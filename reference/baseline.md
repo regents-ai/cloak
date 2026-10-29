@@ -10,7 +10,8 @@ Each item has one status:
 
 - **captured**: taken from a published, pinned source.
 - **reconstructed**: our best reading of published material; the original is
-  unpublished. Replace it with the original when one is obtained.
+  unpublished. Sean ruled on 29 October that the reconstruction is the Regents
+  reference, so A01 records these items as reconstructed, not copied.
 - **unknown**: not published and not yet reconstructed.
 
 Recorded 29 October 2026. Pins live in [sources.json](sources.json) and are
@@ -64,9 +65,8 @@ matter are noted.
 The two bold rows are limits of a torsocks-only wrapper with a shared network:
 torsocks works by preloading a library, so anything that does not load it
 (static binaries, programs with their own resolver, a missing library) connects
-directly. They are findings about our reconstruction. Whether the original
-wrapper has the same gap depends on its unpublished arguments. Either way the
-spec's A06 needs routing that is enforced, not preloaded, and the Mac
+directly. They are findings about the reference itself, since the
+reconstruction is the Regents reference. The spec's A06 needs routing that is enforced, not preloaded, and the Mac
 appliance must provide that.
 
 Not yet reproduced: any paid inference, rewriting with the reference model,

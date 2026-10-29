@@ -28,20 +28,21 @@ Recorded in [reference/baseline.md](../reference/baseline.md):
 - The sandbox wrapper is unpublished, so it is reconstructed and tested. A
   statically linked program inside it reaches the internet directly, and
   torsocks runs programs unwrapped when its library fails to load.
-- Blocked: the original wrapper and settings (unpublished), the rewriter model
-  (needs about 70 GB of memory for weights alone; this Mac has 48 GB), and paid
-  inference (no mainnet deployment of the protocol at either pin).
+- The reconstruction is the Regents reference (Sean, 29 October).
+- Blocked: the rewriter model (needs about 70 GB of memory for weights alone;
+  this Mac has 48 GB), and paid inference (no mainnet deployment of the
+  protocol at either pin).
 
 ## Gates
 
 | ID | Test | State | Evidence |
 | --- | --- | --- | --- |
-| A01 | Reproduce the reference | Open: partly recorded; wrapper, weights, payment deployment unknown | [baseline](../reference/baseline.md) |
+| A01 | Reproduce the reference | Open: partly recorded; the wrapper is recorded as reconstructed; weights and payment deployment unknown | [baseline](../reference/baseline.md) |
 | A02 | Clean Mac installation | Open | |
 | A03 | GUI and CLI equivalence | Open | |
 | A04 | Content and usefulness | Open | [tasks](../reference/tasks.md) |
 | A05 | Whole-agent containment | Open | |
-| A06 | Complete routing | Open: the reconstructed wrapper fails it (static program bypass) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction) |
+| A06 | Complete routing | Open: the reference wrapper fails it (static program bypass) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction) |
 | A07 | Conversation isolation | Open | |
 | A08 | Cover behaviour | Open | |
 | A09 | Failure and pause | Open | |

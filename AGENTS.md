@@ -33,8 +33,9 @@ and 12 before any change. Progress lives in [docs/plan.md](docs/plan.md).
 - A protection is proven only when its gate in `docs/plan.md` has recorded
   evidence. Never write "protected", "private" or "equivalent" in copy, docs or
   status output beyond what a passed gate shows (spec A19).
-- Reconstructed items are labelled `reconstructed` in `reference/baseline.md`
-  until the upstream original replaces them.
+- Reconstructed items stay labelled `reconstructed` in `reference/baseline.md`.
+  Sean ruled on 29 October that the reconstruction is the Regents reference;
+  nobody waits for or swaps in the unpublished original.
 - Development stand-ins (fixture payments, test funds, a smaller model) are
   labelled as such and never ship in a release manifest.
 - Real funding and wallet work is protected: it needs Sean's explicit go.
