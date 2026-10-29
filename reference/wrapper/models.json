@@ -1,0 +1,10 @@
+{
+  "providers": {
+    "zkapi": {
+      "baseUrl": "http://127.0.0.1:8787/v1",
+      "api": "openai-completions",
+      "apiKey": "local",
+      "models": [{ "id": "default", "reasoning": true }]
+    }
+  }
+}

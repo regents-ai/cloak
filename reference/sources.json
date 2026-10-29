@@ -1,0 +1,32 @@
+{
+  "sources": [
+    {
+      "name": "zkapi",
+      "kind": "git",
+      "url": "https://github.com/vbuterin/zkapi.git",
+      "ref": "feat/client-concession-local",
+      "commit": "0fb263b0da04986cfe5c63b12340c1581018ae9b",
+      "full_history": true,
+      "role": "Privacy daemon zkapi-clientd, the branch the 16 Oct post links. Head committed 10:26Z, 22 minutes before the post, and unchanged since."
+    },
+    {
+      "name": "zkapi-spec-snapshot",
+      "kind": "git",
+      "url": "https://github.com/ethereum/zkapi.git",
+      "ref": "main",
+      "commit": "eac5f9065421b729d8415a6f0fc9085389472ba7",
+      "full_history": false,
+      "role": "The later snapshot the spec cites (S06 to S09), 45 commits after the post's commit. Research only; adds the Sepolia staging deployment."
+    },
+    {
+      "name": "pi",
+      "kind": "npm",
+      "package": "@earendil-works/pi-coding-agent",
+      "version": "1.3.0",
+      "integrity": "sha512-V/WoCjA2hQSe3QLWIUB24cTRdtEdeLiIzkDqU5RMXV6VWuD+KGZnzVBMhglwdnQTySkehZsjt8a3g6Jd2g4nnw==",
+      "source_url": "https://github.com/earendil-works/pi",
+      "source_commit": "71023aec1546d6d677a65669c5665c0927ce0dd0",
+      "role": "Agent harness. 1.3.0 (15 Oct 19:13Z) was the newest release when the post went out; 1.4.0 followed on 21 Oct."
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Reconstructed sandbox from the "paranoid mode" post of 16 Oct 2026: a
+# bubblewrap sandbox with torsocks inside it, so the command and every process
+# it starts connect through Tor. Pi and all of its tools run in this one
+# sandbox. The original is unpublished; reference/baseline.md lists which
+# choices here are reconstructed.
+#
+# Usage: sandbox WORKSPACE COMMAND [arguments...]
+set -euo pipefail
+
+workspace="$(realpath "${1:?usage: sandbox WORKSPACE COMMAND [arguments...]}")"
+shift
+here="$(dirname "$(realpath "$0")")"
+agent_home="${PI_PARANOID_HOME:-$HOME/.pi-paranoid}"
+mkdir -p "$agent_home/agent"
+cp -f "$here/models.json" "$agent_home/agent/models.json"
+
+exec bwrap \
+  --unshare-user --unshare-ipc --unshare-pid --unshare-uts --unshare-cgroup \
+  --die-with-parent --new-session \
+  --ro-bind /usr /usr \
+  --symlink usr/bin /bin --symlink usr/sbin /sbin \
+  --symlink usr/lib /lib \
+  --ro-bind /etc/ssl /etc/ssl --ro-bind /etc/ca-certificates /etc/ca-certificates \
+  --ro-bind /etc/alternatives /etc/alternatives --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
+  --ro-bind "$here" "$here" \
+  --proc /proc --dev /dev --tmpfs /tmp \
+  --bind "$agent_home" /home/agent \
+  --bind "$workspace" /workspace --chdir /workspace \
+  --clearenv \
+  --setenv HOME /home/agent --setenv PATH /usr/local/bin:/usr/bin \
+  --setenv TERM "${TERM:-xterm-256color}" \
+  --setenv TORSOCKS_CONF_FILE "$here/torsocks.conf" \
+  --setenv PI_OFFLINE 1 --setenv PI_SKIP_VERSION_CHECK 1 --setenv PI_TELEMETRY 0 \
+  torsocks "$@"

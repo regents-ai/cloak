@@ -1,0 +1,5 @@
+# Reconstructed from zkapi-clientd docs/CLI_ZKAPI.md ("Tor") at 0fb263b.
+# The daemon gives each conversation its own SOCKS identity; IsolateSOCKSAuth
+# makes Tor give each identity its own circuit.
+SocksPort 127.0.0.1:9050 IsolateSOCKSAuth
+Log notice stdout

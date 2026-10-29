@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Reconstructed "paranoid mode" launcher: Pi inside ./sandbox, talking to the
+# local zkapi-clientd daemon at 127.0.0.1:8787.
+#
+# Usage: pi-paranoid WORKSPACE [pi arguments...]
+set -euo pipefail
+
+workspace="${1:?usage: pi-paranoid WORKSPACE [pi arguments...]}"
+shift
+exec "$(dirname "$(realpath "$0")")/sandbox" "$workspace" pi --provider zkapi --model default "$@"

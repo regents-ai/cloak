@@ -4,3 +4,6 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Pinned upstream sources fetched by scripts/fetch_sources.py
+reference/src/
