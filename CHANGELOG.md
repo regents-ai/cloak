@@ -9,3 +9,5 @@
 - Stage 1: rebuilt the daemon at the post's commit; its own checks pass.
 - Stage 1: reconstructed the unpublished Pi sandbox wrapper and a Linux host to
   test it. Found that programs which skip torsocks reach the internet directly.
+- Agent rules now require the macos-app-skills for all Mac app work, each
+  mapped to the stage it serves and the spec limits that win over it.

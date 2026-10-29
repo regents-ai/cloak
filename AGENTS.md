@@ -2,8 +2,21 @@
 
 Start Regent work with the workspace's regent-workflow skill
 (`/Users/sean/Documents/regent/.agents/skills/regent-workflow/SKILL.md`).
-For the Mac app, load the macos skills (`macos-patterns`, `macos-build`,
-`macos-release`, `macos-auto-update`, `macos-settings-ui`) before writing Swift.
+For any Mac app work, load the skills from
+[macos-app-skills](https://github.com/fayazara/macos-app-skills) that the work
+touches, plus `write-swift` for all Swift. Sean requires them.
+
+| Skill | Load for | Spec limits that win over the skill |
+| --- | --- | --- |
+| `macos-patterns` | Every piece of app code: menu bar, activation policy, windows, launch at login | Start at login stays optional and keeps a deliberate pause (section 7) |
+| `macos-build` | Every compile check, through `xcodebuild` | Run builds one at a time, niced |
+| `macos-settings-ui` | The utility windows: settings, activity, balance, updates, recovery | Few words on screen; technical detail only on demand |
+| `macos-notch-ui` | The running or paused indicator on Macs with a notch, beside the menu-bar control | The menu-bar control stays the main interface; the indicator never shows prompts or amounts |
+| `macos-auto-update` | Updates, with Sparkle | UPD01 to UPD02 and NET09: an update check is maintenance traffic, never carries task content, and an update never silently resumes spending |
+| `macos-release` | Signed, notarized releases (stages 3 and 5) | MAC06 Developer ID; publishing needs a GitHub remote Sean creates, and signing keys are Sean's |
+
+Interface copy also follows `better-writing`, `better-accessibility` and
+`apple-design`.
 
 The contract is [docs/spec-v0.3.md](docs/spec-v0.3.md). Read sections 2, 11
 and 12 before any change. Progress lives in [docs/plan.md](docs/plan.md).

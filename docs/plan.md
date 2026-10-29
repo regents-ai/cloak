@@ -14,6 +14,11 @@ inconclusive check is not a pass. Tickets are in `bd`.
 | 4. Simple interface | Menu bar, local session, funding and recovery, status, diagnostics | GUI and CLI share behaviour; novices complete the journey | Not started |
 | 5. Qualify and release | Full real-service workflow and evidence package | A01 to A19 pass | Not started |
 
+Mac skills by stage (rules in [AGENTS.md](../AGENTS.md)): stage 3 uses
+`macos-patterns`, `macos-build`, `macos-auto-update`, `macos-release` and
+`write-swift`; stage 4 adds `macos-settings-ui` and `macos-notch-ui`; stage 5
+uses `macos-release` for the qualified release.
+
 ## Stage 1 so far
 
 Recorded in [reference/baseline.md](../reference/baseline.md):
