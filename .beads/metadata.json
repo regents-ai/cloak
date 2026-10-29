@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "cloak",
+  "project_id": "63956c6e-5eb8-425a-b7b8-f76f735f53f7"
+}
