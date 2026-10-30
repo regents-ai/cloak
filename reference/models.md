@@ -34,8 +34,10 @@ on 20 July added a `response_template` to `tokenizer_config.json`. The weights
 and `tokenizer.json` are unchanged by those commits, so the conversion's
 weights still correspond to Google's current weights.
 
-Both findings are decision 1 in [docs/plan.md](../docs/plan.md): which
-tokenizer and template files each candidate is frozen with.
+Both findings were decision 1 in [docs/plan.md](../docs/plan.md). Sean
+decided on 30 October that each candidate uses its conversion's weights with
+the vendor's own tokenizer and chat template files at the pinned vendor
+revision.
 
 ## Configuration still to freeze per candidate
 
@@ -45,7 +47,7 @@ EVAL03) and cannot change afterwards without fresh evidence.
 | Item | Lead | Challenger |
 | --- | --- | --- |
 | Weights | the 3 pinned files | the 3 pinned files |
-| Tokenizer and chat template | decision 1 | decision 1 |
+| Tokenizer and chat template | the vendor's files from `lead-base` (decision 1) | the vendor's files from `challenger-base` (decision 1) |
 | Thinking | off (spec DATA02 proposes non-thinking). The daemon request sets no thinking field and Qwen's template defaults to thinking on, so the worker sets it off as fixed configuration, not per request | to be read from the frozen template |
 | Sampling | greedy, from the daemon's `temperature: 0` | greedy |
 | Loader | one pinned MLX loader (spec MAC02); both conversions were made with mlx-vlm | same loader |

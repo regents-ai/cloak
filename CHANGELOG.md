@@ -15,6 +15,12 @@
   same model code as the lead) for building the worker, and added a script that
   downloads a pinned model and checks every file. The stand-in is never
   evaluated and never ships.
+- Stage 1: proposed values for the evaluation protocol's open items (attacks,
+  intervals, confidence, sample size, repeat runs); they need sign-off.
+- Recorded Sean's decisions of 30 October: candidates use their conversion's
+  weights with the vendor's own tokenizer and chat template; no 32 GB Mac is
+  tested, so 32 GB support stays unmet and at most a limited 48 GB pilot is
+  possible.
 - Stage 2: added the native rewrite worker. It loads a model only after every
   file matches its pin, applies the model's own chat template with the pinned
   settings, decodes greedily, runs one rewrite at a time, and answers in the

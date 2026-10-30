@@ -12,7 +12,7 @@ not a pass. Tickets are in `bd`.
 | --- | --- | --- | --- |
 | 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
 | 2. Build the local path | Minimal guest adapter and native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | Not started |
-| 3. Check feasibility early | Lead and challenger runs on a specified 48 GB and a specified 32 GB Mac with the full stack loaded | Input, deadline and memory risks measured before the large privacy evaluation | Not started |
+| 3. Check feasibility early | Lead and challenger runs on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Not started |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Not started |
 | 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | Not started |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
@@ -44,11 +44,15 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
 
 ## Decisions
 
-1. Candidate tokenizer and template files. Recommendation: each candidate uses
-   its conversion's weights with the vendor's own tokenizer and chat template
-   files at the pinned vendor revision, recorded in `models.json`.
-2. The 32 GB Mac for stage 3 (spec HW01). Recommendation: a physical 32 GB
-   Apple Silicon Mac, so sleep, wake and ordinary-use tests are real.
+1. Candidate tokenizer and template files. Decided 30 October (Sean, 1a):
+   each candidate uses its conversion's weights with the vendor's own
+   tokenizer and chat template files at the pinned vendor revision, recorded
+   in `models.json`. This fixes the lead's word-splitting mismatch and the
+   challenger's old chat template without converting the weights ourselves.
+2. The 32 GB Mac for stage 3 (spec HW01). Decided 30 October (Sean, 2c): no
+   32 GB machine is tested. This departs from HW01 by Sean's ruling. Under
+   HW03 the most this work can reach is a clearly limited 48 GB pilot; 32 GB
+   support stays unmet and unavailable, and nothing may claim it.
 
 ## Gates
 
