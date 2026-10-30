@@ -1,0 +1,27 @@
+#!/bin/busybox sh
+# The guest's only process tree: load vsock, start the adapter on loopback as
+# its own user, run the daemon's rewrite checks as another, print the results
+# on the console, power off. No network device exists in this guest.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+
+for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
+	insmod /lib/modules/$module.ko || { echo "cloak-guest: cannot load $module"; poweroff -f; }
+done
+ip link set lo up
+
+su -s /bin/sh adapter -c 'exec /usr/bin/cloak-adapter' &
+
+# 8012 is 1F4C; state 0A is listening.
+tries=0
+until grep -q ':1F4C 00000000:0000 0A' /proc/net/tcp; do
+	tries=$((tries + 1))
+	[ $tries -gt 50 ] && { echo "cloak-guest: adapter did not start"; poweroff -f; }
+	sleep 0.1
+done
+
+su -s /bin/sh checker -c "exec /usr/bin/cloak-rewrite-check /etc/cloak/cases.jsonl $(cat /etc/cloak/model) /run/cloak/rewriter-key"
+echo "cloak-guest: check exited $?"
+poweroff -f

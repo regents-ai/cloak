@@ -28,6 +28,13 @@
   protocol fault stops the worker. Twenty functional checks cover refusals,
   the token limit, cancellation, a second request while busy, bad frames and
   tampered model files.
+- Stage 2: added the guest and the host. The guest is a minimal Linux image
+  with no network device in which the daemon's own rewrite code calls a small
+  adapter; the adapter forwards each request unchanged over one token-checked
+  virtio socket to the host, which relays it to the worker. Sixteen checks
+  drive the whole path: unchanged requests, nine kinds of bad reply refused,
+  cancellation, the daemon's deadline, and a lost worker. The worker's network
+  sandbox is still to come.
 
 - Started the repository for the Regents Cloak Mac app, with spec v0.3, the
   plan and gates A01 to A19.

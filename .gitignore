@@ -14,3 +14,7 @@ models/
 # Worker build output
 worker/.build/
 worker/.xcode/
+
+# Guest and host build output
+guest/build/
+host/.build/

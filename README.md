@@ -38,6 +38,8 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/wrapper/` | The reconstructed Pi sandbox wrapper and its Tor settings |
 | `reference/host/` | The Linux reference host used for stage 1 |
 | `worker/` | The native rewrite worker (Swift, MLX) |
+| `host/` | The host supervisor: boots the guest and relays its rewrites to the worker |
+| `guest/` | The guest: adapter, the daemon's rewrite check, kernel and root build |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
 | `scripts/` | Repository scripts, run with `uv run` |
 | `models/` | Model files fetched by `scripts/fetch_model.py` (ignored by git) |
@@ -86,6 +88,26 @@ Run the worker's functional checks against the stand-in model:
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_worker.py
+```
+
+Build the guest (Go cross-builds and a pinned Debian image in Docker, two
+cores) and the host supervisor, which must be signed with the virtualization
+entitlement:
+
+```bash
+guest/build.sh
+```
+
+```bash
+cd host && swift build -c release -j 2 && codesign -s - --entitlements cloak-host.entitlements -f .build/release/cloak-host
+```
+
+Run the whole path: the daemon's own rewrite code in the guest, the adapter,
+the host and a worker (one guest boot per check; one check waits out the
+daemon's 90-second deadline):
+
+```bash
+uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
 ```
 
 ## Tickets
