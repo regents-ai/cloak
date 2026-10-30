@@ -36,6 +36,7 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/wrapper/` | The reconstructed Pi sandbox wrapper and its Tor settings |
 | `reference/host/` | The Linux reference host used for stage 1 |
 | `scripts/` | Repository scripts, run with `uv run` |
+| `models/` | Model files fetched by `scripts/fetch_model.py` (ignored by git) |
 
 ## Stage 1 commands
 
@@ -52,6 +53,14 @@ different bytes):
 
 ```bash
 uv run scripts/pin_models.py
+```
+
+Download one pinned model into `models/<name>/`, checking every file's size
+and hash (the stand-in is 1.75 GB; each candidate is about 16 GB, so check free
+disk first):
+
+```bash
+uv run scripts/fetch_model.py standin
 ```
 
 ## Tickets

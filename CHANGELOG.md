@@ -11,6 +11,10 @@
   own tokenizer and that the challenger conversion has Google's chat template
   from before a fix.
 - Stage 1: drafted the evaluation protocol.
+- Stage 2: pinned a small development stand-in model (Qwen3.5 2B, 4-bit,
+  same model code as the lead) for building the worker, and added a script that
+  downloads a pinned model and checks every file. The stand-in is never
+  evaluated and never ships.
 
 - Started the repository for the Regents Cloak Mac app, with spec v0.3, the
   plan and gates A01 to A19.

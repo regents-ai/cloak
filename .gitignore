@@ -7,3 +7,6 @@
 
 # Pinned upstream sources fetched by scripts/fetch_sources.py
 reference/src/
+
+# Model weights fetched by scripts/fetch_model.py
+models/
