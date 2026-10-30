@@ -1,58 +1,82 @@
 # Plan and release gates
 
-The contract is [spec-v0.3.md](spec-v0.3.md). Work follows its section 12 in
-order. A gate passes only with recorded evidence linked in its row; a failed or
-inconclusive check is not a pass. Tickets are in `bd`.
+The contract is [spec-v0.4.md](spec-v0.4.md) (sha256
+`8c6b4d5d66fca24383bd3282503e17289784f14df14345a5e15b7bffdac74aea`, received
+30 October 2026). Work follows its section 12 in order. A gate passes only
+with recorded evidence linked in its row; a failed or inconclusive check is
+not a pass. Tickets are in `bd`.
 
 ## Stages
 
 | Stage | Deliverable | Exit condition | State |
 | --- | --- | --- | --- |
-| 1. Capture and reproduce | Pi and the reference daemon, model, routing and sandbox configuration | Reference tasks and stated limits documented and reproduced | In progress |
-| 2. Automate the stack | Idempotent installer and one supervisor and CLI on the reference environment | Automation preserves versions, policies, behaviour and state | Not started |
-| 3. Package for Mac | Signed app, Linux appliance, required assets, narrow local controls | Complete stack runs on a clean qualified Mac; platform changes pass comparison | Not started |
-| 4. Simple interface | Menu bar, local session, funding and recovery, status, diagnostics | GUI and CLI share behaviour; novices complete the journey | Not started |
-| 5. Qualify and release | Full real-service workflow and evidence package | A01 to A19 pass | Not started |
+| 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
+| 2. Build the local path | Minimal guest adapter and native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | Not started |
+| 3. Check feasibility early | Lead and challenger runs on a specified 48 GB and a specified 32 GB Mac with the full stack loaded | Input, deadline and memory risks measured before the large privacy evaluation | Not started |
+| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Not started |
+| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | Not started |
+| 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
-Mac skills by stage (rules in [AGENTS.md](../AGENTS.md)): stage 3 uses
-`macos-patterns`, `macos-build`, `macos-auto-update`, `macos-release` and
-`write-swift`; stage 4 adds `macos-settings-ui` and `macos-notch-ui`; stage 5
-uses `macos-release` for the qualified release.
+Stage 2 builds and tests the path with a small model labelled as a
+development stand-in, so it runs light on the development Mac (an M4 Max with
+48 GB, macOS 27.0). The candidates' 16 GB weights are first loaded in stage 3,
+after a free memory and disk check.
+
+Mac skills by stage (rules in [AGENTS.md](../AGENTS.md)): stage 2's native
+worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
+`macos-auto-update`, `macos-release`, `macos-settings-ui` and
+`macos-notch-ui`; stage 6 uses `macos-release`.
 
 ## Stage 1 so far
 
-Recorded in [reference/baseline.md](../reference/baseline.md):
+- The daemon is pinned at the post's commit and the spec's later snapshot,
+  builds, and passes its own tests. Pi 1.3.0 is pinned by package hash.
+- The rewriter contract is captured and identical at both pins:
+  [rewriter-contract.md](../reference/rewriter-contract.md).
+- The reference model, both candidates and their vendor checkpoints are pinned
+  file by file: [models.md](../reference/models.md). Two provenance findings
+  there need decision 1.
+- The sandbox wrapper is reconstructed and is the Regents reference (Sean,
+  29 October). A static program inside it bypasses Tor.
+- Unknown and recorded as such: the reference's inference server,
+  quantization and thinking setting; which payment deployment the post used.
+- Still to write: the evaluation protocol (EVAL01 to EVAL07).
 
-- The post's daemon commit is pinned and verified, builds, and passes its own
-  tests. Pi 1.3.0 is pinned by package hash.
-- The sandbox wrapper is unpublished, so it is reconstructed and tested. A
-  statically linked program inside it reaches the internet directly, and
-  torsocks runs programs unwrapped when its library fails to load.
-- The reconstruction is the Regents reference (Sean, 29 October).
-- Blocked: the rewriter model (needs about 70 GB of memory for weights alone;
-  this Mac has 48 GB), and paid inference (no mainnet deployment of the
-  protocol at either pin).
+## Decisions
+
+1. Candidate tokenizer and template files. Recommendation: each candidate uses
+   its conversion's weights with the vendor's own tokenizer and chat template
+   files at the pinned vendor revision, recorded in `models.json`.
+2. The 32 GB Mac for stage 3 (spec HW01). Recommendation: a physical 32 GB
+   Apple Silicon Mac, so sleep, wake and ordinary-use tests are real.
 
 ## Gates
 
 | ID | Test | State | Evidence |
 | --- | --- | --- | --- |
-| A01 | Reproduce the reference | Open: partly recorded; the wrapper is recorded as reconstructed; weights and payment deployment unknown | [baseline](../reference/baseline.md) |
+| A01 | Reference integrity | Open: sources, wrapper (reconstructed), contract and model files pinned; reference inference settings and payment deployment unknown | [baseline](../reference/baseline.md), [contract](../reference/rewriter-contract.md), [models](../reference/models.md) |
 | A02 | Clean Mac installation | Open | |
 | A03 | GUI and CLI equivalence | Open | |
-| A04 | Content and usefulness | Open | [tasks](../reference/tasks.md) |
+| A04 | Fidelity | Open | |
 | A05 | Whole-agent containment | Open | |
 | A06 | Complete routing | Open: the reference wrapper fails it (static program bypass) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction) |
 | A07 | Conversation isolation | Open | |
 | A08 | Cover behaviour | Open | |
 | A09 | Failure and pause | Open | |
-| A10 | Local API authority | Open | |
-| A11 | Paid operations | Open: no qualified deployment exists yet | |
+| A10 | Local authority | Open | |
+| A11 | Actual paid workflow | Open: no qualified deployment exists yet | |
 | A12 | Financial interruption | Open | |
 | A13 | Fresh-device recovery | Open | |
-| A14 | Wrapper-created leaks | Open | |
-| A15 | Update and rollback | Open | |
+| A14 | Wrapper disclosure | Open | |
+| A15 | Updates and rollback | Open | |
 | A16 | Deletion and removal | Open | |
-| A17 | Hardware and substitution | Open | |
+| A17 | Hardware | Open | |
 | A18 | Usability | Open | |
-| A19 | Honest claims | Open | |
+| A19 | Claims | Open | |
+| A20 | Unchanged rewrite API | Open: contract captured | [contract](../reference/rewriter-contract.md) |
+| A21 | Host–guest worker boundary | Open | |
+| A22 | Authorship and linkability | Open | |
+| A23 | Long and cold tasks | Open | |
+| A24 | Artifact provenance | Open: files pinned; two conversion mismatches found | [models](../reference/models.md) |
+| A25 | Single implementation | Open | |
+| A26 | Performance claims | Open | |

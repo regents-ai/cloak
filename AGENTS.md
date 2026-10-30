@@ -18,13 +18,23 @@ touches, plus `write-swift` for all Swift. Sean requires them.
 Interface copy also follows `better-writing`, `better-accessibility` and
 `apple-design`.
 
-The contract is [docs/spec-v0.3.md](docs/spec-v0.3.md). Read sections 2, 11
-and 12 before any change. Progress lives in [docs/plan.md](docs/plan.md).
+The contract is [docs/spec-v0.4.md](docs/spec-v0.4.md). Read sections 1, 4, 7,
+11 and 12 before any change. Progress lives in [docs/plan.md](docs/plan.md).
 
 ## Rules
 
-- Follow the spec's stages in order: capture and reproduce the reference, then
-  one supervisor and CLI, then Mac packaging, then the menu-bar interface.
+- Follow the spec's stages in order: freeze the experiment, build the local
+  rewrite path, check feasibility, qualify the substitution, package, release.
+- The rewriter is one native MLX worker on macOS, reached from the guest only
+  through one authenticated adapter that carries the daemon's chat request and
+  reply. Exactly one model, loader and configuration ships: no model picker,
+  no switching by hardware, no second rewrite stage.
+- The daemon's instruction bytes, request fields, reply checks and limits stay
+  exactly as captured in `reference/rewriter-contract.md`. No prompt tuning,
+  placeholders, fine-tuning, pruning, expert streaming or speculative decoding
+  in a candidate.
+- Model files load only from local files matching `reference/models.json`;
+  never fetch from a model hub at runtime.
 - One implementation. No second engine, runtime abstraction or optional path
   kept "just in case".
 - No fallback, ever (spec REF04). When a model, daemon, sandbox, route, cover
@@ -36,8 +46,11 @@ and 12 before any change. Progress lives in [docs/plan.md](docs/plan.md).
 - Reconstructed items stay labelled `reconstructed` in `reference/baseline.md`.
   Sean ruled on 29 October that the reconstruction is the Regents reference;
   nobody waits for or swaps in the unpublished original.
-- Development stand-ins (fixture payments, test funds, a smaller model) are
-  labelled as such and never ship in a release manifest.
+- Development stand-ins (fixture payments, test funds, a small model for
+  building the worker) are labelled as such and never ship in a release
+  manifest.
+- The reference model runs only on rented or borrowed high-memory hardware,
+  and rented hardware sees approved synthetic fixtures only.
 - Real funding and wallet work is protected: it needs Sean's explicit go.
 - Tests come after a feature works; unit and functional tests only. No smoke,
   integration or exact-wording tests unless Sean asks.

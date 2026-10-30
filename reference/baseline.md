@@ -37,8 +37,9 @@ verified by `uv run scripts/fetch_sources.py`.
 | Cover traffic | captured | Native worker, Poisson arrivals, default 5 per second, 4 in flight, 20 s and 64 KiB per request, each worker on its own SOCKS identity | `docs/COVER_TRAFFIC.md` |
 | Cover destinations | unknown | Operator-chosen HTTPS URLs; Vitalik's are unpublished | `docs/COVER_TRAFFIC.md` |
 | Local rewriter | captured | `--rewriter-url http://localhost:8012 --rewriter-model qwen3.8-flash-next`, default instruction of about 253 tokens, preview shown as reasoning | `docs/REWRITER.md`, `docs/REWRITER_EVALUATION.md`; matches the post's first screenshot |
-| Rewriter model | captured | `Qwen/Qwen3.8-Flash-Next` (Hugging Face `de4b8e4d`), 180B-parameter mixture of experts | Post; Hugging Face |
-| Rewriter weights and server | unknown | Quantization and inference server unpublished. The smallest published quantizations are 66 to 72 GB | Hugging Face file listings |
+| Rewriter model | captured | `Qwen/Qwen3.8-Flash-Next` (Hugging Face `de4b8e4d`): a 125B main model plus 51B n-gram embeddings, 6B active per token; 360 GB of full-precision weights, every file pinned in [models.json](models.json) | Post; Hugging Face; spec S18 |
+| Rewriter weights and server | unknown | Quantization, inference server, thinking setting and server sampling defaults unpublished. The smallest published quantizations are 66 to 72 GB | Hugging Face file listings; [models.md](models.md) |
+| Rewriter contract | captured | Instruction, request fields, reply checks and limits, identical at both daemon pins: [rewriter-contract.md](rewriter-contract.md) | `internal/rewriter/rewriter.go` |
 | Web search | captured | On by default through OpenRouter's web plugin | `zkapi-clientd/README.md` |
 | Payment deployment | unknown | Which network and vault the post's wallet used. Mainnet concession is not deployed at either pin | `docs/LOCAL_PROTOCOL_MIGRATION.md`; post: "cheaper ... coming to mainnet soon" |
 
