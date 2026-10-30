@@ -1305,6 +1305,9 @@
       "role": "Development stand-in for building and testing the worker (same model code as the lead). Never evaluated as a candidate and never ships.",
       "repo": "mlx-community/Qwen3.5-2B-4bit",
       "revision": "674aaa7240b91e8012fcad5d791b7dfe5ba90207",
+      "chat_template_context": {
+        "enable_thinking": false
+      },
       "last_modified": "2026-03-02T16:14:15.000Z",
       "gated": false,
       "license": "apache-2.0",

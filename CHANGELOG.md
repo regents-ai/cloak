@@ -15,6 +15,13 @@
   same model code as the lead) for building the worker, and added a script that
   downloads a pinned model and checks every file. The stand-in is never
   evaluated and never ships.
+- Stage 2: added the native rewrite worker. It loads a model only after every
+  file matches its pin, applies the model's own chat template with the pinned
+  settings, decodes greedily, runs one rewrite at a time, and answers in the
+  shape the daemon reads. A cancel from the supervisor stops the rewrite; any
+  protocol fault stops the worker. Twenty functional checks cover refusals,
+  the token limit, cancellation, a second request while busy, bad frames and
+  tampered model files.
 
 - Started the repository for the Regents Cloak Mac app, with spec v0.3, the
   plan and gates A01 to A19.

@@ -58,8 +58,8 @@ def record(model: dict) -> dict:
 
 def main() -> None:
     manifest = json.loads(MODELS.read_text())
-    keep = ("name", "role", "repo", "revision")
-    manifest["models"] = [record({k: m[k] for k in keep}) for m in manifest["models"]]
+    keep = ("name", "role", "repo", "revision", "chat_template_context")
+    manifest["models"] = [record({k: m[k] for k in keep if k in m}) for m in manifest["models"]]
     MODELS.write_text(json.dumps(manifest, indent=2) + "\n")
     for m in manifest["models"]:
         print(f"{m['name']}: {m['repo']}@{m['revision'][:8]} {len(m['files'])} files, "

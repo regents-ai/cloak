@@ -17,7 +17,9 @@ A01 to A26 is in [docs/plan.md](docs/plan.md).
 
 ## Status
 
-Stage 1 of 6: freeze the experiment. Nothing here is a release,
+Stage 2 of 6: build the local rewrite path, with a small stand-in model.
+Stage 1 waits on the tokenizer decision and the evaluation sign-off. Nothing
+here is a release,
 and no protection is claimed as proven. A gate counts only when its evidence
 is recorded in [docs/plan.md](docs/plan.md).
 
@@ -35,6 +37,8 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/tasks.md` | Representative reference tasks |
 | `reference/wrapper/` | The reconstructed Pi sandbox wrapper and its Tor settings |
 | `reference/host/` | The Linux reference host used for stage 1 |
+| `worker/` | The native rewrite worker (Swift, MLX) |
+| `tests/` | Functional checks, run with `uv run --with pytest` |
 | `scripts/` | Repository scripts, run with `uv run` |
 | `models/` | Model files fetched by `scripts/fetch_model.py` (ignored by git) |
 
@@ -61,6 +65,27 @@ disk first):
 
 ```bash
 uv run scripts/fetch_model.py standin
+```
+
+## Stage 2 commands
+
+Build the native worker (two build jobs, low priority; the first build needs
+Apple's Metal toolchain, `xcodebuild -downloadComponent MetalToolchain`):
+
+```bash
+cd worker && nice -n 10 xcodebuild build -scheme cloak-rewriter -destination 'platform=macOS' -configuration Release -derivedDataPath .xcode -jobs 2
+```
+
+Send the worker one rewrite request built exactly as the daemon builds it:
+
+```bash
+uv run scripts/drive_worker.py --worker worker/.xcode/Build/Products/Release/cloak-rewriter --name standin "a text to rewrite"
+```
+
+Run the worker's functional checks against the stand-in model:
+
+```bash
+uv run --with pytest==8.4.2 pytest tests/test_worker.py
 ```
 
 ## Tickets

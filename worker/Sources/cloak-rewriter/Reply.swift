@@ -1,0 +1,56 @@
+import Foundation
+
+/// OpenAI-style reply bodies, carrying the fields the daemon reads.
+enum Reply {
+    private struct Body: Encodable {
+        struct Choice: Encodable {
+            struct Message: Encodable {
+                let role = "assistant"
+                let content: String
+            }
+            let index = 0
+            let message: Message
+            let finish_reason: String
+        }
+        struct Usage: Encodable {
+            let prompt_tokens: Int
+            let completion_tokens: Int
+            let total_tokens: Int
+        }
+        let id: String
+        let object = "chat.completion"
+        let created: Int
+        let model: String
+        let choices: [Choice]
+        let usage: Usage
+    }
+
+    private struct ErrorBody: Encodable {
+        struct Detail: Encodable { let message: String }
+        let error: Detail
+    }
+
+    static func completion(model: String, completion: Completion, finishReason: String) -> Data {
+        encode(
+            Body(
+                id: "chatcmpl-\(UUID().uuidString.lowercased())",
+                created: Int(Date().timeIntervalSince1970),
+                model: model,
+                choices: [.init(message: .init(content: completion.text), finish_reason: finishReason)],
+                usage: .init(
+                    prompt_tokens: completion.info.promptTokenCount,
+                    completion_tokens: completion.info.generationTokenCount,
+                    total_tokens: completion.info.promptTokenCount + completion.info.generationTokenCount)))
+    }
+
+    static func error(_ message: String) -> Data {
+        encode(ErrorBody(error: .init(message: message)))
+    }
+
+    private static func encode(_ value: some Encodable) -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        // Encoding these plain structs cannot fail.
+        return try! encoder.encode(value)
+    }
+}

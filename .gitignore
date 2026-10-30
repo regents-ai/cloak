@@ -10,3 +10,7 @@ reference/src/
 
 # Model weights fetched by scripts/fetch_model.py
 models/
+
+# Worker build output
+worker/.build/
+worker/.xcode/
