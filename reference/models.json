@@ -744,6 +744,19 @@
       "role": "Lead candidate (spec section 1): the community MLX 4-bit conversion of Qwen/Qwen3.8-27B.",
       "repo": "mlx-community/Qwen3.8-27B-4bit",
       "revision": "10c35caafbb80f7dc6a7a432cdd11af10a6d4818",
+      "vendor_files": {
+        "from": "lead-base",
+        "paths": [
+          "chat_template.jinja",
+          "merges.txt",
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "vocab.json"
+        ]
+      },
+      "chat_template_context": {
+        "enable_thinking": false
+      },
       "last_modified": "2026-09-14T12:37:43.000Z",
       "gated": false,
       "license": "apache-2.0",
@@ -758,7 +771,7 @@
         "bits": 4,
         "mode": "affine"
       },
-      "total_bytes": 16081490933,
+      "total_bytes": 16077680950,
       "files": [
         {
           "path": ".gitattributes",
@@ -773,7 +786,8 @@
         {
           "path": "chat_template.jinja",
           "size": 8952,
-          "sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041"
+          "sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+          "from": "lead-base"
         },
         {
           "path": "config.json",
@@ -784,6 +798,12 @@
           "path": "generation_config.json",
           "size": 202,
           "sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e"
+        },
+        {
+          "path": "merges.txt",
+          "size": 3353259,
+          "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+          "from": "lead-base"
         },
         {
           "path": "model-00001-of-00003.safetensors",
@@ -817,13 +837,15 @@
         },
         {
           "path": "tokenizer.json",
-          "size": 19989325,
-          "sha256": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523"
+          "size": 12809320,
+          "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+          "from": "lead-base"
         },
         {
           "path": "tokenizer_config.json",
-          "size": 1165,
-          "sha256": "792fa3f0cb88b111e54ef3134c873531008c4df471d108da17903426e308aa7b"
+          "size": 17928,
+          "sha256": "b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27",
+          "from": "lead-base"
         },
         {
           "path": "video_preprocessor_config.json",
@@ -833,7 +855,8 @@
         {
           "path": "vocab.json",
           "size": 6722759,
-          "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+          "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+          "from": "lead-base"
         }
       ]
     },
@@ -1021,6 +1044,17 @@
       "role": "Challenger (spec section 1): the plain MLX 4-bit conversion of google/gemma-4-26B-A4B-it.",
       "repo": "mlx-community/gemma-4-26b-a4b-it-4bit",
       "revision": "0d77464eeb233a2da68ebf9d7dc4edaac7db956d",
+      "vendor_files": {
+        "from": "challenger-base",
+        "paths": [
+          "chat_template.jinja",
+          "tokenizer.json",
+          "tokenizer_config.json"
+        ]
+      },
+      "chat_template_context": {
+        "enable_thinking": false
+      },
       "last_modified": "2026-07-05T23:03:15.000Z",
       "gated": false,
       "license": "apache-2.0",
@@ -1155,7 +1189,7 @@
           "bits": 8
         }
       },
-      "total_bytes": 15373588575,
+      "total_bytes": 15373590134,
       "files": [
         {
           "path": ".gitattributes",
@@ -1169,8 +1203,9 @@
         },
         {
           "path": "chat_template.jinja",
-          "size": 17466,
-          "sha256": "36e3a42e5cf14cd0020e72d92e1fdd9970f59b82170e421f0cbe1bb42bead3f0"
+          "size": 18683,
+          "sha256": "ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4",
+          "from": "challenger-base"
         },
         {
           "path": "config.json",
@@ -1210,12 +1245,14 @@
         {
           "path": "tokenizer.json",
           "size": 32169626,
-          "sha256": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
+          "sha256": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f",
+          "from": "challenger-base"
         },
         {
           "path": "tokenizer_config.json",
-          "size": 2740,
-          "sha256": "080d9e1aff284e2f6043889cd05367966f7c7b80e025fbc0b06745e218158656"
+          "size": 3082,
+          "sha256": "9f4fec4b1dc6ecddf8f4a92e9caea5971c0e67d81309f3f9066a2bee8c362633",
+          "from": "challenger-base"
         }
       ]
     },

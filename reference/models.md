@@ -39,6 +39,16 @@ decided on 30 October that each candidate uses its conversion's weights with
 the vendor's own tokenizer and chat template files at the pinned vendor
 revision.
 
+In [models.json](models.json) each candidate lists those files under
+`vendor_files`, and its file list takes them from the vendor entry (each
+marked `from`) in place of the conversion's: for the lead
+`chat_template.jinja`, `merges.txt`, `tokenizer.json`, `tokenizer_config.json`
+and `vocab.json` from `lead-base`; for the challenger `chat_template.jinja`,
+`tokenizer.json` and `tokenizer_config.json` from `challenger-base`.
+`scripts/fetch_model.py` downloads each file from where it is pinned, and the
+worker checks the combined list like any other. That the combination loads
+and rewrites is first shown when a candidate is downloaded in stage 3.
+
 ## Configuration still to freeze per candidate
 
 Each item becomes part of the candidate before the final holdout opens (spec
@@ -47,8 +57,8 @@ EVAL03) and cannot change afterwards without fresh evidence.
 | Item | Lead | Challenger |
 | --- | --- | --- |
 | Weights | the 3 pinned files | the 3 pinned files |
-| Tokenizer and chat template | the vendor's files from `lead-base` (decision 1) | the vendor's files from `challenger-base` (decision 1) |
-| Thinking | off (spec DATA02 proposes non-thinking). The daemon request sets no thinking field and Qwen's template defaults to thinking on, so the worker sets it off as fixed configuration, not per request | to be read from the frozen template |
+| Tokenizer and chat template | the vendor's files from `lead-base` (decision 1), pinned | the vendor's files from `challenger-base` (decision 1), pinned |
+| Thinking | off, pinned as `enable_thinking: false` (spec DATA02 proposes non-thinking). The daemon request sets no thinking field and Qwen's template defaults to thinking on, so the worker sets it off as fixed configuration, not per request | off, pinned as `enable_thinking: false`. Google's template (pinned, `ae53464b`) already defaults to off; pinning it keeps the setting explicit |
 | Sampling | greedy, from the daemon's `temperature: 0` | greedy |
 | Loader | one pinned MLX loader (spec MAC02); both conversions were made with mlx-vlm | same loader |
 

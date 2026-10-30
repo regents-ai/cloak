@@ -5,8 +5,9 @@
 ~/Library/Application Support/Regents Cloak/models/<name>/, the only place the
 sandboxed worker may read.
 
-Every file is fetched at the pinned revision and must match its recorded size
-and sha256; a file already present and matching is kept. Any mismatch stops
+Every file is fetched at its pinned repository and revision (a candidate's
+vendor tokenizer and template files from the vendor checkpoint) and must match
+its recorded size and sha256; a file already present and matching is kept. Any mismatch stops
 the run with a non-zero exit and leaves the bad file in place as `<file>.bad`.
 Check free disk space before fetching a candidate (about 16 GB each).
 """
@@ -48,9 +49,11 @@ def fetch(repo: str, revision: str, entry: dict, target: Path) -> None:
 
 def main() -> None:
     name = sys.argv[1]
-    model = next(m for m in json.loads(MODELS.read_text())["models"] if m["name"] == name)
-    for entry in model["files"]:
-        fetch(model["repo"], model["revision"], entry, DEST / name / entry["path"])
+    models = {m["name"]: m for m in json.loads(MODELS.read_text())["models"]}
+    for entry in models[name]["files"]:
+        # A file marked `from` is the vendor's (decision 1), fetched from there.
+        source = models[entry.get("from", name)]
+        fetch(source["repo"], source["revision"], entry, DEST / name / entry["path"])
         print(f"{entry['path']} ok")
 
 

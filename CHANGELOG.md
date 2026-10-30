@@ -40,6 +40,11 @@
   signed worker decides what it loads. worker/install.sh builds, signs and
   installs it. New checks show the network is refused and folders outside the
   models folder cannot be read.
+- Decision 1 in the model pins: each candidate's file list now takes the
+  vendor's tokenizer and chat template files from its vendor checkpoint, and
+  the download script fetches each file from where it is pinned. Both
+  candidates are pinned with thinking off. Re-recording from the hub changed
+  no other byte.
 
 - Started the repository for the Regents Cloak Mac app, with spec v0.3, the
   plan and gates A01 to A19.
