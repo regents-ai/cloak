@@ -40,7 +40,7 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   29 October). A static program inside it bypasses Tor.
 - Unknown and recorded as such: the reference's inference server,
   quantization and thinking setting; which payment deployment the post used.
-- The evaluation protocol (EVAL01 to EVAL07) is drafted with proposed values for its open items; they wait for sign-off.
+- The evaluation protocol (EVAL01 to EVAL07) is frozen (Sean, 30 October).
 
 ## Stage 2 so far
 

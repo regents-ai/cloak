@@ -1,11 +1,11 @@
-# Evaluation protocol (draft)
+# Evaluation protocol
 
 Draft of the preregistration spec section 11 requires. It becomes binding
 when it is committed with the word **Frozen** in place of **Draft** below,
 before any final holdout is opened. After that, a change motivated by results
 needs a fresh confirmatory design (spec EVAL03, EVAL04).
 
-**Status: Draft, 30 October 2026.** Proposed items are marked *proposed* and need sign-off before freezing.
+**Status: Frozen, 30 October 2026** (Sean, 1a, 17:45Z: every proposed value signed off as written).
 
 ## What is compared
 

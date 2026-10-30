@@ -45,6 +45,8 @@
   the download script fetches each file from where it is pinned. Both
   candidates are pinned with thinking off. Re-recording from the hub changed
   no other byte.
+- Froze the evaluation protocol with every proposed value, by Sean's sign-off
+  of 30 October.
 
 - Started the repository for the Regents Cloak Mac app, with spec v0.3, the
   plan and gates A01 to A19.
