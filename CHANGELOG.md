@@ -33,8 +33,13 @@
   adapter; the adapter forwards each request unchanged over one token-checked
   virtio socket to the host, which relays it to the worker. Sixteen checks
   drive the whole path: unchanged requests, nine kinds of bad reply refused,
-  cancellation, the daemon's deadline, and a lost worker. The worker's network
-  sandbox is still to come.
+  cancellation, the daemon's deadline, and a lost worker.
+- Stage 2: the worker now runs in Apple's App Sandbox with no network and
+  reads files only in ~/Library/Application Support/Regents Cloak/models/,
+  where models are now downloaded. Its model pins are built into it, so the
+  signed worker decides what it loads. worker/install.sh builds, signs and
+  installs it. New checks show the network is refused and folders outside the
+  models folder cannot be read.
 
 - Started the repository for the Regents Cloak Mac app, with spec v0.3, the
   plan and gates A01 to A19.

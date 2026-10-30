@@ -1,7 +1,9 @@
 # /// script
 # requires-python = ">=3.12"
 # ///
-"""Download one pinned model from reference/models.json into models/<name>/.
+"""Download one pinned model from reference/models.json into
+~/Library/Application Support/Regents Cloak/models/<name>/, the only place the
+sandboxed worker may read.
 
 Every file is fetched at the pinned revision and must match its recorded size
 and sha256; a file already present and matching is kept. Any mismatch stops
@@ -17,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MODELS = ROOT / "reference" / "models.json"
-DEST = ROOT / "models"
+DEST = Path.home() / "Library/Application Support/Regents Cloak/models"
 HUB = "https://huggingface.co"
 CHUNK = 8 << 20
 

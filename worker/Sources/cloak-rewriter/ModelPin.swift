@@ -1,8 +1,9 @@
 import CryptoKit
 import Foundation
 
-/// One model entry of `reference/models.json`: the files the worker may load
-/// and the chat template settings frozen with them.
+/// One model entry of `reference/models.json`, which is built into the worker:
+/// the files the worker may load and the chat template settings frozen with
+/// them.
 struct ModelPin: Sendable {
     struct File: Decodable, Sendable {
         let path: String
@@ -16,16 +17,16 @@ struct ModelPin: Sendable {
 
     /// Only models whose chat template settings are frozen carry
     /// `chat_template_context`; the worker loads no other.
-    static func load(manifest: URL, name: String) throws -> ModelPin {
+    static func load(name: String) throws -> ModelPin {
         struct Entry: Decodable {
             let name: String
             let files: [File]
             let chat_template_context: [String: Bool]?
         }
         struct Manifest: Decodable { let models: [Entry] }
-        let models = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifest)).models
+        let models = try JSONDecoder().decode(Manifest.self, from: Data(PackageResources.models_json)).models
         guard let entry = models.first(where: { $0.name == name }) else {
-            throw WorkerError("no model named \(name) in \(manifest.path)")
+            throw WorkerError("no pinned model named \(name)")
         }
         guard let context = entry.chat_template_context else {
             throw WorkerError("\(name) has no frozen chat template settings")
@@ -38,7 +39,13 @@ struct ModelPin: Sendable {
     func verify(directory: URL) throws {
         var found = Set<String>()
         let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey]
-        guard let entries = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: keys) else {
+        // The sandbox hides folders outside the models folder; an unreadable
+        // folder must fail as unreadable, not look empty.
+        var unreadable: URL?
+        guard let entries = FileManager.default.enumerator(
+            at: directory, includingPropertiesForKeys: keys, options: [],
+            errorHandler: { url, _ in unreadable = url; return false })
+        else {
             throw WorkerError("cannot read \(directory.path)")
         }
         let root = directory.standardizedFileURL.path + "/"
@@ -49,6 +56,7 @@ struct ModelPin: Sendable {
             guard values.isRegularFile == true else { throw WorkerError("\(path) is not a regular file") }
             found.insert(path)
         }
+        if let unreadable { throw WorkerError("cannot read \(unreadable.path)") }
         let pinned = Set(files.map(\.path))
         guard found == pinned else {
             let extra = found.subtracting(pinned).sorted(), missing = pinned.subtracting(found).sorted()

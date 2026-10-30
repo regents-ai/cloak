@@ -37,12 +37,11 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/tasks.md` | Representative reference tasks |
 | `reference/wrapper/` | The reconstructed Pi sandbox wrapper and its Tor settings |
 | `reference/host/` | The Linux reference host used for stage 1 |
-| `worker/` | The native rewrite worker (Swift, MLX) |
+| `worker/` | The native rewrite worker (Swift, MLX), its sandbox entitlements and install script |
 | `host/` | The host supervisor: boots the guest and relays its rewrites to the worker |
 | `guest/` | The guest: adapter, the daemon's rewrite check, kernel and root build |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
 | `scripts/` | Repository scripts, run with `uv run` |
-| `models/` | Model files fetched by `scripts/fetch_model.py` (ignored by git) |
 
 ## Stage 1 commands
 
@@ -61,8 +60,9 @@ different bytes):
 uv run scripts/pin_models.py
 ```
 
-Download one pinned model into `models/<name>/`, checking every file's size
-and hash (the stand-in is 1.75 GB; each candidate is about 16 GB, so check free
+Download one pinned model into
+`~/Library/Application Support/Regents Cloak/models/<name>/`, the only folder
+the sandboxed worker may read, checking every file's size and hash (the stand-in is 1.75 GB; each candidate is about 16 GB, so check free
 disk first):
 
 ```bash
@@ -72,16 +72,21 @@ uv run scripts/fetch_model.py standin
 ## Stage 2 commands
 
 Build the native worker (two build jobs, low priority; the first build needs
-Apple's Metal toolchain, `xcodebuild -downloadComponent MetalToolchain`):
+Apple's Metal toolchain, `xcodebuild -downloadComponent MetalToolchain`), sign
+it into the App Sandbox with no network and reading only the models folder,
+and install it in `~/Library/Application Support/Regents Cloak/worker/` (the
+sandbox cannot start a program kept under `~/Documents`). The model pins are
+built into the worker, so rebuild after `reference/models.json` changes:
 
 ```bash
-cd worker && nice -n 10 xcodebuild build -scheme cloak-rewriter -destination 'platform=macOS' -configuration Release -derivedDataPath .xcode -jobs 2
+worker/install.sh
 ```
 
-Send the worker one rewrite request built exactly as the daemon builds it:
+Send the installed worker one rewrite request built exactly as the daemon
+builds it:
 
 ```bash
-uv run scripts/drive_worker.py --worker worker/.xcode/Build/Products/Release/cloak-rewriter --name standin "a text to rewrite"
+uv run scripts/drive_worker.py --name standin "a text to rewrite"
 ```
 
 Run the worker's functional checks against the stand-in model:

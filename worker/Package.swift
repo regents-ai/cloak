@@ -1,6 +1,11 @@
 // swift-tools-version: 6.2
 
+import Foundation
 import PackageDescription
+
+// The worker runs in the App Sandbox, which needs a bundle identifier; a
+// command-line tool carries it in an Info.plist section of its own binary.
+let infoPlist = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "Info.plist").path
 
 // Every dependency is pinned to one exact version or commit (spec MAC02,
 // S17); Package.resolved records the rest of the graph.
@@ -23,6 +28,12 @@ let package = Package(
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
+            ],
+            // The model pins are built into the worker, so the signed binary
+            // decides which files it will load.
+            resources: [.embedInCode("models.json")],
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", infoPlist])
             ])
     ]
 )

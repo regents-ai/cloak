@@ -3,6 +3,7 @@ in the guest, the guest adapter, the host supervisor and a worker. Each check
 boots the guest once and runs a list of cases through the daemon's
 Transcript.Rewrite; the guest prints one result per case.
 
+    worker/install.sh
     guest/build.sh
     (cd host && swift build -c release -j 2 && codesign -s - --entitlements cloak-host.entitlements -f .build/release/cloak-host)
     uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
@@ -23,10 +24,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-from drive_worker import request_body  # noqa: E402
+from drive_worker import INSTALLED, request_body  # noqa: E402
+from fetch_model import DEST  # noqa: E402
 
 HOST = ROOT / "host/.build/release/cloak-host"
-WORKER = Path(os.environ.get("CLOAK_WORKER", ROOT / "worker/.xcode/Build/Products/Release/cloak-rewriter"))
+WORKER = INSTALLED
 FAKE = ROOT / "tests/fake_worker.py"
 NAME = "standin"
 FAILED = "rewriter failed; original prompt was not sent to the target model"
@@ -47,8 +49,7 @@ def boot(tmp_path: Path, cases: list[dict], worker: Path, during=None) -> dict[s
     cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
     host = subprocess.Popen(
         [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
-         "--cases", cases_file, "--worker", worker, "--manifest", ROOT / "reference/models.json",
-         "--name", NAME, "--dir", ROOT / "models" / NAME],
+         "--cases", cases_file, "--worker", worker, "--name", NAME, "--dir", DEST / NAME],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         env=os.environ | {"FAKE_WORKER_LOG": str(tmp_path)})
     try:

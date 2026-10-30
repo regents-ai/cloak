@@ -2,15 +2,15 @@ import Foundation
 import Virtualization
 
 // cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl>
-//            --worker <cloak-rewriter> --manifest <models.json> --name <model> --dir <model directory>
+//            --worker <cloak-rewriter> --name <model> --dir <model directory>
 //
 // Starts the native worker, boots the guest with a fresh channel token and
 // rewriter key, relays the guest's rewrite requests to the worker one at a
 // time, and exits when the guest powers off. The guest's console is this
 // process's standard output.
 
-let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter> --manifest <models.json> --name <model> --dir <model directory>"
-let flags = ["--kernel", "--initrd", "--cases", "--worker", "--manifest", "--name", "--dir"]
+let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter> --name <model> --dir <model directory>"
+let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir"]
 let arguments = {
     var parsed = [String: String]()
     var rest = CommandLine.arguments.dropFirst()
@@ -39,7 +39,7 @@ func hex(_ data: Data) -> Data { Data(data.map { String(format: "%02x", $0) }.jo
 let channel: WorkerChannel
 do {
     channel = try WorkerChannel(executable: path("--worker"), arguments: [
-        "--manifest", arguments["--manifest"]!, "--name", arguments["--name"]!, "--dir", arguments["--dir"]!,
+        "--name", arguments["--name"]!, "--dir", arguments["--dir"]!,
     ])
 } catch { fail("cannot start the worker: \(error)") }
 guard channel.waitUntilReady() else { fail("the worker did not become ready") }

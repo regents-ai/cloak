@@ -8,7 +8,7 @@ in the path. The request is built the way the daemon builds it: the system
 message is read from the pinned daemon source and must match the recorded
 sha256, and the user message is Go-style JSON.
 
-    uv run scripts/drive_worker.py --worker <cloak-rewriter> --name standin "text one" "text two"
+    uv run scripts/drive_worker.py --name standin "text one" "text two"
 """
 
 import argparse
@@ -19,6 +19,11 @@ import struct
 import subprocess
 import time
 from pathlib import Path
+
+from fetch_model import DEST
+
+# Where worker/install.sh puts the signed, sandboxed worker.
+INSTALLED = DEST.parent / "worker" / "cloak-rewriter"
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "reference/src/zkapi/zkapi-clientd/internal/rewriter/rewriter.go"
@@ -72,8 +77,7 @@ def read_frame(stream) -> tuple[bytes, bytes] | None:
 
 def spawn(worker: str | Path, name: str, directory: Path | None = None) -> subprocess.Popen:
     return subprocess.Popen(
-        [worker, "--manifest", ROOT / "reference/models.json", "--name", name,
-         "--dir", directory or ROOT / "models" / name],
+        [worker, "--name", name, "--dir", directory or DEST / name],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
@@ -84,7 +88,7 @@ def answer(payload: bytes) -> tuple[int, dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--worker", required=True)
+    parser.add_argument("--worker", default=INSTALLED)
     parser.add_argument("--name", required=True)
     parser.add_argument("--max-tokens", type=int, default=16384)
     parser.add_argument("texts", nargs="+")

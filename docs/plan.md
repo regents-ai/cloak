@@ -45,8 +45,14 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
 ## Stage 2 so far
 
 - The native worker (`worker/`) loads a model only when every file matches
-  its pin, rewrites one request at a time, stops on a cancel, and stops on
-  any protocol fault. 20 checks in `tests/test_worker.py` pass.
+  the pins built into it, rewrites one request at a time, stops on a cancel,
+  and stops on any protocol fault. It runs in Apple's App Sandbox with no
+  network entitlement and reads files only in
+  `~/Library/Application Support/Regents Cloak/models/`. 23 checks in
+  `tests/test_worker.py` pass, including: a program signed with the worker's
+  entitlements is refused a connection the same program makes unsandboxed,
+  the installed worker carries exactly those entitlements, and the worker
+  cannot read a folder outside the models folder.
 - The guest (`guest/`) is a Debian trixie kernel and a small initramfs from a
   pinned snapshot, with no network device. Inside it, the daemon's own
   rewrite code (`internal/rewriter`, built from the pinned module) calls a
@@ -65,8 +71,9 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
 - Claim limits. The daemon's full serve path cannot run: its payment vault is
   not deployed at the pinned commit, so the check drives the daemon's rewrite
   code directly, as its client does before target inference (A11 stays open).
-  The worker has no network sandbox yet, so A21's "no external worker egress"
-  is not shown. The stand-in model is never evaluated: it sometimes fences
+  The sandbox confines reads within the person's home folder; system-wide
+  readable places such as `/private/tmp` stay readable, as App Sandbox allows.
+  The stand-in model is never evaluated: it sometimes fences
   its reply, which the daemon refuses, and sometimes answers instead of
   rewriting.
 
@@ -106,7 +113,7 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
 | A18 | Usability | Open | |
 | A19 | Claims | Open | |
 | A20 | Unchanged rewrite API | Open: contract captured; the daemon's own rewrite code runs unchanged in the guest and refuses nine kinds of bad reply (stand-in model only) | [contract](../reference/rewriter-contract.md), `tests/test_guest_path.py` |
-| A21 | Host–guest worker boundary | Open: one token-checked virtio socket, guest has no network device, host relays only rewrite frames; worker network sandbox not built | `host/`, `guest/`, `tests/test_guest_path.py` |
+| A21 | Host–guest worker boundary | Open: one token-checked virtio socket, guest has no network device, host relays only rewrite frames, worker sandboxed with no network (development signing; stand-in model) | `host/`, `guest/`, `worker/cloak-rewriter.entitlements`, `tests/test_guest_path.py`, `tests/test_worker.py` |
 | A22 | Authorship and linkability | Open | |
 | A23 | Long and cold tasks | Open | |
 | A24 | Artifact provenance | Open: files pinned; two conversion mismatches found | [models](../reference/models.md) |
