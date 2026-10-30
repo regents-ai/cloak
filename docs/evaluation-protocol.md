@@ -5,7 +5,7 @@ when it is committed with the word **Frozen** in place of **Draft** below,
 before any final holdout is opened. After that, a change motivated by results
 needs a fresh confirmatory design (spec EVAL03, EVAL04).
 
-**Status: Draft, 30 October 2026.** Open items are marked *open*.
+**Status: Draft, 30 October 2026.** Proposed items are marked *proposed* and need sign-off before freezing.
 
 ## What is compared
 
@@ -58,8 +58,19 @@ reported separately (spec DATA09); it never leaves the denominator.
 
 Privacy (EVAL03), per arm: known-author attribution accuracy, cross-session
 same-author linkage, and identifying content kept compared with the reference.
-At least two developed attacks with comparable budgets *(open: which)*, each
-reported at a predeclared low false-positive rate *(open: the rate)*.
+Attacks, each trained and tuned only on the attack partition with the same
+data and the same tuning budget (a fixed number of settings tried), and
+reported at a false-positive rate of 1 % on different-author pairs, with the
+threshold set on the tuning partition *(proposed)*:
+
+1. Character n-grams (3 to 5) with a linear classifier for attribution and
+   cosine similarity for linkage: the standard stylometry baseline.
+2. A learned authorship embedding: a contrastive text encoder trained on the
+   attack partition to place one writer's texts together, used for both
+   attribution and linkage.
+
+Each attack also runs on the originals, so a reader sees how much each arm
+removes, not only how arms compare.
 
 ## Primary harm metrics and the parity rule
 
@@ -76,21 +87,34 @@ of its harm difference is at most zero. No positive margin. "No significant
 difference" is not a pass. Separately, any confirmed critical
 candidate-specific disclosure or fidelity error blocks the candidate.
 
-Statistics:
+What the rule demands: with finite data an upper bound at or below zero needs
+the candidate to make measurably fewer errors than the reference. A candidate
+that is merely as good as the reference cannot pass, however large the
+holdout. The sample size below is chosen with that in mind.
 
-- Sampling unit: the writer for EVAL03 and the original input for EVAL02;
-  intervals account for several items from one writer or session (cluster
-  bootstrap or a cluster-robust exact method) *(open: which)*.
-- The interval method must stay valid with few or zero paired errors; a naive
-  bootstrap that returns zero width on all-zero data is not acceptable.
-  *(open: the method, for example an exact paired binomial bound.)*
-- Confidence level *(open; proposed 95 % one-sided)*. Two candidates against
-  the reference on three comparisons: multiplicity handled by Bonferroni
-  across the two candidates *(open)*.
-- Sample size fixed in advance from a power calculation on development data
-  *(open)*; no adding data until a bound turns favourable.
-- Repeated runs: each arm run at least three times on a development subset to
-  measure run-to-run variation before the holdout *(open: the count)*.
+Statistics *(proposed; to be confirmed with a statistician before freezing)*:
+
+- Sampling unit: the original input for EVAL02, with one item per original,
+  and the writer for EVAL03, where one writer contributes several items.
+- Interval: for EVAL02, Tango's score interval for a difference of paired
+  proportions. For EVAL03, the paired difference of per-writer success rates,
+  with the bound found by inverting an exact sign-flip test over writers. Both
+  give a positive upper bound when no paired errors are seen, so all-zero
+  data never passes.
+- Confidence: 95 % one-sided overall. Two candidates are compared with the
+  reference, so each bound is at 97.5 % (Bonferroni). A candidate must pass all
+  three comparisons, which needs no further correction (each comparison must
+  pass on its own).
+- Sample size: fixed before the holdout opens, from the development rates of
+  candidate-only and reference-only errors, so that a candidate at those rates
+  passes with probability at least 80 %. If the development data show a
+  candidate no better than the reference, no sample size can pass it; the
+  protocol records that and the holdout stays closed for it. No data are added
+  after the holdout opens.
+- Repeated runs: each arm runs three times on 50 development items to measure
+  run-to-run variation; the reference runs five times if its recorded settings
+  sample. Greedy decoding on one Mac is expected to repeat exactly; any
+  variation found is reported and raises the count.
 
 ## Selection rule
 
