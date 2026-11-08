@@ -47,6 +47,15 @@
   no other byte.
 - Froze the evaluation protocol with every proposed value, by Sean's sign-off
   of 30 October.
+- Stage 2: named every staged process in the code and listed them in
+  docs/state-machines.md. Doing so found and fixed three faults in the host:
+  a worker that died between rewrites ended the host instead of failing the
+  next rewrite; a client that gave up before the worker had its request lost
+  its cancel, so the abandoned rewrite ran on and the next one failed at the
+  daemon's deadline; and the secret boot files were written before the guest
+  was checked, so a failed check would have left them on disk. The guest now
+  waits for the adapter to say it is ready instead of polling for up to five
+  seconds. Two new whole-path checks show the first two faults fixed.
 
 - Started the repository for the Regents Cloak Mac app, with spec v0.3, the
   plan and gates A01 to A19.

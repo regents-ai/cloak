@@ -17,17 +17,26 @@ func stop(_ reason: String) -> Never {
 /// Runs one rewrite at a time (spec MAC03). A second request while one runs is
 /// a protocol violation and stops the worker.
 final class Worker: Sendable {
-    /// The rewrite in progress: whether the supervisor cancelled it, and the
-    /// generation to stop when it does.
-    private struct Run {
-        var cancelled = false
-        var generation: Task<Void, Never>?
+    /// The one rewrite at a time:
+    ///
+    ///     idle --request--> preparing --generation starts--> generating
+    ///      ^                    |                                |
+    ///      +------------- answer written ------------------------+
+    ///
+    /// A cancel while preparing is kept and stops the generation as it
+    /// starts; a cancel while generating stops it; a cancel while idle is one
+    /// that crossed the answer, and does nothing.
+    private enum State {
+        case idle
+        /// The request is being checked and its prompt built.
+        case preparing(cancelled: Bool)
+        /// The generation runs, and is the one a cancel stops.
+        case generating(Task<Void, Never>)
     }
 
     let pin: ModelPin
     let container: ModelContainer
-    private let busy = Atomic(false)
-    private let run = Mutex(Run())
+    private let state = Mutex(State.idle)
 
     init(pin: ModelPin, container: ModelContainer) {
         self.pin = pin
@@ -37,20 +46,27 @@ final class Worker: Sendable {
     func receive(_ frame: Frames.Incoming) {
         switch frame.kind {
         case .request:
-            guard !busy.exchange(true, ordering: .acquiringAndReleasing) else { stop("request while busy") }
-            run.withLock { $0 = Run() }
+            state.withLock { state in
+                guard case .idle = state else { stop("request while busy") }
+                state = .preparing(cancelled: false)
+            }
             Task { await answer(frame.payload) }
         case .cancel:
-            run.withLock { run in
-                run.cancelled = true
-                run.generation?.cancel()
+            state.withLock { state in
+                switch state {
+                case .idle: break
+                case .preparing: state = .preparing(cancelled: true)
+                case .generating(let generation): generation.cancel()
+                }
             }
         }
     }
 
     private func answer(_ body: Data) async {
         let (status, reply) = await respond(to: body)
-        busy.store(false, ordering: .releasing)
+        // Idle before the answer goes out: the supervisor sends its next
+        // request as soon as it has read this answer.
+        state.withLock { $0 = .idle }
         Frames.answer(status: status, body: reply)
     }
 
@@ -89,9 +105,12 @@ final class Worker: Sendable {
                 input: LMInput(tokens: MLXArray(prompt)),
                 parameters: GenerateParameters(maxTokens: request.maxTokens, temperature: 0),
                 context: context)
-            self.run.withLock { run in
-                run.generation = generation
-                if run.cancelled { generation.cancel() }
+            self.state.withLock { state in
+                guard case .preparing(let cancelled) = state else {
+                    preconditionFailure("a generation started outside a request")
+                }
+                state = .generating(generation)
+                if cancelled { generation.cancel() }
             }
             var tokens: [Int] = []
             var summary: GenerateCompletionInfo?

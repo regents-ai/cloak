@@ -62,12 +62,16 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   the token, relays to the worker, turns a dropped guest connection into a
   cancel, and treats a lost worker as a failure for this and every later
   rewrite.
-- 16 checks in `tests/test_guest_path.py` pass: the request reaches the
+- 18 checks in `tests/test_guest_path.py` pass: the request reaches the
   worker byte for byte; nine kinds of bad reply are refused by the daemon's
   code and the next rewrite still works; a client that gives up cancels the
-  worker; the daemon's 90-second deadline still holds; a lost worker (fake or
-  real, killed mid-rewrite) fails safely; the real worker rewrites through the
+  worker, even before the worker has its request; the daemon's 90-second
+  deadline still holds; a lost worker (fake or real, killed mid-rewrite, or
+  gone between rewrites) fails safely; the real worker rewrites through the
   whole path and is free again within seconds of a cancel.
+- Every staged process (the worker's rewrite, the host's channel and
+  connections, the boot files, the guest's boot) is named in the code and
+  listed in [state-machines.md](state-machines.md).
 - Claim limits. The daemon's full serve path cannot run: its payment vault is
   not deployed at the pinned commit, so the check drives the daemon's rewrite
   code directly, as its client does before target inference (A11 stays open).

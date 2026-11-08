@@ -3,8 +3,9 @@ import Foundation
 /// The host end of the guest channel (spec section 7). Each guest connection
 /// carries one request: the 32-byte channel token, then an `R` frame. The
 /// answer goes back as an `A` frame and the connection closes. Connections are
-/// served one at a time, in order. A guest that closes its end while the
-/// worker runs cancels the rewrite.
+/// served one at a time, in order. A guest that closes its end once it has
+/// sent its request cancels the rewrite, including while the request is still
+/// being handed to the worker.
 final class Relay: Sendable {
     static let port: UInt32 = 8012
     static let maxRequest = 1 << 20
@@ -39,10 +40,19 @@ final class Relay: Sendable {
         guard let header = Self.read(socket, 5), header[0] == 0x52 else { return }
         let length = header.dropFirst().reduce(0) { $0 << 8 | Int($1) }
         guard length <= Self.maxRequest, let request = Self.read(socket, length) else { return }
+        guard worker.send(request), let answer = cancellingOnClose(socket, worker.answer) else {
+            log("worker lost; closing the guest connection without an answer")
+            return
+        }
+        Self.write(socket, WorkerChannel.frame(0x41, answer))
+    }
 
-        // Nothing more is expected from the guest, so the socket turning
-        // readable means it closed its end (or broke the protocol).
-        // The socket stays open until the watch has let go of it.
+    /// Runs `body` while the guest closing its end cancels the worker's
+    /// request. It starts once the worker has the request: nothing more is
+    /// expected from the guest, so the socket turning readable means it closed
+    /// its end (or broke the protocol), and a guest that closed earlier is
+    /// seen at once. The socket stays open until the watch has let go of it.
+    private func cancellingOnClose<T>(_ socket: Int32, _ body: () -> T) -> T {
         let closed = DispatchSource.makeReadSource(fileDescriptor: socket, queue: watch)
         let released = DispatchSemaphore(value: 0)
         closed.setEventHandler { [worker, unowned closed] in
@@ -51,14 +61,11 @@ final class Relay: Sendable {
         }
         closed.setCancelHandler { released.signal() }
         closed.resume()
-        let answer = worker.relay(request)
-        closed.cancel()
-        released.wait()
-        guard let answer else {
-            log("worker lost; closing the guest connection without an answer")
-            return
+        defer {
+            closed.cancel()
+            released.wait()
         }
-        Self.write(socket, WorkerChannel.frame(0x41, answer))
+        return body()
     }
 
     private static func read(_ socket: Int32, _ count: Int) -> Data? {

@@ -43,6 +43,16 @@ def case(name: str, text: str, cancel_after_ms: int = 0) -> dict:
     return {"name": name, "body": body, "cancel_after_ms": cancel_after_ms}
 
 
+def fake(tmp_path: Path, read_delay: float = 0) -> Path:
+    """A launcher that runs the fake worker as the host's own child process,
+    as the real worker is, so closing its channel ends are final."""
+    launcher = tmp_path / "fake-worker"
+    launcher.write_text(f'#!/bin/sh\nexport FAKE_WORKER_READ_DELAY={read_delay}\n'
+                        f'exec "{sys.executable}" -I "{FAKE}" "$@"\n')
+    launcher.chmod(0o755)
+    return launcher
+
+
 def boot(tmp_path: Path, cases: list[dict], worker: Path, during=None) -> dict[str, dict]:
     """Runs the cases in one guest boot and returns each case's result."""
     cases_file = tmp_path / "cases.jsonl"
@@ -67,7 +77,7 @@ def boot(tmp_path: Path, cases: list[dict], worker: Path, during=None) -> dict[s
 
 def test_requests_reach_the_worker_unchanged_and_good_replies_come_back(tmp_path):
     texts = ["case:ok Hi there <friend> &   café, please list rivers"]
-    results = boot(tmp_path, [case("ok", texts[0])], FAKE)
+    results = boot(tmp_path, [case("ok", texts[0])], fake(tmp_path))
     assert results["ok"]["outcome"] == "rewritten"
     assert results["ok"]["texts"] == [t.upper() for t in texts]
     assert (tmp_path / "1.json").read_bytes() == request_body(NAME, texts)
@@ -79,7 +89,7 @@ def test_requests_reach_the_worker_unchanged_and_good_replies_come_back(tmp_path
 ])
 def test_the_daemon_refuses_every_bad_reply(tmp_path, fault):
     results = boot(tmp_path, [case(fault, f"case:{fault} please rewrite this"),
-                              case("next", "case:ok and this")], FAKE)
+                              case("next", "case:ok and this")], fake(tmp_path))
     assert (results[fault]["outcome"], results[fault]["error"]) == ("stopped", FAILED)
     assert results["next"]["outcome"] == "rewritten"
 
@@ -88,25 +98,45 @@ def test_a_client_that_gives_up_cancels_the_rewrite(tmp_path):
     # The daemon reports a cut-off rewrite call as a plain failure; the cancel
     # file shows the cancel reached the worker.
     results = boot(tmp_path, [case("held", "case:hold wait", cancel_after_ms=500),
-                              case("next", "case:ok and this")], FAKE)
+                              case("next", "case:ok and this")], fake(tmp_path))
     assert (results["held"]["outcome"], results["held"]["error"]) == ("stopped", FAILED)
     assert results["held"]["seconds"] < 2
     assert (tmp_path / "1.cancel").exists()
     assert results["next"]["outcome"] == "rewritten"
 
 
+def test_a_client_that_gives_up_before_the_worker_has_its_request_cancels_it(tmp_path):
+    # This request is larger than the channel to the worker holds, and the
+    # worker leaves it unread for two seconds, so the client gives up while the
+    # host is still handing it over.
+    held = "case:hold " + "word " * 20000
+    results = boot(tmp_path, [case("held", held, cancel_after_ms=500),
+                              case("next", "case:ok and this")], fake(tmp_path, read_delay=2))
+    assert (results["held"]["outcome"], results["held"]["error"]) == ("stopped", FAILED)
+    assert (tmp_path / "1.cancel").exists()
+    assert results["next"]["outcome"] == "rewritten"
+
+
 def test_the_daemon_deadline_still_holds(tmp_path):
-    results = boot(tmp_path, [case("held", "case:hold wait")], FAKE)
+    results = boot(tmp_path, [case("held", "case:hold wait")], fake(tmp_path))
     assert (results["held"]["outcome"], results["held"]["error"]) == ("stopped", FAILED)
     assert 89 < results["held"]["seconds"] < 95
     assert (tmp_path / "1.cancel").exists()
 
 
 def test_a_lost_worker_fails_this_and_every_later_rewrite(tmp_path):
-    results = boot(tmp_path, [case("exit", "case:exit now"), case("after", "case:ok and this")], FAKE)
+    results = boot(tmp_path, [case("exit", "case:exit now"), case("after", "case:ok and this")], fake(tmp_path))
     assert (results["exit"]["outcome"], results["exit"]["error"]) == ("stopped", FAILED)
     assert (results["after"]["outcome"], results["after"]["error"]) == ("stopped", FAILED)
     assert results["after"]["seconds"] < 1
+
+
+def test_a_worker_lost_between_rewrites_fails_the_next_rewrite(tmp_path):
+    results = boot(tmp_path, [case("last", "case:exit-after-answer now"), case("after", "case:ok and this"),
+                              case("later", "case:ok and this too")], fake(tmp_path))
+    assert results["last"]["outcome"] == "rewritten"
+    assert (results["after"]["outcome"], results["after"]["error"]) == ("stopped", FAILED)
+    assert (results["later"]["outcome"], results["later"]["error"]) == ("stopped", FAILED)
 
 
 def test_the_real_worker_rewrites_through_the_daemon(tmp_path):

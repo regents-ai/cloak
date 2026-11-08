@@ -1,15 +1,14 @@
-#!/usr/bin/env -S uv run --quiet --script
-# /// script
-# requires-python = ">=3.12"
-# ///
 """A stand-in for the native worker that answers each rewrite with a chosen
 fault, for the guest path checks. It speaks the worker's frames and picks its
 behaviour from the first text, "case:<name> ...". Every request body it
 receives is saved to FAKE_WORKER_LOG/<n>.json, and every cancel it receives is
-noted as FAKE_WORKER_LOG/<n>.cancel.
+noted as FAKE_WORKER_LOG/<n>.cancel. It leaves each request unread for
+FAKE_WORKER_READ_DELAY seconds once it starts arriving, so a check can have a
+client give up while the host is still handing the request over. Like the
+real worker, it ignores a cancel that arrives after its answer.
 
-The host starts it in place of the worker, with the worker's arguments,
-which it ignores.
+The host starts it in place of the worker, through the launcher the checks
+write, with the worker's arguments, which it ignores.
 """
 
 import json
@@ -21,7 +20,9 @@ import time
 from pathlib import Path
 
 LOG = Path(os.environ["FAKE_WORKER_LOG"])
-IN, OUT = sys.stdin.buffer, sys.stdout.buffer
+READ_DELAY = float(os.environ["FAKE_WORKER_READ_DELAY"])
+# Unbuffered input, so a select on it sees every frame that has arrived.
+IN, OUT = sys.stdin.buffer.raw, sys.stdout.buffer
 
 
 def send(kind: bytes, payload: bytes = b"") -> None:
@@ -33,12 +34,19 @@ def answer(status: int, body: bytes) -> None:
     send(b"A", struct.pack(">H", status) + body)
 
 
+def read_exactly(count: int) -> bytes:
+    data = b""
+    while len(data) < count and (block := IN.read(count - len(data))):
+        data += block
+    return data
+
+
 def read_frame() -> tuple[bytes, bytes] | None:
-    header = IN.read(5)
+    header = read_exactly(5)
     if len(header) < 5:
         return None
     (length,) = struct.unpack(">I", header[1:])
-    return header[:1], IN.read(length)
+    return header[:1], read_exactly(length)
 
 
 def completion(content: str, finish: str = "stop", **message) -> bytes:
@@ -56,11 +64,20 @@ def wait_for_cancel(seconds: float) -> bool:
     return False
 
 
+def next_request() -> tuple[bytes, bytes] | None:
+    if READ_DELAY:
+        select.select([IN], [], [])
+        time.sleep(READ_DELAY)
+    return read_frame()
+
+
 def main() -> None:
     send(b"Y")
     count = 0
-    while frame := read_frame():
+    while frame := next_request():
         kind, body = frame
+        if kind == b"C":
+            continue
         count += 1
         (LOG / f"{count}.json").write_bytes(body)
         texts = json.loads(json.loads(body)["messages"][1]["content"])["texts"]
@@ -95,6 +112,12 @@ def main() -> None:
                 answer(499, b'{"error":{"message":"cancelled"}}')
             case "exit":
                 time.sleep(0.5)
+                sys.exit(3)
+            case "exit-after-answer":
+                # Gone between rewrites: its input is closed before it answers,
+                # so the host's next request meets a closed channel.
+                os.close(IN.fileno())
+                answer(200, completion(json.dumps({"texts": rewritten})))
                 sys.exit(3)
 
 

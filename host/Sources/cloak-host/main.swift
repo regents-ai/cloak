@@ -35,6 +35,10 @@ func randomBytes(_ count: Int) -> Data {
 
 func hex(_ data: Data) -> Data { Data(data.map { String(format: "%02x", $0) }.joined().utf8) }
 
+// A write to a worker or guest connection that has gone fails, and is handled
+// as that loss, instead of ending the host.
+signal(SIGPIPE, SIG_IGN)
+
 // The worker.
 let channel: WorkerChannel
 do {
@@ -42,37 +46,11 @@ do {
         "--name", arguments["--name"]!, "--dir", arguments["--dir"]!,
     ])
 } catch { fail("cannot start the worker: \(error)") }
-guard channel.waitUntilReady() else { fail("the worker did not become ready") }
-
-// The guest's boot files. The token and key exist only in this process and
-// the guest's memory; the initrd that carries them is removed once read.
-let token = randomBytes(32)
-let rewriterKey = hex(randomBytes(32))
-let cases: Data
-let base: Data
-do {
-    cases = try Data(contentsOf: path("--cases"))
-    base = try Data(contentsOf: path("--initrd"))
-} catch { fail("\(error)") }
-let bootDirectory = FileManager.default.temporaryDirectory.appending(path: "cloak-\(UUID().uuidString)")
-let bootInitrd = bootDirectory.appending(path: "initrd")
-do {
-    try FileManager.default.createDirectory(at: bootDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-    let initrd = BootFiles.initrd(base: base, entries: [
-        .init(path: "run/cloak/adapter-token", mode: 0o400, uid: 1001, gid: 1001, data: hex(token)),
-        .init(path: "run/cloak/rewriter-key", mode: 0o440, uid: 0, gid: 1003, data: rewriterKey),
-        .init(path: "etc/cloak/cases.jsonl", mode: 0o444, uid: 0, gid: 0, data: cases),
-        .init(path: "etc/cloak/model", mode: 0o444, uid: 0, gid: 0, data: Data(arguments["--name"]!.utf8)),
-    ])
-    guard FileManager.default.createFile(atPath: bootInitrd.path, contents: initrd, attributes: [.posixPermissions: 0o600]) else {
-        fail("cannot write the boot files")
-    }
-} catch { fail("\(error)") }
-
-func removeBootFiles() { try? FileManager.default.removeItem(at: bootDirectory) }
 
 // The guest: two cores, 1 GiB, a console, the channel socket. No network
-// device and no disk.
+// device and no disk. Its initrd is written just before it starts.
+let bootDirectory = FileManager.default.temporaryDirectory.appending(path: "cloak-\(UUID().uuidString)")
+let bootInitrd = bootDirectory.appending(path: "initrd")
 let boot = VZLinuxBootLoader(kernelURL: path("--kernel"))
 boot.initialRamdiskURL = bootInitrd
 boot.commandLine = "console=hvc0 quiet"
@@ -85,6 +63,28 @@ configuration.bootLoader = boot
 configuration.serialPorts = [console]
 configuration.socketDevices = [VZVirtioSocketDeviceConfiguration()]
 do { try configuration.validate() } catch { fail("invalid guest: \(error)") }
+
+// The guest's boot files. The token and key exist only in this process and
+// the guest's memory. The initrd that carries them exists only while the
+// guest starts: written here, removed when the start ends either way.
+let token = randomBytes(32)
+let initrd: Data
+do {
+    initrd = BootFiles.initrd(base: try Data(contentsOf: path("--initrd")), entries: [
+        .init(path: "run/cloak/adapter-token", mode: 0o400, uid: 1001, gid: 1001, data: hex(token)),
+        .init(path: "run/cloak/rewriter-key", mode: 0o440, uid: 0, gid: 1003, data: hex(randomBytes(32))),
+        .init(path: "etc/cloak/cases.jsonl", mode: 0o444, uid: 0, gid: 0, data: try Data(contentsOf: path("--cases"))),
+        .init(path: "etc/cloak/model", mode: 0o444, uid: 0, gid: 0, data: Data(arguments["--name"]!.utf8)),
+    ])
+    try FileManager.default.createDirectory(at: bootDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+} catch { fail("\(error)") }
+
+func removeBootFiles() { try? FileManager.default.removeItem(at: bootDirectory) }
+
+guard FileManager.default.createFile(atPath: bootInitrd.path, contents: initrd, attributes: [.posixPermissions: 0o600]) else {
+    removeBootFiles()
+    fail("cannot write the boot files")
+}
 
 final class Supervisor: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListenerDelegate {
     let relay: Relay
@@ -116,7 +116,6 @@ final class Supervisor: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
     }
 
     private func finish(_ status: Int32) {
-        removeBootFiles()
         worker.finish()
         exit(status)
     }

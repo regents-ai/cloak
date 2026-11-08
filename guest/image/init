@@ -12,15 +12,12 @@ for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport
 done
 ip link set lo up
 
-su -s /bin/sh adapter -c 'exec /usr/bin/cloak-adapter' &
-
-# 8012 is 1F4C; state 0A is listening.
-tries=0
-until grep -q ':1F4C 00000000:0000 0A' /proc/net/tcp; do
-	tries=$((tries + 1))
-	[ $tries -gt 50 ] && { echo "cloak-guest: adapter did not start"; poweroff -f; }
-	sleep 0.1
-done
+# The adapter prints "ready" once it listens. One that exits first ends the
+# line empty.
+mkfifo /run/cloak/adapter-ready
+su -s /bin/sh adapter -c 'exec /usr/bin/cloak-adapter' > /run/cloak/adapter-ready &
+read -r ready < /run/cloak/adapter-ready
+[ "$ready" = ready ] || { echo "cloak-guest: adapter did not start"; poweroff -f; }
 
 su -s /bin/sh checker -c "exec /usr/bin/cloak-rewrite-check /etc/cloak/cases.jsonl $(cat /etc/cloak/model) /run/cloak/rewriter-key"
 echo "cloak-guest: check exited $?"

@@ -141,6 +141,8 @@ def altered_model(case: str, alter) -> Path:
     target = CHECKS / case
     if not target.exists():
         building = CHECKS / f"{case}.building"
+        # A run stopped part way leaves a half-built folder; build it afresh.
+        shutil.rmtree(building, ignore_errors=True)
         building.mkdir(parents=True)
         for file in MODEL.iterdir():
             if file.stat().st_size > 1 << 20:

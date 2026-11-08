@@ -59,8 +59,14 @@ func main() {
 		log.Fatal(err)
 	}
 	a := &adapter{token: raw, key: key}
-	server := &http.Server{Addr: listen, Handler: a, ErrorLog: log.New(io.Discard, "", 0)}
-	log.Fatal(server.ListenAndServe())
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// The guest's init waits for this one line before it runs the daemon.
+	fmt.Println("ready")
+	server := &http.Server{Handler: a, ErrorLog: log.New(io.Discard, "", 0)}
+	log.Fatal(server.Serve(ln))
 }
 
 func readSecret(path string) (string, error) {
