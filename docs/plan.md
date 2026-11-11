@@ -120,11 +120,54 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   daemon's full serve path (A11), per-process GPU use (macOS gives it only to
   root), and a 32 GB Mac (decision 2).
 - What a real run needs. Disk: the lead is 16,077,680,950 bytes and the
-  challenger 15,373,590,134 (29.3 GiB together); with about 52 GiB free and
-  50 GiB kept free, neither fits until space is made. Memory: the kit refuses
-  to boot unless the model's size plus 5 GiB is available (20.0 GiB for the
-  lead, 19.3 GiB for the challenger); this shared Mac had about 15.6 GiB
-  available on 10 November.
+  challenger 15,373,590,134 (29.3 GiB together); with about 58 GiB free on
+  11 November and 50 GiB kept free, neither fits until space is made.
+  Memory: the kit refuses to boot unless the model's size plus 5 GiB is
+  available (20.0 GiB for the lead, 19.3 GiB for the challenger); this
+  shared Mac had about 13.8 GiB available on 11 November.
+
+### Stand-in proof (development only)
+
+These runs prove the kit works end to end on the development stand-in. The
+stand-in is not a candidate: none of these figures is evaluated or counts
+toward any gate, and the proposed targets are not judged on them.
+
+Feasibility,
+[feasibility-20261111T072322Z.json](../evidence/stage3/standin/feasibility-20261111T072322Z.json),
+kit commit `5dc1d09`, 11 November, on AC power with other lanes working:
+
+- Cold start: the worker loaded in 1.97 s, including its hash check of every
+  pinned file; the first result came 2.69 s after the host started. After a
+  restart: 1.86 s and 2.72 s, and all three probes were rewritten.
+- EVAL06, 40 messages warm: 24 rewritten; 10 stopped malformed and 6
+  truncated at the 16,384-token limit. Median 0.36 s; the 95th percentile is
+  not reached, because a stopped call holds that rank. By input length:
+  20 of 28 up to 128 tokens, 1 of 6 from 129 to 256, 3 of 6 from 257 to 512.
+  Median speed: 287 tokens a second generated, 3,115 read.
+- Long inputs, none rewritten: 4 KiB truncated (68.9 s); 16, 32 and 64 KiB
+  malformed (17.4, 38.4, 5.0 s); 128 KiB stopped at the 90 s limit; one byte
+  over 128 KiB refused before any call; the 16 KiB log truncated (76.8 s).
+- History rebuilt after cache loss: stopped malformed on the fourth call,
+  1.08 s.
+- Cancellation: the worker answered 0.01 s after the cancel, and the next
+  call was rewritten in 0.26 s.
+- Worker killed 2.03 s into a call: that call and the next both ended as
+  "worker lost", the host exited cleanly, and nothing restarted the worker
+  within the boot.
+- Memory: the worker peaked at 3.35 GiB, the guest's virtual machine at
+  0.16 GiB and the host at 24 MB; 3.50 GiB in all. Swap fell by 272 MiB;
+  memory pressure reached level 2; the system GPU averaged 95 %.
+- Installed on disk: 1.70 GiB. The path itself (the time a case took less
+  the worker's own time) added a median of 1 ms, at most 15 ms.
+- All 57 cases: 30 rewritten; 14 malformed, 8 truncated, 1 timed out,
+  1 cancelled, 2 worker lost, 1 over the input limit.
+- The first run found two faults in the kit, fixed before this one: the
+  worker's log lines were matched to calls on the wrong clock, and the
+  guest's virtual machine was not found.
+- For the candidates: the stand-in's runaway outputs reached the
+  16,384-token limit in about 70 s. A slower candidate that runs away will
+  hit the 90 s limit instead, so a stop for time there may mean a runaway,
+  not a slow answer.
 
 ## Decisions
 
