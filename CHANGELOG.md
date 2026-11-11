@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Stage 3 (work in progress, side branch): the feasibility kit's tap, boot runner and
+  arithmetic, the fixed EVAL05 inputs and EVAL06 messages, and the kit command
+  (`scripts/stage3.py`). Not yet proved end to end; the stand-in runs are still to do.
 - Adopted spec v0.4 in place of v0.3: a native Mac rewriter with a smaller
   model, six stages and gates A01 to A26. Plan, rules and readme follow it.
 - Stage 1: captured the rewriter contract; it is identical at both daemon pins.
