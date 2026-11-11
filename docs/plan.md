@@ -169,6 +169,15 @@ kit commit `5dc1d09`, 11 November, on AC power with other lanes working:
   hit the 90 s limit instead, so a stop for time there may mean a runaway,
   not a slow answer.
 
+EVAL01 development screen,
+[eval01-20261111T072816Z.json](../evidence/stage3/standin/eval01-20261111T072816Z.json),
+kit commit `de16729`: 14 of the daemon's 16 cases rewritten, 2 stopped
+malformed (privacy, spanish), and 9 passed the daemon's own checks. The
+other five rewrites dropped something they had to keep: a number
+(recommendations, bounds, ranking), a file path (conditional) or a word
+(redundancy2). Median 0.21 s, slowest rewrite 0.54 s; the worker peaked at
+2.04 GiB. An earlier run of the same kit logic gave the same results.
+
 ## Decisions
 
 1. Candidate tokenizer and template files. Decided 30 October (Sean, 1a):

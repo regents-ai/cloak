@@ -7,8 +7,9 @@
   `scripts/stage3.py eval01 <name>` runs the development screen. Added the fixed
   synthetic EVAL05 inputs and EVAL06 messages, pinned by hash before any candidate
   ran, a copy-only tap that keeps each call's raw reply, and checks of the kit's
-  logic. The stand-in feasibility proof (development only, counted toward no
-  gate) is in evidence/stage3/standin/ and its figures in docs/plan.md.
+  logic. The stand-in proofs (feasibility and EVAL01, development only,
+  counted toward no gate) are in evidence/stage3/standin/ and their figures
+  in docs/plan.md.
 - Stage 3 kit: times now use the clock the unified log uses, which keeps
   counting while the Mac sleeps, so the worker's own timings land on the
   right call; and the guest's virtual machine is found as the one that
