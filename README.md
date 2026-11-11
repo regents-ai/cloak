@@ -17,10 +17,10 @@ A01 to A26 is in [docs/plan.md](docs/plan.md).
 
 ## Status
 
-Stage 2 of 6: build the local rewrite path, with a small stand-in model.
-Stage 1 waits on the tokenizer decision and the evaluation sign-off. Nothing
-here is a release,
-and no protection is claimed as proven. A gate counts only when its evidence
+Stage 3 of 6: the feasibility kit is ready and waits for the candidates'
+weights, which Sean decides when to fetch. Stages 1 and 2 stay open in
+[docs/plan.md](docs/plan.md). Nothing here is a release, and no protection is
+claimed as proven. A gate counts only when its evidence
 is recorded in [docs/plan.md](docs/plan.md).
 
 ## Layout
@@ -35,11 +35,13 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/rewriter-contract.md` | What the daemon sends the rewriter and accepts back |
 | `reference/models.json`, `models.md` | Every file of the reference and candidate models, pinned by hash |
 | `reference/tasks.md` | Representative reference tasks |
+| `reference/eval05-inputs.json`, `eval06-messages.json` | The fixed synthetic inputs for stage 3, pinned by hash in `scripts/stage3.py` |
 | `reference/wrapper/` | The reconstructed Pi sandbox wrapper and its Tor settings |
 | `reference/host/` | The Linux reference host used for stage 1 |
 | `worker/` | The native rewrite worker (Swift, MLX), its sandbox entitlements and install script |
 | `host/` | The host supervisor: boots the guest and relays its rewrites to the worker |
 | `guest/` | The guest: adapter, the daemon's rewrite check, kernel and root build |
+| `evidence/stage3/` | Stage 3 records, one folder per model |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
 | `scripts/` | Repository scripts, run with `uv run` |
 
@@ -115,9 +117,45 @@ daemon's 90-second deadline):
 uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
 ```
 
-## Tickets
+## Stage 3 commands
 
-Work is tracked with `bd` in this repository: `bd ready` lists open work.
+With the stage 2 parts built and a candidate's weights on disk (each about
+16 GB; fetched only when Sean decides), one command writes that candidate's
+feasibility record (EVAL05, EVAL06 and EVAL07):
+
+```bash
+uv run scripts/stage3.py feasibility lead
+```
+
+It checks everything first (the pins, each model file's size, the inputs and
+daemon sources by hash, that each EVAL06 message is 512 tokens or fewer with
+the candidate's own tokenizer, that no other guest is running, and that the
+model's size plus 5 GiB of memory is available), then boots the guest three
+times in turn: the main run, the worker killed mid-rewrite, and a restart.
+The record goes to `evidence/stage3/<name>/` with every call's input, raw
+reply, timing and hashes. Steps that need a person (sleep and wake, battery,
+the declared load, induced memory pressure, the first run after a restart)
+are listed in the record with no result.
+
+Run the development screen (EVAL01: the daemon's 16 synthetic cases and its
+own checks) through the same path:
+
+```bash
+uv run scripts/stage3.py eval01 lead
+```
+
+A model other than `lead` or `challenger`, such as `standin`, gets a record
+marked development only, which counts toward no gate.
+
+Run the kit's own checks:
+
+```bash
+uv run --with pytest==8.4.2 pytest tests/test_stage3.py
+```
+
+## Progress
+
+Progress lives in [docs/plan.md](docs/plan.md).
 
 ## Rules
 

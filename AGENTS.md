@@ -59,17 +59,10 @@ The contract is [docs/spec-v0.4.md](docs/spec-v0.4.md). Read sections 1, 4, 7,
 - Keep memory and disk use low: check free RAM and disk before any large
   download, VM image or model weights.
 
-## Git and tickets
+## Git and progress
 
 This repository is local only; there is no remote until Sean creates one.
 Agents commit their own work here with a message saying what changed and why,
 and add a CHANGELOG entry in the same commit.
 
-Tickets use `bd`:
-
-```bash
-bd ready                 # open work with nothing blocking it
-bd show <id>             # one ticket
-bd update <id> --claim   # take a ticket
-bd close <id>            # finish a ticket
-```
+Progress lives in [docs/plan.md](docs/plan.md); `bd` is not used.

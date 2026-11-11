@@ -4,7 +4,7 @@ The contract is [spec-v0.4.md](spec-v0.4.md) (sha256
 `8c6b4d5d66fca24383bd3282503e17289784f14df14345a5e15b7bffdac74aea`, received
 30 October 2026). Work follows its section 12 in order. A gate passes only
 with recorded evidence linked in its row; a failed or inconclusive check is
-not a pass. Tickets are in `bd`.
+not a pass. Progress lives here.
 
 ## Stages
 
@@ -12,7 +12,7 @@ not a pass. Tickets are in `bd`.
 | --- | --- | --- | --- |
 | 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
 | 2. Build the local path | Minimal guest adapter and native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
-| 3. Check feasibility early | Lead and challenger runs on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Not started |
+| 3. Check feasibility early | Lead and challenger runs on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready, waiting for the weights |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Not started |
 | 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | Not started |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
@@ -80,6 +80,51 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   The stand-in model is never evaluated: it sometimes fences
   its reply, which the daemon refuses, and sometimes answers instead of
   rewriting.
+
+## Stage 3 so far
+
+- The feasibility kit is ready: `uv run scripts/stage3.py feasibility <name>`
+  writes one candidate's stage 3 record (EVAL05, EVAL06, EVAL07) to
+  `evidence/stage3/<name>/`, and `uv run scripts/stage3.py eval01 <name>`
+  runs the development screen. No candidate has run: the weights wait for
+  Sean.
+- Every call goes through the real path: the daemon's rewrite code in the
+  guest, the adapter, the host relay and the sandboxed worker. A copy-only
+  tap between the host and the worker (`scripts/worker_tap.py`) keeps each
+  call's request, raw reply and timing without changing either side. Each
+  case keeps its input, the daemon's result, every call it made, the
+  artifact and configuration hashes, and why it stopped. Rejected,
+  malformed, truncated, timed-out, cancelled and lost calls stay in every
+  denominator; nothing is cut and no limit is lowered.
+- The fixed inputs were written for this and pinned before any candidate ran:
+  [eval06-messages.json](../reference/eval06-messages.json) (40 ordinary
+  messages up to 512 input tokens, each with its expected output length;
+  sha256 `10136dd123899a17ba52b56bbe2a376ecf0f4e5f41d1a8a87e4207c1c8a5e50b`)
+  and [eval05-inputs.json](../reference/eval05-inputs.json) (the probe, long
+  inputs from 4 KiB to 128 KiB and one byte over, a four-turn conversation
+  rebuilt after cache loss, the cancellation and worker-loss inputs; sha256
+  `efd9c6ff8b7419edbd10f282392106994ed4bd4644b6366866539c8b807655cb`).
+- One `feasibility` run boots the guest three times in turn. The main run
+  covers the cold load, the cold first call, the 40 EVAL06 messages warm, the
+  rebuild after cache loss, the long inputs and outputs, and a cancellation
+  and the call after it. Then the worker is killed mid-rewrite, then a
+  restart. Every second it samples the memory and CPU of the worker, the
+  guest's virtual machine and the host, plus swap, memory pressure and the
+  system's GPU use. It also records the installed size and the end-to-end
+  time per case.
+- Needs a person, listed in each record with no result: sleep and wake
+  during a call, a run on battery, the declared ordinary load, induced memory
+  pressure, and the first run after the Mac restarts.
+- Not measured by this kit: the full stack (the guest has no Pi, Tor, cover
+  traffic or payment vault yet, so stage 3's exit condition stays unmet), the
+  daemon's full serve path (A11), per-process GPU use (macOS gives it only to
+  root), and a 32 GB Mac (decision 2).
+- What a real run needs. Disk: the lead is 16,077,680,950 bytes and the
+  challenger 15,373,590,134 (29.3 GiB together); with about 52 GiB free and
+  50 GiB kept free, neither fits until space is made. Memory: the kit refuses
+  to boot unless the model's size plus 5 GiB is available (20.0 GiB for the
+  lead, 19.3 GiB for the challenger); this shared Mac had about 15.6 GiB
+  available on 10 November.
 
 ## Decisions
 
