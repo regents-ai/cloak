@@ -7,7 +7,7 @@
   `scripts/stage3.py eval01 <name>` runs the development screen. Added the fixed
   synthetic EVAL05 inputs and EVAL06 messages, pinned by hash before any candidate
   ran, a copy-only tap that keeps each call's raw reply, and checks of the kit's
-  logic. Proved end to end with the stand-in only (development records).
+  logic. The stand-in proof run (development only) is not finished yet.
 - Progress lives in docs/plan.md; the `bd` instructions are gone from the readme
   and AGENTS.md.
 - Adopted spec v0.4 in place of v0.3: a native Mac rewriter with a smaller
