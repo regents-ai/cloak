@@ -6,7 +6,8 @@ of the worker, the guest's virtual machine and the host, and the system's
 swap, memory pressure and GPU use; the worker's own log lines (token counts
 and timings, never content) are streamed from the unified log.
 
-Times are nanoseconds on CLOCK_UPTIME_RAW, shared with the tap and the log.
+Times are nanoseconds on CLOCK_MONOTONIC_RAW, shared with the tap and the
+log; it keeps counting while the Mac sleeps.
 """
 
 import ctypes
@@ -43,7 +44,7 @@ _libc.mach_timebase_info(ctypes.byref(_timebase))
 
 
 def clock() -> int:
-    return time.clock_gettime_ns(time.CLOCK_UPTIME_RAW)
+    return time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
 
 
 def mach_to_ns(ticks: int) -> int:
@@ -79,12 +80,18 @@ def process_reading(pid: int) -> list[int] | None:
 _libc.responsibility_get_pid_responsible_for_pid.restype = ctypes.c_int
 
 
-def vm_process_of(host_pid: int) -> int | None:
-    """The virtual machine process macOS starts for this host: launchd is its
-    parent, and the host is the process responsible for it."""
+def vm_processes() -> set[int]:
     found = subprocess.run(["pgrep", "-f", VM_PROCESS], capture_output=True, text=True).stdout.split()
-    return next((int(p) for p in found
-                 if _libc.responsibility_get_pid_responsible_for_pid(int(p)) == host_pid), None)
+    return {int(p) for p in found}
+
+
+def vm_process_of(host_pid: int, before: set[int]) -> int | None:
+    """The virtual machine process macOS starts for this host. launchd is its
+    parent; macOS holds the same process responsible for it as for the host
+    (the app that started the host), and it is new since the host started."""
+    owner = _libc.responsibility_get_pid_responsible_for_pid(host_pid)
+    return next((p for p in vm_processes() - before
+                 if _libc.responsibility_get_pid_responsible_for_pid(p) == owner), None)
 
 
 class _SwapUsage(ctypes.Structure):
@@ -189,8 +196,8 @@ class _LogStream:
 
 
 class _Sampler:
-    def __init__(self, host_pid: int, events: Path):
-        self.host_pid, self.events = host_pid, events
+    def __init__(self, host_pid: int, events: Path, vms_before: set[int]):
+        self.host_pid, self.events, self.vms_before = host_pid, events, vms_before
         self.samples: list[dict] = []
         self.worker_pid: int | None = None
         self.vm_pid: int | None = None
@@ -205,7 +212,7 @@ class _Sampler:
                               if '"spawn"' in line), None)
                 self.worker_pid = spawn and spawn["pid"]
             if self.vm_pid is None:
-                self.vm_pid = vm_process_of(self.host_pid)
+                self.vm_pid = vm_process_of(self.host_pid, self.vms_before)
             gpu_percent, gpu_memory = gpu_reading()
             self.samples.append({
                 "t": clock(),
@@ -239,12 +246,13 @@ def run(name: str, cases: list[dict], worker: Path, model: str, model_dir: Path,
         cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
         system_start = system_snapshot()
         log = _LogStream()
+        vms_before = vm_processes()
         started = clock()
         host = subprocess.Popen(
             [HOST, "--kernel", KERNEL, "--initrd", INITRD, "--cases", cases_file,
              "--worker", _launcher(scratch, events, worker), "--name", model, "--dir", model_dir],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        sampler = _Sampler(host.pid, events)
+        sampler = _Sampler(host.pid, events, vms_before)
         console: list[tuple[int, str]] = []
         stderr: list[str] = []
 

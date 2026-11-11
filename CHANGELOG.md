@@ -8,6 +8,10 @@
   synthetic EVAL05 inputs and EVAL06 messages, pinned by hash before any candidate
   ran, a copy-only tap that keeps each call's raw reply, and checks of the kit's
   logic. The stand-in proof run (development only) is not finished yet.
+- Stage 3 kit: times now use the clock the unified log uses, which keeps
+  counting while the Mac sleeps, so the worker's own timings land on the
+  right call; and the guest's virtual machine is found as the one that
+  appeared after the host started, so its memory and CPU are recorded.
 - Progress lives in docs/plan.md; the `bd` instructions are gone from the readme
   and AGENTS.md.
 - Adopted spec v0.4 in place of v0.3: a native Mac rewriter with a smaller

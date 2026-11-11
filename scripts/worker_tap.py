@@ -8,9 +8,10 @@ the worker or their frames (worker/Sources/cloak-rewriter/Frames.swift).
     worker_tap.py <events file> <worker> <worker arguments...>
 
 Each line of the events file is JSON with `t`, nanoseconds on the system's
-CLOCK_UPTIME_RAW (the clock the unified log's mach timestamps use), and
-`kind`: `spawn` (the worker's and the tap's pids), `in` (a frame from the host), `out` (a
-frame from the worker), `exit` (the worker's exit status) or `terminated`.
+CLOCK_MONOTONIC_RAW (the clock the unified log's mach timestamps use, which
+keeps counting while the Mac sleeps), and `kind`: `spawn` (the worker's and
+the tap's pids), `in` (a frame from the host), `out` (a frame from the
+worker), `exit` (the worker's exit status) or `terminated`.
 A frame's payload is kept whole: as text when it is UTF-8, otherwise in base64.
 
 The worker's life is the tap's: when the worker exits, the tap closes its
@@ -31,7 +32,7 @@ import time
 
 
 def clock() -> int:
-    return time.clock_gettime_ns(time.CLOCK_UPTIME_RAW)
+    return time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
 
 
 def read_frame(stream) -> tuple[bytes, bytes, bytes] | None:
