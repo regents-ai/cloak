@@ -14,6 +14,9 @@
   counting while the Mac sleeps, so the worker's own timings land on the
   right call; and the guest's virtual machine is found as the one that
   appeared after the host started, so its memory and CPU are recorded.
+- Stage 3 kit: when it is stopped from outside, by a watcher or a person,
+  it now stops its guest and its log reader and removes its scratch files,
+  and writes no record.
 - Progress lives in docs/plan.md; the `bd` instructions are gone from the readme
   and AGENTS.md.
 - Adopted spec v0.4 in place of v0.3: a native Mac rewriter with a smaller

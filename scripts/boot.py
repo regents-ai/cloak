@@ -252,44 +252,52 @@ def run(name: str, cases: list[dict], worker: Path, model: str, model_dir: Path,
             [HOST, "--kernel", KERNEL, "--initrd", INITRD, "--cases", cases_file,
              "--worker", _launcher(scratch, events, worker), "--name", model, "--dir", model_dir],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        sampler = _Sampler(host.pid, events, vms_before)
-        console: list[tuple[int, str]] = []
-        stderr: list[str] = []
-
-        def read_console():
-            for line in host.stdout:
-                console.append((clock(), line.rstrip("\n")))
-                print(f"  [{name}] {line.rstrip()[:160]}", flush=True)
-
-        def read_stderr():
-            for line in host.stderr:
-                stderr.append(line)
-
-        readers = [threading.Thread(target=read_console), threading.Thread(target=read_stderr)]
-        for reader in readers:
-            reader.start()
-        if during:
-            during(events, host)
-        over_time = False
         try:
-            host.wait(timeout=time_limit_s)
-        except subprocess.TimeoutExpired:
-            over_time = True
-            host.send_signal(signal.SIGTERM)
-            host.wait()
-        ended = clock()
-        for reader in readers:
-            reader.join()
-        samples = sampler.stop()
-        worker_log = log.stop()
-        results = {}
-        for _, line in console:
-            if line.startswith("{"):
-                result = json.loads(line)
-                results[result["name"]] = result
-        return Boot(
-            name=name, started_ns=started, ended_ns=ended, host_status=host.returncode,
-            over_time=over_time, console=console, host_stderr="".join(stderr), results=results,
-            events=[json.loads(line) for line in events.read_text().splitlines()] if events.exists() else [],
-            worker_log=worker_log, samples=samples, vm_pid=sampler.vm_pid,
-            system_start=system_start, system_end=system_snapshot())
+            sampler = _Sampler(host.pid, events, vms_before)
+            console: list[tuple[int, str]] = []
+            stderr: list[str] = []
+
+            def read_console():
+                for line in host.stdout:
+                    console.append((clock(), line.rstrip("\n")))
+                    print(f"  [{name}] {line.rstrip()[:160]}", flush=True)
+
+            def read_stderr():
+                for line in host.stderr:
+                    stderr.append(line)
+
+            readers = [threading.Thread(target=read_console), threading.Thread(target=read_stderr)]
+            for reader in readers:
+                reader.start()
+            if during:
+                during(events, host)
+            over_time = False
+            try:
+                host.wait(timeout=time_limit_s)
+            except subprocess.TimeoutExpired:
+                over_time = True
+                host.send_signal(signal.SIGTERM)
+                host.wait()
+            ended = clock()
+            for reader in readers:
+                reader.join()
+            samples = sampler.stop()
+            worker_log = log.stop()
+            results = {}
+            for _, line in console:
+                if line.startswith("{"):
+                    result = json.loads(line)
+                    results[result["name"]] = result
+            return Boot(
+                name=name, started_ns=started, ended_ns=ended, host_status=host.returncode,
+                over_time=over_time, console=console, host_stderr="".join(stderr), results=results,
+                events=[json.loads(line) for line in events.read_text().splitlines()] if events.exists() else [],
+                worker_log=worker_log, samples=samples, vm_pid=sampler.vm_pid,
+                system_start=system_start, system_end=system_snapshot())
+        finally:
+            # A boot left early, when the kit is stopped from outside, still
+            # stops its guest and the log stream.
+            for process in (host, log.process):
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait()

@@ -39,6 +39,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -709,6 +710,9 @@ def main() -> None:
     parser.add_argument("kind", choices=("feasibility", "eval01"))
     parser.add_argument("name", help="a pinned model in reference/models.json, such as lead or challenger")
     args = parser.parse_args()
+    # Stopped from outside (a watcher, a person): unwind, so each boot stops
+    # its guest and removes its scratch files. No record is written.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit("stage3: stopped from outside; no record written"))
     (run_feasibility if args.kind == "feasibility" else run_eval01)(args.name)
 
 
