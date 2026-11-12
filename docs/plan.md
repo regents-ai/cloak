@@ -181,6 +181,114 @@ Missing for the full stack, and the next step for each:
 - **A real answer to Pi**: every task stops at the Tor route, so Pi's tools
   never run on a model's answer.
 
+### Tor out of the guest (design, 12 November 2026)
+
+Decision 5: torsocks in front of the Tor Project's own `tor` on the public
+Tor network; the guest keeps no network device, and its one way out is a
+relay to the Tor port. What the spec asks of it
+([spec-v0.4.md](spec-v0.4.md)):
+
+- Routing, line 88: "Complete intended agent/tool traffic, DNS behavior and
+  transport failure handling", and never "A proxy setting that leaves other
+  processes or protocols able to connect directly". A06, line 396:
+  "Main/auxiliary calls, tools, children, DNS and alternative connection
+  paths cannot bypass the qualified route". NET05, line 287: "Installing
+  torsocks alone is not accepted as proof that every possible process path
+  is protected."
+- Containment, line 90: "Actual sandbox policy, allowed files/ports and full
+  harness process tree". MAC04, line 148: "Preserve bubblewrap/torsocks and
+  the reference network restrictions for the complete agent process tree.
+  … Disallowed TCP, DNS, IPv4/IPv6, UDP/QUIC and subprocess paths must
+  fail." MAC03, line 146: "Restrict host–guest channels to the required
+  operation."
+- Failure: NET06, line 289, route loss must "stop new affected operations"
+  and "Do not quietly restart the work through a different route"; REF04,
+  line 75, no fall back to direct calls.
+- Placement: Tor's location is "Reference network placement" (line 134), and
+  "The guest remains the home of the qualified Pi workflow, daemon
+  semantics, payment authority, Tor isolation, cover and sandbox policy.
+  Exact placement changes from the captured reference are recorded and
+  tested" (line 160).
+- Pin and state: UPD01, line 325, puts "Tor/torsocks" in the signed
+  manifest; NET08, line 293, "Do not merge or clone active session/wallet
+  state".
+
+Two ways keep the guest without a network device:
+
+- **A. tor in the guest**, its relay connections carried out by the host.
+  tor reaches an upstream proxy only over loopback TCP, which every guest
+  process can reach too, the sandbox included. The host end would then be a
+  way out to any address, unless it checked each one against Tor's current
+  relay list or the guest filtered loopback by user; guest root would still
+  have it.
+- **B. tor on the Mac, as the host's child, with the guest's Tor port
+  relayed to it.** The guest reaches only tor's SOCKS port, which is what
+  every local program reaches in the reference. No guest process, root
+  included, has a direct connection.
+
+Chosen: **B**, as less mechanism and the stricter route. Its cost is
+placement: tor runs on the Mac as the person's own process, outside the
+guest, which departs from lines 134 and 160; it is recorded here, tested
+below and put to Sean (questions below). The daemon in the guest still
+gives each conversation its SOCKS identity, and tor's `IsolateSOCKSAuth`
+still makes each one its own circuit, as in the reference.
+
+How B works:
+
+- **Guest**: `cloak-tor-port`, as its own user, listens where the
+  reference's tor listens, 127.0.0.1:9050, so the daemon's
+  `tor://127.0.0.1:9050` and the torsocks settings stay as they are. It
+  carries each connection's bytes unchanged over vsock to the host's port
+  9050.
+- **Host relay**: reads each connection's first bytes within 10 seconds.
+  Only a SOCKS5 greeting offering no authentication or a user name and
+  password, which is what torsocks and the daemon send, goes on; anything
+  else is closed without a byte. The relay then connects to tor's SOCKS
+  socket and copies both ways until either end closes. It takes no address
+  from the guest; its one destination is tor. The host listens on no vsock
+  port but this one and the rewrite relay's 8012.
+- **tor**: started by the host after the worker and before the boot files,
+  with no configuration file. Its settings are the reference's
+  (`SocksPort … IsolateSOCKSAuth`, `Log notice stdout`), with the SOCKS port
+  on a socket file in a private per-boot folder instead of a TCP port, so it
+  opens no listener on the Mac's network. Its log goes to the host's
+  standard error. The host is its owning process: a host that dies without
+  stopping it ends it within about 15 seconds. The host waits for tor's SOCKS
+  socket, never for its bootstrap, and never restarts it. A task that needs
+  Tor before tor has a circuit waits within the daemon's own 25-second route
+  check.
+- **What leaves the Mac**: tor's own connections to the Tor network, and,
+  through Tor, only the streams the guest asks for.
+- **Pin**: the Tor Project's macOS arm64 expert bundle 16.0.1, which carries
+  tor 0.4.9.16 (the stage 1 reference host ran Debian's 0.4.9.15). It is
+  pinned in `reference/sources.json` by size (19,005,562 bytes) and sha256
+  (`0b7d022017c31e3f972d06465bcd7ac50feb66ac825547419a934914fe4bb156`, as in
+  the Tor Project's signed-build hash list; the list's own signature was not
+  checked, as this Mac has no GPG). `host/build.sh` checks the pin, takes
+  only `tor` and its `libevent` from the bundle, and signs `tor` ad hoc,
+  because macOS 27 kills the bundle's own copy at launch for an invalid
+  signature.
+- **State and keys**: all of tor's state (the directory cache, the guard
+  choice; a client tor keeps no long-term identity key, and its circuit keys
+  live in its memory) is in the per-boot folder, inside the host's private
+  temporary folder, and is removed when the host stops tor. Nothing passes
+  from one guest to the next.
+- **Fails closed**: with tor gone or unable to build a circuit, the
+  daemon's own route check stops the task ("no direct fallback was used"),
+  and nothing else in the guest has a way out.
+
+Checks planned, on the stand-in: a torsocks program reaches the Tor port and
+a circuit is built; the reference's static A06 probe, run in the sandbox as
+the stage 1 routing check runs it, reaches nothing; the guest lists only
+`lo`; the relay closes everything that is not a SOCKS5 greeting, and no
+other vsock port answers; a tor that stops, or that cannot reach the
+network, stops the task.
+
+Open for Sean: tor on the Mac instead of in the guest; a fresh guard each
+boot, where Tor by default, and the reference's Debian tor, keep theirs; and
+whether tor on the Mac gets its own confinement (it runs unconfined; Apple's
+App Sandbox refused it as a bare program with no bundle identifier).
+
 ## Stage 3 so far
 
 - The feasibility kit is ready: `uv run scripts/stage3.py feasibility <name>`

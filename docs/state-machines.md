@@ -199,6 +199,37 @@ checked --> host connection --> request sent --> answer header --> reply copied
 Go's request context carries the state: the daemon giving up closes the host
 connection, which cancels the rewrite. No hidden flags; no change.
 
+## 7a. Tor's way out (`host/Sources/cloak-host/Tor.swift`, `host/Sources/cloak-host/TorRelay.swift`, `guest/torport/main.go`)
+
+Design of 12 November ([plan.md](plan.md), "Tor out of the guest"). Where
+the bytes go:
+
+```
+guest (no network device)                       | Mac: cloak-host              | Tor network
+daemon route check, Pi under torsocks           |                              |
+  --> 127.0.0.1:9050 (cloak-tor-port)           |                              |
+  --> vsock port 9050 ------------------------> | Tor relay --socket file--> tor --> guard, relays, exit
+a program that skips torsocks --> unreachable   |                              |
+anything but a SOCKS5 greeting on 9050 -------> | closed, no byte              |
+any other vsock port -------------------------> | refused                      |
+```
+
+tor's life, as the host's child:
+
+```
+started --> SOCKS socket open --> (bootstrapping, then circuits) --> stopped --> folder removed
+exits before its socket opens --> the host fails before the boot files are written
+exits later --> every later Tor connection fails; never restarted
+```
+
+One Tor relay connection:
+
+```
+accepted --> greeting read (10 s) --> greeting checked --> tor connected
+  --> greeting passed on --> copying both ways --> either end closes --> both closed
+any step failing --> closed, without a byte from the host
+```
+
 ## 8. Files built in steps
 
 - **Altered model folders for the worker checks** (`tests/test_worker.py`):
