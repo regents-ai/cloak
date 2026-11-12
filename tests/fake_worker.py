@@ -57,7 +57,7 @@ def completion(content: str, finish: str = "stop", **message) -> bytes:
     }).encode()
 
 
-def wait_for_cancel(seconds: float) -> bool:
+def wait_for_cancel(seconds: float | None) -> bool:
     if select.select([IN], [], [], seconds)[0]:
         frame = read_frame()
         return frame is not None and frame[0] == b"C"
@@ -107,9 +107,13 @@ def main() -> None:
                 answer(200, completion(json.dumps({"texts": rewritten}) + " " * (1 << 20)))
             case "hold":
                 # Waits for the cancel the daemon's deadline or a client causes.
-                if wait_for_cancel(120):
+                if wait_for_cancel(None):
                     (LOG / f"{count}.cancel").touch()
                 answer(499, b'{"error":{"message":"cancelled"}}')
+            case "slow":
+                # Answers well after the daemon's base deadline of 90 seconds.
+                time.sleep(100)
+                answer(200, completion(json.dumps({"texts": rewritten})))
             case "exit":
                 time.sleep(0.5)
                 sys.exit(3)

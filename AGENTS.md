@@ -30,7 +30,9 @@ The contract is [docs/spec-v0.4.md](docs/spec-v0.4.md). Read sections 1, 4, 7,
   reply. Exactly one model, loader and configuration ships: no model picker,
   no switching by hardware, no second rewrite stage.
 - The daemon's instruction bytes, request fields, reply checks and limits stay
-  exactly as captured in `reference/rewriter-contract.md`. No prompt tuning,
+  exactly as captured in `reference/rewriter-contract.md`, but for the input
+  limit and call deadline Sean set in decision 6 of `docs/plan.md`, which
+  that file records as Cloak's one departure. No prompt tuning,
   placeholders, fine-tuning, pruning, expert streaming or speculative decoding
   in a candidate.
 - Model files load only from local files matching `reference/models.json`;

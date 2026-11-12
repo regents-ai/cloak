@@ -57,6 +57,11 @@ GATE_MODELS = ("lead", "challenger")
 # The fixed inputs, pinned before any candidate ran on them.
 EVAL05 = ROOT / "reference/eval05-inputs.json"
 EVAL05_SHA256 = "efd9c6ff8b7419edbd10f282392106994ed4bd4644b6366866539c8b807655cb"
+# The cases decision 6's input limit forces, pinned on 12 November 2026,
+# after the lead's first run: the limit's two sides, and the cancellation and
+# worker loss inputs in place of EVAL05's, which the limit refuses.
+EVAL05_CAP = ROOT / "reference/eval05-cap-inputs.json"
+EVAL05_CAP_SHA256 = "bd9d4045da2b6aa863bf2ccb555b48e5d9875108728c1d0a94fea5d5463757e3"
 EVAL06 = ROOT / "reference/eval06-messages.json"
 EVAL06_SHA256 = "10136dd123899a17ba52b56bbe2a376ecf0f4e5f41d1a8a87e4207c1c8a5e50b"
 EVAL06_MAX_TOKENS = 512
@@ -69,7 +74,8 @@ DAEMON_SOURCES = {
 }
 KIT_FILES = ("scripts/stage3.py", "scripts/boot.py", "scripts/measures.py", "scripts/worker_tap.py",
              "scripts/drive_worker.py", "guest/check/main.go", "guest/image/init", "guest/image/boot",
-             "guest/daemon/zz_cloak_guest.go", "guest/agent/main.go")
+             "guest/daemon/zz_cloak_guest.go", "guest/daemon/rewriter.patch", "guest/daemon/server.patch",
+             "guest/agent/main.go")
 
 MAX_TOKENS = 16384
 TEMPERATURE = 0
@@ -116,21 +122,23 @@ def long_text(inputs: dict, source: str, size: int) -> str:
     return text
 
 
-def feasibility_plan(inputs: dict, messages: list[dict]) -> list[dict]:
+def feasibility_plan(inputs: dict, cap: dict, messages: list[dict]) -> list[dict]:
     """The three boots and their cases, in order. `group` names the measure a
-    case belongs to; only name, body and cancel_after_ms reach the guest."""
+    case belongs to; only name, body and cancel_after_ms reach the guest.
+    Every EVAL05 long input runs, those over the input limit included; the
+    cancellation and worker loss inputs are the cap cases' (EVAL05_CAP)."""
     probe = inputs["probe"]
     main = [{"name": "cold-probe", "group": "cold", "body": user(probe)}]
     main += [{"name": m["id"], "group": "eval06", "body": user(m["text"]), "message": m} for m in messages]
     history = inputs["history"]
     main.append({"name": history["id"], "group": "history", "body": {"messages": history["messages"]}})
     main += [{"name": x["id"], "group": "long", "body": user(long_text(inputs, x["source"], x["bytes"]))}
-             for x in inputs["long"]]
-    cancel = inputs["cancellation"]
+             for x in inputs["long"] + cap["long"]]
+    cancel = cap["cancellation"]
     main.append({"name": cancel["id"], "group": "cancellation", "cancel_after_ms": cancel["cancel_after_ms"],
                  "body": user(long_text(inputs, cancel["source"], cancel["bytes"]))})
     main.append({"name": "after-cancel-probe", "group": "cancellation", "body": user(probe)})
-    loss = inputs["worker_loss"]
+    loss = cap["worker_loss"]
     kill = [
         {"name": "loss-before-probe", "group": "worker_loss", "body": user(probe)},
         {"name": loss["id"], "group": "worker_loss", "body": user(long_text(inputs, loss["source"], loss["bytes"])),
@@ -147,8 +155,8 @@ def guest_case(case: dict) -> dict:
 
 
 def time_limit(cases: list[dict]) -> float:
-    calls = sum(len(measures.expected_texts(c["body"])) for c in cases)
-    return LOAD_ALLOWANCE_S + BOOT_ALLOWANCE_S + calls * measures.DEADLINE_S
+    calls = [texts for c in cases for texts in measures.expected_texts(c["body"])]
+    return LOAD_ALLOWANCE_S + BOOT_ALLOWANCE_S + sum(measures.deadline_s(texts) for texts in calls)
 
 
 def battery() -> list[dict]:
@@ -237,7 +245,7 @@ def preflight(model: dict, model_dir: Path) -> dict:
             stop(f"{path} is not built (README, stage 2 commands)")
     if MODELS.read_bytes() not in INSTALLED.read_bytes():
         stop("the installed worker was built with other model pins; run worker/install.sh")
-    for path, digest in ((EVAL05, EVAL05_SHA256), (EVAL06, EVAL06_SHA256)):
+    for path, digest in ((EVAL05, EVAL05_SHA256), (EVAL05_CAP, EVAL05_CAP_SHA256), (EVAL06, EVAL06_SHA256)):
         if sha256_file(path) != digest:
             stop(f"{path} is not the pinned input set")
     for relative, digest in DAEMON_SOURCES.items():
@@ -308,7 +316,7 @@ def kit() -> dict:
     git = lambda *a: subprocess.run(["git", *a], cwd=ROOT, capture_output=True, text=True).stdout.strip()  # noqa: E731
     return {"commit": git("rev-parse", "HEAD"), "uncommitted_changes": bool(git("status", "--porcelain")),
             "files_sha256": {f: sha256_file(ROOT / f) for f in KIT_FILES},
-            "inputs_sha256": {"eval05": EVAL05_SHA256, "eval06": EVAL06_SHA256}}
+            "inputs_sha256": {"eval05": EVAL05_SHA256, "eval05_cap": EVAL05_CAP_SHA256, "eval06": EVAL06_SHA256}}
 
 
 def sysctl(name: str) -> str:
@@ -505,7 +513,7 @@ def summarise(boots: dict[str, dict], kills: list[dict]) -> dict:
                  "host_start_to_first_result_seconds": first_result_seconds(main),
                  "load_window": load_window(main)},
         "history": [brief(c) for c in group(main, "history")],
-        "long": {"cases": [brief(c) | {"input_bytes": len(c["body"]["messages"][0]["content"].encode())}
+        "long": {"cases": [brief(c) | {"input_characters": len(c["body"]["messages"][0]["content"])}
                            for c in group(main, "long")],
                  "window": window_of(main, "long")},
         "cancellation": {
@@ -614,13 +622,14 @@ def run_feasibility(name: str) -> Path:
     model_dir = DEST / name
     checks = preflight(model, model_dir)
     inputs = json.loads(EVAL05.read_text())
+    cap = json.loads(EVAL05_CAP.read_text())
     messages = json.loads(EVAL06.read_text())["messages"]
     counts = eval06_tokens(model_dir, messages)
     record = header("feasibility", model, model_dir, checks)
     record["eval06_input_tokens"] = counts
     art, conf = record["artifact"], record["configuration"]
     boots, kills = {}, []
-    for planned in feasibility_plan(inputs, messages):
+    for planned in feasibility_plan(inputs, cap, messages):
         cases, label = planned["cases"], planned["boot"]
         during = killer(cases, kills) if label == "worker_loss" else None
         limit = time_limit(cases)

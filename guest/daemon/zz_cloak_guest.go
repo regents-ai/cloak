@@ -1,5 +1,8 @@
 // The guest's daemon: the pinned zkapi-clientd command package with this one
-// file added by go build -overlay, so every other file stays the daemon's own.
+// file added by go build -overlay. Every other file stays the daemon's own,
+// but for internal/rewriter/rewriter.go and internal/server/server.go, which
+// the overlay replaces with copies carrying Cloak's input limit and deadline
+// (guest/daemon/*.patch, docs/plan.md decision 6).
 // Its init runs before the daemon's main and never returns to it.
 //
 // It starts the daemon's local inference API exactly as serveSnapshot does
@@ -9,9 +12,9 @@
 // first and this does not, because its prerequisites are absent: the funding
 // check and deposit, the wallet companion and its connect proxy, the
 // deployment check, cover traffic, and the session and settlement monitors.
-// With no Tor and no companion, every request stops after its rewrite: Tor
-// route preparation fails, so no key is acquired and nothing reaches a target
-// model. No fallback exists here, as in the daemon.
+// With no companion, every request stops after its rewrite and its Tor route
+// (or at the route, with the checks' stand-in tor): no key is acquired, so
+// nothing reaches a target model. No fallback exists here, as in the daemon.
 //
 // Usage: cloak-daemon <rewriter model> <rewriter key file>
 // It prints "ready" on standard output once it listens, and nothing else

@@ -8,12 +8,15 @@ Transcript.Rewrite; the guest prints one result per case.
     host/build.sh
     uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
 
-The checks with the fake worker cover every reply the daemon must refuse
-and the new worker the host starts after a loss; the checks with the real
-worker cover a real rewrite, cancellation (while it generates and while it
-reads a long prompt) and the loss of the worker. The deadline check waits out
-the daemon's 90 seconds. The host's tor is the stand-in (fake_tor.py), which
-never reaches the network; nothing here uses Tor.
+The checks with the fake worker cover every reply the daemon must refuse,
+the new worker the host starts after a loss, and the input limit and
+deadline of decision 6 in docs/plan.md: an input over 10,000 characters is
+refused before any call, and each call's deadline is 90 seconds plus 20 ms a
+character, so the deadline checks wait out about 90 and 290 seconds. The
+checks with the real worker cover a real rewrite, cancellation (while it
+generates and early in the longest prompt the daemon accepts) and the loss
+of the worker. The host's tor is the stand-in (fake_tor.py), which never
+reaches the network; nothing here uses Tor.
 """
 
 import json
@@ -29,6 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 from drive_worker import INSTALLED, request_body  # noqa: E402
 from fetch_model import DEST  # noqa: E402
+from measures import MAX_INPUT_CHARACTERS, deadline_s  # noqa: E402
 
 HOST = ROOT / "host/.build/release/cloak-host"
 WORKER = INSTALLED
@@ -38,15 +42,22 @@ NAME = "standin"
 FAILED = "rewriter failed; original prompt was not sent to the target model"
 # The stand-in rewrites this one cleanly.
 PLAIN = "Hey, could you please tell me the three biggest rivers in Europe? Thanks!!"
+# 9,788 characters, within the daemon's input limit.
 LONG = " ".join(
     f"On day {i} the travelling group walked along the river, counted the boats, "
     "wrote down the weather, and argued about where to sleep that night."
-    for i in range(1, 240))
+    for i in range(1, 70))
 
 
 def case(name: str, text: str, cancel_after_ms: int = 0) -> dict:
     body = {"model": "target", "messages": [{"role": "user", "content": text}]}
     return {"name": name, "body": body, "cancel_after_ms": cancel_after_ms}
+
+
+def sized(start: str, characters: int, fill: str = "é") -> str:
+    """A text of exactly this many characters. The default fill is two bytes
+    a character, so a limit that counted bytes would show."""
+    return start + fill * (characters - len(start))
 
 
 def fake(tmp_path: Path, read_delay: float = 0, starts: int = 0) -> Path:
@@ -130,10 +141,12 @@ def test_a_client_that_gives_up_cancels_the_rewrite(tmp_path):
 
 
 def test_a_client_that_gives_up_before_the_worker_has_its_request_cancels_it(tmp_path):
-    # This request is larger than the channel to the worker holds, and the
-    # worker leaves it unread for two seconds, so the client gives up while the
-    # host is still handing it over.
-    held = "case:hold " + "word " * 20000
+    # This request is larger than the channel to the worker holds (each "<"
+    # is seven bytes once the daemon and the request encode it, about 71 KB
+    # in all), and the worker leaves it unread for two seconds, so the client
+    # gives up while the host is still handing it over.
+    held = sized("case:hold ", MAX_INPUT_CHARACTERS, fill="<")
+    assert len(request_body(NAME, [held])) > 64 << 10
     results = boot(tmp_path, [case("held", held, cancel_after_ms=500),
                               case("next", "case:ok and this")], fake(tmp_path, read_delay=2))
     assert (results["held"]["outcome"], results["held"]["error"]) == ("stopped", FAILED)
@@ -141,11 +154,42 @@ def test_a_client_that_gives_up_before_the_worker_has_its_request_cancels_it(tmp
     assert results["next"]["outcome"] == "rewritten"
 
 
-def test_the_daemon_deadline_still_holds(tmp_path):
-    results = boot(tmp_path, [case("held", "case:hold wait")], fake(tmp_path))
+def test_a_short_input_keeps_the_base_deadline(tmp_path):
+    text = "case:hold wait"
+    results = boot(tmp_path, [case("held", text)], fake(tmp_path))
     assert (results["held"]["outcome"], results["held"]["error"]) == ("stopped", FAILED)
-    assert 89 < results["held"]["seconds"] < 95
+    assert deadline_s([text]) <= results["held"]["seconds"] < deadline_s([text]) + 3 < 94
     assert (tmp_path / "1.cancel").exists()
+
+
+def test_the_longest_input_is_accepted_and_given_the_grown_deadline(tmp_path):
+    # Both are exactly 10,000 characters, 19,990 bytes. The first is answered
+    # after 100 seconds, past the base deadline; the second waits out its own
+    # deadline, 290 seconds.
+    slow = sized("case:slow ", MAX_INPUT_CHARACTERS)
+    held = sized("case:hold ", MAX_INPUT_CHARACTERS)
+    results = boot(tmp_path, [case("slow", slow), case("held", held)], fake(tmp_path))
+    assert results["slow"]["outcome"] == "rewritten"
+    assert results["slow"]["texts"] == [slow.upper()]
+    assert 100 <= results["slow"]["seconds"] < 103
+    assert (tmp_path / "1.json").read_bytes() == request_body(NAME, [slow])
+    assert (results["held"]["outcome"], results["held"]["error"]) == ("stopped", FAILED)
+    assert 289 < deadline_s([held]) <= results["held"]["seconds"] < deadline_s([held]) + 3
+    assert (tmp_path / "2.json").read_bytes() == request_body(NAME, [held])
+    assert (tmp_path / "2.cancel").exists()
+
+
+def test_an_input_over_the_limit_is_refused_at_once(tmp_path):
+    over = sized("case:ok ", MAX_INPUT_CHARACTERS + 1, fill="x")
+    results = boot(tmp_path, [case("over", over), case("next", "case:ok and this")], fake(tmp_path))
+    assert results["over"]["outcome"] == "stopped"
+    assert results["over"]["seconds"] < 1
+    # The message gives the length received and the limit.
+    assert "10,001" in results["over"]["error"] and "10,000" in results["over"]["error"]
+    assert results["next"]["outcome"] == "rewritten"
+    # The worker's only request is the next one: nothing of the long input reached it.
+    assert (tmp_path / "1.json").read_bytes() == request_body(NAME, ["case:ok and this"])
+    assert not (tmp_path / "2.json").exists()
 
 
 def test_a_lost_worker_fails_its_rewrite_and_a_new_worker_serves_the_next(tmp_path):
@@ -184,7 +228,7 @@ def test_the_real_worker_rewrites_through_the_daemon(tmp_path):
 
 
 def test_cancelling_frees_the_real_worker(tmp_path):
-    # Uncancelled, this rewrite runs for about forty seconds on the stand-in.
+    # Uncancelled, this rewrite runs for about nine seconds on the stand-in.
     results = boot(tmp_path, [case("long", LONG, cancel_after_ms=2000),
                               case("plain", PLAIN)], WORKER)
     assert (results["long"]["outcome"], results["long"]["error"]) == ("stopped", FAILED)
@@ -193,11 +237,13 @@ def test_cancelling_frees_the_real_worker(tmp_path):
     assert results["plain"]["seconds"] < 10
 
 
-def test_a_client_that_gives_up_while_the_real_worker_reads_a_long_prompt_frees_it(tmp_path):
-    # The stand-in reads 128 KiB of prose for about ten seconds before it
-    # writes a token; the client gives up one second in.
-    prose = json.loads((ROOT / "reference/eval05-inputs.json").read_text())["prose"][:128 << 10]
-    results = boot(tmp_path, [case("long", prose, cancel_after_ms=1000), case("plain", PLAIN)], WORKER)
+def test_a_client_that_gives_up_early_in_the_longest_prompt_frees_the_real_worker(tmp_path):
+    # The longest prompt the daemon accepts, 10,000 characters of prose; the
+    # client gives up 300 ms in, aiming at the stand-in's reading of it, which
+    # takes under a second. Nothing here shows where the cancel landed;
+    # tests/test_worker.py checks a cancel during a ten-second read directly.
+    prose = json.loads((ROOT / "reference/eval05-inputs.json").read_text())["prose"][:MAX_INPUT_CHARACTERS]
+    results = boot(tmp_path, [case("long", prose, cancel_after_ms=300), case("plain", PLAIN)], WORKER)
     assert (results["long"]["outcome"], results["long"]["error"]) == ("stopped", FAILED)
     assert results["plain"]["outcome"] == "rewritten"
     assert results["plain"]["seconds"] < 5
@@ -207,7 +253,8 @@ def test_losing_the_real_worker_mid_rewrite_fails_that_rewrite_and_a_new_worker_
     def kill_worker_mid_rewrite(host):
         while not (pids := subprocess.run(["pgrep", "-P", str(host.pid)], capture_output=True, text=True).stdout.split()):
             time.sleep(0.1)
-        # Model load, boot and the start of the long rewrite take well under this.
+        # Model load and boot take well under this, and the long rewrite,
+        # about nine seconds on the stand-in, is under way.
         time.sleep(8)
         subprocess.run(["kill", "-9", pids[0]], check=True)
 

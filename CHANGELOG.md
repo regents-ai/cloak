@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Stage 2: the input limit and deadline of decision 6 (Sean, 12 November).
+  A user turn of more than 10,000 characters (Unicode scalar values) is
+  refused before any call, with a message giving its length and the limit;
+  this replaces the 128 KiB input limit. Each rewrite call gets 90 seconds
+  plus 20 ms a character (110 s at 1,000 characters, 290 s at 10,000) in
+  place of a flat 90 seconds. The daemon's files are patched into copies at
+  build time (`guest/daemon/rewriter.patch`, `guest/daemon/server.patch`);
+  the pinned source is untouched. A departure from the spec's limits by
+  Sean's ruling, recorded in `docs/plan.md` and
+  `reference/rewriter-contract.md`. The stage 3 kit pins the new
+  `reference/eval05-cap-inputs.json` beside EVAL05, which is unchanged, and
+  sizes each boot's time limit by the new deadline; the stage 4 kit refuses
+  a holdout text over the limit.
 - Stage 2: Tor's way out of the guest (decision 5). The host runs the Tor
   Project's tor 0.4.9.16 (macOS expert bundle 16.0.1, pinned by size and
   sha256 in `reference/sources.json`, unpacked and signed by the new

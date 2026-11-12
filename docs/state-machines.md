@@ -42,8 +42,11 @@ task doing it is cancelled, and nothing cancelled it. The lead read a
 128 KiB prompt for 217 s, 127 s past its cancel; the rewrites queued behind
 it reached the worker after their own 90-second deadlines, and so did every
 later one in that boot. Check: `test_cancel_stops_the_rewrite_while_it_reads_the_prompt`
-(the stand-in answered 9.4 s after the cancel before the fix) and
-`test_a_client_that_gives_up_while_the_real_worker_reads_a_long_prompt_frees_it`.
+(the stand-in answered 9.4 s after the cancel before the fix). Through the
+guest, `test_a_client_that_gives_up_early_in_the_longest_prompt_frees_the_real_worker`
+aims a cancel at the read, but since decision 6 the longest prompt the
+daemon accepts is read in under a second, so that check no longer shows
+where its cancel lands.
 
 Before (the same run, whose main boot's worker ended at exit status -11):
 the worker exited as soon as its channel closed, even mid-rewrite. Exiting
@@ -239,6 +242,30 @@ accepted --> greeting read (10 s) --> greeting checked --> tor connected
   --> greeting passed on --> copying both ways --> either end closes --> both closed
 any step failing --> closed, without a byte from the host
 ```
+
+## 7b. One user turn's rewrite in the daemon (`guest/daemon/rewriter.patch`, `guest/daemon/server.patch`)
+
+Cloak's input limit and deadline (decision 6 in [plan.md](plan.md)), patched
+into copies of the daemon's `internal/rewriter/rewriter.go` and
+`internal/server/server.go` when the guest is built:
+
+```
+turn selected --> characters counted --> over 10,000 --> refused, no call
+                                     --> call sent (deadline 90 s + 20 ms a character) --> reply checked
+call sent --> deadline passes --> call cancelled --> rewrite failed
+```
+
+The count is made once, when the turn is selected, and kept with it; the
+call's deadline and its response-header limit are both taken from it, so
+the two cannot disagree. A refused turn is its own error, which the local
+API answers with status 413 and the plain message; every other failure
+keeps the daemon's own answer. Before (the reference): 128 KiB counted in
+bytes, refused as an ordinary rewrite failure, and a flat 90 s. Checks:
+`test_a_short_input_keeps_the_base_deadline`,
+`test_the_longest_input_is_accepted_and_given_the_grown_deadline`,
+`test_an_input_over_the_limit_is_refused_at_once` (`tests/test_guest_path.py`)
+and `test_a_prompt_over_the_input_limit_stops_its_task_with_the_length_and_the_limit`
+(`tests/test_agent_path.py`).
 
 ## 8. Files built in steps
 

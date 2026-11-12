@@ -1,0 +1,101 @@
+--- a/internal/rewriter/rewriter.go
++++ b/internal/rewriter/rewriter.go
+@@ -12,6 +12,7 @@
+ 	"net"
+ 	"net/http"
+ 	"net/url"
++	"strconv"
+ 	"strings"
+ 	"time"
+ 	"unicode/utf8"
+@@ -67,6 +68,35 @@
+ const maxText = 128 << 10
+ const maxResponse = 1 << 20
+ 
++// Regents Cloak, docs/plan.md decision 6 (Sean, 12 November 2026): the text
++// to rewrite in one user turn is at most maxInputCharacters characters,
++// counted as Unicode scalar values, and each rewrite call may take
++// baseDeadline plus deadlinePerCharacter for each of them.
++const maxInputCharacters = 10_000
++const baseDeadline = 90 * time.Second
++const deadlinePerCharacter = 20 * time.Millisecond
++
++func deadline(characters int) time.Duration {
++	return baseDeadline + time.Duration(characters)*deadlinePerCharacter
++}
++
++// InputTooLongError refuses a user turn over maxInputCharacters before the
++// rewriter is called. Its message is for the person who wrote the turn.
++type InputTooLongError struct{ Characters int }
++
++func (e *InputTooLongError) Error() string {
++	return "This message is " + thousands(e.Characters) + " characters long, over the limit of " +
++		thousands(maxInputCharacters) + " characters. Shorten it and send it again."
++}
++
++func thousands(n int) string {
++	s := strconv.Itoa(n)
++	for i := len(s) - 3; i > 0; i -= 3 {
++		s = s[:i] + "," + s[i:]
++	}
++	return s
++}
++
+ const MaxInstructionBytes = 16 << 10
+ 
+ // DefaultInstruction is style policy; the response contract is not configurable.
+@@ -104,12 +134,13 @@
+ // model parameters are not rewritten or disclosed. Tool continuations whose
+ // final message is not user are passed through without revisiting old prompts.
+ type Draft struct {
+-	request  map[string]json.RawMessage
+-	messages []json.RawMessage
+-	message  map[string]json.RawMessage
+-	parts    []map[string]json.RawMessage
+-	indices  []int
+-	texts    []string
++	request    map[string]json.RawMessage
++	messages   []json.RawMessage
++	message    map[string]json.RawMessage
++	parts      []map[string]json.RawMessage
++	indices    []int
++	texts      []string
++	characters int
+ }
+ 
+ func Select(body json.RawMessage) (*Draft, error) {
+@@ -163,12 +194,11 @@
+ 			return nil, nil
+ 		}
+ 	}
+-	size := 0
+ 	for _, s := range d.texts {
+-		size += len(s)
++		d.characters += utf8.RuneCountInString(s)
+ 	}
+-	if size > maxText {
+-		return nil, ErrFailed
++	if d.characters > maxInputCharacters {
++		return nil, &InputTooLongError{Characters: d.characters}
+ 	}
+ 	return d, nil
+ }
+@@ -191,7 +221,8 @@
+ 		}
+ 		endpoint += "/chat/completions"
+ 	}
+-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
++	limit := deadline(d.characters)
++	ctx, cancel := context.WithTimeout(ctx, limit)
+ 	defer cancel()
+ 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
+ 	if err != nil {
+@@ -201,7 +232,7 @@
+ 	if c.APIKey != "" {
+ 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+ 	}
+-	tr := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 90 * time.Second, DisableKeepAlives: true, MaxResponseHeaderBytes: 64 << 10}
++	tr := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: limit, DisableKeepAlives: true, MaxResponseHeaderBytes: 64 << 10}
+ 	defer tr.CloseIdleConnections()
+ 	client := &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+ 	resp, err := client.Do(req)

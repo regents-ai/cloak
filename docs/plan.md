@@ -58,7 +58,8 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   cannot read a folder outside the models folder.
 - The guest (`guest/`) is a Debian trixie kernel and a small initramfs from a
   pinned snapshot, with no network device. Inside it, the daemon's own
-  rewrite code (`internal/rewriter`, built from the pinned module) calls a
+  rewrite code (`internal/rewriter`, built from the pinned module, with
+  decision 6's input limit and deadline patched into a copy) calls a
   guest adapter on its usual local address; the adapter forwards each request
   unchanged over one virtio socket with a per-boot token.
 - The host (`host/`) boots the guest with Virtualization.framework, checks
@@ -67,16 +68,20 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   sent again); it then starts a new worker from the same program and pinned
   files for the next rewrite. A new worker that cannot start leaves every
   later rewrite failing.
-- 20 checks in `tests/test_guest_path.py` pass: the request reaches the
+- 22 checks in `tests/test_guest_path.py` pass: the request reaches the
   worker byte for byte; nine kinds of bad reply are refused by the daemon's
   code and the next rewrite still works; a client that gives up cancels the
-  worker, even before the worker has its request; the daemon's 90-second
-  deadline still holds; a lost worker (fake or real, killed mid-rewrite, or
-  gone between rewrites) fails only the rewrite it had or the one that found
-  it gone, and a new worker serves the next; a new worker that cannot start
+  worker, even before the worker has its request; under decision 6, a short
+  input keeps the 90-second base deadline, the longest input accepted
+  (10,000 characters, two bytes each) is rewritten after 100 seconds and,
+  when the worker holds it, stopped at its own 290, and one character more
+  is refused at once, naming its length and the limit, with nothing sent to
+  the worker; a lost worker (fake or real, killed mid-rewrite, or gone
+  between rewrites) fails only the rewrite it had or the one that found it
+  gone, and a new worker serves the next; a new worker that cannot start
   fails every later rewrite; the real worker rewrites through the whole path
-  and is free again within seconds of a cancel, also one that lands while it
-  reads a 128 KiB prompt.
+  and is free again within seconds of a cancel, also one 300 ms into the
+  longest prompt accepted.
 - Every staged process (the worker's rewrite, the host's channel and
   connections, the boot files, the guest's boot) is named in the code and
   listed in [state-machines.md](state-machines.md).
@@ -100,7 +105,8 @@ stand-in; nothing here counts toward a gate):
 - The daemon's own local API, `cloak-daemon`, as user `zkapi` on
   127.0.0.1:8787. It is the pinned `zkapi-clientd` built with one added file
   (`guest/daemon/zz_cloak_guest.go`, compiled in by overlay, so the daemon's
-  files stay untouched) that builds the API exactly as the daemon's own
+  files stay untouched, but for the two copies decision 6 patches) that
+  builds the API exactly as the daemon's own
   `serve` does after setup: the default configuration, the rewriter at the
   adapter, Tor at `tor://127.0.0.1:9050`. It skips what needs the network or
   a wallet: funding, the wallet companion, the deployment check, cover
@@ -131,7 +137,7 @@ Containment, as checked:
   request is rewritten, then stops at Tor route preparation with the daemon's
   own message: "no direct fallback was used".
 
-Six checks in `tests/test_agent_path.py` pass:
+Seven checks in `tests/test_agent_path.py` pass:
 
 - Pi's new turn reaches the worker byte for byte as the daemon's rewrite
   request, and the task then stops at the Tor route.
@@ -141,6 +147,11 @@ Six checks in `tests/test_agent_path.py` pass:
   any model request, and the next task still runs.
 - A lost worker stops its task the same way, and the next task runs on a
   new worker.
+- A prompt over 10,000 characters (decision 6) stops its task with the
+  daemon's message naming its length and the limit, with nothing sent to
+  the worker, and the next task runs. Pi shows that message inside its own
+  error line, after the status and the error's code
+  (`413: {"code":"input_too_long","message":"This message is 10,001 characters long, ..."}`).
 - The sandbox holds, as above; the adapter and the daemon's status route
   both answer 401 without their keys.
 - Pi with the real worker and the stand-in model, end to end to the Tor
@@ -350,6 +361,17 @@ bare program with no bundle identifier).
   inputs from 4 KiB to 128 KiB and one byte over, a four-turn conversation
   rebuilt after cache loss, the cancellation and worker-loss inputs; sha256
   `efd9c6ff8b7419edbd10f282392106994ed4bd4644b6366866539c8b807655cb`).
+- Decision 6's input limit forced new cases, which are in a second file,
+  [eval05-cap-inputs.json](../reference/eval05-cap-inputs.json) (sha256
+  `bd9d4045da2b6aa863bf2ccb555b48e5d9875108728c1d0a94fea5d5463757e3`),
+  pinned in the kit beside EVAL05, which stays as it was. It was written on
+  12 November after the lead's first run, so unlike EVAL05 it was not pinned
+  before a candidate ran. It holds no new text, only the start of EVAL05's
+  prose: the limit's two sides (10,000 and 10,001 characters), and
+  cancellation and worker-loss inputs of 10,000 characters with EVAL05's
+  timings. They replace EVAL05's 16,384-character ones, which the limit now
+  refuses before any call, so they would cancel or kill nothing. EVAL05's
+  own long inputs all still run; those over the limit are refused at once.
 - One `feasibility` run boots the guest three times in turn. The main run
   covers the cold load, the cold first call, the 40 EVAL06 messages warm, the
   rebuild after cache loss, the long inputs and outputs, and a cancellation
@@ -426,7 +448,8 @@ To settle before the next run, none changed here: whether a cancelled or
 lost worker should be restarted within the same boot (today every later
 call in that boot stops); what the limit for long inputs should be, since
 90 s cannot hold them at this speed; and whether a 0.17 s miss on the
-median stands on a quiet Mac.
+median stands on a quiet Mac. Decision 6 has since settled the second: the
+deadline grows with the input, which is capped at 10,000 characters.
 
 Since this run (commit `d71605e`), a cancel stops the worker while it reads
 the prompt, and a lost worker fails only its own call before a new one is
@@ -658,7 +681,8 @@ bound as unresolved, never a pass, by Sean's ruling (decision 4).
 
 1. The EVAL02 holdout: new texts annotated before any model runs on them,
    covering all fourteen categories and three or more languages, long inputs
-   up to 128 KiB, kept outside this repository and pinned with `pin`. Its
+   up to the daemon's 10,000-character limit (decision 6; the kit refuses an
+   item over it), kept outside this repository and pinned with `pin`. Its
    size comes from `sample-size` once the development rates exist.
 2. The EVAL03 holdout: permitted authored text from several writers, topics
    and sessions, with partitions assigned by writer and session and the
@@ -702,6 +726,51 @@ bound as unresolved, never a pass, by Sean's ruling (decision 4).
    runs on the Mac as the host's child, and the guest's Tor port is relayed
    to it. A06 stays open: the checks are development evidence on the
    stand-in, and the placement is Sean's to confirm.
+6. The input limit and each rewrite call's deadline. Decided 12 November
+   (Sean: "yes grow with the size, hard cap at 10,000 characters"). A user
+   turn whose text parts total more than 10,000 characters is refused before
+   any call, so the model never sees it, with a plain message giving the
+   limit and the length received. A character is a Unicode scalar value (Go's
+   `utf8.RuneCountInString`, Python's `len`): an accented letter or an emoji
+   counts once, whatever its bytes. Each call gets 90 seconds plus 20 ms for
+   each character it carries, for the whole call and for its response
+   headers:
+
+   | Characters | Deadline |
+   | --- | --- |
+   | 1,000 | 110 s |
+   | 4,000 | 170 s |
+   | 10,000 | 290 s |
+
+   The two numbers, 90 s and 20 ms, are the worker's proposal and Sean's to
+   change. They come from the lead's first run
+   ([feasibility-20261112T142919Z.json](../evidence/stage3/lead/feasibility-20261112T142919Z.json)):
+   its 4,096 characters of prose took 58.43 s (1,318 prompt tokens in
+   7.68 s, 1,028 generated in 50.70 s), about 14.3 ms a character, so 10,000
+   characters would need about 143 s and get about 2.0 times that. At the
+   run's median rates over the 40 ordinary messages (16.0 tokens a second
+   generated, 133.5 read), 10,000 characters would need about 181 s and get
+   about 1.6 times that. Both assume time grows in proportion to length; the
+   16,384-character call, cut at 90 s, had read 4,496 tokens in 24.47 s and
+   generated 1,406 in 65.56 s, which fits. The base stays the reference's
+   90 s, so a short input keeps close to the reference's deadline (100
+   characters get 92 s). This departs from the spec by Sean's ruling, as
+   decision 2 departs from HW01: spec section 7 bounds a user turn at
+   128 KiB and a call at 90 seconds, A20 asks for the same limits, and
+   section 11 ("Full-request feasibility") says not to lower the input limit
+   to pass. 10,000 characters is at most 40,000 bytes, so
+   the cap is below the reference's 128 KiB for every input: a turn the
+   reference took, from 10,001 characters to 128 KiB, is now refused. The
+   reply's limits (its strings at most 128 KiB, its body at most 1 MiB) are
+   unchanged. The formula is in one place in the daemon
+   (`guest/daemon/rewriter.patch`, applied to a copy of
+   `internal/rewriter/rewriter.go` when the guest is built; the pinned source
+   stays as fetched), and copied once for the kit's time limits
+   (`scripts/measures.py`); `guest/daemon/server.patch` gives the refusal its
+   own message on the daemon's local API, where every other rewrite failure
+   keeps the daemon's. EVAL05 stays as pinned; the cases the cap forces are
+   in [eval05-cap-inputs.json](../reference/eval05-cap-inputs.json) (stage
+   3 above).
 
 ## Gates
 
@@ -726,7 +795,7 @@ bound as unresolved, never a pass, by Sean's ruling (decision 4).
 | A17 | Hardware | Open | |
 | A18 | Usability | Open | |
 | A19 | Claims | Open | |
-| A20 | Unchanged rewrite API | Open: contract captured; the daemon's own rewrite code runs unchanged in the guest and refuses nine kinds of bad reply (stand-in model only) | [contract](../reference/rewriter-contract.md), `tests/test_guest_path.py` |
+| A20 | Unchanged rewrite API | Open: contract captured; the daemon's own rewrite code runs in the guest, unchanged but for Cloak's input limit and deadline (decision 6, a departure from the spec's limits by Sean's ruling), and refuses nine kinds of bad reply (stand-in model only) | [contract](../reference/rewriter-contract.md), `tests/test_guest_path.py` |
 | A21 | Host–guest worker boundary | Open: one token-checked virtio socket, guest has no network device, host relays only rewrite frames, worker sandboxed with no network (development signing; stand-in model) | `host/`, `guest/`, `worker/cloak-rewriter.entitlements`, `tests/test_guest_path.py`, `tests/test_worker.py` |
 | A22 | Authorship and linkability | Open: attack 1 and the sign-flip bound built and proven on synthetic development data only; attack 2 not built; no holdout | `scripts/stage4.py`, `scripts/privacy.py` |
 | A23 | Long and cold tasks | Open | |

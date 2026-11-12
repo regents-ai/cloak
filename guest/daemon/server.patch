@@ -1,0 +1,16 @@
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -298,6 +298,13 @@
+ 	ctx = notice.context(ctx, w)
+ 	response, err := a.backend.Complete(ctx, clean)
+ 	if err != nil {
++		// Regents Cloak, docs/plan.md decision 6: a user turn over the
++		// rewriter's input limit is refused with its own plain message.
++		var long *rewriter.InputTooLongError
++		if errors.As(err, &long) {
++			notice.writeError(w, 413, "input_too_long", long.Error())
++			return
++		}
+ 		if errors.Is(err, rewriter.ErrFailed) {
+ 			notice.writeError(w, 502, "rewrite_failed", rewriter.ErrFailed.Error())
+ 			return

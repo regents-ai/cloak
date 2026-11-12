@@ -64,6 +64,25 @@ There is no fallback to the original text.
 
 Input limit: the newest user turn's text parts total at most 128 KiB.
 
+## Cloak's departure
+
+Everything above is the reference as captured. Cloak changes two items, by
+Sean's ruling of 12 November 2026 (decision 6 in
+[plan.md](../docs/plan.md#decisions)):
+
+- Input limit: the newest user turn's text parts total at most 10,000
+  characters (Unicode scalar values, as Go's `utf8.RuneCountInString`
+  counts them), in place of 128 KiB. A longer turn is refused before any
+  call, with a plain message giving the limit and the length received.
+- Deadline: 90 s plus 20 ms for each character sent, for the whole call and
+  for its response headers, in place of 90 s. 1,000 characters get 110 s;
+  4,000, 170 s; 10,000, 290 s.
+
+The instruction bytes, request fields and reply checks, the reply's 128 KiB
+and 1 MiB limits among them, are unchanged. The change is made at build
+time by `guest/daemon/rewriter.patch` and `guest/daemon/server.patch`, on
+copies of the daemon's files; the pinned source stays as fetched.
+
 ## Reference evaluation
 
 `instruction_eval_test.go` holds the 16 synthetic cases (EVAL01) and the

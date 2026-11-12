@@ -123,6 +123,18 @@ def test_a_lost_worker_stops_its_task_and_the_next_task_runs(tmp_path):
     assert results["after"]["output"].strip() == TOR_STOP
 
 
+def test_a_prompt_over_the_input_limit_stops_its_task_with_the_length_and_the_limit(tmp_path):
+    over = "case:ok " + "x" * (10_001 - len("case:ok "))
+    results = boot(tmp_path, [agent("over", over), agent("next", "case:ok and this")], fake(tmp_path))
+    assert results["over"]["exit"] != 0
+    assert "10,001" in results["over"]["output"] and "10,000" in results["over"]["output"]
+    assert TOR_STOP not in results["over"]["output"]
+    assert results["next"]["output"].strip() == TOR_STOP
+    # Nothing of the long prompt reached the worker.
+    assert (tmp_path / "1.json").read_bytes() == request_body(NAME, ["case:ok and this"])
+    assert not (tmp_path / "2.json").exists()
+
+
 FETCH = ("node -e 'fetch(process.argv[1], {method: process.argv[2], signal: AbortSignal.timeout(5000)})"
          ".then(r => console.log(r.status), e => console.log(\"refused\", e.cause?.code ?? e.name))' ")
 

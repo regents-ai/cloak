@@ -3,10 +3,11 @@
 # check, the two routing instruments (the stage 1 reference's static probe
 # and a vsock probe), the daemon's rewrite check and the guest daemon (both
 # compiled inside the pinned daemon module with an overlay, so the daemon's
-# own files stay untouched), then the kernel and root from pinned Debian
-# packages, the pinned Pi package and Node.js runtime, and the reference
-# wrapper. Every pinned source is checked against its pin first. Two cores,
-# low priority.
+# own files stay untouched, and both with Cloak's input limit and deadline,
+# decision 6 in docs/plan.md, patched into copies of two of its files), then
+# the kernel and root from pinned Debian packages, the pinned Pi package and
+# Node.js runtime, and the reference wrapper. Every pinned source is checked
+# against its pin first. Two cores, low priority.
 set -eu
 cd "$(dirname "$0")/.."
 repo=$PWD
@@ -22,10 +23,14 @@ export GOOS=linux GOARCH=arm64 CGO_ENABLED=0 GOMAXPROCS=2
 (cd guest/agent && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-agent-check" .)
 (cd guest/vsockprobe && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-vsock-probe" .)
 (cd reference/host/probe && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-routing-probe" .)
-printf '{"Replace":{"%s/cmd/cloak-rewrite-check/main.go":"%s/guest/check/main.go"}}' "$module" "$repo" > "$out/overlay.json"
+patch -s -o "$out/rewriter.go" "$module/internal/rewriter/rewriter.go" guest/daemon/rewriter.patch
+patch -s -o "$out/server.go" "$module/internal/server/server.go" guest/daemon/server.patch
+rewriter="\"$module/internal/rewriter/rewriter.go\":\"$out/rewriter.go\""
+printf '{"Replace":{"%s/cmd/cloak-rewrite-check/main.go":"%s/guest/check/main.go",%s}}' "$module" "$repo" "$rewriter" > "$out/overlay.json"
 (cd "$module" && nice -n 10 go build -p 2 -trimpath -overlay "$out/overlay.json" -o "$out/cloak-rewrite-check" ./cmd/cloak-rewrite-check)
 # The daemon's build flags (docs/DEVELOPMENT.md at the pinned commit).
-printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_guest.go":"%s/guest/daemon/zz_cloak_guest.go"}}' "$module" "$repo" > "$out/daemon-overlay.json"
+printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_guest.go":"%s/guest/daemon/zz_cloak_guest.go",%s,"%s/internal/server/server.go":"%s/server.go"}}' \
+	"$module" "$repo" "$rewriter" "$module" "$out" > "$out/daemon-overlay.json"
 (cd "$module" && nice -n 10 go build -p 2 -trimpath -overlay "$out/daemon-overlay.json" \
 	-ldflags="-X main.version=privacy-$(git rev-parse --short HEAD)-dev" -o "$out/cloak-daemon" ./cmd/zkapi-clientd)
 

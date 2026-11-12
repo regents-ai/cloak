@@ -3,9 +3,12 @@ matching them to the cases that made them, naming why a case stopped,
 percentiles that keep stopped calls in the denominator, and figures over the
 resource samples. No input or output here; `stage3.py` runs the path.
 
-The daemon's limits are its own (reference/rewriter-contract.md): a newest
-user turn of at most 128 KiB of text, 16,384 tokens and 90 seconds per call.
-Nothing here lowers or truncates them.
+The daemon's limits are its own (reference/rewriter-contract.md), with
+Cloak's input limit and deadline by Sean's ruling (docs/plan.md, decision
+6): a user turn of at most 10,000 characters (Unicode scalar values, which
+Python's len counts), 16,384 tokens, and per call 90 seconds plus 20 ms for
+each character. The deadline here is the daemon's formula, for the kit's
+own time limits; nothing here lowers or truncates either limit.
 """
 
 import json
@@ -13,8 +16,9 @@ import math
 import re
 from dataclasses import dataclass, field
 
-MAX_TEXT = 128 << 10
-DEADLINE_S = 90
+MAX_INPUT_CHARACTERS = 10_000
+BASE_DEADLINE_S = 90
+DEADLINE_PER_CHARACTER_S = 0.020
 TARGET_P50_S = 5
 TARGET_P95_S = 15
 
@@ -23,7 +27,7 @@ STOP_REASONS = (
     "malformed",  # a reply came back and the daemon refused its content
     "truncated",  # the reply ended at the token limit
     "worker error",  # the worker answered with an error status
-    "timed out",  # the daemon's 90-second deadline cancelled the call
+    "timed out",  # the daemon's deadline cancelled the call
     "cancelled",  # the client gave up on purpose (the cancellation check)
     "worker lost",  # the worker was gone, or went, before it answered
     "no result",  # the boot ended before the daemon reported the case
@@ -132,14 +136,19 @@ def expected_texts(body: dict) -> list[list[str]]:
             raise ValueError("the kit sends only plain string content")
         if not text.strip():
             continue
-        if len(text.encode()) > MAX_TEXT:
+        if len(text) > MAX_INPUT_CHARACTERS:
             break
         calls.append([text])
     return calls
 
 
 def over_limit(body: dict) -> bool:
-    return any(m["role"] == "user" and len(m["content"].encode()) > MAX_TEXT for m in body["messages"])
+    return any(m["role"] == "user" and len(m["content"]) > MAX_INPUT_CHARACTERS for m in body["messages"])
+
+
+def deadline_s(texts: list[str]) -> float:
+    """The daemon's deadline for one call that rewrites these texts."""
+    return BASE_DEADLINE_S + DEADLINE_PER_CHARACTER_S * sum(len(t) for t in texts)
 
 
 def attribute(bodies: list[dict], calls: list[Call]) -> list[list[Call]]:
@@ -163,8 +172,9 @@ def attribute(bodies: list[dict], calls: list[Call]) -> list[list[Call]]:
 
 def stop_reason(outcome: str | None, body: dict, calls: list[Call], cancel_after_ms: int) -> str | None:
     """Why a case stopped, from what the worker saw; None when it was
-    rewritten. The daemon itself reports only that the rewrite failed, and
-    nothing at all for a case the boot never reached (outcome None)."""
+    rewritten. The daemon itself reports only that the rewrite failed, or
+    that the input was too long, and nothing at all for a case the boot
+    never reached (outcome None)."""
     if outcome == "rewritten":
         return None
     if outcome is None:

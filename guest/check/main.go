@@ -1,9 +1,11 @@
 // Command cloak-rewrite-check drives the daemon's own rewrite code inside the
 // guest. It is built inside the pinned zkapi-clientd module (with go build
-// -overlay, which leaves the daemon's files untouched) so it can call
-// internal/rewriter exactly as the daemon's client does before target
-// inference: Transcript.Rewrite with the saved rewriter settings. Every
-// request, reply check, limit and deadline is the daemon's.
+// -overlay, which adds this file and swaps internal/rewriter/rewriter.go for
+// the copy patched with Cloak's input limit and deadline, docs/plan.md
+// decision 6) so it can call internal/rewriter exactly as the daemon's client
+// does before target inference: Transcript.Rewrite with the saved rewriter
+// settings. Every request and reply check is the daemon's; the input limit
+// and the deadline are decision 6's.
 //
 // Each line of the cases file is {"name", "body", "cancel_after_ms"}: body is
 // a chat request as a local client sends it to the daemon, and a positive

@@ -1,0 +1,12 @@
+{
+  "set": "EVAL05 cap cases",
+  "authored": "2026-11-12",
+  "purpose": "The cases Sean's 10,000-character input limit forces (docs/plan.md, decision 6), added beside eval05-inputs.json, which stays as pinned. Written on 12 November 2026, after the lead's first feasibility run, so these were not pinned before any candidate ran. They hold no new text: each is the start of eval05-inputs.json's prose, which is ASCII, so each byte is one character.",
+  "content": "long holds the largest input the limit accepts and the smallest it refuses. cancellation and worker_loss replace eval05-inputs.json's, whose 16,384 characters the limit now refuses before any call, so they would cancel or kill nothing; each keeps its own timing.",
+  "long": [
+    {"id": "prose-10000", "source": "prose", "bytes": 10000},
+    {"id": "prose-10001", "source": "prose", "bytes": 10001}
+  ],
+  "cancellation": {"id": "cancel-prose-10000", "source": "prose", "bytes": 10000, "cancel_after_ms": 3000},
+  "worker_loss": {"id": "kill-prose-10000", "source": "prose", "bytes": 10000, "kill_after_ms": 2000}
+}

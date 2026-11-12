@@ -117,11 +117,13 @@ def test_calls_and_worker_processes_are_rebuilt_from_the_events():
 def test_calls_are_split_among_cases_in_order_one_per_user_turn():
     history = {"messages": [{"role": "user", "content": "a"}, {"role": "assistant", "content": "x"},
                             {"role": "user", "content": " "}, {"role": "user", "content": "b"}]}
-    over = user("z" * (measures.MAX_TEXT + 1))
+    over = user("z" * (measures.MAX_INPUT_CHARACTERS + 1))
     bodies = [user("probe"), history, over, user("probe")]
     calls = [answered(t, i * 10, 5) for i, t in enumerate(["probe", "a", "b", "probe"])]
     assert measures.attribute(bodies, calls) == [[calls[0]], [calls[1], calls[2]], [], [calls[3]]]
-    assert measures.expected_texts(user("y" * measures.MAX_TEXT)) == [["y" * measures.MAX_TEXT]]
+    # The limit counts characters, not bytes: two-byte characters up to it make a call.
+    widest = "é" * measures.MAX_INPUT_CHARACTERS
+    assert measures.expected_texts(user(widest)) == [[widest]]
 
 
 def test_a_case_that_stopped_early_takes_only_the_calls_it_made():
@@ -138,7 +140,7 @@ def test_a_call_that_matches_no_case_is_an_error():
 @pytest.mark.parametrize("outcome, body, calls, cancel_after_ms, reason", [
     ("rewritten", user("a"), [answered("a", 0, 1)], 0, None),
     (None, user("a"), [], 0, "no result"),
-    ("stopped", user("z" * (measures.MAX_TEXT + 1)), [], 0, "over the input limit"),
+    ("stopped", user("z" * (measures.MAX_INPUT_CHARACTERS + 1)), [], 0, "over the input limit"),
     ("stopped", user("a"), [], 0, "worker lost"),
     ("stopped", user("a"), [Call(sent_ns=0, request=request("a"))], 0, "worker lost"),
     ("stopped", user("a"), [answered("a", 0, 9, status=499, cancels=[5])], 3000, "cancelled"),
@@ -230,22 +232,36 @@ def test_a_window_across_a_new_worker_keeps_its_peak_but_no_cpu_figure():
 # The plan and the record.
 
 
+def test_the_deadline_grows_with_the_input():
+    # Decision 6: 90 seconds plus 20 ms for each character the call rewrites.
+    sizes = (0, 1_000, 4_000, 10_000)
+    assert [measures.deadline_s(["x" * n]) for n in sizes] == pytest.approx([90, 110, 170, 290])
+    assert measures.deadline_s(["é" * 600, "y" * 400]) == pytest.approx(110)
+
+
 def test_the_plan_uses_the_pinned_inputs_whole():
     inputs = json.loads(stage3.EVAL05.read_text())
+    cap = json.loads(stage3.EVAL05_CAP.read_text())
     messages = json.loads(stage3.EVAL06.read_text())["messages"]
-    plan = stage3.feasibility_plan(inputs, messages)
+    plan = stage3.feasibility_plan(inputs, cap, messages)
     assert [b["boot"] for b in plan] == ["main", "worker_loss", "restart"]
     main = plan[0]["cases"]
     assert [c["group"] for c in main].count("eval06") == len(messages) == 40
     sizes = {c["name"]: len(c["body"]["messages"][0]["content"].encode()) for c in main if c["group"] == "long"}
-    assert sizes == {x["id"]: x["bytes"] for x in inputs["long"]}
-    assert measures.over_limit(next(c for c in main if c["name"] == "prose-131073")["body"])
-    assert not measures.over_limit(next(c for c in main if c["name"] == "prose-131072")["body"])
-    assert [c["cancel_after_ms"] for c in main if "cancel_after_ms" in c] == [3000]
-    assert [c.get("kill_after_ms") for c in plan[1]["cases"]] == [None, 2000, None]
+    assert sizes == {x["id"]: x["bytes"] for x in inputs["long"] + cap["long"]}
+    assert measures.over_limit(next(c for c in main if c["name"] == "prose-10001")["body"])
+    assert not measures.over_limit(next(c for c in main if c["name"] == "prose-10000")["body"])
+    assert [(c["name"], c["cancel_after_ms"]) for c in main if "cancel_after_ms" in c] == [
+        ("cancel-prose-10000", 3000)]
+    assert [(c["name"], c.get("kill_after_ms")) for c in plan[1]["cases"]] == [
+        ("loss-before-probe", None), ("kill-prose-10000", 2000), ("loss-after-probe", None)]
     assert set(stage3.guest_case(main[0])) == {"name", "body", "cancel_after_ms"}
-    # Every call the daemon can make gets its full deadline, after the load allowance.
-    assert stage3.time_limit(plan[2]["cases"]) == stage3.LOAD_ALLOWANCE_S + stage3.BOOT_ALLOWANCE_S + 3 * 90
+    # Every call the daemon can make gets its full deadline, grown with its
+    # input, after the load allowance.
+    allowances = stage3.LOAD_ALLOWANCE_S + stage3.BOOT_ALLOWANCE_S
+    probe = 90 + 0.020 * len(inputs["probe"])
+    assert stage3.time_limit(plan[2]["cases"]) == pytest.approx(allowances + 3 * probe)
+    assert stage3.time_limit(plan[1]["cases"]) == pytest.approx(allowances + 2 * probe + 290)
 
 
 def test_the_screen_applies_the_daemons_own_checks():
@@ -302,7 +318,7 @@ def test_a_boot_becomes_a_record_with_every_call_and_its_hashes():
               "message": {"id": "one", "style": "plain", "text": "one", "expected_output_bytes": 3}},
              {"name": "two", "group": "eval06", "body": user("two"),
               "message": {"id": "two", "style": "plain", "text": "two", "expected_output_bytes": 3}},
-             {"name": "big", "group": "long", "body": user("z" * (measures.MAX_TEXT + 1))},
+             {"name": "big", "group": "long", "body": user("z" * (measures.MAX_INPUT_CHARACTERS + 1))},
              {"name": "gone", "group": "long", "body": user("gone")}]
     calls = [answered("one", 10, 20), answered("two", 40, 20, finish="length")]
     results = {"one": result("one", "rewritten", 0.5, 31, ["ONE"]), "two": result("two", "stopped", 0.6, 61),
@@ -325,7 +341,8 @@ def test_a_boot_becomes_a_record_with_every_call_and_its_hashes():
 def test_the_summary_counts_every_case_of_every_boot():
     inputs = json.loads(stage3.EVAL05.read_text())
     messages = json.loads(stage3.EVAL06.read_text())["messages"][:3]
-    plan = {b["boot"]: b["cases"] for b in stage3.feasibility_plan(inputs, messages)}
+    cap = json.loads(stage3.EVAL05_CAP.read_text())
+    plan = {b["boot"]: b["cases"] for b in stage3.feasibility_plan(inputs, cap, messages)}
     plan["main"] = [c for c in plan["main"] if c["group"] != "long"]
     boots, start = {}, 0
     for name, cases in plan.items():
@@ -349,7 +366,7 @@ def test_the_summary_counts_every_case_of_every_boot():
         boots[name] = stage3.analyse(name, cases, fake_boot(cases, calls, results, start, tuple(losses)),
                                      ART, CONF, counts, {})
         start = t + 100
-    summary = stage3.summarise(boots, [{"case": "kill-prose-16384", "call_was_open": True}])
+    summary = stage3.summarise(boots, [{"case": "kill-prose-10000", "call_was_open": True}])
     assert summary["eval06"]["cases"] == 3 and summary["eval06"]["rewritten"] == 3
     assert summary["eval06"]["by_band"]["1-128"]["cases"] == 3 and summary["eval06"]["by_band"]["257-512"] is None
     assert summary["history"][0]["outcome"] == "rewritten" and len(summary["history"][0]["calls"]) == 4

@@ -116,8 +116,9 @@ host/build.sh
 ```
 
 Run the whole path: the daemon's own rewrite code in the guest, the adapter,
-the host and a worker (one guest boot per check; one check waits out the
-daemon's 90-second deadline):
+the host and a worker (one guest boot per check; two checks wait out the
+daemon's deadline, which is 90 seconds plus 20 ms for each character, for
+about 90 and 290 seconds):
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_guest_path.py

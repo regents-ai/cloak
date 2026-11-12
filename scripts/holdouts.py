@@ -22,9 +22,10 @@ import json
 import time
 from pathlib import Path
 
+from measures import MAX_INPUT_CHARACTERS  # the daemon's limit on one user turn
+
 ROOT = Path(__file__).resolve().parent.parent
 PINS = ROOT / "reference/holdouts.json"
-MAX_TEXT = 128 << 10  # the daemon's limit on one user turn
 
 # Spec EVAL02's coverage list, one name each.
 EVAL02_CATEGORIES = (
@@ -113,8 +114,9 @@ def check_eval02(data: dict) -> list[str]:
         if not isinstance(text, str) or not text.strip():
             problems.append(f"{name}: no text")
             continue
-        if len(text.encode()) > MAX_TEXT:
-            problems.append(f"{name}: over the daemon's 128 KiB limit, which it refuses before any call")
+        if len(text) > MAX_INPUT_CHARACTERS:
+            problems.append(f"{name}: over the daemon's {MAX_INPUT_CHARACTERS:,}-character limit, "
+                            "which it refuses before any call")
         if not item.get("language"):
             problems.append(f"{name}: no language")
         unknown = set(item.get("categories") or []) - set(EVAL02_CATEGORIES)
@@ -170,8 +172,8 @@ def check_eval03(data: dict) -> list[str]:
         text = o.get("text")
         if not isinstance(text, str) or not text.strip():
             problems.append(f"{name}: no text")
-        elif len(text.encode()) > MAX_TEXT:
-            problems.append(f"{name}: over the daemon's 128 KiB limit")
+        elif len(text) > MAX_INPUT_CHARACTERS:
+            problems.append(f"{name}: over the daemon's {MAX_INPUT_CHARACTERS:,}-character limit")
         for span in o.get("identifying_spans") or []:
             if not isinstance(text, str) or span.casefold() not in text.casefold():
                 problems.append(f"{name}: identifying span {span!r} is not in the text")
