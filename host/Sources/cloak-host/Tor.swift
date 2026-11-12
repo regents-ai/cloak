@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// tor, the Tor Project's own program (Decision 5 in docs/plan.md), as this
 /// host's child: the guest's one way out, through `TorRelay`. Its settings
@@ -11,29 +12,36 @@ import Foundation
 /// guard it chose) lives in a private folder of its own and goes with it, so
 /// nothing passes from one guest to the next. Its log lines go to this
 /// process's standard error. It is never restarted: once it has stopped,
-/// every Tor connection from the guest fails.
+/// nothing more is connected to its port, which another program may then
+/// take, so every Tor connection from the guest fails.
 final class Tor: Sendable {
-    /// How long, from its start, tor has to bootstrap. tor itself never gives
-    /// up. 90 s is the default of the Tor Project's own controller library,
-    /// stem, whose `launch_tor` waits for the same line in tor's output; it
-    /// says a tor with no saved state, as this one always is, usually
-    /// bootstraps "in 50 seconds or so". Here it took 7 to 9 s.
+    /// How long, from its start, tor has to open its SOCKS port and
+    /// bootstrap. tor itself never gives up. 90 s is the default of the Tor
+    /// Project's own controller library, stem, whose `launch_tor` waits for
+    /// the same line in tor's output; it says a tor with no saved state, as
+    /// this one always is, usually bootstraps "in 50 seconds or so". Here it
+    /// took 7 to 9 s.
     static let bootstrapLimit = 90
     /// tor's own line once it can build circuits; before it, tor refuses
     /// every request.
     static let bootstrapped = "[notice] Bootstrapped 100% (done)"
 
     /// tor's SOCKS port on 127.0.0.1.
-    let port: UInt16
+    private let port: UInt16
     private let folder: URL
     private let process: Process
+    /// The guest sockets of the Tor relay's connections to tor's SOCKS port;
+    /// nil once tor has stopped.
+    private let relayed: OSAllocatedUnfairLock<Set<Int32>?>
 
     /// Starts tor and returns once it has bootstrapped, so that no task
     /// starts before tor can carry it, or once it is unavailable: exited, or
     /// stopped here at `bootstrapLimit`. Either way every Tor connection from
-    /// the guest then fails, as after any later exit. This host is its
-    /// owning process: a host that dies without stopping it ends it within
-    /// about 15 seconds, leaving its folder behind.
+    /// the guest then fails, as after any later exit. Throws, with tor
+    /// stopped and its folder removed, when its SOCKS port never opened:
+    /// tor exited first, or was stopped at `bootstrapLimit`. This host is
+    /// its owning process: a host that dies without stopping it ends it
+    /// within about 15 seconds, leaving its folder behind.
     init(executable: URL) throws {
         folder = FileManager.default.temporaryDirectory.appending(path: "cloak-tor-\(String(decoding: hex(randomBytes(8)), as: UTF8.self))")
         // Never written: tor reads no configuration file.
@@ -50,7 +58,21 @@ final class Tor: Sendable {
         let output = Pipe()
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
-        process.terminationHandler = { log("tor exited with status \($0.terminationStatus)") }
+        // Once tor has stopped, its port may be another program's: nothing
+        // more is connected to it, and the relayed connections still open
+        // are shut.
+        let relayed = OSAllocatedUnfairLock<Set<Int32>?>(initialState: [])
+        let stopped: @Sendable () -> Void = {
+            relayed.withLock { guests in
+                for guest in guests ?? [] { shutdown(guest, SHUT_RDWR) }
+                guests = nil
+            }
+        }
+        self.relayed = relayed
+        process.terminationHandler = {
+            log("tor exited with status \($0.terminationStatus)")
+            stopped()
+        }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         do {
             try process.run()
@@ -58,25 +80,70 @@ final class Tor: Sendable {
             try? FileManager.default.removeItem(at: folder)
             throw error
         }
+        // One limit for the whole start, the SOCKS port and the bootstrap,
+        // and one wait: tor's output is read on its own thread throughout.
         let limit = DispatchTime.now() + .seconds(Self.bootstrapLimit)
-        var lines = Lines(output: output.fileHandleForReading)
-        guard let port = lines.untilListening() else {
-            process.waitUntilExit()
-            try? FileManager.default.removeItem(at: folder)
-            throw TorError(description: "it exited before its SOCKS port opened")
-        }
-        self.port = port
-        let done = DispatchSemaphore(value: 0)
-        Thread { [lines] in
-            var rest = lines
-            rest.untilBootstrapped()
-            done.signal()
-            rest.forward()
+        let listening = OSAllocatedUnfairLock<UInt16?>(initialState: nil)
+        let started = DispatchSemaphore(value: 0)
+        Thread { [lines = Lines(output: output.fileHandleForReading)] in
+            var lines = lines
+            let port = lines.untilListening()
+            listening.withLock { $0 = port }
+            lines.untilBootstrapped()
+            started.signal()
+            lines.forward()
         }.start()
-        if done.wait(timeout: limit) == .timedOut {
-            log("tor did not bootstrap within \(Self.bootstrapLimit) seconds; stopped it, so every Tor connection fails")
+        let timedOut = started.wait(timeout: limit) == .timedOut
+        if timedOut {
+            stopped()
             process.terminate()
         }
+        guard let port = listening.withLock({ $0 }) else {
+            process.waitUntilExit()
+            try? FileManager.default.removeItem(at: folder)
+            throw TorError(description: timedOut
+                ? "its SOCKS port did not open within \(Self.bootstrapLimit) seconds; stopped it"
+                : "it exited before its SOCKS port opened")
+        }
+        self.port = port
+        if timedOut {
+            log("tor did not bootstrap within \(Self.bootstrapLimit) seconds; stopped it, so every Tor connection fails")
+        }
+    }
+
+    /// Connects the Tor relay's connection from `guest` to tor's SOCKS port:
+    /// the socket, or nil once tor has stopped, whose port may then be
+    /// another program's, or when tor cannot be reached. Until
+    /// `disconnect(guest)`, tor stopping shuts `guest` down.
+    func connect(_ guest: Int32) -> Int32? {
+        relayed.withLock { guests in
+            guard guests != nil else {
+                log("cannot reach tor (it has stopped); closed a Tor port connection without an answer")
+                return nil
+            }
+            let socks = socket(AF_INET, SOCK_STREAM, 0)
+            guard socks >= 0 else { return nil }
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = port.bigEndian
+            address.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
+            let connected = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(socks, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+            }
+            guard connected == 0 else {
+                log("cannot reach tor (\(String(cString: strerror(errno)))); closed a Tor port connection without an answer")
+                close(socks)
+                return nil
+            }
+            guests?.insert(guest)
+            return socks
+        }
+    }
+
+    /// Ends what `connect` began for `guest`; called before `guest` closes.
+    func disconnect(_ guest: Int32) {
+        relayed.withLock { _ = $0?.remove(guest) }
     }
 
     /// Stops tor and removes its folder, with its state.

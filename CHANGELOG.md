@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Stage 2: the host's 90-second limit for tor now covers its whole start,
+  counted from tor's start: the SOCKS port line as well as the bootstrap
+  line, read on one thread with one wait. Before, the wait for the port had
+  no limit, and a tor that hung before opening it hung the host; now that
+  tor is stopped and the host fails before the guest starts, as when tor
+  exits before its port opens. And once tor has stopped (it exited, or the
+  host stopped it at the limit), the host's Tor relay connects nothing to
+  its port, which another program on the Mac may then take: each guest
+  connection is closed without a byte, and the relay's open connections to
+  tor are shut. Before, the relay still connected guest Tor traffic to the
+  freed port. The guest sees no change: the task stops at its Tor route
+  ("no direct fallback was used"). Two new checks in
+  `tests/test_tor_path.py`: a stand-in tor that never opens its port, and a
+  listener that takes a stopped stand-in's port and receives nothing.
+
 - Stage 2: the host starts the guest only once tor says it has bootstrapped
   ("Bootstrapped 100% (done)" in tor's own log), so a task at the start of a
   boot passes its Tor route; before, it stopped there, as tor refuses every

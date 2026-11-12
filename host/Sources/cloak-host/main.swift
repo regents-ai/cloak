@@ -5,12 +5,13 @@ import Virtualization
 //            --worker <cloak-rewriter> --name <model> --dir <model directory>
 //            --tor <tor>
 //
-// Starts the native worker and tor, waits for tor to bootstrap (at most 90
-// seconds), boots the guest with a fresh channel token and rewriter key,
-// relays the guest's rewrite requests to the worker one at a time and its Tor
-// port to tor, starts a new worker after a lost one, and exits when the guest
-// powers off, after stopping both. The guest's console is this process's
-// standard output.
+// Starts the native worker and tor, waits for tor to open its SOCKS port and
+// bootstrap (at most 90 seconds from its start; this process fails if the
+// port has not opened by then), boots the guest with a fresh channel token
+// and rewriter key, relays the guest's rewrite requests to the worker one at
+// a time and its Tor port to tor, starts a new worker after a lost one, and
+// exits when the guest powers off, after stopping both. The guest's console
+// is this process's standard output.
 
 let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter> --name <model> --dir <model directory> --tor <tor>"
 let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir", "--tor"]
@@ -73,8 +74,8 @@ do { try configuration.validate() } catch { fail("invalid guest: \(error)") }
 
 // tor, the guest's one way out (Tor.swift). Started, and waited for until it
 // has bootstrapped or is unavailable, before the boot files exist, so no task
-// starts before tor can carry it; every way this process ends from here stops
-// it.
+// starts before tor can carry it; a tor whose SOCKS port never opened ends
+// this process here. Every way this process ends from here stops it.
 let tor: Tor
 do { tor = try Tor(executable: path("--tor")) } catch { fail("cannot start Tor: \(error)") }
 
@@ -111,7 +112,7 @@ final class Supervisor: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
 
     init(relay: Relay, tor: Tor) {
         self.relay = relay
-        self.torRelay = TorRelay(socks: tor.port)
+        self.torRelay = TorRelay(tor: tor)
         self.tor = tor
     }
 

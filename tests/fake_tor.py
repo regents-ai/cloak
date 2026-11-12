@@ -24,14 +24,20 @@ Done") as FAKE_TOR_START says:
 - never: never.
 - exits: it exits right after its first bootstrap line, as a tor that stops
   while starting.
+- hangs: it never opens its port or says anything, as a tor that hangs
+  while starting, and does not watch its owner either: only a signal ends
+  it. It writes its pid to FAKE_TOR_LOG/tor.pid, so a check can see whether
+  it is still running.
 
-Like tor, it exits on SIGTERM and once its owner has gone.
+Like tor, it exits on SIGTERM, and, unless it hangs, once its owner has
+gone.
 """
 
 import hashlib
 import json
 import os
 import select
+import signal
 import socket
 import sys
 import threading
@@ -124,6 +130,10 @@ def bootstrap(after_s: float) -> None:
 
 
 def main() -> None:
+    if START == "hangs":
+        (LOG.parent / "tor.pid").write_text(str(os.getpid()))
+        # SIGTERM, unhandled, ends it.
+        signal.pause()
     owner = int(argument("--__OwningControllerProcess"))
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind(("127.0.0.1", 0))

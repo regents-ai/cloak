@@ -21,15 +21,21 @@ stand-in tor (fake_tor.py), or tor whose only way onto the network is a
 closed port on the Mac's loopback.
 
 The host starts the guest only once tor has bootstrapped, or after it has
-exited or been stopped at the host's 90-second limit. Each check boots the
-guest once; the guest prints one result per case.
+exited or been stopped at the host's 90-second limit; a tor whose SOCKS port
+has not opened by then fails the host, and no guest starts. Each other check
+boots the guest once; the guest prints one result per case.
 """
 
 import json
 import os
+import re
+import signal
+import socket
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -91,22 +97,40 @@ def routes(tmp_path: Path) -> list[dict]:
     return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
-def boot(tmp_path: Path, cases: list[dict], tor_launcher: Path) -> tuple[dict[str, dict], str]:
-    """Runs the cases in one guest boot; returns each case's result and the
-    host's log."""
+def host(tmp_path: Path, cases: list[dict], tor_launcher: Path) -> dict:
+    """The host's command line and environment, to run the cases in one
+    guest boot."""
     cases_file = tmp_path / "cases.jsonl"
     cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
-    host = subprocess.Popen(
-        [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
-         "--cases", cases_file, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
-         "--tor", tor_launcher],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        env=os.environ | {"FAKE_WORKER_LOG": str(tmp_path)})
+    return {"args": [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
+                     "--cases", cases_file, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
+                     "--tor", tor_launcher],
+            "env": os.environ | {"FAKE_WORKER_LOG": str(tmp_path)}}
+
+
+def boot(tmp_path: Path, cases: list[dict], tor_launcher: Path,
+         on_log: Callable[[str], None] = lambda line: None) -> tuple[dict[str, dict], str]:
+    """Runs the cases in one guest boot; returns each case's result and the
+    host's log, each line of which also goes to on_log as it comes."""
+    console = tmp_path / "console"
+    with console.open("w") as stdout:
+        running = subprocess.Popen(**host(tmp_path, cases, tor_launcher), stdout=stdout, stderr=subprocess.PIPE, text=True)
+    lines = []
+
+    def read() -> None:
+        for line in running.stderr:
+            lines.append(line)
+            on_log(line)
+
+    reader = threading.Thread(target=read)
+    reader.start()
     try:
-        out, err = host.communicate(timeout=900)
+        running.wait(timeout=900)
     finally:
-        host.kill()
-    assert host.returncode == 0, err
+        running.kill()
+        reader.join()
+    out, err = console.read_text(), "".join(lines)
+    assert running.returncode == 0, err
     assert "cloak-guest: agent check exited 0" in out, out + err
     results = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
     assert [r["name"] for r in results] == [c["name"] for c in cases]
@@ -213,6 +237,68 @@ def test_a_tor_that_never_bootstraps_is_stopped_at_the_limit_and_the_task_stops(
     assert "tcp: blocked" in results["static probe"]["output"] and "udp dns: blocked" in results["static probe"]["output"]
     # Stopped before the guest started, the stand-in saw nothing.
     assert routes(tmp_path) == []
+
+
+def running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_a_tor_that_never_opens_its_port_is_stopped_at_the_limit_and_the_host_fails(tmp_path):
+    pid = tmp_path / "tor.pid"
+    started = time.monotonic()
+    try:
+        ended = subprocess.run(**host(tmp_path, [agent("pi", PROMPT)], fake_tor(tmp_path, "hangs")),
+                               capture_output=True, text=True, timeout=300)
+        # One limit, 90 s from tor's start, for its port and its bootstrap together.
+        assert 90 <= time.monotonic() - started < 120
+        assert ended.returncode == 2
+        assert "cannot start Tor: its SOCKS port did not open within 90 seconds; stopped it" in ended.stderr
+        # The guest never started, and the host stopped the stand-in before it exited.
+        assert "cloak-guest" not in ended.stdout
+        assert not running(int(pid.read_text()))
+    finally:
+        if pid.exists() and running(int(pid.read_text())):
+            os.kill(int(pid.read_text()), signal.SIGKILL)
+
+
+PORT_OPEN = re.compile(r"Opened Socks listener connection \(ready\) on 127\.0\.0\.1:(\d+)")
+
+
+def test_a_program_that_takes_the_port_of_a_tor_that_exited_receives_nothing(tmp_path):
+    # Once the stand-in has exited, a listener here takes its freed port, as
+    # any program on the Mac could, before the guest's first Tor connection
+    # (the guest's first case waits 5 s for that).
+    taken = socket.socket()
+    port = []
+
+    def on_log(line: str) -> None:
+        if found := PORT_OPEN.search(line):
+            port.append(int(found[1]))
+        elif "tor exited" in line:
+            taken.bind(("127.0.0.1", port[0]))
+            taken.listen()
+
+    try:
+        results, err = boot(tmp_path, [sandbox("pause", "sleep 5"), agent("pi", PROMPT)],
+                            fake_tor(tmp_path, "exits"), on_log)
+        assert taken.getsockname() == ("127.0.0.1", port[0])
+        taken.setblocking(False)
+        try:
+            connection, _ = taken.accept()
+        except BlockingIOError:
+            connection = None
+        assert connection is None, f"the listener received a connection and {connection.recv(1024)!r}"
+        # The task stops at its Tor route as before; its connection reached
+        # the host's relay, which closed it without connecting anywhere.
+        assert results["pi"]["output"].strip() == TOR_STOP
+        assert "cannot reach tor" in err
+        assert routes(tmp_path) == []
+    finally:
+        taken.close()
 
 
 def test_a_tor_that_cannot_reach_the_network_stops_the_task(tmp_path):

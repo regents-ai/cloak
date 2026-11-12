@@ -284,6 +284,28 @@ How B works:
   gone, so every Tor connection fails and each task stops at its Tor
   route, while rewrites, which need no Tor, still run. Nothing is retried,
   tor is not restarted, and nothing is routed another way.
+- **One limit for the whole start** (12 November, after the bootstrap
+  wait): the wait for tor's SOCKS port line had no limit, so a tor that
+  hung before opening its port hung the host. The same 90 seconds from
+  tor's start now covers the port line and the bootstrap line together:
+  one thread reads tor's log from its start, and the host waits on it once.
+  A tor whose port has not opened by then is stopped, and the host fails
+  before the boot files are written ("cannot start Tor: its SOCKS port did
+  not open within 90 seconds; stopped it"), as it fails when tor exits
+  before its port opens.
+- **Nothing reaches tor's port once tor has stopped** (12 November, the
+  same day): tor's SOCKS port is a free port on the Mac's loopback, so once
+  tor has exited another program on the Mac may take it, and the relay
+  still connected guest Tor traffic to it. The host now counts tor as
+  stopped from tor's own exit (the process's termination notice) or from
+  stopping it at the limit, and from then on the relay connects nothing to
+  that port: each guest connection is closed without a byte, as when tor
+  cannot be reached, and the relay's connections to tor still open then
+  are shut. The relay checks and connects under one lock, so no connection
+  starts after that moment. The guest sees what it saw before: the daemon's
+  route check stops the task ("no direct fallback was used"). Left open:
+  the moment between tor's exit and the system's notice of it, in which a
+  program that took the port at once could still receive a connection.
 - **Built first on a socket file, and moved**: the design put tor's SOCKS
   port on a socket file in its private folder, to open no listener at all.
   There tor answers each SOCKS request in its 22-byte form, where on a TCP
@@ -311,10 +333,10 @@ How B works:
   passes from one guest to the next.
 - **Fails closed**: with tor gone (exited, or stopped at the bootstrap
   limit) or unable to build a circuit, the daemon's own route check stops
-  the task ("no direct fallback was used"), and nothing else in the guest
-  has a way out.
+  the task ("no direct fallback was used"), nothing reaches tor's freed
+  port, and nothing else in the guest has a way out.
 
-Six checks in `tests/test_tor_path.py` pass, with the stand-in model's
+Eight checks in `tests/test_tor_path.py` pass, with the stand-in model's
 fake worker; development evidence only, so A06 stays open:
 
 - **Through Tor, and nothing else** (the only check that reaches the Tor
@@ -357,6 +379,17 @@ fake worker; development evidence only, so A06 stays open:
   whose only way onto the network is a closed port on the Mac's loopback,
   never bootstraps and is stopped at the limit; the Pi task stops with the
   same message and the Node request is refused.
+- **A tor that never opens its port is stopped at the limit**: a stand-in
+  that hangs before opening its port, and ends only on a signal; the host
+  stops it between 90 and 120 seconds after it started, fails with exit
+  status 2 and starts no guest, and the stand-in is not running afterwards.
+  Before, the host was still waiting when the check gave up at 300 s.
+- **Nothing reaches a tor's freed port**: once the stand-in has exited, the
+  check takes its port with a listener of its own, as any program on the
+  Mac could; the guest's Pi task then stops at its Tor route with the same
+  message, its connection reached the host's relay, and the listener
+  received no connection. Before, the relay connected to the listener and
+  sent it the SOCKS5 greeting.
 
 Open for Sean: tor on the Mac instead of in the guest; tor's SOCKS port on
 the Mac's loopback, reachable by every program on the Mac; a fresh guard
