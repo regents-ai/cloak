@@ -15,3 +15,4 @@ worker/.xcode/
 # Guest and host build output
 guest/build/
 host/.build/
+__pycache__/
