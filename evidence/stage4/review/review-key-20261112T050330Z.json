@@ -1,0 +1,81 @@
+{
+ "dataset": "EVAL02",
+ "key": {
+  "d5a49eaa56a5": {
+   "arm": "originals",
+   "item": "dev-quantity"
+  },
+  "3075edc49963": {
+   "arm": "standin",
+   "item": "dev-condition"
+  },
+  "273022772df2": {
+   "arm": "originals",
+   "item": "dev-url-path"
+  },
+  "5e63b7aa0e84": {
+   "arm": "originals",
+   "item": "dev-quotation"
+  },
+  "bd86be52be41": {
+   "arm": "originals",
+   "item": "dev-inequality"
+  },
+  "bf2af1b72247": {
+   "arm": "standin",
+   "item": "dev-inequality"
+  },
+  "a489e1d0a0d1": {
+   "arm": "originals",
+   "item": "dev-exact-output"
+  },
+  "8f5d1c860dc3": {
+   "arm": "standin",
+   "item": "dev-uncertainty"
+  },
+  "b6024f06013f": {
+   "arm": "originals",
+   "item": "dev-negation"
+  },
+  "7cf62fb56a97": {
+   "arm": "originals",
+   "item": "dev-code"
+  },
+  "1a82d4ef2fc3": {
+   "arm": "originals",
+   "item": "dev-missing-context"
+  },
+  "b538dd033218": {
+   "arm": "standin",
+   "item": "dev-negation"
+  },
+  "71993acc9566": {
+   "arm": "originals",
+   "item": "dev-german"
+  },
+  "e56497cbec6f": {
+   "arm": "originals",
+   "item": "dev-uncertainty"
+  },
+  "8d9094899fea": {
+   "arm": "standin",
+   "item": "dev-url-path"
+  },
+  "9cd3c49fcbfc": {
+   "arm": "originals",
+   "item": "dev-spanish"
+  },
+  "a5aa63fca80a": {
+   "arm": "originals",
+   "item": "dev-long"
+  },
+  "a3c472e72784": {
+   "arm": "originals",
+   "item": "dev-condition"
+  },
+  "3bd0b4d2e707": {
+   "arm": "standin",
+   "item": "dev-missing-context"
+  }
+ }
+}

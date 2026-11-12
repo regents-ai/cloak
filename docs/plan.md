@@ -13,7 +13,7 @@ not a pass. Progress lives here.
 | 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
 | 2. Build the local path | Minimal guest adapter and native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
 | 3. Check feasibility early | Lead and challenger runs on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready, waiting for the weights |
-| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Not started |
+| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet |
 | 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | Not started |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
@@ -178,6 +178,154 @@ other five rewrites dropped something they had to keep: a number
 (redundancy2). Median 0.21 s, slowest rewrite 0.54 s; the worker peaked at
 2.04 GiB. An earlier run of the same kit logic gave the same results.
 
+## Stage 4 so far
+
+- The qualification kit is built: `uv run scripts/stage4.py`, with its
+  measures in `scripts/holdouts.py`, `scripts/fidelity.py`,
+  `scripts/privacy.py` and `scripts/parity.py` (commit `7deb2c6`). It runs a
+  set's texts through the stage 3 path and keeps the same record of every
+  call. No candidate has been judged and no gate has moved.
+- Holdouts. Each is one JSON file a person writes, kept outside this
+  repository. `check` tests it; `pin` records its sha256 in
+  [holdouts.json](../reference/holdouts.json) once, before any model runs on
+  it, and never replaces a pin. The kit refuses an unpinned or changed
+  holdout, one inside the repository, a stand-in on a holdout, and any arm
+  but the reference's own record as the reference. Records holding holdout
+  text stay beside the holdout; only pins and content-free scores are kept
+  here.
+- EVAL02, fidelity. Per item: its text, language, the categories it covers
+  (the spec's fourteen), the required meaning as relations and every
+  protected span. A holdout must cover every category and at least three
+  languages. Each output is stopped, critical (a protected span not kept as
+  written, or a relation lost or reversed), minor or pass. Every output that
+  keeps its spans goes to a blinded review: `review` writes a packet with
+  each output under a random id, one at a time and without its arm, and a
+  separate key. `fidelity` tabulates the pairs and the full cross-table,
+  bounds candidate harm minus reference harm with Tango's score interval at
+  97.5 % one-sided, and lists every candidate critical error, which blocks
+  the candidate whatever the bound. An unreviewed output leaves the
+  comparison unresolved.
+- EVAL03, privacy. Per original: writer, session, topic, partition (train,
+  tune or evaluation, by writer and session) and identifying spans.
+  `privacy` runs attack 1 (character 3- to 5-grams, a linear classifier for
+  attribution, cosine similarity for linkage) on the originals and on each
+  arm, at 1 % false positives on different-author pairs, and bounds the
+  per-writer difference with the exact sign-flip test at 97.5 % one-sided.
+  It lists identifying spans the candidate kept where the reference did
+  not, for a person to judge.
+- `repeat` runs a development set several times and reports any output that
+  differs; `sample-size` gives the EVAL02 holdout size at which a candidate
+  with the development rates passes with probability at least 80 %, by
+  exact sum over the paired outcomes.
+- 35 checks in `tests/test_stage4.py` pass, including: Tango's bound is
+  where the score statistic reaches the critical value and is
+  z²/(n + z²) with no paired failure; a candidate as good as the reference
+  never passes; the sign-flip bound equals the brute-force subset mean; the
+  exact power equals a direct sum; pins, refusals and the blinded review
+  behave as above.
+
+### Stand-in proof (development only)
+
+These runs prove the kit end to end on the development stand-in against
+two development sets: [stage4-dev-fidelity.json](../reference/stage4-dev-fidelity.json)
+(13 items written for the kit) and
+[stage4-dev-privacy.json](../reference/stage4-dev-privacy.json) (60 synthetic
+texts from six invented writers, made from templates). The comparator arm is
+the unchanged originals, which a holdout never allows. None of these
+figures is evaluated or counts toward any gate. All were run at kit commit
+`7deb2c6`; the records' "uncommitted changes" flag is set only by Python's
+bytecode folder and the proof's own new files, and every kit file hash in
+them matches that commit.
+
+- EVAL02, [eval02-20261112T050022Z.json](../evidence/stage4/standin/eval02-20261112T050022Z.json):
+  9 of 13 rewritten, 4 stopped malformed (the exact-output, German, Spanish
+  and long items); the worker peaked at 2.59 GiB.
+- Review: [packet](../evidence/stage4/review/review-packet-20261112T050330Z.json),
+  [key](../evidence/stage4/review/review-key-20261112T050330Z.json) and
+  [answers](../evidence/stage4/review/review-answers-20261112T050330Z.json),
+  19 outputs. The answers were filled by the kit's author, who wrote the
+  items and could tell the originals apart: not a blinded review.
+- Fidelity score, [fidelity-20261112T050330Z.json](../evidence/stage4/standin/fidelity-20261112T050330Z.json):
+  stand-in 5 pass, 4 critical, 4 stopped. The critical errors: "12.5 kg" and
+  "40 kg" written out as kilograms, a code span's backticks dropped, a
+  quotation's marks dropped, and earlier context invented. Pairs: 8
+  candidate-only failures, none reference-only; upper bound 0.823.
+- Privacy, [eval03-20261112T050322Z.json](../evidence/stage4/standin/eval03-20261112T050322Z.json):
+  25 of 36 rewritten, 9 malformed, 2 truncated. Score,
+  [privacy-20261112T050331Z.json](../evidence/stage4/standin/privacy-20261112T050331Z.json):
+  on the originals attack 1 attributed 24 of 24 and linked 18 of 24 pairs;
+  on the stand-in 11 of 24 and 11 of 24, with 7 evaluation rewrites stopped
+  and counted as successes. Synthetic text cannot satisfy EVAL03.
+- Repeats, [repeat-20261112T050424Z.json](../evidence/stage4/standin/repeat-20261112T050424Z.json):
+  three boots, no item's result differed.
+- Sample size from the fidelity score: none, because the stand-in fails more
+  than its comparator, as the protocol says.
+
+### How the kit reads the protocol
+
+The frozen protocol leaves these open; the kit fixes them in code before any
+holdout exists, and each is decision 3 below:
+
+1. A stopped item counts as harm in both comparisons: a fidelity failure
+   and an attack success. This keeps it in every denominator and stops a
+   model looking better by stopping (spec DATA09).
+2. Attack 1 learns from the training partition's originals for every arm;
+   its one tuned setting is the classifier's regularisation, chosen from a
+   budget of four by accuracy on the tuning originals. Each arm's threshold
+   is set on its own rewrites of the tuning partition, so each is judged at
+   its own 1 %. An attribution succeeds when the true writer scores highest
+   and above the threshold.
+3. "Several languages" is at least three; every output that keeps its spans
+   is reviewed, not only ambiguous ones; any candidate critical error blocks
+   the candidate (spec EVAL02, A04), with a note whether the reference also
+   failed.
+
+### Found in the protocol
+
+The protocol says both intervals give a positive bound when no paired
+errors are seen. That holds for Tango's interval. It does not hold for the
+sign-flip bound as written: writers with no difference make the bound
+exactly zero, which the parity rule would pass. The kit reports such a
+bound as unresolved, not a pass, until Sean rules (decision 4).
+
+### Not built, and why
+
+- Attack 2, the learned authorship embedding. It needs a text encoder: one
+  fetched from a model hub, or one trained from nothing with a large
+  library added; neither was done. Without it the privacy gate cannot pass,
+  and the score says so.
+- A way to run the reference arm. The reference's inference server,
+  quantization and thinking setting are unknown (A01), and it runs only on
+  high-memory hardware. The scoring takes its record in the same format as
+  a candidate's.
+- The EVAL03 sample size. The protocol fixes the EVAL02 size from
+  development rates; for EVAL03 it names no rule. At 97.5 % one-sided the
+  sign-flip bound exists only from six evaluation writers.
+- The 50 development items for the repeated runs. The two development sets
+  here are for the proof; the protocol's set needs the reference too.
+
+### Needs a person
+
+1. The EVAL02 holdout: new texts annotated before any model runs on them,
+   covering all fourteen categories and three or more languages, long inputs
+   up to 128 KiB, kept outside this repository and pinned with `pin`. Its
+   size comes from `sample-size` once the development rates exist.
+2. The EVAL03 holdout: permitted authored text from several writers, topics
+   and sessions, with partitions assigned by writer and session and the
+   identifying spans marked, before any rewrite; at least six evaluation
+   writers; and the permission that names where it may be processed.
+3. Blinded reviewers for the fidelity packet, kept from the key.
+4. The reference arm's records on both holdouts, at the reference's actual
+   settings, on hardware approved for each set (rented hardware sees
+   synthetic data only).
+5. Development runs of every arm on the same development items, to fix the
+   EVAL02 size and the repeat count before the holdouts open.
+6. A statistician's confirmation of the readings above and of decision 4.
+7. A person's judgment of each identifying span the candidate kept where
+   the reference removed it.
+8. The usability gate (A18): five first-time users through the full
+   journey and an interruption exercise.
+
 ## Decisions
 
 1. Candidate tokenizer and template files. Decided 30 October (Sean, 1a):
@@ -189,6 +337,12 @@ other five rewrites dropped something they had to keep: a number
    32 GB machine is tested. This departs from HW01 by Sean's ruling. Under
    HW03 the most this work can reach is a clearly limited 48 GB pilot; 32 GB
    support stays unmet and unavailable, and nothing may claim it.
+3. The stage 4 kit's readings of the protocol (stage 4, "How the kit reads
+   the protocol"). Open: proposed 12 November by the kit's author; each must
+   be confirmed or changed before a holdout opens.
+4. A sign-flip bound of exactly zero from writers with no difference. Open:
+   the kit reports it as unresolved, not a pass, matching the protocol's
+   statement that data with no paired errors never passes.
 
 ## Gates
 
@@ -197,7 +351,7 @@ other five rewrites dropped something they had to keep: a number
 | A01 | Reference integrity | Open: sources, wrapper (reconstructed), contract and model files pinned; reference inference settings and payment deployment unknown | [baseline](../reference/baseline.md), [contract](../reference/rewriter-contract.md), [models](../reference/models.md) |
 | A02 | Clean Mac installation | Open | |
 | A03 | GUI and CLI equivalence | Open | |
-| A04 | Fidelity | Open | |
+| A04 | Fidelity | Open: scoring kit built and proven on development data only; no holdout | `scripts/stage4.py`, `scripts/fidelity.py` |
 | A05 | Whole-agent containment | Open | |
 | A06 | Complete routing | Open: the reference wrapper fails it (static program bypass) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction) |
 | A07 | Conversation isolation | Open | |
@@ -215,7 +369,7 @@ other five rewrites dropped something they had to keep: a number
 | A19 | Claims | Open | |
 | A20 | Unchanged rewrite API | Open: contract captured; the daemon's own rewrite code runs unchanged in the guest and refuses nine kinds of bad reply (stand-in model only) | [contract](../reference/rewriter-contract.md), `tests/test_guest_path.py` |
 | A21 | Host–guest worker boundary | Open: one token-checked virtio socket, guest has no network device, host relays only rewrite frames, worker sandboxed with no network (development signing; stand-in model) | `host/`, `guest/`, `worker/cloak-rewriter.entitlements`, `tests/test_guest_path.py`, `tests/test_worker.py` |
-| A22 | Authorship and linkability | Open | |
+| A22 | Authorship and linkability | Open: attack 1 and the sign-flip bound built and proven on synthetic development data only; attack 2 not built; no holdout | `scripts/stage4.py`, `scripts/privacy.py` |
 | A23 | Long and cold tasks | Open | |
 | A24 | Artifact provenance | Open: files pinned; two conversion mismatches found | [models](../reference/models.md) |
 | A25 | Single implementation | Open | |

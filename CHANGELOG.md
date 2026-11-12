@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Stage 4: the stand-in proof of the qualification kit (development only,
+  counted toward no gate) is in evidence/stage4/, and docs/plan.md records
+  what was built, how the kit reads the protocol, a conflict found in the
+  protocol's sign-flip claim, and what only a person can supply.
 - Stage 4: the qualification kit. `scripts/stage4.py` pins and checks the
   fidelity (EVAL02) and privacy (EVAL03) holdouts, rewrites a set through the
   stage 3 path, makes the blinded fidelity review, and scores a candidate

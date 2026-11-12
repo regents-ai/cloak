@@ -1,0 +1,265 @@
+{
+ "score": "stage 4 EVAL03 privacy",
+ "development_only": true,
+ "label": "Development only, not evaluated: a development set or a development stand-in. Proves the kit end to end; never counted toward a gate in docs/plan.md.",
+ "input": {
+  "sha256": "266e940cf2c03651291ee3a1125dface3cf3c6766d4bd4fef35b89504f4a0556",
+  "kind": "development",
+  "label": "Development only, not evaluated: synthetic, not authored material. Six invented writers made from templates by the stage 4 kit's author to prove the kit end to end. Synthetic text cannot satisfy EVAL03 (spec section 11); never a holdout."
+ },
+ "written_utc": "2026-11-12T05:03:31Z",
+ "kit": {
+  "commit": "7deb2c6deea44646b206d8bcc54be3e0da50bc99",
+  "files_sha256": {
+   "scripts/stage4.py": "23a57b11966d52496d4b848b6127074703650c50780386eaaa431e59483cd33b",
+   "scripts/holdouts.py": "a77e704112ede2ccdd6f2caefffb8fea353c42f32b0703685989f3cd9d7c6451",
+   "scripts/fidelity.py": "ae9fe28344b327eff66ec5e8d033f85fa6297f4d3f1fb84861005383ac3a90d1",
+   "scripts/privacy.py": "88b36996380366d750a19c0c8834b8fa16c8ee5d23b6aec1b0e9374fc1c30cef",
+   "scripts/parity.py": "4d245d640170012ea8609f12332e93bcadcde0dfb1add385f0c8ec8e03b55a19"
+  }
+ },
+ "arms": {
+  "originals": {
+   "stopped": {
+    "tuning": 0,
+    "evaluation": 0,
+    "evaluation_ids": []
+   },
+   "attribution": {
+    "threshold": 0.17012948493601193,
+    "per_writer": {
+     "w1": {
+      "successes": 4,
+      "items": 4
+     },
+     "w2": {
+      "successes": 4,
+      "items": 4
+     },
+     "w3": {
+      "successes": 4,
+      "items": 4
+     },
+     "w4": {
+      "successes": 4,
+      "items": 4
+     },
+     "w5": {
+      "successes": 4,
+      "items": 4
+     },
+     "w6": {
+      "successes": 4,
+      "items": 4
+     }
+    },
+    "top1_accuracy_unthresholded": 1.0
+   },
+   "linkage": {
+    "threshold": 0.5642376275595142,
+    "per_writer": {
+     "w1": {
+      "successes": 4,
+      "pairs": 4
+     },
+     "w2": {
+      "successes": 4,
+      "pairs": 4
+     },
+     "w3": {
+      "successes": 4,
+      "pairs": 4
+     },
+     "w4": {
+      "successes": 1,
+      "pairs": 4
+     },
+     "w5": {
+      "successes": 1,
+      "pairs": 4
+     },
+     "w6": {
+      "successes": 4,
+      "pairs": 4
+     }
+    },
+    "evaluation_false_positive_rate": 0.004166666666666667
+   }
+  },
+  "standin": {
+   "stopped": {
+    "tuning": 4,
+    "evaluation": 7,
+    "evaluation_ids": [
+     "w3-s4-1",
+     "w3-s5-1",
+     "w3-s5-2",
+     "w5-s4-1",
+     "w5-s4-2",
+     "w6-s4-2",
+     "w6-s5-1"
+    ]
+   },
+   "attribution": {
+    "threshold": 0.17368579647881288,
+    "per_writer": {
+     "w1": {
+      "successes": 0,
+      "items": 4
+     },
+     "w2": {
+      "successes": 1,
+      "items": 4
+     },
+     "w3": {
+      "successes": 3,
+      "items": 4
+     },
+     "w4": {
+      "successes": 3,
+      "items": 4
+     },
+     "w5": {
+      "successes": 2,
+      "items": 4
+     },
+     "w6": {
+      "successes": 2,
+      "items": 4
+     }
+    },
+    "top1_accuracy_unthresholded": 0.47058823529411764
+   },
+   "linkage": {
+    "threshold": 0.5853824434487501,
+    "per_writer": {
+     "w1": {
+      "successes": 0,
+      "pairs": 4
+     },
+     "w2": {
+      "successes": 0,
+      "pairs": 4
+     },
+     "w3": {
+      "successes": 4,
+      "pairs": 4
+     },
+     "w4": {
+      "successes": 0,
+      "pairs": 4
+     },
+     "w5": {
+      "successes": 4,
+      "pairs": 4
+     },
+     "w6": {
+      "successes": 3,
+      "pairs": 4
+     }
+    },
+    "evaluation_false_positive_rate": 0.008620689655172414
+   }
+  }
+ },
+ "partitions": {
+  "train": {
+   "originals": 24,
+   "writers": 6,
+   "sessions": 12,
+   "topics_with_one_writer": []
+  },
+  "tune": {
+   "originals": 12,
+   "writers": 6,
+   "sessions": 6,
+   "topics_with_one_writer": []
+  },
+  "evaluation": {
+   "originals": 24,
+   "writers": 6,
+   "sessions": 12,
+   "topics_with_one_writer": []
+  }
+ },
+ "attack": {
+  "name": "character n-grams with a linear classifier and cosine similarity",
+  "ngrams": [
+   3,
+   5
+  ],
+  "C_budget": [
+   0.1,
+   1.0,
+   10.0,
+   100.0
+  ],
+  "C_chosen": 0.1,
+  "tuning": [
+   {
+    "C": 0.1,
+    "tuning_accuracy": 1.0
+   },
+   {
+    "C": 1.0,
+    "tuning_accuracy": 1.0
+   },
+   {
+    "C": 10.0,
+    "tuning_accuracy": 1.0
+   },
+   {
+    "C": 100.0,
+    "tuning_accuracy": 1.0
+   }
+  ],
+  "false_positive_rate": 0.01
+ },
+ "comparisons": {
+  "attribution": {
+   "harm": "attribution success at 1 % false positives",
+   "method": "per-writer paired difference, exact sign-flip test inverted",
+   "one_sided_confidence": 0.975,
+   "writers": 6,
+   "mean_difference": -0.5416666666666666,
+   "per_writer_difference": {
+    "w1": -1.0,
+    "w2": -0.75,
+    "w3": -0.25,
+    "w4": -0.25,
+    "w5": -0.5,
+    "w6": -0.5
+   },
+   "upper_bound": -0.25,
+   "verdict": "pass"
+  },
+  "linkage": {
+   "harm": "linkage success at 1 % false positives",
+   "method": "per-writer paired difference, exact sign-flip test inverted",
+   "one_sided_confidence": 0.975,
+   "writers": 6,
+   "mean_difference": -0.2916666666666667,
+   "per_writer_difference": {
+    "w1": -1.0,
+    "w2": -1.0,
+    "w3": 0.0,
+    "w4": -0.25,
+    "w5": 0.75,
+    "w6": -0.25
+   },
+   "upper_bound": 0.75,
+   "verdict": "fail"
+  }
+ },
+ "identifying_content": {
+  "spans": 8,
+  "reference_kept": 8,
+  "candidate_kept": 8,
+  "candidate_only": [],
+  "note": "Each candidate-only span needs a person to judge whether it is a critical disclosure; a confirmed one blocks the candidate. Stopped rewrites are left out here."
+ },
+ "not_run": [
+  "Attack 2, the learned authorship embedding: not built (docs/plan.md, stage 4). The privacy gate needs both attacks, so no candidate can pass it on this record alone."
+ ],
+ "candidate_passes_privacy": false
+}

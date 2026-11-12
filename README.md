@@ -18,7 +18,9 @@ A01 to A26 is in [docs/plan.md](docs/plan.md).
 ## Status
 
 Stage 3 of 6: the feasibility kit is ready and waits for the candidates'
-weights, which Sean decides when to fetch. Stages 1 and 2 stay open in
+weights, which Sean decides when to fetch. The stage 4 qualification kit is
+built and proven on development data only; its holdouts need people to
+write them. Stages 1 and 2 stay open in
 [docs/plan.md](docs/plan.md). Nothing here is a release, and no protection is
 claimed as proven. A gate counts only when its evidence
 is recorded in [docs/plan.md](docs/plan.md).
