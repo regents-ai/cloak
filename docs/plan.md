@@ -279,6 +279,13 @@ call in that boot stops); what the limit for long inputs should be, since
 90 s cannot hold them at this speed; and whether a 0.17 s miss on the
 median stands on a quiet Mac.
 
+Since this run (commit `d71605e`), a cancel stops the worker while it reads
+the prompt, and a lost worker fails only its own call before a new one is
+started; both faults above came from the old code, so this run's
+cancellation and worker loss lines are not measures of the candidate, and
+nor are the 128 KiB prose and 16 KiB literal inputs, which reached the
+worker 4.3 s and 132 s late, behind timed-out calls it was still reading.
+
 The weights were deleted after the run, as Sean asked; a later run fetches
 and verifies them again.
 
@@ -335,6 +342,29 @@ came 3.85 s after the host started. The guest's virtual machine peaked at
 0.54 GiB, up from 0.16 GiB, because its root is now about 75 MB compressed
 and held in memory. The worker peaked at 3.46 GiB and the whole product at
 4.14 GiB. Installed on disk: 1.76 GiB.
+
+Feasibility after the cancellation and worker loss fixes,
+[feasibility-20261112T151550Z.json](../evidence/stage3/standin/feasibility-20261112T151550Z.json),
+kit commit `d71605e`, 12 November, on AC power with another lane testing.
+Development only, like the runs above. One case changed, all others ended
+as in the run above:
+
+- Worker killed 2.03 s into a call: that call still ended as "worker
+  lost" and was not sent again; the probe after it, which also ended as
+  "worker lost" before, was rewritten in 1.88 s by a new worker the host
+  started, of which 1.61 s was that worker's load. The first worker exited
+  by the kill, the new one cleanly at power-off; the host exited cleanly.
+- Cancellation as before: the worker answered 0.01 s after the cancel, and
+  the next call was rewritten in 0.21 s. The stand-in reads this case's
+  prompt in 1.2 s, so the cancel lands while it generates; a cancel while it
+  reads a long prompt is shown by `tests/test_worker.py` and
+  `tests/test_guest_path.py`, not by this run.
+- All 57 cases: 31 rewritten; 14 malformed, 8 truncated, 1 timed out,
+  1 cancelled, 1 worker lost, 1 over the input limit.
+- Cold load 1.40 s, and the first result came 2.49 s after the host
+  started. The worker peaked at 3.20 GiB and the whole product at 3.80 GiB.
+  The path added a median of 1 ms; the most, 1.64 s, was the probe's wait
+  for the new worker to load.
 
 EVAL01 development screen,
 [eval01-20261111T072816Z.json](../evidence/stage3/standin/eval01-20261111T072816Z.json),

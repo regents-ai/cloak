@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Stage 3: a stand-in feasibility run after the cancellation and worker loss
+  fixes (development only, counted toward no gate) is in
+  evidence/stage3/standin/; the probe after the killed worker is now
+  rewritten by a new worker, and docs/plan.md records its figures.
 - Stage 2: a cancel now stops the worker while it reads a long prompt; before,
   it waited for the whole prompt (217 s for 128 KiB on the lead), and the
   rewrites queued behind it ran out of time. A lost worker now fails only the
