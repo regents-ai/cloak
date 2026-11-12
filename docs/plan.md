@@ -262,6 +262,17 @@ kit commit `5dc1d09`, 11 November, on AC power with other lanes working:
   hit the 90 s limit instead, so a stop for time there may mean a runaway,
   not a slow answer.
 
+Feasibility again,
+[feasibility-20261112T065257Z.json](../evidence/stage3/standin/feasibility-20261112T065257Z.json),
+kit commit `d0716e9`, 12 November, with the daemon's local API and Pi now in
+the guest (Pi idle; the kit's calls come from the daemon's rewrite code).
+Development only, like the run above. The same 30 of 57 cases were
+rewritten, with the same stops. Cold load 2.13 s, and the first result
+came 3.85 s after the host started. The guest's virtual machine peaked at
+0.54 GiB, up from 0.16 GiB, because its root is now about 75 MB compressed
+and held in memory. The worker peaked at 3.46 GiB and the whole product at
+4.14 GiB. Installed on disk: 1.76 GiB.
+
 EVAL01 development screen,
 [eval01-20261111T072816Z.json](../evidence/stage3/standin/eval01-20261111T072816Z.json),
 kit commit `de16729`: 14 of the daemon's 16 cases rewritten, 2 stopped

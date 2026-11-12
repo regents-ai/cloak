@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Stage 3: a stand-in feasibility run with Pi and the daemon's local API in
+  the guest (development only, counted toward no gate) is in
+  evidence/stage3/standin/; docs/plan.md records its figures.
 - Stage 2: Pi 1.3.0 runs in the guest inside the reference wrapper
   (bubblewrap with torsocks) as its own user, talking to the daemon's own
   local API, which now runs in the guest and rewrites through the adapter.
