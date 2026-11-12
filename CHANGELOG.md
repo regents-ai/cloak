@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Stage 4: the qualification kit. `scripts/stage4.py` pins and checks the
+  fidelity (EVAL02) and privacy (EVAL03) holdouts, rewrites a set through the
+  stage 3 path, makes the blinded fidelity review, and scores a candidate
+  against the reference under the frozen protocol: Tango's paired interval
+  for fidelity, the exact writer sign-flip bound for attribution and
+  linkage with the character n-gram attack, each at 97.5 % one-sided with no
+  positive margin. It also measures run-to-run variation and sizes the
+  fidelity holdout from development rates. Holdout text stays outside the
+  repository; only pins and content-free scores are kept here. Added two
+  development sets, never holdouts, and checks of the kit's logic.
 - Stage 3: the feasibility kit. `scripts/stage3.py feasibility <name>` writes a
   candidate's stage 3 record (EVAL05, EVAL06, EVAL07) through the real path, and
   `scripts/stage3.py eval01 <name>` runs the development screen. Added the fixed

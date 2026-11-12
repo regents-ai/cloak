@@ -36,12 +36,15 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/models.json`, `models.md` | Every file of the reference and candidate models, pinned by hash |
 | `reference/tasks.md` | Representative reference tasks |
 | `reference/eval05-inputs.json`, `eval06-messages.json` | The fixed synthetic inputs for stage 3, pinned by hash in `scripts/stage3.py` |
+| `reference/holdouts.json` | The stage 4 holdouts' pins, recorded before any model runs on them |
+| `reference/stage4-dev-fidelity.json`, `stage4-dev-privacy.json` | Development sets for the stage 4 kit; never holdouts |
 | `reference/wrapper/` | The reconstructed Pi sandbox wrapper and its Tor settings |
 | `reference/host/` | The Linux reference host used for stage 1 |
 | `worker/` | The native rewrite worker (Swift, MLX), its sandbox entitlements and install script |
 | `host/` | The host supervisor: boots the guest and relays its rewrites to the worker |
 | `guest/` | The guest: adapter, the daemon's rewrite check, kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
+| `evidence/stage4/` | Stage 4 development records and every score, one folder per model |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
 | `scripts/` | Repository scripts, run with `uv run` |
 
@@ -151,6 +154,56 @@ Run the kit's own checks:
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_stage3.py
+```
+
+## Stage 4 commands
+
+Stage 4 qualifies the substitution against the fidelity holdout (EVAL02)
+and the privacy holdout (EVAL03) under the frozen protocol. The holdouts are
+written by people, kept outside this repository, and pinned once before any
+model runs on them:
+
+```bash
+uv run scripts/stage4.py check EVAL02 <file>
+uv run scripts/stage4.py pin EVAL02 <file>
+```
+
+Rewrite a set through the same real path as stage 3. Records holding
+holdout text stay beside the holdout, in `records/<name>/`; development
+records go to `evidence/stage4/<name>/`:
+
+```bash
+uv run scripts/stage4.py rewrite lead EVAL02 <file>
+uv run scripts/stage4.py rewrite lead EVAL03 <file>
+```
+
+Fidelity: make the blinded review packet (the outputs without their arm)
+and its key, give the packet to the reviewers, then score a candidate
+against the reference with their answers:
+
+```bash
+uv run scripts/stage4.py review <file> <reference record> <lead record> <challenger record>
+uv run scripts/stage4.py fidelity <file> --reference <record> --candidate <record> --key <key> --reviews <answers>
+```
+
+Privacy, with the protocol's character n-gram attack:
+
+```bash
+uv run scripts/stage4.py privacy <file> --reference <record> --candidate <record>
+```
+
+Scores hold no text and go to `evidence/stage4/<candidate>/`. Also:
+`repeat <name> <development file>` runs a development set three times to
+measure run-to-run variation, and `sample-size --from <fidelity score>`
+gives the EVAL02 holdout size from development rates. In a development
+comparison `originals` may stand for an arm; on a holdout every arm is a run
+record and only `lead` or `challenger` may rewrite it.
+
+Run the kit's own checks:
+
+```bash
+uv run --with pytest==8.4.2 --with scikit-learn==1.9.1 --with numpy==2.5.4 \
+    --with scipy==1.18.1 --with tokenizers==0.22.1 pytest tests/test_stage4.py
 ```
 
 ## Progress
