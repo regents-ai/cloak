@@ -29,7 +29,10 @@ Done") as FAKE_TOR_START says:
   it. It writes its pid to FAKE_TOR_LOG/tor.pid, so a check can see whether
   it is still running.
 
-Like tor, it exits on SIGTERM, and, unless it hangs, once its owner has
+Like tor, it keeps a state file in the folder it is given with
+--DataDirectory: at each start it notes in FAKE_TOR_LOG/starts.jsonl that
+folder and the state file it found there (null if none), then writes its
+own. Like tor, it exits on SIGTERM, and, unless it hangs, once its owner has
 gone.
 """
 
@@ -130,6 +133,11 @@ def bootstrap(after_s: float) -> None:
 
 
 def main() -> None:
+    state = Path(argument("--DataDirectory")) / "state"
+    with (LOG.parent / "starts.jsonl").open("a") as starts:
+        found = state.read_text() if state.exists() else None
+        starts.write(json.dumps({"data": str(state.parent), "found": found, "pid": os.getpid()}) + "\n")
+    state.write_text(f"stand-in {os.getpid()}")
     if START == "hangs":
         (LOG.parent / "tor.pid").write_text(str(os.getpid()))
         # SIGTERM, unhandled, ends it.

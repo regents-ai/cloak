@@ -161,11 +161,12 @@ of 90 seconds from tor's start, for both of tor's lines (section 7a): its
 SOCKS port open, then its bootstrap. It ends when tor says it has
 bootstrapped, when it exits, or at the limit, when the host stops it. If
 tor's SOCKS port has not opened by then, the host fails there, with tor
-stopped and its folder removed. Otherwise the guest starts, so no task
-starts before tor can carry it; after an exit or the limit every Tor
-connection from the guest fails (section 7a). Every way the host ends after
-the wait, a failure included, stops tor and removes its folder. The secret
-boot files are written only after the wait.
+stopped. Otherwise the guest starts, so no task starts before tor can
+carry it; after an exit or the limit every Tor connection from the guest
+fails (section 7a). Every way the host ends after the wait, a failure
+included, stops tor. tor's folder is never removed: its state stays for
+the next start (section 7a). The secret boot files are written only after
+the wait.
 
 Before (12 November, after the bootstrap wait): the wait for tor's SOCKS
 port line had no limit, and only the bootstrap wait after it had one, so a
@@ -192,9 +193,7 @@ Limit: a host killed during the start (under a second) leaves them in its
 private temporary folder, readable only by the person. The stage 4 app,
 which will run the host, owns that case. A host killed at any time leaves
 tor running for up to about 15 seconds, until tor sees its owner gone and
-exits, and leaves tor's folder (its directory cache and guard choice) in
-the same private temporary folder. The stage 3 kit stops a boot over its
-time limit this way.
+exits. The stage 3 kit stops a boot over its time limit this way.
 
 ## 6. The guest's boot (`guest/image/init`, then `guest/image/boot`)
 
@@ -252,8 +251,9 @@ any other vsock port -------------------------> | refused                      |
 tor's life, as the host's child:
 
 ```
-started --> SOCKS port open --> bootstrapping --> bootstrapped (100%) --> stopped --> folder removed
+started on its lasting folder --> SOCKS port open --> bootstrapping --> bootstrapped (100%) --> stopped; folder kept
 exits before its port opens --> the host fails before the boot files are written
+folder held by another tor --> its port opens, then it exits about 5 s later (exits while bootstrapping, below)
 port not open 90 s after it started --> stopped by the host; the host fails before the boot files are written
 bootstrapping --> every request refused at once; the host waits, and starts no guest
 exits while bootstrapping --> the host stops waiting; every Tor connection fails; never restarted
@@ -272,6 +272,21 @@ the same line; tor itself never gives up. Checks (`tests/test_tor_path.py`):
 `test_a_tor_that_never_bootstraps_is_stopped_at_the_limit_and_the_task_stops`,
 `test_a_tor_that_cannot_reach_the_network_stops_the_task` and
 `test_a_tor_that_never_opens_its_port_is_stopped_at_the_limit_and_the_host_fails`.
+
+tor's folder lasts from one start to the next: the host is given it
+(`--tor-data`; the stage kits use `~/Library/Application Support/Regents
+Cloak/tor`), creates it owner-only if it does not exist, and never removes
+it. tor keeps its state file, its entry guards and its directory cache
+there, so a later start keeps the same entry guards and bootstraps from
+what it saved. tor locks the folder while it runs; a second host's tor on
+the same folder opens its port, waits 5 seconds, says another tor holds the
+folder and exits with status 1, so that host's guest starts with tor gone
+and every Tor connection fails, as after any exit. Check:
+`test_a_second_start_reuses_tors_folder_and_its_state`.
+
+Before (12 November): each start had a new folder in the host's temporary
+folder, removed when tor stopped, so every boot chose new entry guards and
+bootstrapped from nothing.
 
 tor counts as stopped from its exit (its process's termination notice) or
 from the host stopping it at the limit, whichever comes first. Its SOCKS

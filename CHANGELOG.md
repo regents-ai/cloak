@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Stage 2: tor keeps its state between runs. Its data folder is no longer
+  a new temporary folder removed when tor stops, which made every boot pick
+  new entry guards and bootstrap from nothing; it is one lasting folder the
+  host is given with the new `--tor-data` flag, created owner-only if
+  missing and never removed, so tor keeps its entry guards as the Tor
+  Project recommends and later starts bootstrap from what it saved (in one
+  measurement, 9.52 s for a first start and 2.41 s for a second). The
+  stage kits use `~/Library/Application Support/Regents Cloak/tor`; the
+  checks pass scratch folders. A second host on the same folder gets a tor
+  that exits after 5 seconds (tor's own lock), and its guest's tasks stop at
+  their Tor route. New check: a second start reuses the folder and its
+  state file. `docs/plan.md` also lists, as a known gap, that tor's SOCKS
+  port serves every program on the Mac while tor runs, until Cloak is
+  packaged as an app.
+
 - Stage 2: the host's 90-second limit for tor now covers its whole start,
   counted from tor's start: the SOCKS port line as well as the bootstrap
   line, read on one thread with one wait. Before, the wait for the port had

@@ -554,7 +554,8 @@ def summarise(boots: dict[str, dict], kills: list[dict]) -> dict:
     }
 
 
-TOR_BOOTSTRAP_INCLUDES = ("tor's start, with no saved state, to its 'Bootstrapped 100% (done)' line; the host "
+TOR_BOOTSTRAP_INCLUDES = ("tor's start, with the state it saved in its lasting folder on earlier starts (none "
+                          "on its first), to its 'Bootstrapped 100% (done)' line; the host "
                           "starts tor once the worker is ready and the guest once tor has bootstrapped. None: tor "
                           "never bootstrapped, and the host stopped it at its 90 s limit or it exited")
 FIRST_RESULT_INCLUDES = "the cold load, tor's bootstrap, the guest's boot and the first call"

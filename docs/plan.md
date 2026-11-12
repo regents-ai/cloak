@@ -275,8 +275,9 @@ How B works:
   waiting on it with one limit and no polling: 90 seconds from tor's
   start. tor itself never gives up; 90 s is the default of the Tor
   Project's own controller library, stem, whose `launch_tor` waits for the
-  same line and says a tor with no saved state, as this one always is,
-  usually bootstraps "in 50 seconds or so". A cold start is longer by
+  same line and says a tor with no saved state, as this one is on its first
+  start, usually bootstraps "in 50 seconds or so"; later starts reuse the
+  state tor saved ("tor keeps its state" below). A cold start is longer by
   tor's bootstrap, the secret boot files are written only after it, and a
   task at the start of a boot no longer stops at its Tor route. A tor
   that exits while bootstrapping ends the wait at once; one not done at
@@ -306,6 +307,27 @@ How B works:
   route check stops the task ("no direct fallback was used"). Left open:
   the moment between tor's exit and the system's notice of it, in which a
   program that took the port at once could still receive a connection.
+- **tor keeps its state** (12 November, after the two notes above): tor's
+  folder was new for every boot, in the host's temporary folder, and
+  removed when tor stopped, so every boot chose new entry guards and
+  bootstrapped from nothing. Now tor's DataDirectory is one lasting folder
+  the host is given (`--tor-data`, as it is given the model's folder and
+  tor itself; the stage kits use `~/Library/Application Support/Regents
+  Cloak/tor`, beside the models folder). The host creates it owner-only
+  (0700, which tor requires) if it does not exist and never removes it, so
+  tor keeps its entry guards from one run to the next, as the Tor Project
+  recommends, and a later start bootstraps from the directory it saved.
+  The first start is still stateless. Measured once on the public Tor
+  network, with the pinned tor and the host's settings, each start stopped
+  once bootstrapped: a first start on a new folder bootstrapped in 9.52 s,
+  and a second on the same folder in 2.41 s, building its first circuit
+  from the directory it had saved. tor locks the folder while it runs: a
+  second host on the same folder starts a tor that opens its port, waits 5
+  seconds, says another tor is running with the same data directory and
+  exits with status 1, so that host's guest starts with tor gone and its
+  tasks stop at their Tor route, as after any exit. Checked offline with
+  the pinned tor, whose only way onto the network was a closed loopback
+  port.
 - **Built first on a socket file, and moved**: the design put tor's SOCKS
   port on a socket file in its private folder, to open no listener at all.
   There tor answers each SOCKS request in its 22-byte form, where on a TCP
@@ -326,18 +348,20 @@ How B works:
   only `tor` and its `libevent` from the bundle, and signs `tor` ad hoc,
   because macOS 27 kills the bundle's own copy at launch for an invalid
   signature.
-- **State and keys**: all of tor's state (the directory cache, the guard
-  choice; a client tor keeps no long-term identity key, and its circuit keys
-  live in its memory) is in a private per-boot folder, inside the host's
-  private temporary folder, and is removed when the host stops tor. Nothing
-  passes from one guest to the next.
+- **State and keys**: all of tor's state (its state file with the entry
+  guards it chose, and the directory cache; a client tor keeps no long-term
+  identity key, and its circuit keys live in its memory) is in its one
+  lasting, owner-only folder, which the host never removes. tor's state
+  passes from one boot to the next; the guest's does not, as each boot's
+  guest makes new keys and Tor identities.
 - **Fails closed**: with tor gone (exited, or stopped at the bootstrap
   limit) or unable to build a circuit, the daemon's own route check stops
   the task ("no direct fallback was used"), nothing reaches tor's freed
   port, and nothing else in the guest has a way out.
 
-Eight checks in `tests/test_tor_path.py` pass, with the stand-in model's
-fake worker; development evidence only, so A06 stays open:
+Nine checks in `tests/test_tor_path.py` pass, with the stand-in model's
+fake worker; development evidence only, so A06 stays open. Each gives the
+host a scratch folder for tor's state, never the stage kits' folder:
 
 - **Through Tor, and nothing else** (the only check that reaches the Tor
   network): with no wait of its own, as the host has waited for tor's
@@ -390,13 +414,21 @@ fake worker; development evidence only, so A06 stays open:
   message, its connection reached the host's relay, and the listener
   received no connection. Before, the relay connected to the listener and
   sent it the SOCKS5 greeting.
+- **A second start reuses tor's folder**: two boots in a row on one
+  folder, with a stand-in tor that keeps a state file in its data folder as
+  tor does: both starts are given the same folder, the second finds the
+  state file the first wrote, and the folder is owner-only.
 
-Open for Sean: tor on the Mac instead of in the guest; tor's SOCKS port on
-the Mac's loopback, reachable by every program on the Mac; a fresh guard
-each boot, where Tor by default, and the reference's Debian tor, keep
-theirs; and whether tor on the Mac gets its own confinement (it runs
-unconfined; Apple's App Sandbox refused it as a bare program with no bundle
-identifier).
+Known gaps:
+
+- **tor's SOCKS port serves the whole Mac**: it listens on the Mac's
+  loopback, so while tor runs, any other program on the same Mac can route
+  its own traffic through it. Accepted until Cloak is packaged as an app,
+  and to be closed then.
+
+Open for Sean: tor on the Mac instead of in the guest; and whether tor on
+the Mac gets its own confinement (it runs unconfined; Apple's App Sandbox
+refused it as a bare program with no bundle identifier).
 
 ## Stage 3 so far
 
@@ -448,7 +480,10 @@ identifier).
   when tor never got there), beside the cold load, which is the worker's
   alone and unchanged. No record before then has tor in its first result;
   in one kit boot with the fake worker, tor took 7.40 s and the first
-  result came 8.59 s after the host started.
+  result came 8.59 s after the host started. tor now keeps its state in
+  `~/Library/Application Support/Regents Cloak/tor` between boots, so only
+  the first boot on that folder bootstraps from nothing; a record does not
+  say whether its boot's tor had saved state.
 - Needs a person, listed in each record with no result: sleep and wake
   during a call, a run on battery, the declared ordinary load, induced memory
   pressure, and the first run after the Mac restarts.

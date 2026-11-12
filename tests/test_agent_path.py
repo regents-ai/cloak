@@ -69,7 +69,7 @@ def boot(tmp_path: Path, cases: list[dict], worker: Path) -> dict[str, dict]:
     host = subprocess.Popen(
         [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
          "--cases", cases_file, "--worker", worker, "--name", NAME, "--dir", DEST / NAME,
-         "--tor", fake_tor(tmp_path)],
+         "--tor", fake_tor(tmp_path), "--tor-data", tmp_path / "tor-data"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         env=os.environ | {"FAKE_WORKER_LOG": str(tmp_path)})
     try:

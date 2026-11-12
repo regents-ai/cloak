@@ -31,6 +31,7 @@ import os
 import re
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -99,12 +100,12 @@ def routes(tmp_path: Path) -> list[dict]:
 
 def host(tmp_path: Path, cases: list[dict], tor_launcher: Path) -> dict:
     """The host's command line and environment, to run the cases in one
-    guest boot."""
+    guest boot, with tor's lasting folder in tmp_path."""
     cases_file = tmp_path / "cases.jsonl"
     cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
     return {"args": [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
                      "--cases", cases_file, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
-                     "--tor", tor_launcher],
+                     "--tor", tor_launcher, "--tor-data", tmp_path / "tor-data"],
             "env": os.environ | {"FAKE_WORKER_LOG": str(tmp_path)}}
 
 
@@ -166,6 +167,8 @@ def test_tor_carries_the_guest_and_a_program_that_skips_torsocks_reaches_nothing
     assert "tcp: blocked" in out["static probe"] and "udp dns: blocked" in out["static probe"]
     assert out["no torsocks"].startswith("refused ENETUNREACH")
     assert unreachable(out["tcp ipv4"]) and unreachable(out["tcp ipv6"])
+    # tor kept its state in the folder the host gave it, for its next start.
+    assert (tmp_path / "tor-data" / "state").is_file()
 
 
 NC = "busybox nc -w 3 127.0.0.1 9050"
@@ -299,6 +302,18 @@ def test_a_program_that_takes_the_port_of_a_tor_that_exited_receives_nothing(tmp
         assert routes(tmp_path) == []
     finally:
         taken.close()
+
+
+def test_a_second_start_reuses_tors_folder_and_its_state(tmp_path):
+    # Two boots on one tmp_path, so on one tor folder, with nothing in
+    # between; the stand-in keeps a state file there as tor does.
+    for _ in range(2):
+        boot(tmp_path, [sandbox("nothing", "true")], fake_tor(tmp_path, "ready"))
+    folder = tmp_path / "tor-data"
+    first, second = [json.loads(line) for line in (tmp_path / "starts.jsonl").read_text().splitlines()]
+    assert first["data"] == second["data"] == str(folder)
+    assert first["found"] is None and second["found"] == f"stand-in {first['pid']}"
+    assert stat.S_IMODE(folder.stat().st_mode) == 0o700
 
 
 def test_a_tor_that_cannot_reach_the_network_stops_the_task(tmp_path):

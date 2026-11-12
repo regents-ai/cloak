@@ -3,7 +3,7 @@ import Virtualization
 
 // cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl>
 //            --worker <cloak-rewriter> --name <model> --dir <model directory>
-//            --tor <tor>
+//            --tor <tor> --tor-data <tor's folder>
 //
 // Starts the native worker and tor, waits for tor to open its SOCKS port and
 // bootstrap (at most 90 seconds from its start; this process fails if the
@@ -13,8 +13,8 @@ import Virtualization
 // exits when the guest powers off, after stopping both. The guest's console
 // is this process's standard output.
 
-let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter> --name <model> --dir <model directory> --tor <tor>"
-let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir", "--tor"]
+let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder>"
+let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir", "--tor", "--tor-data"]
 let arguments = {
     var parsed = [String: String]()
     var rest = CommandLine.arguments.dropFirst()
@@ -75,9 +75,10 @@ do { try configuration.validate() } catch { fail("invalid guest: \(error)") }
 // tor, the guest's one way out (Tor.swift). Started, and waited for until it
 // has bootstrapped or is unavailable, before the boot files exist, so no task
 // starts before tor can carry it; a tor whose SOCKS port never opened ends
-// this process here. Every way this process ends from here stops it.
+// this process here. Every way this process ends from here stops it. Its
+// state stays in its folder for the next start.
 let tor: Tor
-do { tor = try Tor(executable: path("--tor")) } catch { fail("cannot start Tor: \(error)") }
+do { tor = try Tor(executable: path("--tor"), data: path("--tor-data")) } catch { fail("cannot start Tor: \(error)") }
 
 // The guest's boot files. The token and key exist only in this process and
 // the guest's memory. The initrd that carries them exists only while the

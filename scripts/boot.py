@@ -26,10 +26,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from fetch_model import DEST
+
 ROOT = Path(__file__).resolve().parent.parent
 HOST = ROOT / "host/.build/release/cloak-host"
-# The Tor Project's tor, which the host runs for the guest (host/build.sh).
+# The Tor Project's tor, which the host runs for the guest (host/build.sh),
+# and its lasting folder, which keeps its state from one boot to the next.
 TOR = ROOT / "host/.build/tor/tor"
+TOR_DATA = DEST.parent / "tor"
 KERNEL = ROOT / "guest/build/Image"
 INITRD = ROOT / "guest/build/initrd.gz"
 TAP = Path(__file__).resolve().parent / "worker_tap.py"
@@ -264,7 +268,8 @@ def run(name: str, cases: list[dict], worker: Path, model: str, model_dir: Path,
         started = clock()
         host = subprocess.Popen(
             [HOST, "--kernel", KERNEL, "--initrd", INITRD, "--cases", cases_file,
-             "--worker", _launcher(scratch, events, worker), "--name", model, "--dir", model_dir, "--tor", TOR],
+             "--worker", _launcher(scratch, events, worker), "--name", model, "--dir", model_dir, "--tor", TOR,
+             "--tor-data", TOR_DATA],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             sampler = _Sampler(host.pid, events, vms_before)
