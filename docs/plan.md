@@ -48,9 +48,10 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   the pins built into it, rewrites one request at a time, stops on a cancel
   (also while it reads a long prompt), and stops on any protocol fault. When
   the host shuts down mid-rewrite, the worker stops that rewrite, which
-  fails, and exits cleanly. It runs in Apple's App Sandbox with no
+  fails, and exits cleanly; a protocol fault mid-rewrite stops the rewrite
+  the same way before the worker exits. It runs in Apple's App Sandbox with no
   network entitlement and reads files only in
-  `~/Library/Application Support/Regents Cloak/models/`. 25 checks in
+  `~/Library/Application Support/Regents Cloak/models/`. 28 checks in
   `tests/test_worker.py` pass, including: a program signed with the worker's
   entitlements is refused a connection the same program makes unsandboxed,
   the installed worker carries exactly those entitlements, and the worker

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Stage 2: a worker that stops for a protocol fault (a second request while
+  busy, an unknown or oversized frame, input cut inside a frame) now stops
+  the rewrite in progress first, answers it as cancelled and exits with
+  status 2; before, it exited mid-rewrite and crashed (exit status -11), as
+  at shutdown before the fix below.
 - Stage 2: a worker still rewriting when the host shuts down now stops that
   rewrite, answers it as cancelled and exits cleanly; before, it crashed
   (the lead's main boot ended with its worker at exit status -11).

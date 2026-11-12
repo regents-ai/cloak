@@ -123,12 +123,30 @@ def test_cancel_stops_the_rewrite_while_it_reads_the_prompt(worker):
     assert ask(worker, request_body(NAME, ["hello"], max_tokens=2))[0] == 200
 
 
-def test_second_request_while_busy_stops_the_worker(worker):
-    body = request_body(NAME, ["tell me a long story about a lighthouse keeper"])
-    send(worker, b"R", body)
-    send(worker, b"R", body)
-    assert read_frame(worker.stdout) is None
+@pytest.mark.parametrize("fault", ["second request", "unknown frame", "oversized frame", "input cut mid-frame"])
+def test_a_protocol_fault_mid_rewrite_stops_the_rewrite_and_ends_the_worker(worker, fault):
+    # Exiting while a rewrite runs tears down the model library's GPU state
+    # under it, so the rewrite in progress stops first, as when the channel
+    # closes. The stand-in reads 128 KiB of prose for about ten seconds; the
+    # fault comes one second in.
+    prose = json.loads((ROOT / "reference/eval05-inputs.json").read_text())["prose"][:128 << 10]
+    send(worker, b"R", request_body(NAME, [prose]))
+    time.sleep(1.0)
+    worker.stdin.write({
+        "second request": frame(b"R", request_body(NAME, ["hello"])),
+        "unknown frame": frame(b"X", b""),
+        "oversized frame": b"R" + (1 << 20 | 1).to_bytes(4, "big"),
+        "input cut mid-frame": b"R" + (256).to_bytes(4, "big") + b"{",
+    }[fault])
+    worker.stdin.flush()
+    if fault == "input cut mid-frame":
+        worker.stdin.close()
+    faulted = time.monotonic()
     assert worker.wait(timeout=30) == 2
+    assert time.monotonic() - faulted < 2
+    kind, payload = read_frame(worker.stdout)
+    assert (kind, answer(payload)) == (b"A", (499, {"error": {"message": "cancelled"}}))
+    assert read_frame(worker.stdout) is None
 
 
 def test_unknown_frame_stops_the_worker(worker):

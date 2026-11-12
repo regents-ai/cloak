@@ -15,7 +15,7 @@ func stop(_ reason: String) -> Never {
 }
 
 /// Runs one rewrite at a time (spec MAC03). A second request while one runs is
-/// a protocol violation and stops the worker.
+/// a protocol fault and stops the worker, once that rewrite has stopped.
 final class Worker: Sendable {
     /// The one rewrite at a time:
     ///
@@ -27,8 +27,8 @@ final class Worker: Sendable {
     /// the model reading the prompt at its next chunk, or the generation as
     /// it starts; a cancel while generating stops the generation; a cancel
     /// while idle is one that crossed the answer, and does nothing. The end
-    /// of the supervisor's channel cancels the same way, then waits for the
-    /// request's task to write its answer.
+    /// of the supervisor's channel, and any protocol fault, cancels the same
+    /// way, then waits for the request's task to write its answer.
     private enum State {
         case idle
         /// The request's task checks it, builds its prompt and has the model
@@ -48,11 +48,11 @@ final class Worker: Sendable {
         self.container = container
     }
 
-    func receive(_ frame: Frames.Incoming) {
+    func receive(_ frame: Frames.Incoming) throws(ProtocolFault) {
         switch frame.kind {
         case .request:
-            state.withLock { state in
-                guard case .idle = state else { stop("request while busy") }
+            try state.withLock { state throws(ProtocolFault) in
+                guard case .idle = state else { throw ProtocolFault("request while busy") }
                 state = .preparing(Task { await answer(frame.payload) })
             }
         case .cancel:
@@ -60,10 +60,11 @@ final class Worker: Sendable {
         }
     }
 
-    /// The supervisor closed the channel: stops the rewrite in progress as a
-    /// cancel does, and returns once its answer is written. The program ends
-    /// only after this, because ending it tears down the model library's GPU
-    /// state, which a running rewrite would still be using.
+    /// The supervisor closed the channel or broke the protocol: stops the
+    /// rewrite in progress as a cancel does, and returns once its answer is
+    /// written. The program ends only after this, because ending it tears
+    /// down the model library's GPU state, which a running rewrite would
+    /// still be using.
     func finish() async {
         await cancel()?.value
     }

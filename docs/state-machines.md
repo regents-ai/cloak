@@ -20,12 +20,15 @@ idle --request--> preparing --generation starts--> generating
   the moment it starts. The answer is 499.
 - **generating**: a cancel stops the generation; the answer is 499.
 - **idle**: a cancel here is one that crossed the answer, and does nothing.
-  A request while not idle breaks the protocol and stops the worker.
 - The worker goes idle before it writes the answer, because the host sends
   its next request as soon as it has read this one.
 - **End of the channel** (the host's shutdown closes it): a rewrite in
   progress is cancelled as above and answered 499; the worker exits 0 once
   that answer is written, or at once when idle.
+- **Protocol fault** (a request while not idle, an unknown or oversized
+  frame, input cut inside a frame): no frame is read after it; a rewrite in
+  progress is cancelled and answered 499 the same way, then the worker exits
+  2.
 
 Before: a busy flag (an atomic) and a run record (a cancelled flag and the
 generation) under a separate lock described the same state twice. No fault
@@ -49,6 +52,13 @@ rewrite was still writing to, and the rewrite then crashed (SIGSEGV),
 leaving a crash report. Check:
 `test_closing_the_channel_mid_rewrite_stops_the_rewrite_and_ends_the_worker`
 (exit status -11 and no answer before the fix).
+
+Before (12 November, the same hazard): a protocol fault exited at once,
+from the frame-reading thread or the request's hand-over, even mid-rewrite,
+with the same crash. Check:
+`test_a_protocol_fault_mid_rewrite_stops_the_rewrite_and_ends_the_worker`,
+one case per fault (exit status -11 and no answer in all four before the
+fix).
 
 ## 2. The host's channel to the worker (`host/Sources/cloak-host/WorkerChannel.swift`)
 
@@ -120,7 +130,8 @@ is seen at once, because its socket is already readable. Check:
 
 ```
 worker: Y once, then for each request: R in, A out; C may come in between;
-        the end of input ends the worker, after the A it owes
+        the end of input, or a frame it cannot take, ends the worker, after
+        the A it owes
 ```
 
 - A cancel may cross the answer and arrive when the worker is idle; both

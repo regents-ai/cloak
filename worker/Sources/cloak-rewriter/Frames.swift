@@ -44,35 +44,48 @@ enum Frames {
     }
 
     /// Reads frames on a thread of their own, so a cancel arrives while a
-    /// rewrite runs. The stream ends when the supervisor closes the channel.
-    static func incoming() -> AsyncStream<Incoming> {
-        AsyncStream { continuation in
+    /// rewrite runs. The stream ends when the supervisor closes the channel,
+    /// and fails with a `ProtocolFault` at a frame the worker cannot take; no
+    /// frame is read after either.
+    static func incoming() -> AsyncThrowingStream<Incoming, any Error> {
+        AsyncThrowingStream { continuation in
             Thread {
-                while let frame = readFrame() { continuation.yield(frame) }
-                continuation.finish()
+                do {
+                    while let frame = try readFrame() { continuation.yield(frame) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
             }.start()
         }
     }
 
-    private static func readFrame() -> Incoming? {
-        guard let header = readExactly(5) else { return nil }
-        guard let kind = Incoming.Kind(rawValue: header[0]) else { stop("unknown frame kind") }
+    private static func readFrame() throws(ProtocolFault) -> Incoming? {
+        guard let header = try readExactly(5) else { return nil }
+        guard let kind = Incoming.Kind(rawValue: header[0]) else { throw ProtocolFault("unknown frame kind") }
         let length = header.dropFirst().reduce(0) { $0 << 8 | Int($1) }
-        guard length <= maxPayload else { stop("frame too large") }
-        guard let payload = readExactly(length) else { stop("channel closed inside a frame") }
+        guard length <= maxPayload else { throw ProtocolFault("frame too large") }
+        guard let payload = try readExactly(length) else { throw ProtocolFault("channel closed inside a frame") }
         return Incoming(kind: kind, payload: payload)
     }
 
     /// nil only at a clean end of input before the first byte.
-    private static func readExactly(_ count: Int) -> Data? {
+    private static func readExactly(_ count: Int) throws(ProtocolFault) -> Data? {
         var data = Data()
         while data.count < count {
             guard let block = try? FileHandle.standardInput.read(upToCount: count - data.count), !block.isEmpty else {
                 if data.isEmpty { return nil }
-                stop("channel closed inside a frame")
+                throw ProtocolFault("channel closed inside a frame")
             }
             data += block
         }
         return data
     }
+}
+
+/// The supervisor broke the frame protocol. The worker stops for it, once
+/// the rewrite in progress has stopped.
+struct ProtocolFault: Error, CustomStringConvertible {
+    let description: String
+    init(_ description: String) { self.description = description }
 }
