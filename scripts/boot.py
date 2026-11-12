@@ -26,6 +26,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HOST = ROOT / "host/.build/release/cloak-host"
+# The Tor Project's tor, which the host runs for the guest (host/build.sh).
+TOR = ROOT / "host/.build/tor/tor"
 KERNEL = ROOT / "guest/build/Image"
 INITRD = ROOT / "guest/build/initrd.gz"
 TAP = Path(__file__).resolve().parent / "worker_tap.py"
@@ -260,7 +262,7 @@ def run(name: str, cases: list[dict], worker: Path, model: str, model_dir: Path,
         started = clock()
         host = subprocess.Popen(
             [HOST, "--kernel", KERNEL, "--initrd", INITRD, "--cases", cases_file,
-             "--worker", _launcher(scratch, events, worker), "--name", model, "--dir", model_dir],
+             "--worker", _launcher(scratch, events, worker), "--name", model, "--dir", model_dir, "--tor", TOR],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             sampler = _Sampler(host.pid, events, vms_before)

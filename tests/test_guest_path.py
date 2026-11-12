@@ -5,14 +5,15 @@ Transcript.Rewrite; the guest prints one result per case.
 
     worker/install.sh
     guest/build.sh
-    (cd host && swift build -c release -j 2 && codesign -s - --entitlements cloak-host.entitlements -f .build/release/cloak-host)
+    host/build.sh
     uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
 
 The checks with the fake worker cover every reply the daemon must refuse
 and the new worker the host starts after a loss; the checks with the real
 worker cover a real rewrite, cancellation (while it generates and while it
 reads a long prompt) and the loss of the worker. The deadline check waits out
-the daemon's 90 seconds.
+the daemon's 90 seconds. The host's tor is the stand-in (fake_tor.py), which
+never reaches the network; nothing here uses Tor.
 """
 
 import json
@@ -32,6 +33,7 @@ from fetch_model import DEST  # noqa: E402
 HOST = ROOT / "host/.build/release/cloak-host"
 WORKER = INSTALLED
 FAKE = ROOT / "tests/fake_worker.py"
+FAKE_TOR = ROOT / "tests/fake_tor.py"
 NAME = "standin"
 FAILED = "rewriter failed; original prompt was not sent to the target model"
 # The stand-in rewrites this one cleanly.
@@ -65,13 +67,23 @@ def starts(tmp_path: Path) -> int:
     return len((tmp_path / "starts").read_text().splitlines())
 
 
+def fake_tor(tmp_path: Path) -> Path:
+    """A launcher that runs the stand-in tor as the host's own child."""
+    launcher = tmp_path / "fake-tor"
+    launcher.write_text(f'#!/bin/sh\nexport FAKE_TOR_LOG="{tmp_path}" FAKE_TOR_EXIT=0\n'
+                        f'exec "{sys.executable}" -I "{FAKE_TOR}" "$@"\n')
+    launcher.chmod(0o755)
+    return launcher
+
+
 def boot(tmp_path: Path, cases: list[dict], worker: Path, during=None) -> dict[str, dict]:
     """Runs the cases in one guest boot and returns each case's result."""
     cases_file = tmp_path / "cases.jsonl"
     cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
     host = subprocess.Popen(
         [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
-         "--cases", cases_file, "--worker", worker, "--name", NAME, "--dir", DEST / NAME],
+         "--cases", cases_file, "--worker", worker, "--name", NAME, "--dir", DEST / NAME,
+         "--tor", fake_tor(tmp_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         env=os.environ | {"FAKE_WORKER_LOG": str(tmp_path)})
     try:

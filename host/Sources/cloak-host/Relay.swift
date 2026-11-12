@@ -105,7 +105,7 @@ final class Relay: Sendable {
         return worker.answer()
     }
 
-    private static func read(_ socket: Int32, _ count: Int) -> Data? {
+    static func read(_ socket: Int32, _ count: Int) -> Data? {
         var data = Data(count: count)
         var done = 0
         while done < count {
@@ -117,14 +117,17 @@ final class Relay: Sendable {
         return data
     }
 
-    private static func write(_ socket: Int32, _ data: Data) {
+    /// False when the socket failed before all of the data was written.
+    @discardableResult
+    static func write(_ socket: Int32, _ data: Data) -> Bool {
         var done = 0
         while done < data.count {
             let n = data.withUnsafeBytes { Darwin.write(socket, $0.baseAddress! + done, data.count - done) }
             if n < 0, errno == EINTR { continue }
-            guard n > 0 else { return }
+            guard n > 0 else { return false }
             done += n
         }
+        return true
     }
 
     private static func same(_ a: Data, _ b: Data) -> Bool {

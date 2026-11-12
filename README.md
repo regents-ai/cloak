@@ -103,15 +103,16 @@ uv run --with pytest==8.4.2 pytest tests/test_worker.py
 ```
 
 Build the guest (Go cross-builds and a pinned Debian image in Docker, two
-cores) and the host supervisor, which must be signed with the virtualization
-entitlement:
+cores), then the host supervisor, signed with the virtualization
+entitlement, with the pinned tor beside it (the Tor Project's own build,
+fetched once by `uv run scripts/fetch_sources.py` and checked by its hash):
 
 ```bash
 guest/build.sh
 ```
 
 ```bash
-cd host && swift build -c release -j 2 && codesign -s - --entitlements cloak-host.entitlements -f .build/release/cloak-host
+host/build.sh
 ```
 
 Run the whole path: the daemon's own rewrite code in the guest, the adapter,
@@ -123,11 +124,21 @@ uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
 ```
 
 Run Pi 1.3.0 in the guest, inside the reference wrapper, through the
-daemon's local API (the guest has no Tor, so every task stops at the Tor
-route after its rewrite; one check uses the real worker):
+daemon's local API (the host's tor is a stand-in that refuses every route,
+so every task stops at the Tor route after its rewrite; one check uses the
+real worker):
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_agent_path.py
+```
+
+Check the guest's one way out, the Tor port relayed to the host's tor. The
+first check runs tor on the public Tor network and fetches
+https://check.torproject.org/api/ip through it; the others send nothing off
+the Mac:
+
+```bash
+uv run --with pytest==8.4.2 pytest tests/test_tor_path.py
 ```
 
 ## Stage 3 commands

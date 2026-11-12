@@ -32,7 +32,8 @@ cp /bin/busybox $root/usr/bin/busybox
 for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport virtio-rng; do
 	xz -dc $(find /lib/modules/$kernel -name "$module.ko.xz") > $root/usr/lib/modules/$module.ko
 done
-install -m 0755 /out/cloak-adapter /out/cloak-rewrite-check /out/cloak-daemon /out/cloak-agent-check $root/usr/bin/
+install -m 0755 /out/cloak-adapter /out/cloak-tor-port /out/cloak-rewrite-check /out/cloak-daemon /out/cloak-agent-check \
+	/out/cloak-routing-probe /out/cloak-vsock-probe $root/usr/bin/
 install -m 0755 /src/init $root/init
 install -m 0755 /src/boot $root/usr/lib/cloak/boot
 
@@ -80,6 +81,7 @@ adapter:x:1001:1001:adapter:/:/bin/sh
 checker:x:1002:1002:checker:/:/bin/sh
 zkapi:x:1004:1004:zkapi:/:/bin/sh
 agent:x:1005:1005:agent:/home/agent:/bin/sh
+torport:x:1006:1006:torport:/:/bin/sh
 PASSWD
 cat > $root/etc/group <<GROUP
 root:x:0:
@@ -88,6 +90,7 @@ checker:x:1002:
 rewriter:x:1003:adapter,checker,zkapi
 zkapi:x:1004:
 agent:x:1005:
+torport:x:1006:
 GROUP
 chmod 0755 $root/run/cloak
 chmod 1777 $root/tmp
@@ -98,6 +101,7 @@ chmod 1777 $root/tmp
 	dpkg-query -W linux-image-$kernel busybox-static bash bubblewrap torsocks ca-certificates libc6 libstdc++6 libgcc-s1 libcap2 libselinux1 libpcre2-8-0 libtinfo6
 	(cd /node && sha256sum node-v24.22.2-linux-arm64.tar.xz)
 	(cd /pi && sha256sum earendil-works-pi-coding-agent-1.3.0.tgz)
-	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-rewrite-check cloak-daemon cloak-agent-check
+	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-tor-port cloak-rewrite-check cloak-daemon cloak-agent-check \
+		cloak-routing-probe cloak-vsock-probe
 } > /out/guest-manifest.txt
 cat /out/guest-manifest.txt

@@ -232,7 +232,7 @@ def preflight(model: dict, model_dir: Path) -> dict:
         path = model_dir / entry["path"]
         if not path.is_file() or path.stat().st_size != entry["size"]:
             stop(f"{path} is missing or not its pinned size; fetch it with scripts/fetch_model.py")
-    for path in (INSTALLED, boot.HOST, boot.KERNEL, boot.INITRD):
+    for path in (INSTALLED, boot.HOST, boot.TOR, boot.KERNEL, boot.INITRD):
         if not path.is_file():
             stop(f"{path} is not built (README, stage 2 commands)")
     if MODELS.read_bytes() not in INSTALLED.read_bytes():
@@ -296,6 +296,7 @@ def configuration(model: dict) -> dict:
         "daemon_sources_sha256": DAEMON_SOURCES,
         "worker_sha256": sha256_file(INSTALLED),
         "host_sha256": sha256_file(boot.HOST),
+        "tor_sha256": sha256_file(boot.TOR),
         "kernel_sha256": sha256_file(boot.KERNEL),
         "initrd_sha256": sha256_file(boot.INITRD),
         "guest": {"cpus": 2, "memory_bytes": 1 << 30},
@@ -337,7 +338,7 @@ def du_bytes(path: Path) -> int:
 
 def installed_size(model: dict, model_dir: Path) -> dict:
     parts = {"model_on_disk": du_bytes(model_dir), "worker_with_shaders": du_bytes(INSTALLED.parent),
-             "host": du_bytes(boot.HOST), "guest_kernel": du_bytes(boot.KERNEL), "guest_initrd": du_bytes(boot.INITRD)}
+             "host": du_bytes(boot.HOST), "tor": du_bytes(boot.TOR.parent), "guest_kernel": du_bytes(boot.KERNEL), "guest_initrd": du_bytes(boot.INITRD)}
     return {"model_pinned_bytes": model["total_bytes"], "on_disk_bytes": parts, "total_on_disk_bytes": sum(parts.values())}
 
 
@@ -355,8 +356,9 @@ MANUAL_STEPS = [
 ]
 
 NOT_MEASURED = [
-    "The full stack: the guest runs the daemon's local API and has Pi in the reference wrapper, but no Tor, "
-    "cover traffic or payment vault yet, and this kit's calls come from the daemon's rewrite code, not from Pi; "
+    "The full stack: the guest runs the daemon's local API and has Pi in the reference wrapper, and the host "
+    "runs tor for it on the public Tor network, but there is no cover traffic or payment vault yet, tor's own "
+    "memory and CPU are not sampled, and this kit's calls come from the daemon's rewrite code, not from Pi; "
     "so 'with the full stack loaded' (stage 3's exit condition) is not met by any record from this kit.",
     "The daemon's full serve path: its payment vault is not deployed at the pinned commit; the kit drives the "
     "daemon's rewrite code as its client does before target inference (A11 stays open).",

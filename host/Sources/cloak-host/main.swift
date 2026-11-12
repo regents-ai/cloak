@@ -3,14 +3,16 @@ import Virtualization
 
 // cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl>
 //            --worker <cloak-rewriter> --name <model> --dir <model directory>
+//            --tor <tor>
 //
-// Starts the native worker, boots the guest with a fresh channel token and
-// rewriter key, relays the guest's rewrite requests to the worker one at a
-// time, starts a new worker after a lost one, and exits when the guest powers
-// off. The guest's console is this process's standard output.
+// Starts the native worker and tor, boots the guest with a fresh channel
+// token and rewriter key, relays the guest's rewrite requests to the worker
+// one at a time and its Tor port to tor, starts a new worker after a lost
+// one, and exits when the guest powers off, after stopping both. The guest's
+// console is this process's standard output.
 
-let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter> --name <model> --dir <model directory>"
-let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir"]
+let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter> --name <model> --dir <model directory> --tor <tor>"
+let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir", "--tor"]
 let arguments = {
     var parsed = [String: String]()
     var rest = CommandLine.arguments.dropFirst()
@@ -68,6 +70,11 @@ configuration.socketDevices = [VZVirtioSocketDeviceConfiguration()]
 configuration.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
 do { try configuration.validate() } catch { fail("invalid guest: \(error)") }
 
+// tor, the guest's one way out (Tor.swift). Started before the boot files
+// exist; every way this process ends from here stops it.
+let tor: Tor
+do { tor = try Tor(executable: path("--tor")) } catch { fail("cannot start Tor: \(error)") }
+
 // The guest's boot files. The token and key exist only in this process and
 // the guest's memory. The initrd that carries them exists only while the
 // guest starts: written here, removed when the start ends either way.
@@ -81,30 +88,45 @@ do {
         .init(path: "etc/cloak/model", mode: 0o444, uid: 0, gid: 0, data: Data(arguments["--name"]!.utf8)),
     ])
     try FileManager.default.createDirectory(at: bootDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-} catch { fail("\(error)") }
+} catch {
+    tor.stop()
+    fail("\(error)")
+}
 
 func removeBootFiles() { try? FileManager.default.removeItem(at: bootDirectory) }
 
 guard FileManager.default.createFile(atPath: bootInitrd.path, contents: initrd, attributes: [.posixPermissions: 0o600]) else {
     removeBootFiles()
+    tor.stop()
     fail("cannot write the boot files")
 }
 
 final class Supervisor: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListenerDelegate {
     let relay: Relay
+    let torRelay: TorRelay
+    let tor: Tor
 
-    init(relay: Relay) {
+    init(relay: Relay, tor: Tor) {
         self.relay = relay
+        self.torRelay = TorRelay(socks: tor.port)
+        self.tor = tor
     }
 
+    /// The guest's two ports on the host: the rewrite relay's and the Tor
+    /// port's. The guest can open no other.
     func listener(
         _ listener: VZVirtioSocketListener, shouldAcceptNewConnection connection: VZVirtioSocketConnection,
         from socketDevice: VZVirtioSocketDevice
     ) -> Bool {
         let socket = dup(connection.fileDescriptor)
+        let port = connection.destinationPort
         connection.close()
         guard socket >= 0 else { return false }
-        relay.accept(socket)
+        if port == TorRelay.port {
+            torRelay.accept(socket)
+        } else {
+            relay.accept(socket)
+        }
         return true
     }
 
@@ -119,11 +141,12 @@ final class Supervisor: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
 
     private func finish(_ status: Int32) {
         relay.finish()
+        tor.stop()
         exit(status)
     }
 }
 
-let supervisor = Supervisor(relay: Relay(token: token, worker: channel, startWorker: startWorker))
+let supervisor = Supervisor(relay: Relay(token: token, worker: channel, startWorker: startWorker), tor: tor)
 let listener = VZVirtioSocketListener()
 listener.delegate = supervisor
 let machine = VZVirtualMachine(configuration: configuration)
@@ -132,8 +155,11 @@ machine.start { result in
     removeBootFiles()
     if case .failure(let error) = result {
         log("cannot start the guest: \(error)")
+        tor.stop()
         exit(1)
     }
-    (machine.socketDevices[0] as! VZVirtioSocketDevice).setSocketListener(listener, forPort: Relay.port)
+    let socketDevice = machine.socketDevices[0] as! VZVirtioSocketDevice
+    socketDevice.setSocketListener(listener, forPort: Relay.port)
+    socketDevice.setSocketListener(listener, forPort: TorRelay.port)
 }
 dispatchMain()

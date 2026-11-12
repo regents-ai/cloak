@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Stage 2: Tor's way out of the guest (decision 5). The host runs the Tor
+  Project's tor 0.4.9.16 (macOS expert bundle 16.0.1, pinned by size and
+  sha256 in `reference/sources.json`, unpacked and signed by the new
+  `host/build.sh`) as its child, with the reference's settings, its SOCKS
+  port on a free loopback port and its state in a private folder removed
+  when it stops. The guest still has no network device: its Tor port,
+  `cloak-tor-port`, carries each connection over vsock to the host, which
+  passes only a SOCKS5 greeting on to tor and closes anything else. A Pi
+  task now passes its Tor route and stops at the wallet companion, which is
+  not built. A tor that stops or cannot reach the network stops the task.
+  The agent check's route observer is gone; the checks use a stand-in tor
+  (`tests/fake_tor.py`) instead. Four checks in `tests/test_tor_path.py`,
+  one of them on the public Tor network. A first build put tor's SOCKS port
+  on a socket file, where tor answers in a form torsocks misreads, and TLS
+  through Tor failed; found by the live check and moved to loopback. The
+  stage 3 and stage 4 kits now run tor on the public Tor network in each
+  boot, and the stage 3 record keeps tor's hash and size.
 - Stage 2: a worker that stops for a protocol fault (a second request while
   busy, an unknown or oversized frame, input cut inside a frame) now stops
   the rewrite in progress first, answers it as cancelled and exits with

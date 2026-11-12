@@ -1,10 +1,12 @@
 #!/bin/sh
-# Builds the guest into guest/build/: the adapter, the agent check, the
-# daemon's rewrite check and the guest daemon (both compiled inside the pinned
-# daemon module with an overlay, so the daemon's own files stay untouched),
-# then the kernel and root from pinned Debian packages, the pinned Pi package
-# and Node.js runtime, and the reference wrapper. Every pinned source is
-# checked against its pin first. Two cores, low priority.
+# Builds the guest into guest/build/: the adapter, the Tor port, the agent
+# check, the two routing instruments (the stage 1 reference's static probe
+# and a vsock probe), the daemon's rewrite check and the guest daemon (both
+# compiled inside the pinned daemon module with an overlay, so the daemon's
+# own files stay untouched), then the kernel and root from pinned Debian
+# packages, the pinned Pi package and Node.js runtime, and the reference
+# wrapper. Every pinned source is checked against its pin first. Two cores,
+# low priority.
 set -eu
 cd "$(dirname "$0")/.."
 repo=$PWD
@@ -16,7 +18,10 @@ PYTHONDONTWRITEBYTECODE=1 uv run scripts/fetch_sources.py --check
 
 export GOOS=linux GOARCH=arm64 CGO_ENABLED=0 GOMAXPROCS=2
 (cd guest/adapter && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-adapter" .)
+(cd guest/torport && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-tor-port" .)
 (cd guest/agent && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-agent-check" .)
+(cd guest/vsockprobe && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-vsock-probe" .)
+(cd reference/host/probe && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-routing-probe" .)
 printf '{"Replace":{"%s/cmd/cloak-rewrite-check/main.go":"%s/guest/check/main.go"}}' "$module" "$repo" > "$out/overlay.json"
 (cd "$module" && nice -n 10 go build -p 2 -trimpath -overlay "$out/overlay.json" -o "$out/cloak-rewrite-check" ./cmd/cloak-rewrite-check)
 # The daemon's build flags (docs/DEVELOPMENT.md at the pinned commit).

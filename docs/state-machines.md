@@ -145,14 +145,16 @@ worker: Y once, then for each request: R in, A out; C may come in between;
 ## 5. The host's life and the secret boot files (`host/Sources/cloak-host/main.swift`)
 
 ```
-worker ready --> guest checked --> boot files written --> guest starting
-             --> boot files removed --> listening --> guest stopped --> worker finished
+worker ready --> guest checked --> Tor listening --> boot files written --> guest starting
+             --> boot files removed --> listening --> guest stopped --> worker finished --> Tor stopped
 ```
 
 The boot files carry the per-boot channel token and rewriter key.
 "Worker finished" closes the worker's channel and waits for it to exit; a
 busy worker first stops its rewrite (section 1), so the rewrite in progress
-fails and is not sent again.
+fails and is not sent again. "Tor listening" is tor's SOCKS port open
+(section 7a); every way the host ends after it, a failure included, stops
+tor and removes its folder.
 
 Before: they were written before the guest's configuration was checked, so a
 failed check left them on disk, and their removal was written in two places.
@@ -163,32 +165,39 @@ or not, or straight away if writing them fails.
 
 Limit: a host killed during the start (under a second) leaves them in its
 private temporary folder, readable only by the person. The stage 4 app,
-which will run the host, owns that case.
+which will run the host, owns that case. A host killed at any time leaves
+tor running for up to about 15 seconds, until tor sees its owner gone and
+exits, and leaves tor's folder (its directory cache and guard choice) in
+the same private temporary folder. The stage 3 kit stops a boot over its
+time limit this way.
 
 ## 6. The guest's boot (`guest/image/init`, then `guest/image/boot`)
 
 ```
 root copied to tmpfs --> switched root --> mounts --> vsock and entropy modules --> loopback
-  --> adapter ready --> daemon ready --> daemon checks --> workspace made --> agent cases --> power off
+  --> adapter ready --> Tor port ready --> daemon ready --> daemon checks --> workspace made
+  --> agent cases --> power off
 ```
 
 Before: "adapter ready" was guessed by scanning the kernel's socket table
 every 0.1 seconds for up to 5 seconds, so a slow boot could fail for no
 reason. Now the adapter prints one line, "ready", once it listens, and the
 boot waits for that line; an adapter that exits first ends the wait at once.
-The daemon is waited for the same way. Either one failing to start powers
-the guest off with a line saying which.
+The Tor port and the daemon are waited for the same way. Any of them
+failing to start powers the guest off with a line saying which.
 
 ## 6a. One agent case (`guest/agent/main.go`)
 
 ```
-log offset noted --> earlier route attempts cleared --> case run as agent --> exited
-  --> route attempts taken --> daemon log lines taken --> result printed
+log offset noted --> case run as agent --> exited --> daemon log lines taken --> result printed
 ```
 
-The route observer refuses each SOCKS connection in steps (greeting,
-password, request, refusal) and records what it read so far, whichever step
-the connection ends at.
+Before (12 November): the agent check also ran a route observer on the Tor
+port, which refused each SOCKS connection and recorded what it read. The Tor
+port is now `cloak-tor-port`, so the observer is gone; the checks' stand-in
+tor (`tests/fake_tor.py`) does the same from the host, in the same steps
+(greeting, password, request, refusal), recording what it read whichever
+step the connection ends at.
 
 ## 7. One request in the guest adapter (`guest/adapter/main.go`)
 
@@ -201,14 +210,14 @@ connection, which cancels the rewrite. No hidden flags; no change.
 
 ## 7a. Tor's way out (`host/Sources/cloak-host/Tor.swift`, `host/Sources/cloak-host/TorRelay.swift`, `guest/torport/main.go`)
 
-Design of 12 November ([plan.md](plan.md), "Tor out of the guest"). Where
-the bytes go:
+Built 12 November to the design in [plan.md](plan.md) ("Tor out of the
+guest"); the checks are `tests/test_tor_path.py`. Where the bytes go:
 
 ```
 guest (no network device)                       | Mac: cloak-host              | Tor network
 daemon route check, Pi under torsocks           |                              |
   --> 127.0.0.1:9050 (cloak-tor-port)           |                              |
-  --> vsock port 9050 ------------------------> | Tor relay --socket file--> tor --> guard, relays, exit
+  --> vsock port 9050 ------------------------> | Tor relay --loopback port--> tor --> guard, relays, exit
 a program that skips torsocks --> unreachable   |                              |
 anything but a SOCKS5 greeting on 9050 -------> | closed, no byte              |
 any other vsock port -------------------------> | refused                      |
@@ -217,8 +226,9 @@ any other vsock port -------------------------> | refused                      |
 tor's life, as the host's child:
 
 ```
-started --> SOCKS socket open --> (bootstrapping, then circuits) --> stopped --> folder removed
-exits before its socket opens --> the host fails before the boot files are written
+started --> SOCKS port open --> bootstrapping --> can build circuits --> stopped --> folder removed
+exits before its port opens --> the host fails before the boot files are written
+bootstrapping --> every request refused at once (a task then stops at its Tor route)
 exits later --> every later Tor connection fails; never restarted
 ```
 
