@@ -12,8 +12,8 @@ workspace="$(realpath "${1:?usage: sandbox WORKSPACE COMMAND [arguments...]}")"
 shift
 here="$(dirname "$(realpath "$0")")"
 agent_home="${PI_PARANOID_HOME:-$HOME/.pi-paranoid}"
-mkdir -p "$agent_home/agent"
-cp -f "$here/models.json" "$agent_home/agent/models.json"
+mkdir -p "$agent_home/.pi/agent"
+cp -f "$here/models.json" "$agent_home/.pi/agent/models.json"
 
 exec bwrap \
   --unshare-user --unshare-ipc --unshare-pid --unshare-uts --unshare-cgroup \

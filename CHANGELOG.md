@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reference wrapper: the sandbox now puts Pi's provider file where Pi reads
+  it (`~/.pi/agent/models.json`); before, Pi refused the `zkapi` provider.
 - Stage 2: Node.js 24.22.2 for Pi in the guest is pinned by size and sha256 in
   `reference/sources.json`. `scripts/fetch_sources.py` downloads a pinned
   file once, after a free disk check, and keeps a mismatch aside; with
