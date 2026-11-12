@@ -115,3 +115,10 @@
 - Stage 1: the reconstruction is now the Regents reference, by Sean's ruling.
 - Agent rules now require the macos-app-skills for all Mac app work, each
   mapped to the stage it serves and the spec limits that win over it.
+- Stage 3: the lead candidate's first feasibility run is recorded (12 November).
+  40 of 40 ordinary messages rewritten, median 5.17 s against a proposed 5 s;
+  inputs of 16 KiB and more stopped at the 90 s limit; the worker peaked at
+  20.50 GiB. No gate closes on it. The weights were deleted afterwards.
+- Sean's rulings of 12 November recorded: the stage 4 kit's stricter readings
+  stand, a zero privacy bound from no-difference writers is not a pass, and
+  Tor leaves the guest the reference's way.

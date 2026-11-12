@@ -177,8 +177,8 @@ Missing for the full stack, and the next step for each:
 - The feasibility kit is ready: `uv run scripts/stage3.py feasibility <name>`
   writes one candidate's stage 3 record (EVAL05, EVAL06, EVAL07) to
   `evidence/stage3/<name>/`, and `uv run scripts/stage3.py eval01 <name>`
-  runs the development screen. No candidate has run: the weights wait for
-  Sean.
+  runs the development screen. The lead candidate has one feasibility run
+  ("Lead candidate, first run" below); the challenger has none.
 - Every call goes through the real path: the daemon's rewrite code in the
   guest, the adapter, the host relay and the sandboxed worker. A copy-only
   tap between the host and the worker (`scripts/worker_tap.py`) keeps each
@@ -218,6 +218,62 @@ Missing for the full stack, and the next step for each:
   Memory: the kit refuses to boot unless the model's size plus 5 GiB is
   available (20.0 GiB for the lead, 19.3 GiB for the challenger); this
   shared Mac had about 13.8 GiB available on 11 November.
+
+### Lead candidate, first run (12 November 2026)
+
+[feasibility-20261112T142919Z.json](../evidence/stage3/lead/feasibility-20261112T142919Z.json),
+kit commit `97f8605`, clean tree, on AC power, by Sean's "go Cloak run". The
+artifact is `mlx-community/Qwen3.8-27B-4bit` at the pinned revision
+(16,077,680,950 bytes, hashes in the record). The preflight saw 24.1 GiB
+available against 20.0 GiB needed. This is a candidate record, not a
+development one. It closes no gate: the five hand-run steps are open, the
+Mac was not at the declared load (another lane was building and testing
+during the run), and the full stack is still missing (no Tor, cover
+traffic or payment vault).
+
+What it showed:
+
+- Cold load 12.65 s; the first result came 21.19 s after the host started.
+  After a restart the cold load was 11.65 s and three probes were rewritten.
+- EVAL06: 40 of 40 ordinary messages rewritten, none stopped. Median
+  5.17 s against a proposed 5 s; 95th percentile 14.48 s against a proposed
+  15 s. The median misses by 0.17 s, so the proposed targets are not met.
+  By input size: up to 128 tokens, median 4.55 s (28 messages); 129 to 256,
+  8.08 s (6); 257 to 512, 13.26 s (6). Generation ran at a median of 16.0
+  tokens a second. Outputs were a median 1.05 times their expected length.
+- The four-turn conversation was rebuilt after cache loss in 13.01 s over
+  four calls.
+- Long inputs: 4 KiB of prose was rewritten in 58.43 s. 16 KiB, 32 KiB,
+  64 KiB and 128 KiB of prose and 16 KiB of literal text all stopped at the
+  90 s limit. One byte over the input limit was refused in 0.01 s, as it
+  should be. At 16 tokens a second, 90 s allows about 1,400 output tokens,
+  so no input much past 4 KiB can finish inside the present limit.
+- Cancellation: after the cancel the worker answered nothing more in that
+  boot, and the next call stopped at the 90 s limit.
+- Worker loss: the probe before was rewritten; the 16 KiB call during which
+  the worker was killed reported the worker lost; so did the probe after
+  it. The worker did not come back within that boot. A fresh boot did.
+- Memory: the worker peaked at 20.50 GiB, the guest's virtual machine at
+  0.50 GiB and the whole product at 21.04 GiB during the main boot; during
+  the 40 ordinary messages alone the product peaked at 16.30 GiB. Swap grew
+  by 5,345 MiB over the main boot and not at all during the ordinary
+  messages, so the long inputs caused it.
+- All cases: 47 of 57 rewritten; stopped: 5 timed out, 4 worker lost, 1 over
+  the input limit. Installed on disk: 15.11 GiB.
+
+What it did not show: fidelity or privacy (stage 4), the challenger, the
+five hand-run steps (sleep and wake, battery, declared load, induced memory
+pressure, first run after a restart), per-process GPU use, the daemon's
+full serve path, and anything on a 32 GB Mac.
+
+To settle before the next run, none changed here: whether a cancelled or
+lost worker should be restarted within the same boot (today every later
+call in that boot stops); what the limit for long inputs should be, since
+90 s cannot hold them at this speed; and whether a 0.17 s miss on the
+median stands on a quiet Mac.
+
+The weights were deleted after the run, as Sean asked; a later run fetches
+and verifies them again.
 
 ### Stand-in proof (development only)
 
@@ -368,7 +424,7 @@ them matches that commit.
 ### How the kit reads the protocol
 
 The frozen protocol leaves these open; the kit fixes them in code before any
-holdout exists, and each is decision 3 below:
+holdout exists. Sean confirmed them on 12 November (decision 3 below):
 
 1. A stopped item counts as harm in both comparisons: a fidelity failure
    and an attack success. This keeps it in every denominator and stops a
@@ -390,7 +446,7 @@ The protocol says both intervals give a positive bound when no paired
 errors are seen. That holds for Tango's interval. It does not hold for the
 sign-flip bound as written: writers with no difference make the bound
 exactly zero, which the parity rule would pass. The kit reports such a
-bound as unresolved, not a pass, until Sean rules (decision 4).
+bound as unresolved, never a pass, by Sean's ruling (decision 4).
 
 ### Not built, and why
 
@@ -442,11 +498,17 @@ bound as unresolved, not a pass, until Sean rules (decision 4).
    HW03 the most this work can reach is a clearly limited 48 GB pilot; 32 GB
    support stays unmet and unavailable, and nothing may claim it.
 3. The stage 4 kit's readings of the protocol (stage 4, "How the kit reads
-   the protocol"). Open: proposed 12 November by the kit's author; each must
-   be confirmed or changed before a holdout opens.
-4. A sign-flip bound of exactly zero from writers with no difference. Open:
-   the kit reports it as unresolved, not a pass, matching the protocol's
-   statement that data with no paired errors never passes.
+   the protocol"). Decided 12 November (Sean, 2a): the stricter readings
+   stand as written there.
+4. A sign-flip bound of exactly zero from writers with no difference.
+   Decided 12 November (Sean, 3a): it is not a pass, matching the
+   protocol's statement that data with no paired errors never passes.
+5. How Tor's traffic leaves the guest. Decided 12 November (Sean: "use the
+   reference - use open source tor node?"): follow the reference, torsocks
+   in front of the standard open source `tor` on the public Tor network.
+   The guest still gets no network device; its one way out is to be a
+   single relay to the Tor port, so that a program which skips torsocks
+   reaches nothing. Not built yet; A06 stays open until it is checked.
 
 ## Gates
 
