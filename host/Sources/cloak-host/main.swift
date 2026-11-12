@@ -47,8 +47,11 @@ do {
     ])
 } catch { fail("cannot start the worker: \(error)") }
 
-// The guest: two cores, 1 GiB, a console, the channel socket. No network
-// device and no disk. Its initrd is written just before it starts.
+// The guest: two cores, 1 GiB, a console, the channel socket and an entropy
+// source. No network device and no disk. Its initrd is written just before it
+// starts. The entropy device only carries random bytes into the guest; without
+// it the guest kernel's random source never becomes ready, and the daemon,
+// which makes its keys and Tor identities from it, waits forever.
 let bootDirectory = FileManager.default.temporaryDirectory.appending(path: "cloak-\(UUID().uuidString)")
 let bootInitrd = bootDirectory.appending(path: "initrd")
 let boot = VZLinuxBootLoader(kernelURL: path("--kernel"))
@@ -62,6 +65,7 @@ configuration.memorySize = 1 << 30
 configuration.bootLoader = boot
 configuration.serialPorts = [console]
 configuration.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+configuration.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
 do { try configuration.validate() } catch { fail("invalid guest: \(error)") }
 
 // The guest's boot files. The token and key exist only in this process and

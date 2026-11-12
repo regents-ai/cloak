@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Stage 2: Pi 1.3.0 runs in the guest inside the reference wrapper
+  (bubblewrap with torsocks) as its own user, talking to the daemon's own
+  local API, which now runs in the guest and rewrites through the adapter.
+  The guest still has no network device and no Tor: each model request is
+  rewritten, then stops at Tor route preparation. The host gives the guest
+  an entropy device, which only carries random bytes in. Six checks in
+  `tests/test_agent_path.py` cover the rewrite, conversation isolation, a
+  bad rewrite, a lost worker and what the sandbox can reach.
 - Reference wrapper: the sandbox now puts Pi's provider file where Pi reads
   it (`~/.pi/agent/models.json`); before, Pi refused the `zkapi` provider.
 - Stage 2: Node.js 24.22.2 for Pi in the guest is pinned by size and sha256 in

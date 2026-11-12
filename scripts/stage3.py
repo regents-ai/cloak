@@ -67,7 +67,8 @@ DAEMON_SOURCES = {
     "internal/rewriter/instruction_eval_test.go": "8581ba4116e7b843c1839928aff1fb657586d29e28b97cd2e88fa507fa52b8a2",
 }
 KIT_FILES = ("scripts/stage3.py", "scripts/boot.py", "scripts/measures.py", "scripts/worker_tap.py",
-             "scripts/drive_worker.py", "guest/check/main.go", "guest/image/init")
+             "scripts/drive_worker.py", "guest/check/main.go", "guest/image/init", "guest/image/boot",
+             "guest/daemon/zz_cloak_guest.go", "guest/agent/main.go")
 
 MAX_TOKENS = 16384
 TEMPERATURE = 0
@@ -353,8 +354,9 @@ MANUAL_STEPS = [
 ]
 
 NOT_MEASURED = [
-    "The full stack: the guest has no Pi, Tor, cover traffic or payment vault yet, so 'with the full stack "
-    "loaded' (stage 3's exit condition) is not met by any record from this kit.",
+    "The full stack: the guest runs the daemon's local API and has Pi in the reference wrapper, but no Tor, "
+    "cover traffic or payment vault yet, and this kit's calls come from the daemon's rewrite code, not from Pi; "
+    "so 'with the full stack loaded' (stage 3's exit condition) is not met by any record from this kit.",
     "The daemon's full serve path: its payment vault is not deployed at the pinned commit; the kit drives the "
     "daemon's rewrite code as its client does before target inference (A11 stays open).",
     "Per-process GPU use: macOS gives it only to root; the record has the system-wide GPU utilisation.",

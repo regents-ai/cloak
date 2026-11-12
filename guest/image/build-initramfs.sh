@@ -1,9 +1,16 @@
 #!/bin/sh
-# Runs inside the pinned build image. Reads the guest binaries from /out and
-# writes /out/Image (the uncompressed kernel), /out/initrd.gz (the guest root)
-# and /out/guest-manifest.txt (what went into both, with hashes).
+# Runs inside the pinned build image. Reads the guest binaries from /out, the
+# pinned Pi package from /pi, the pinned Node.js runtime from /node and the
+# reference wrapper from /wrapper, and writes /out/Image (the uncompressed
+# kernel), /out/initrd.gz (the guest root) and /out/guest-manifest.txt (what
+# went into both, with hashes).
+#
+# The root keeps everything under /usr (bin, sbin and lib are links into it),
+# because the reference sandbox gives the agent the guest's /usr read-only and
+# links its own /bin and /lib into it.
 set -eu
 kernel=$(ls /lib/modules)
+arch=aarch64-linux-gnu
 root=$(mktemp -d)
 chmod 0755 $root
 
@@ -13,23 +20,74 @@ image=/boot/vmlinuz-$kernel
 [ "$(dd if=$image bs=1 skip=56 count=4 2>/dev/null)" = ARMd ]
 cp $image /out/Image
 
-mkdir -p $root/bin $root/usr/bin $root/lib/modules $root/proc $root/sys $root/dev $root/etc/cloak $root/run/cloak $root/tmp
-cp /bin/busybox $root/bin/busybox
-for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
-	xz -dc $(find /lib/modules/$kernel -name "$module.ko.xz") > $root/lib/modules/$module.ko
+mkdir -p $root/usr/bin $root/usr/sbin $root/usr/lib/$arch $root/usr/lib/modules $root/usr/lib/cloak \
+	$root/usr/local/bin $root/usr/local/lib/node_modules/@earendil-works \
+	$root/proc $root/sys $root/dev $root/tmp $root/newroot $root/run/cloak $root/home \
+	$root/etc/cloak $root/etc/alternatives $root/etc/ld.so.conf.d $root/opt/cloak
+ln -s usr/bin $root/bin
+ln -s usr/sbin $root/sbin
+ln -s usr/lib $root/lib
+
+cp /bin/busybox $root/usr/bin/busybox
+for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport virtio-rng; do
+	xz -dc $(find /lib/modules/$kernel -name "$module.ko.xz") > $root/usr/lib/modules/$module.ko
 done
-install -m 0755 /out/cloak-adapter /out/cloak-rewrite-check $root/usr/bin/
+install -m 0755 /out/cloak-adapter /out/cloak-rewrite-check /out/cloak-daemon /out/cloak-agent-check $root/usr/bin/
 install -m 0755 /src/init $root/init
+install -m 0755 /src/boot $root/usr/lib/cloak/boot
+
+# The reference wrapper and what it runs: bash, bubblewrap, torsocks, the CA
+# certificates it binds, Node.js and Pi, installed where `npm install -g` puts it.
+# The torsocks script's Debian-only block warns when libtorsocks is missing
+# for another enabled architecture, using dpkg tools the guest does not carry;
+# the guest has one architecture, so the block is left out. The package's own
+# loader file puts libtorsocks on the library path, as LD_PRELOAD names it bare.
+install -m 0755 /bin/bash /usr/bin/bwrap $root/usr/bin/
+sed '/^# -- Debian specific part$/,/^# -- Debian specific part ended$/d' /usr/bin/torsocks > $root/usr/bin/torsocks
+chmod 0755 $root/usr/bin/torsocks
+if grep -q dpkg $root/usr/bin/torsocks; then echo 'torsocks: Debian block still present' >&2; exit 1; fi
+cp -a /usr/lib/$arch/torsocks $root/usr/lib/$arch/
+cp /etc/ld.so.conf.d/torsocks-$arch.conf $root/etc/ld.so.conf.d/
+cp -a /etc/ssl /etc/ca-certificates $root/etc/
+mkdir -p $root/usr/share/ca-certificates
+cp -a /usr/share/ca-certificates/. $root/usr/share/ca-certificates/
+cp -a /wrapper $root/opt/cloak/wrapper
+tar -xJf /node/node-v24.22.2-linux-arm64.tar.xz -C /tmp
+install -m 0755 /tmp/node-v24.22.2-linux-arm64/bin/node $root/usr/local/bin/node
+mkdir -p $root/usr/local/share/doc/node
+cp /tmp/node-v24.22.2-linux-arm64/LICENSE $root/usr/local/share/doc/node/
+pi=$root/usr/local/lib/node_modules/@earendil-works/pi-coding-agent
+mkdir $pi
+tar -xzf /pi/earendil-works-pi-coding-agent-1.3.0.tgz -C $pi --strip-components 1 --no-same-owner
+ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js $root/usr/local/bin/pi
+
+# Shared libraries the dynamic programs need, from this image's glibc.
+for elf in /bin/bash /usr/bin/bwrap $root/usr/local/bin/node /usr/lib/$arch/torsocks/libtorsocks.so; do
+	ldd $elf | awk '/=>/ { print $3 } /ld-linux/ { print $1 }'
+done | sort -u | while read -r library; do
+	case $library in
+	/lib/ld-linux-*|/usr/lib/ld-linux-*) cp -L $library $root/usr/lib/ ;;
+	*) cp -L $library $root/usr/lib/$arch/ ;;
+	esac
+done
+echo /usr/lib/$arch > $root/etc/ld.so.conf.d/$arch.conf
+echo 'include /etc/ld.so.conf.d/*.conf' > $root/etc/ld.so.conf
+ldconfig -r $root
+
 cat > $root/etc/passwd <<PASSWD
 root:x:0:0:root:/:/bin/sh
 adapter:x:1001:1001:adapter:/:/bin/sh
 checker:x:1002:1002:checker:/:/bin/sh
+zkapi:x:1004:1004:zkapi:/:/bin/sh
+agent:x:1005:1005:agent:/home/agent:/bin/sh
 PASSWD
 cat > $root/etc/group <<GROUP
 root:x:0:
 adapter:x:1001:
 checker:x:1002:
-rewriter:x:1003:adapter,checker
+rewriter:x:1003:adapter,checker,zkapi
+zkapi:x:1004:
+agent:x:1005:
 GROUP
 chmod 0755 $root/run/cloak
 chmod 1777 $root/tmp
@@ -37,7 +95,9 @@ chmod 1777 $root/tmp
 (cd $root && find . | LC_ALL=C sort | cpio -o -H newc -R 0:0 --reproducible --quiet) | gzip -n -9 > /out/initrd.gz
 
 {
-	dpkg-query -W linux-image-$kernel busybox-static
-	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-rewrite-check
+	dpkg-query -W linux-image-$kernel busybox-static bash bubblewrap torsocks ca-certificates libc6 libstdc++6 libgcc-s1 libcap2 libselinux1 libpcre2-8-0 libtinfo6
+	(cd /node && sha256sum node-v24.22.2-linux-arm64.tar.xz)
+	(cd /pi && sha256sum earendil-works-pi-coding-agent-1.3.0.tgz)
+	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-rewrite-check cloak-daemon cloak-agent-check
 } > /out/guest-manifest.txt
 cat /out/guest-manifest.txt

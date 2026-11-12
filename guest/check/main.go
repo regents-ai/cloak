@@ -9,6 +9,8 @@
 // a chat request as a local client sends it to the daemon, and a positive
 // cancel_after_ms cancels the call that long after it starts, as a client
 // disconnecting does. One JSON result per case is printed to standard output.
+// Lines with an "agent" or "sandbox" field are cloak-agent-check's and are
+// skipped.
 package main
 
 import (
@@ -27,6 +29,8 @@ type testCase struct {
 	Name          string          `json:"name"`
 	Body          json.RawMessage `json:"body"`
 	CancelAfterMs int             `json:"cancel_after_ms"`
+	Agent         json.RawMessage `json:"agent"`
+	Sandbox       json.RawMessage `json:"sandbox"`
 }
 
 type result struct {
@@ -65,6 +69,9 @@ func main() {
 		if err := json.Unmarshal(lines.Bytes(), &c); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
+		}
+		if c.Agent != nil || c.Sandbox != nil {
+			continue
 		}
 		_ = out.Encode(run(c, config))
 	}

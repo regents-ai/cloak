@@ -44,7 +44,7 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/host/` | The Linux reference host used for stage 1 |
 | `worker/` | The native rewrite worker (Swift, MLX), its sandbox entitlements and install script |
 | `host/` | The host supervisor: boots the guest and relays its rewrites to the worker |
-| `guest/` | The guest: adapter, the daemon's rewrite check, kernel and root build |
+| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
 | `evidence/stage4/` | Stage 4 development records and every score, one folder per model |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
@@ -120,6 +120,14 @@ daemon's 90-second deadline):
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
+```
+
+Run Pi 1.3.0 in the guest, inside the reference wrapper, through the
+daemon's local API (the guest has no Tor, so every task stops at the Tor
+route after its rewrite; one check uses the real worker):
+
+```bash
+uv run --with pytest==8.4.2 pytest tests/test_agent_path.py
 ```
 
 ## Stage 3 commands

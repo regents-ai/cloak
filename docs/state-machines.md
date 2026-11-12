@@ -108,16 +108,30 @@ Limit: a host killed during the start (under a second) leaves them in its
 private temporary folder, readable only by the person. The stage 4 app,
 which will run the host, owns that case.
 
-## 6. The guest's boot (`guest/image/init`)
+## 6. The guest's boot (`guest/image/init`, then `guest/image/boot`)
 
 ```
-mounts --> vsock modules --> loopback --> adapter ready --> daemon checks --> power off
+root copied to tmpfs --> switched root --> mounts --> vsock and entropy modules --> loopback
+  --> adapter ready --> daemon ready --> daemon checks --> workspace made --> agent cases --> power off
 ```
 
 Before: "adapter ready" was guessed by scanning the kernel's socket table
 every 0.1 seconds for up to 5 seconds, so a slow boot could fail for no
 reason. Now the adapter prints one line, "ready", once it listens, and the
 boot waits for that line; an adapter that exits first ends the wait at once.
+The daemon is waited for the same way. Either one failing to start powers
+the guest off with a line saying which.
+
+## 6a. One agent case (`guest/agent/main.go`)
+
+```
+log offset noted --> earlier route attempts cleared --> case run as agent --> exited
+  --> route attempts taken --> daemon log lines taken --> result printed
+```
+
+The route observer refuses each SOCKS connection in steps (greeting,
+password, request, refusal) and records what it read so far, whichever step
+the connection ends at.
 
 ## 7. One request in the guest adapter (`guest/adapter/main.go`)
 

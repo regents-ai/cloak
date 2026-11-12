@@ -28,6 +28,7 @@ verified by `uv run scripts/fetch_sources.py`.
 | Later snapshot | captured | `ethereum/zkapi` at `eac5f906` (23 Oct), the commit the spec cites; 45 commits after the post's commit; adds a Sepolia staging deployment with a development proving setup | Spec S06 to S09 |
 | Agent harness | reconstructed | Pi, npm `@earendil-works/pi-coding-agent@1.3.0` (source tag `v1.3.0`, `71023aec`), the newest release when the post went out. The post names Pi but not its version | npm registry times |
 | Pi provider | captured | `openai-completions` API against the daemon at `http://127.0.0.1:8787/v1`, empty key or `local` | `zkapi-clientd/README.md`, `docs/REWRITER.md` |
+| Pi runtime | reconstructed | Node.js 24.22.2 (Pi 1.3.0 needs 22.19 or later), the version in the stage 1 host's pinned image; pinned in [sources.json](sources.json) | Pi `package.json`; [host/](host/) |
 | Pi network settings | reconstructed | `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0` so Pi makes no background requests of its own | Pi `docs/environment-variables.md` |
 | Sandbox | reconstructed | bubblewrap with every namespace but network unshared, read-only `/usr`, a private home and one workspace: [wrapper/sandbox](wrapper/sandbox) | Post: "wrapped with a bwrap sandbox"; exact arguments unpublished |
 | Network wrapper | reconstructed | torsocks inside the sandbox, `AllowOutboundLocalhost 1` so Pi can reach the daemon: [wrapper/torsocks.conf](wrapper/torsocks.conf) | Post: "wrapped again with torsocks" |
@@ -69,6 +70,11 @@ torsocks works by preloading a library, so anything that does not load it
 directly. They are findings about the reference itself, since the
 reconstruction is the Regents reference. The spec's A06 needs routing that is enforced, not preloaded, and the Mac
 appliance must provide that.
+
+Corrected 12 November 2026: the sandbox copied Pi's provider file to a path
+Pi never reads, which `pi --version` above could not show. It now goes to
+`~/.pi/agent/models.json`, and Pi in the Mac guest uses the `zkapi`
+provider ([plan.md](../docs/plan.md), stage 2).
 
 Not yet reproduced: any paid inference, rewriting with the reference model,
 cover traffic against real destinations, and the representative task end to

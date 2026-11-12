@@ -1,24 +1,13 @@
 #!/bin/busybox sh
-# The guest's only process tree: load vsock, start the adapter on loopback as
-# its own user, run the daemon's rewrite checks as another, print the results
-# on the console, power off. No network device exists in this guest.
-/bin/busybox --install -s /bin
-mount -t proc proc /proc
-mount -t sysfs sys /sys
-mount -t devtmpfs dev /dev
-
-for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
-	insmod /lib/modules/$module.ko || { echo "cloak-guest: cannot load $module"; poweroff -f; }
+# The guest's first step: move the root off the kernel's initial ramfs onto a
+# tmpfs, then run the boot (/usr/lib/cloak/boot) from there. The reference
+# sandbox needs this: bubblewrap pivots into its own root, and Linux never
+# pivots away from the initial ramfs. switch_root empties the ramfs as it
+# moves, so the root is held once, not twice, once the boot starts.
+/bin/busybox mount -t tmpfs -o mode=0755 root /newroot || { echo "cloak-guest: cannot make the root"; /bin/busybox poweroff -f; }
+for entry in /* /.[!.]*; do
+	case $entry in /newroot|/proc|/sys|/dev|'/.[!.]*') continue ;; esac
+	/bin/busybox cp -a "$entry" /newroot/ || { echo "cloak-guest: cannot copy the root"; /bin/busybox poweroff -f; }
 done
-ip link set lo up
-
-# The adapter prints "ready" once it listens. One that exits first ends the
-# line empty.
-mkfifo /run/cloak/adapter-ready
-su -s /bin/sh adapter -c 'exec /usr/bin/cloak-adapter' > /run/cloak/adapter-ready &
-read -r ready < /run/cloak/adapter-ready
-[ "$ready" = ready ] || { echo "cloak-guest: adapter did not start"; poweroff -f; }
-
-su -s /bin/sh checker -c "exec /usr/bin/cloak-rewrite-check /etc/cloak/cases.jsonl $(cat /etc/cloak/model) /run/cloak/rewriter-key"
-echo "cloak-guest: check exited $?"
-poweroff -f
+/bin/busybox mkdir -m 0755 /newroot/proc /newroot/sys /newroot/dev
+exec /bin/busybox switch_root /newroot /usr/lib/cloak/boot

@@ -1,0 +1,39 @@
+#!/bin/busybox sh
+# The guest's only process tree, after /init has moved the root: load vsock
+# and the entropy driver, start the adapter on loopback as its own user, start
+# the daemon's local API as another, run the daemon's rewrite checks as a
+# third, then the agent cases (Pi in the reference sandbox as the agent user),
+# print the results on the console, power off. No network device exists in
+# this guest.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+
+for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport virtio-rng; do
+	insmod /lib/modules/$module.ko || { echo "cloak-guest: cannot load $module"; poweroff -f; }
+done
+ip link set lo up
+
+# The adapter and the daemon each print "ready" once they listen. One that
+# exits first ends its line empty.
+mkfifo /run/cloak/adapter-ready
+su -s /bin/sh adapter -c 'exec /usr/bin/cloak-adapter' > /run/cloak/adapter-ready &
+read -r ready < /run/cloak/adapter-ready
+[ "$ready" = ready ] || { echo "cloak-guest: adapter did not start"; poweroff -f; }
+
+mkfifo /run/cloak/daemon-ready
+su -s /bin/sh zkapi -c "exec /usr/bin/cloak-daemon $(cat /etc/cloak/model) /run/cloak/rewriter-key" \
+	> /run/cloak/daemon-ready 2> /run/cloak/daemon.log &
+read -r ready < /run/cloak/daemon-ready
+[ "$ready" = ready ] || { echo "cloak-guest: daemon did not start"; cat /run/cloak/daemon.log; poweroff -f; }
+
+su -s /bin/sh checker -c "exec /usr/bin/cloak-rewrite-check /etc/cloak/cases.jsonl $(cat /etc/cloak/model) /run/cloak/rewriter-key"
+echo "cloak-guest: check exited $?"
+
+mkdir -p /home/agent/workspace
+chown -R agent:agent /home/agent
+chmod 0700 /home/agent
+/usr/bin/cloak-agent-check /etc/cloak/cases.jsonl
+echo "cloak-guest: agent check exited $?"
+poweroff -f

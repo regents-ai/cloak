@@ -81,6 +81,97 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   its reply, which the daemon refuses, and sometimes answers instead of
   rewriting.
 
+### Pi in the guest (12 November 2026)
+
+What runs in the guest now, in boot order (all on the development
+stand-in; nothing here counts toward a gate):
+
+- `/init` copies the root onto a tmpfs and switches to it, because
+  bubblewrap cannot pivot away from the kernel's initial ramfs.
+- The adapter, as before, as user `adapter`.
+- The daemon's own local API, `cloak-daemon`, as user `zkapi` on
+  127.0.0.1:8787. It is the pinned `zkapi-clientd` built with one added file
+  (`guest/daemon/zz_cloak_guest.go`, compiled in by overlay, so the daemon's
+  files stay untouched) that builds the API exactly as the daemon's own
+  `serve` does after setup: the default configuration, the rewriter at the
+  adapter, Tor at `tor://127.0.0.1:9050`. It skips what needs the network or
+  a wallet: funding, the wallet companion, the deployment check, cover
+  traffic and the key-session monitors.
+- The daemon's rewrite checks, as before.
+- `cloak-agent-check` runs each agent case as user `agent`: Pi 1.3.0 inside
+  the reference wrapper (`pi-paranoid`, so bubblewrap with torsocks), talking
+  to the daemon. Plain commands can run in the same sandbox, to probe it.
+
+Containment, as checked:
+
+- Pi and every tool it starts run in one bubblewrap sandbox as an
+  unprivileged user: `/usr` read-only, a private home and one workspace,
+  their own process, IPC and host-name namespaces, and an empty environment
+  apart from the wrapper's settings. The sandbox sees no `/run/cloak` (the
+  channel token and rewriter key) and no `/etc/cloak`, and none of the
+  daemon's or adapter's processes.
+- torsocks preloads into Pi, so Node's connections go to the Tor port. Pi
+  reaches the daemon only because the reference allows loopback
+  (`AllowOutboundLocalhost 1`).
+- The guest has no network device, unchanged: `/proc/net/dev` inside the
+  sandbox lists only `lo`, and a static program, which skips torsocks, finds
+  the network unreachable.
+- The guest has no Tor. A route observer on the Tor port (part of the agent
+  check, not of the path) records each SOCKS identity, as a short hash, and
+  the destination asked for, then refuses. So each model request is
+  rewritten, then stops at Tor route preparation with the daemon's own
+  message: "no direct fallback was used".
+
+Six checks in `tests/test_agent_path.py` pass:
+
+- Pi's new turn reaches the worker byte for byte as the daemon's rewrite
+  request, and the task then stops at the Tor route.
+- A continued conversation (`pi -c`) keeps its SOCKS identity; a new one
+  gets another.
+- A bad rewrite reply stops the task with the daemon's rewrite error before
+  any model request, and the next task still runs.
+- A lost worker stops this and every later task the same way.
+- The sandbox holds, as above; the adapter and the daemon's status route
+  both answer 401 without their keys.
+- Pi with the real worker and the stand-in model, end to end to the Tor
+  route.
+
+Choices made overnight, without asking (Sean's brief of 12 November):
+
+- **Node.js 24.22.2** (linux-arm64, pinned by sha256 in
+  `reference/sources.json`, fetched once by `scripts/fetch_sources.py`). It
+  is the version in the stage 1 reference host's pinned image, and Pi 1.3.0
+  needs 22.19 or later. Pi's published bundle runs on Node alone. The hash
+  matches nodejs.org's published list; its signature was not checked.
+- **Wrapper correction**: the reconstructed `sandbox` copied Pi's provider
+  file to a path Pi never reads, so Pi refused the `zkapi` provider. It now
+  goes to `~/.pi/agent/models.json`. The stage 1 Linux host check ran only
+  `pi --version`, which never reads it.
+- **Entropy device**: the host now gives the guest a virtio entropy device.
+  Without it the guest's random source never became ready and the daemon
+  waited forever for its first key. It is a second channel into the guest
+  and carries only random bytes from the Mac, one way.
+- **torsocks script**: the guest carries Debian's torsocks script without its
+  Debian-only block, which warns about libtorsocks missing for other
+  architectures using dpkg tools the guest lacks. The guest has one
+  architecture.
+- **The guest daemon harness** instead of the daemon's `serve`: `serve`
+  first funds a wallet and starts the wallet companion, which need the
+  network and a payment vault; building those is out of bounds.
+
+Missing for the full stack, and the next step for each:
+
+- **Tor** in the guest (a pinned tor and its route to the Mac). Next: decide
+  how Tor traffic leaves the guest without giving it a network device (the
+  spec's A06 asks for enforced routing). Not built, by instruction.
+- **Cover traffic**: needs Tor and operator-chosen destinations. Not built,
+  by instruction.
+- **Payment vault, funding, wallets**: not deployed at the pinned commit
+  (A11). Not built, by instruction.
+- **The daemon's real `serve`** in place of the harness: needs the two above.
+- **A real answer to Pi**: every task stops at the Tor route, so Pi's tools
+  never run on a model's answer.
+
 ## Stage 3 so far
 
 - The feasibility kit is ready: `uv run scripts/stage3.py feasibility <name>`
@@ -115,8 +206,10 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
 - Needs a person, listed in each record with no result: sleep and wake
   during a call, a run on battery, the declared ordinary load, induced memory
   pressure, and the first run after the Mac restarts.
-- Not measured by this kit: the full stack (the guest has no Pi, Tor, cover
-  traffic or payment vault yet, so stage 3's exit condition stays unmet), the
+- Not measured by this kit: the full stack (the guest now runs the daemon's
+  local API and carries Pi, but has no Tor, cover traffic or payment vault,
+  and the kit's calls do not come from Pi, so stage 3's exit condition stays
+  unmet), the
   daemon's full serve path (A11), per-process GPU use (macOS gives it only to
   root), and a 32 GB Mac (decision 2).
 - What a real run needs. Disk: the lead is 16,077,680,950 bytes and the
