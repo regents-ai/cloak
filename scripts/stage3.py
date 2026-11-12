@@ -12,8 +12,9 @@ EVAL07; docs/evaluation-protocol.md).
 `feasibility` boots the guest three times, one after another: the main run
 (cold load, the cold first call, the 40 EVAL06 messages warm, the
 conversation rebuilt after cache loss, the long inputs, a cancellation and
-the call after it), the worker loss (the worker killed mid-rewrite), and the
-restart (a fresh boot after the loss). `eval01` runs the daemon's 16
+the call after it), the worker loss (the worker killed mid-rewrite, and the
+call after it, served by the new worker the host starts), and the restart (a
+fresh boot after the loss). `eval01` runs the daemon's 16
 synthetic cases (EVAL01, the development screen) through the same path and
 applies the daemon's own mechanical checks to each output.
 
@@ -407,9 +408,10 @@ def analyse(boot_name: str, cases: list[dict], run: boot.Boot, art: dict, conf: 
         "boot": boot_name, "started_ns": run.started_ns, "ended_ns": run.ended_ns,
         "seconds": (run.ended_ns - run.started_ns) / 1e9, "host_exit_status": run.host_status,
         "stopped_over_time": run.over_time, "vm_pid_seen": run.vm_pid is not None,
-        "worker": worker and {"pid": worker.pid, "load_seconds": worker.load_seconds,
-                              "spawn_ns": worker.spawn_ns, "ready_ns": worker.ready_ns,
-                              "exit_ns": worker.exit_ns, "exit_status": worker.exit_status,
+        "worker": worker and {"processes": [{"pid": p.pid, "load_seconds": p.load_seconds,
+                                             "spawn_ns": p.spawn_ns, "ready_ns": p.ready_ns,
+                                             "exit_ns": p.exit_ns, "exit_status": p.exit_status}
+                                            for p in worker.processes],
                               "cancels_after_answer": worker.cancels_after_answer},
         "system_start": run.system_start, "system_end": run.system_end,
         "cases": out_cases, **extra,
@@ -437,6 +439,11 @@ def call_record(call: measures.Call, figures: dict | None, art: dict, conf: dict
     }
 
 
+def first_worker(boot_record: dict) -> dict:
+    """The worker process the boot started with; empty when none was seen."""
+    return boot_record["worker"]["processes"][0] if boot_record["worker"] else {}
+
+
 def window_of(boot_record: dict, group: str) -> dict | None:
     """Resource figures while a group's cases ran: from the end of the case
     before the group's first (or the worker's ready) to the group's last end."""
@@ -445,7 +452,7 @@ def window_of(boot_record: dict, group: str) -> dict | None:
     if not indices or not boot_record["samples"]:
         return None
     previous = cases[indices[0] - 1]["finished_ns"] if indices[0] else None
-    start = previous or (boot_record["worker"] or {}).get("ready_ns") or boot_record["started_ns"]
+    start = previous or first_worker(boot_record).get("ready_ns") or boot_record["started_ns"]
     end = cases[indices[-1]]["finished_ns"] or boot_record["ended_ns"]
     return measures.window(boot_record["samples"], start, end)
 
@@ -490,7 +497,7 @@ def summarise(boots: dict[str, dict], kills: list[dict]) -> dict:
                    "by_band": by_band, "tokens_per_second": tokens_per_second(eval06),
                    "output_to_expected_bytes_p50": measures.percentile(ratios, 50) if ratios else None,
                    "window": window_of(main, "eval06")},
-        "cold": {"load_seconds": (main["worker"] or {}).get("load_seconds"),
+        "cold": {"load_seconds": first_worker(main).get("load_seconds"),
                  "load_includes": "the worker's sha256 check of every pinned file, then the model load",
                  "first_call": brief(group(main, "cold")[0]),
                  "host_start_to_first_result_seconds": first_result_seconds(main),
@@ -506,8 +513,9 @@ def summarise(boots: dict[str, dict], kills: list[dict]) -> dict:
             "next_call": brief(group(main, "cancellation")[-1])},
         "worker_loss": {"kills": kills, "cases": [brief(c) for c in group(loss, "worker_loss")],
                         "host_exit_status": loss["host_exit_status"],
-                        "worker_exit_status": (loss["worker"] or {}).get("exit_status")},
-        "restart": {"load_seconds": (restart["worker"] or {}).get("load_seconds"),
+                        "worker_processes": [{k: p[k] for k in ("pid", "load_seconds", "exit_status")}
+                                             for p in (loss["worker"] or {}).get("processes", [])]},
+        "restart": {"load_seconds": first_worker(restart).get("load_seconds"),
                     "host_start_to_first_result_seconds": first_result_seconds(restart),
                     "cases": [brief(c) for c in group(restart, "restart")]},
         "memory_cpu_gpu": {name: {"whole_boot": measures.window(b["samples"], b["started_ns"], b["ended_ns"])
@@ -523,7 +531,7 @@ def first_result_seconds(boot_record: dict) -> float | None:
 
 
 def load_window(boot_record: dict) -> dict | None:
-    w = boot_record["worker"]
+    w = first_worker(boot_record)
     if not w or not w["ready_ns"] or not boot_record["samples"]:
         return None
     return measures.window(boot_record["samples"], w["spawn_ns"], w["ready_ns"])
@@ -682,7 +690,9 @@ def print_feasibility(record: dict, path: Path) -> None:
         print(f"History {c['name']}: {c['outcome']} in {seconds(c['seconds'])} over {len(c['calls'])} calls")
     print(f"Cancellation: worker answered {seconds(s['cancellation']['cancel_to_answer_seconds'])} after the cancel; "
           f"next call {s['cancellation']['next_call']['outcome']} in {seconds(s['cancellation']['next_call']['seconds'])}")
-    print(f"Worker loss: {[(c['name'], c['stop_reason'] or c['outcome']) for c in s['worker_loss']['cases']]}")
+    print(f"Worker loss: {[(c['name'], c['stop_reason'] or c['outcome']) for c in s['worker_loss']['cases']]}; "
+          f"worker processes (exit status, load): "
+          f"{[(p['exit_status'], seconds(p['load_seconds'])) for p in s['worker_loss']['worker_processes']]}")
     print(f"Restart: cold load {seconds(s['restart']['load_seconds'])}; "
           f"{[(c['name'], c['outcome']) for c in s['restart']['cases']]}")
     whole = s["memory_cpu_gpu"]["main"]["whole_boot"]

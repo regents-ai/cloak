@@ -109,6 +109,20 @@ def test_cancel_stops_the_rewrite(worker):
     assert ask(worker, request_body(NAME, ["hello"], max_tokens=2))[0] == 200
 
 
+def test_cancel_stops_the_rewrite_while_it_reads_the_prompt(worker):
+    # The stand-in reads 128 KiB of prose for about ten seconds before it
+    # writes a token; the cancel comes one second in.
+    prose = json.loads((ROOT / "reference/eval05-inputs.json").read_text())["prose"][:128 << 10]
+    send(worker, b"R", request_body(NAME, [prose]))
+    time.sleep(1.0)
+    cancelled = time.monotonic()
+    send(worker, b"C")
+    kind, payload = read_frame(worker.stdout)
+    assert (kind, answer(payload)) == (b"A", (499, {"error": {"message": "cancelled"}}))
+    assert time.monotonic() - cancelled < 2
+    assert ask(worker, request_body(NAME, ["hello"], max_tokens=2))[0] == 200
+
+
 def test_second_request_while_busy_stops_the_worker(worker):
     body = request_body(NAME, ["tell me a long story about a lighthouse keeper"])
     send(worker, b"R", body)

@@ -2,7 +2,8 @@
 rewrite code in the guest, the adapter, the host relay and the sandboxed
 worker, with the copy-only tap (worker_tap.py) between the host and the
 worker. While the boot runs, a sampler reads every second the memory and CPU
-of the worker, the guest's virtual machine and the host, and the system's
+of the worker (the newest, once the host has started a new one after a
+loss), the guest's virtual machine and the host, and the system's
 swap, memory pressure and GPU use; the worker's own log lines (token counts
 and timings, never content) are streamed from the unified log.
 
@@ -205,18 +206,27 @@ class _Sampler:
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
+    def _newest_worker(self) -> int | None:
+        """The worker the host started last: a new one follows each loss."""
+        if not self.events.exists():
+            return None
+        spawns = [e for line in self.events.read_text().splitlines() if '"spawn"' in line
+                  if (e := json.loads(line))["kind"] == "spawn"]
+        return spawns[-1]["pid"] if spawns else None
+
     def _run(self):
         while not self.done.is_set():
-            if self.worker_pid is None and self.events.exists():
-                spawn = next((json.loads(line) for line in self.events.read_text().splitlines()
-                              if '"spawn"' in line), None)
-                self.worker_pid = spawn and spawn["pid"]
+            worker = self.worker_pid and process_reading(self.worker_pid)
+            if not worker:
+                self.worker_pid = self._newest_worker()
+                worker = self.worker_pid and process_reading(self.worker_pid)
             if self.vm_pid is None:
                 self.vm_pid = vm_process_of(self.host_pid, self.vms_before)
             gpu_percent, gpu_memory = gpu_reading()
             self.samples.append({
                 "t": clock(),
-                "worker": self.worker_pid and process_reading(self.worker_pid),
+                "worker": worker,
+                "worker_pid": self.worker_pid,
                 "vm": self.vm_pid and process_reading(self.vm_pid),
                 "host": process_reading(self.host_pid),
                 "swap_used": swap_used(),

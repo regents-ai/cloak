@@ -60,33 +60,46 @@ class Call:
 
 
 @dataclass
-class Worker:
-    """The worker's life in one boot, from the tap's events."""
+class Process:
+    """One worker process in a boot: the host starts one, and a new one after
+    each loss."""
 
     spawn_ns: int
     pid: int
     tap_pid: int
-    ready_ns: int | None
-    exit_ns: int | None
-    exit_status: int | None
-    calls: list[Call]
-    cancels_after_answer: int
+    ready_ns: int | None = None
+    exit_ns: int | None = None
+    exit_status: int | None = None
 
     @property
     def load_seconds(self) -> float | None:
         return None if self.ready_ns is None else (self.ready_ns - self.spawn_ns) / 1e9
 
 
+@dataclass
+class Worker:
+    """The worker's life in one boot, from the tap's events: each process the
+    host started, in order, and every call across them."""
+
+    processes: list[Process]
+    calls: list[Call]
+    cancels_after_answer: int
+
+
 def worker_from_events(events: list[dict]) -> Worker:
-    """Rebuilds the worker's calls. A cancel that arrives with no call open is
-    one that crossed the answer; it is counted, as the worker ignores it."""
-    spawn = next(e for e in events if e["kind"] == "spawn")
+    """Rebuilds the worker's processes and calls. A call open when a new
+    process starts was lost with the old one, and stays unanswered. A cancel
+    that arrives with no call open is one that crossed the answer; it is
+    counted, as the worker ignores it."""
+    processes: list[Process] = []
     calls: list[Call] = []
     open_call: Call | None = None
-    ready = exit_ns = exit_status = None
     crossing = 0
     for e in events:
-        if e["kind"] == "in" and e["frame"] == "R":
+        if e["kind"] == "spawn":
+            processes.append(Process(spawn_ns=e["t"], pid=e["pid"], tap_pid=e["tap"]))
+            open_call = None
+        elif e["kind"] == "in" and e["frame"] == "R":
             open_call = Call(sent_ns=e["t"], request=e["text"])
             calls.append(open_call)
         elif e["kind"] == "in" and e["frame"] == "C":
@@ -95,15 +108,14 @@ def worker_from_events(events: list[dict]) -> Worker:
             else:
                 open_call.cancels_ns.append(e["t"])
         elif e["kind"] == "out" and e["frame"] == "Y":
-            ready = e["t"]
+            processes[-1].ready_ns = e["t"]
         elif e["kind"] == "out" and e["frame"] == "A":
             open_call.answered_ns, open_call.status = e["t"], e["status"]
             open_call.reply, open_call.reply_base64 = e.get("text"), e.get("base64")
             open_call = None
         elif e["kind"] == "exit":
-            exit_ns, exit_status = e["t"], e["status"]
-    return Worker(spawn_ns=spawn["t"], pid=spawn["pid"], tap_pid=spawn["tap"], ready_ns=ready,
-                  exit_ns=exit_ns, exit_status=exit_status, calls=calls, cancels_after_answer=crossing)
+            processes[-1].exit_ns, processes[-1].exit_status = e["t"], e["status"]
+    return Worker(processes=processes, calls=calls, cancels_after_answer=crossing)
 
 
 def expected_texts(body: dict) -> list[list[str]]:
@@ -218,7 +230,8 @@ def nearest(samples: list[dict], t: int) -> dict:
 def window(samples: list[dict], start: int, end: int) -> dict:
     """Resource figures between two times: peak memory of each process seen,
     the peak of their sum, CPU seconds used, and the system's swap, pressure
-    and GPU readings. CPU uses the samples nearest each end."""
+    and GPU readings. CPU uses the samples nearest each end, and is left out
+    when they read different worker processes (a new worker after a loss)."""
     inside = [s for s in samples if start <= s["t"] <= end] or [nearest(samples, end)]
     first, last = nearest(samples, start), nearest(samples, end)
     processes = ("worker", "vm", "host")
@@ -226,7 +239,7 @@ def window(samples: list[dict], start: int, end: int) -> dict:
     for name in processes:
         seen = [s[name] for s in inside if s.get(name)]
         out[f"{name}_peak_footprint_bytes"] = max((p[0] for p in seen), default=None)
-        if first.get(name) and last.get(name):
+        if first.get(name) and last.get(name) and first.get(f"{name}_pid") == last.get(f"{name}_pid"):
             out[f"{name}_cpu_seconds"] = (last[name][2] - first[name][2]) / 1e9
     out["product_peak_footprint_bytes"] = max(
         sum(s[name][0] for name in processes if s.get(name)) for s in inside)

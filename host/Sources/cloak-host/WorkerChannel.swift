@@ -3,8 +3,9 @@ import Synchronization
 
 /// The native worker as a child process, spoken to in frames over its
 /// standard input and output (see worker/Sources/cloak-rewriter/Frames.swift).
-/// One request at a time. The first fault marks the worker lost and stops it:
-/// the host never restarts it, and every later request fails.
+/// One request at a time. The first fault marks the worker lost and stops it,
+/// and every later request on this channel fails; the relay starts a new
+/// worker on a new channel.
 final class WorkerChannel: Sendable {
     /// The largest answer accepted. The worker's 16,384-token limit keeps real
     /// answers far below it; a larger one means the worker is broken. Answers

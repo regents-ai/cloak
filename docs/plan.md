@@ -45,10 +45,11 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
 ## Stage 2 so far
 
 - The native worker (`worker/`) loads a model only when every file matches
-  the pins built into it, rewrites one request at a time, stops on a cancel,
-  and stops on any protocol fault. It runs in Apple's App Sandbox with no
+  the pins built into it, rewrites one request at a time, stops on a cancel
+  (also while it reads a long prompt), and stops on any protocol fault. It
+  runs in Apple's App Sandbox with no
   network entitlement and reads files only in
-  `~/Library/Application Support/Regents Cloak/models/`. 23 checks in
+  `~/Library/Application Support/Regents Cloak/models/`. 24 checks in
   `tests/test_worker.py` pass, including: a program signed with the worker's
   entitlements is refused a connection the same program makes unsandboxed,
   the installed worker carries exactly those entitlements, and the worker
@@ -60,15 +61,20 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   unchanged over one virtio socket with a per-boot token.
 - The host (`host/`) boots the guest with Virtualization.framework, checks
   the token, relays to the worker, turns a dropped guest connection into a
-  cancel, and treats a lost worker as a failure for this and every later
-  rewrite.
-- 18 checks in `tests/test_guest_path.py` pass: the request reaches the
+  cancel, and treats a lost worker as a failure for the rewrite it had (never
+  sent again); it then starts a new worker from the same program and pinned
+  files for the next rewrite. A new worker that cannot start leaves every
+  later rewrite failing.
+- 20 checks in `tests/test_guest_path.py` pass: the request reaches the
   worker byte for byte; nine kinds of bad reply are refused by the daemon's
   code and the next rewrite still works; a client that gives up cancels the
   worker, even before the worker has its request; the daemon's 90-second
   deadline still holds; a lost worker (fake or real, killed mid-rewrite, or
-  gone between rewrites) fails safely; the real worker rewrites through the
-  whole path and is free again within seconds of a cancel.
+  gone between rewrites) fails only the rewrite it had or the one that found
+  it gone, and a new worker serves the next; a new worker that cannot start
+  fails every later rewrite; the real worker rewrites through the whole path
+  and is free again within seconds of a cancel, also one that lands while it
+  reads a 128 KiB prompt.
 - Every staged process (the worker's rewrite, the host's channel and
   connections, the boot files, the guest's boot) is named in the code and
   listed in [state-machines.md](state-machines.md).
@@ -130,7 +136,8 @@ Six checks in `tests/test_agent_path.py` pass:
   gets another.
 - A bad rewrite reply stops the task with the daemon's rewrite error before
   any model request, and the next task still runs.
-- A lost worker stops this and every later task the same way.
+- A lost worker stops its task the same way, and the next task runs on a
+  new worker.
 - The sandbox holds, as above; the adapter and the daemon's status route
   both answer 401 without their keys.
 - Pi with the real worker and the stand-in model, end to end to the Tor

@@ -14,8 +14,10 @@ idle --request--> preparing --generation starts--> generating
  +------------- answer written ------------------------+
 ```
 
-- **preparing**: the request is being checked and its prompt built. A cancel
-  here is kept and stops the generation the moment it starts.
+- **preparing**: the request's own task checks it, builds its prompt and has
+  the model read the prompt, in chunks of 512 tokens. A cancel here cancels
+  that task: the reading stops at the next chunk, or the generation stops
+  the moment it starts. The answer is 499.
 - **generating**: a cancel stops the generation; the answer is 499.
 - **idle**: a cancel here is one that crossed the answer, and does nothing.
   A request while not idle breaks the protocol and stops the worker.
@@ -26,6 +28,16 @@ Before: a busy flag (an atomic) and a run record (a cancelled flag and the
 generation) under a separate lock described the same state twice. No fault
 was found, but the two could briefly disagree. Now one enum sits under one
 lock.
+
+Before (found in the lead candidate's first run, 12 November): a cancel while
+preparing only set a flag, read once the model had read the whole prompt.
+The model library stops its prompt reading between chunks only when the
+task doing it is cancelled, and nothing cancelled it. The lead read a
+128 KiB prompt for 217 s, 127 s past its cancel; the rewrites queued behind
+it reached the worker after their own 90-second deadlines, and so did every
+later one in that boot. Check: `test_cancel_stops_the_rewrite_while_it_reads_the_prompt`
+(the stand-in answered 9.4 s after the cancel before the fix) and
+`test_a_client_that_gives_up_while_the_real_worker_reads_a_long_prompt_frees_it`.
 
 ## 2. The host's channel to the worker (`host/Sources/cloak-host/WorkerChannel.swift`)
 
@@ -42,6 +54,8 @@ any fault --> lost (never ends)
   cancel can never land inside a request's bytes.
 - `answer` waits outside the lock, so a cancel can reach the worker meanwhile.
 - A cancel in any state but running does nothing.
+- A channel is one worker process; lost ends that channel, not the host's
+  work. The relay then starts a new worker on a new channel (section 3).
 
 Before: an in-flight flag and a lost flag, with a separate "wait until ready"
 call. Two faults:
@@ -50,7 +64,7 @@ call. Two faults:
   to a worker that had died while idle raised SIGPIPE and killed the host,
   instead of marking the worker lost. The host now ignores SIGPIPE, so the
   failed write is the loss. Check:
-  `test_a_worker_lost_between_rewrites_fails_the_next_rewrite` (host exited
+  `test_a_worker_lost_between_rewrites_fails_only_the_next_rewrite` (host exited
   with signal 13 before the fix).
 - **An early cancel was lost.** See section 3; part of the fix is here.
 
@@ -63,6 +77,23 @@ token --> request header --> request body --> handed to the worker
 
 Each step reads with a 10-second limit; any failure closes the connection
 without an answer. The watch turns the guest closing its end into a cancel.
+
+A worker lost during the connection (gone mid-rewrite, or found gone when
+its request is handed over) closes it without an answer; its request is
+never sent again. Before the next connection, the relay starts a new
+worker, from the same program and pinned files, holding the worker's lock
+until it is ready so the host's shutdown waits for it and ends it. A new
+worker that cannot start leaves none, with no further tries, and every later
+connection closes without an answer.
+
+Before: the host never replaced a lost worker, so every later rewrite in
+that boot failed; only a new boot recovered. The spec asks that a worker
+loss stop the affected work without fallback (REF04, A09); the new worker
+is the same pinned program, so it is not a fallback, and the lost call is
+not retried. Checks: `test_a_lost_worker_fails_its_rewrite_and_a_new_worker_serves_the_next`,
+`test_a_worker_lost_between_rewrites_fails_only_the_next_rewrite`,
+`test_a_new_worker_that_cannot_start_leaves_every_later_rewrite_failing`,
+`test_losing_the_real_worker_mid_rewrite_fails_that_rewrite_and_a_new_worker_serves_the_next`.
 
 Before: the watch started before the worker had the request. A guest that
 left in that window (a request larger than the pipe to the worker, or one

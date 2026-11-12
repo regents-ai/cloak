@@ -23,13 +23,15 @@ final class Worker: Sendable {
     ///      ^                    |                                |
     ///      +------------- answer written ------------------------+
     ///
-    /// A cancel while preparing is kept and stops the generation as it
-    /// starts; a cancel while generating stops it; a cancel while idle is one
-    /// that crossed the answer, and does nothing.
+    /// A cancel while preparing cancels the request's own task, which stops
+    /// the model reading the prompt at its next chunk, or the generation as
+    /// it starts; a cancel while generating stops the generation; a cancel
+    /// while idle is one that crossed the answer, and does nothing.
     private enum State {
         case idle
-        /// The request is being checked and its prompt built.
-        case preparing(cancelled: Bool)
+        /// The request's task checks it, builds its prompt and has the model
+        /// read the prompt.
+        case preparing(Task<Void, Never>)
         /// The generation runs, and is the one a cancel stops.
         case generating(Task<Void, Never>)
     }
@@ -48,14 +50,13 @@ final class Worker: Sendable {
         case .request:
             state.withLock { state in
                 guard case .idle = state else { stop("request while busy") }
-                state = .preparing(cancelled: false)
+                state = .preparing(Task { await answer(frame.payload) })
             }
-            Task { await answer(frame.payload) }
         case .cancel:
             state.withLock { state in
                 switch state {
                 case .idle: break
-                case .preparing: state = .preparing(cancelled: true)
+                case .preparing(let request): request.cancel()
                 case .generating(let generation): generation.cancel()
                 }
             }
@@ -79,6 +80,12 @@ final class Worker: Sendable {
         do {
             completion = try await generate(request)
         } catch {
+            // Cancelled while preparing: the prompt reading stopped, or the
+            // generation's stream ended with this task's cancellation.
+            guard !Task.isCancelled else {
+                log.info("rewrite cancelled while the prompt was read")
+                return (499, Reply.error("cancelled"))
+            }
             log.error("rewrite failed: \(String(describing: error), privacy: .public)")
             return (500, Reply.error("rewrite failed"))
         }
@@ -95,7 +102,9 @@ final class Worker: Sendable {
 
     /// Applies the model's own chat template with the pinned settings, then
     /// decodes greedily. The reply carries exactly the generated text; the
-    /// daemon decides whether it is acceptable.
+    /// daemon decides whether it is acceptable. The model reads the prompt
+    /// in chunks inside `generateTokensTask`, checking this task's
+    /// cancellation between them.
     private func generate(_ request: ChatRequest) async throws -> Completion {
         let templateContext: [String: any Sendable] = pin.chatTemplateContext
         return try await container.perform(values: request) { context, request in
@@ -106,11 +115,11 @@ final class Worker: Sendable {
                 parameters: GenerateParameters(maxTokens: request.maxTokens, temperature: 0),
                 context: context)
             self.state.withLock { state in
-                guard case .preparing(let cancelled) = state else {
+                guard case .preparing = state else {
                     preconditionFailure("a generation started outside a request")
                 }
                 state = .generating(generation)
-                if cancelled { generation.cancel() }
+                if Task.isCancelled { generation.cancel() }
             }
             var tokens: [Int] = []
             var summary: GenerateCompletionInfo?

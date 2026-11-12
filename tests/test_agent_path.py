@@ -97,12 +97,12 @@ def test_a_bad_rewrite_stops_the_task_and_the_next_one_still_runs(tmp_path):
     assert results["next"]["output"].strip() == TOR_STOP
 
 
-def test_a_lost_worker_stops_this_and_every_later_task(tmp_path):
+def test_a_lost_worker_stops_its_task_and_the_next_task_runs(tmp_path):
     results = boot(tmp_path, [agent("exit", "case:exit now"), agent("after", "case:ok and this")], fake(tmp_path))
-    for name in ("exit", "after"):
-        assert results[name]["exit"] != 0
-        assert "rewrite" in results[name]["output"].lower()
-        assert TOR_STOP not in results[name]["output"]
+    assert results["exit"]["exit"] != 0
+    assert "rewrite" in results["exit"]["output"].lower()
+    assert TOR_STOP not in results["exit"]["output"]
+    assert results["after"]["output"].strip() == TOR_STOP
 
 
 FETCH = ("node -e 'fetch(process.argv[1], {method: process.argv[2], signal: AbortSignal.timeout(5000)})"

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Stage 2: a cancel now stops the worker while it reads a long prompt; before,
+  it waited for the whole prompt (217 s for 128 KiB on the lead), and the
+  rewrites queued behind it ran out of time. A lost worker now fails only the
+  rewrite it had, never sent again, and the host starts a new worker from the
+  same program and pinned files for the next one; before, every later rewrite
+  in that boot failed. A new worker that cannot start still fails every later
+  rewrite. The stage 3 record lists each worker process in a boot.
 - Stage 3: a stand-in feasibility run with Pi and the daemon's local API in
   the guest (development only, counted toward no gate) is in
   evidence/stage3/standin/; docs/plan.md records its figures.

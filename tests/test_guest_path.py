@@ -8,9 +8,11 @@ Transcript.Rewrite; the guest prints one result per case.
     (cd host && swift build -c release -j 2 && codesign -s - --entitlements cloak-host.entitlements -f .build/release/cloak-host)
     uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
 
-The checks with the fake worker cover every reply the daemon must refuse;
-the checks with the real worker cover a real rewrite, cancellation and the
-loss of the worker. The deadline check waits out the daemon's 90 seconds.
+The checks with the fake worker cover every reply the daemon must refuse
+and the new worker the host starts after a loss; the checks with the real
+worker cover a real rewrite, cancellation (while it generates and while it
+reads a long prompt) and the loss of the worker. The deadline check waits out
+the daemon's 90 seconds.
 """
 
 import json
@@ -32,6 +34,8 @@ WORKER = INSTALLED
 FAKE = ROOT / "tests/fake_worker.py"
 NAME = "standin"
 FAILED = "rewriter failed; original prompt was not sent to the target model"
+# The stand-in rewrites this one cleanly.
+PLAIN = "Hey, could you please tell me the three biggest rivers in Europe? Thanks!!"
 LONG = " ".join(
     f"On day {i} the travelling group walked along the river, counted the boats, "
     "wrote down the weather, and argued about where to sleep that night."
@@ -43,14 +47,22 @@ def case(name: str, text: str, cancel_after_ms: int = 0) -> dict:
     return {"name": name, "body": body, "cancel_after_ms": cancel_after_ms}
 
 
-def fake(tmp_path: Path, read_delay: float = 0) -> Path:
+def fake(tmp_path: Path, read_delay: float = 0, starts: int = 0) -> Path:
     """A launcher that runs the fake worker as the host's own child process,
-    as the real worker is, so closing its channel ends are final."""
+    as the real worker is, so closing its channel ends are final. Each start
+    is noted in `starts`; with `starts` set, a later start fails before the
+    worker is ready."""
+    refuse = f'[ "$(wc -l < "{tmp_path}/starts")" -le {starts} ] || exit 2\n' if starts else ""
     launcher = tmp_path / "fake-worker"
-    launcher.write_text(f'#!/bin/sh\nexport FAKE_WORKER_READ_DELAY={read_delay}\n'
+    launcher.write_text(f'#!/bin/sh\necho start >> "{tmp_path}/starts"\n{refuse}'
+                        f'export FAKE_WORKER_READ_DELAY={read_delay}\n'
                         f'exec "{sys.executable}" -I "{FAKE}" "$@"\n')
     launcher.chmod(0o755)
     return launcher
+
+
+def starts(tmp_path: Path) -> int:
+    return len((tmp_path / "starts").read_text().splitlines())
 
 
 def boot(tmp_path: Path, cases: list[dict], worker: Path, during=None) -> dict[str, dict]:
@@ -124,23 +136,37 @@ def test_the_daemon_deadline_still_holds(tmp_path):
     assert (tmp_path / "1.cancel").exists()
 
 
-def test_a_lost_worker_fails_this_and_every_later_rewrite(tmp_path):
+def test_a_lost_worker_fails_its_rewrite_and_a_new_worker_serves_the_next(tmp_path):
     results = boot(tmp_path, [case("exit", "case:exit now"), case("after", "case:ok and this")], fake(tmp_path))
     assert (results["exit"]["outcome"], results["exit"]["error"]) == ("stopped", FAILED)
-    assert (results["after"]["outcome"], results["after"]["error"]) == ("stopped", FAILED)
-    assert results["after"]["seconds"] < 1
+    assert results["after"]["outcome"] == "rewritten"
+    assert starts(tmp_path) == 2
+    # The new worker's only request is the next one: the lost one is not sent again.
+    assert (tmp_path / "1.json").read_bytes() == request_body(NAME, ["case:ok and this"])
+    assert not (tmp_path / "2.json").exists()
 
 
-def test_a_worker_lost_between_rewrites_fails_the_next_rewrite(tmp_path):
+def test_a_worker_lost_between_rewrites_fails_only_the_next_rewrite(tmp_path):
     results = boot(tmp_path, [case("last", "case:exit-after-answer now"), case("after", "case:ok and this"),
                               case("later", "case:ok and this too")], fake(tmp_path))
     assert results["last"]["outcome"] == "rewritten"
     assert (results["after"]["outcome"], results["after"]["error"]) == ("stopped", FAILED)
-    assert (results["later"]["outcome"], results["later"]["error"]) == ("stopped", FAILED)
+    assert results["later"]["outcome"] == "rewritten"
+    assert starts(tmp_path) == 2
+    assert (tmp_path / "1.json").read_bytes() == request_body(NAME, ["case:ok and this too"])
+
+
+def test_a_new_worker_that_cannot_start_leaves_every_later_rewrite_failing(tmp_path):
+    results = boot(tmp_path, [case("exit", "case:exit now"), case("after", "case:ok and this"),
+                              case("later", "case:ok and this too")], fake(tmp_path, starts=1))
+    for name in ("exit", "after", "later"):
+        assert (results[name]["outcome"], results[name]["error"]) == ("stopped", FAILED)
+    assert results["later"]["seconds"] < 1
+    assert starts(tmp_path) == 2  # one failed start, and no more tries
 
 
 def test_the_real_worker_rewrites_through_the_daemon(tmp_path):
-    results = boot(tmp_path, [case("plain", "Hey, could you please tell me the three biggest rivers in Europe? Thanks!!")], WORKER)
+    results = boot(tmp_path, [case("plain", PLAIN)], WORKER)
     assert results["plain"]["outcome"] == "rewritten"
     assert len(results["plain"]["texts"]) == 1
 
@@ -148,14 +174,24 @@ def test_the_real_worker_rewrites_through_the_daemon(tmp_path):
 def test_cancelling_frees_the_real_worker(tmp_path):
     # Uncancelled, this rewrite runs for about forty seconds on the stand-in.
     results = boot(tmp_path, [case("long", LONG, cancel_after_ms=2000),
-                              case("plain", "Hey, could you please tell me the three biggest rivers in Europe? Thanks!!")], WORKER)
+                              case("plain", PLAIN)], WORKER)
     assert (results["long"]["outcome"], results["long"]["error"]) == ("stopped", FAILED)
     assert results["long"]["seconds"] < 3
     assert results["plain"]["outcome"] == "rewritten"
     assert results["plain"]["seconds"] < 10
 
 
-def test_losing_the_real_worker_mid_rewrite_fails_safely(tmp_path):
+def test_a_client_that_gives_up_while_the_real_worker_reads_a_long_prompt_frees_it(tmp_path):
+    # The stand-in reads 128 KiB of prose for about ten seconds before it
+    # writes a token; the client gives up one second in.
+    prose = json.loads((ROOT / "reference/eval05-inputs.json").read_text())["prose"][:128 << 10]
+    results = boot(tmp_path, [case("long", prose, cancel_after_ms=1000), case("plain", PLAIN)], WORKER)
+    assert (results["long"]["outcome"], results["long"]["error"]) == ("stopped", FAILED)
+    assert results["plain"]["outcome"] == "rewritten"
+    assert results["plain"]["seconds"] < 5
+
+
+def test_losing_the_real_worker_mid_rewrite_fails_that_rewrite_and_a_new_worker_serves_the_next(tmp_path):
     def kill_worker_mid_rewrite(host):
         while not (pids := subprocess.run(["pgrep", "-P", str(host.pid)], capture_output=True, text=True).stdout.split()):
             time.sleep(0.1)
@@ -163,8 +199,7 @@ def test_losing_the_real_worker_mid_rewrite_fails_safely(tmp_path):
         time.sleep(8)
         subprocess.run(["kill", "-9", pids[0]], check=True)
 
-    results = boot(tmp_path, [case("long", LONG), case("after", "what is two plus two")], WORKER,
-                   during=kill_worker_mid_rewrite)
+    results = boot(tmp_path, [case("long", LONG), case("after", PLAIN)], WORKER, during=kill_worker_mid_rewrite)
     assert (results["long"]["outcome"], results["long"]["error"]) == ("stopped", FAILED)
     assert results["long"]["seconds"] < 30
-    assert (results["after"]["outcome"], results["after"]["error"]) == ("stopped", FAILED)
+    assert results["after"]["outcome"] == "rewritten"

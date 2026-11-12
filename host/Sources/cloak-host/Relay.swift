@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// The host end of the guest channel (spec section 7). Each guest connection
 /// carries one request: the 32-byte channel token, then an `R` frame. The
@@ -6,6 +7,12 @@ import Foundation
 /// served one at a time, in order. A guest that closes its end once it has
 /// sent its request cancels the rewrite, including while the request is still
 /// being handed to the worker.
+///
+/// A lost worker fails the request it had, or the one that found it gone:
+/// that connection closes without an answer, and its request is never sent
+/// again. A new worker then starts, from the same program and pinned files,
+/// before the next connection is served. A new worker that cannot start
+/// leaves none, and every later request fails.
 final class Relay: Sendable {
     static let port: UInt32 = 8012
     static let maxRequest = 1 << 20
@@ -13,49 +20,79 @@ final class Relay: Sendable {
     static let requestTimeout = timeval(tv_sec: 10, tv_usec: 0)
 
     private let token: Data
-    private let worker: WorkerChannel
+    private let startWorker: @Sendable () throws -> WorkerChannel
+    /// The worker requests go to; nil once a new one could not start.
+    private let worker: Mutex<WorkerChannel?>
     private let queue = DispatchQueue(label: "sh.regents.cloak.relay")
     private let watch = DispatchQueue(label: "sh.regents.cloak.relay.watch")
 
-    init(token: Data, worker: WorkerChannel) {
+    init(token: Data, worker: WorkerChannel, startWorker: @escaping @Sendable () throws -> WorkerChannel) {
         self.token = token
-        self.worker = worker
+        self.worker = Mutex(worker)
+        self.startWorker = startWorker
     }
 
     /// Takes ownership of the socket.
     func accept(_ socket: Int32) {
         queue.async { [self] in
-            serve(socket)
+            let lost = serve(socket)
             close(socket)
+            if lost { replaceWorker() }
         }
     }
 
-    private func serve(_ socket: Int32) {
+    /// Ends the worker, waiting first for one that is starting.
+    func finish() {
+        worker.withLock { $0?.finish() }
+    }
+
+    /// Serves one connection. True when the worker was lost during it.
+    private func serve(_ socket: Int32) -> Bool {
         var timeout = Self.requestTimeout
         setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         guard let presented = Self.read(socket, 32), Self.same(presented, token) else {
             log("refused a connection without the channel token")
-            return
+            return false
         }
-        guard let header = Self.read(socket, 5), header[0] == 0x52 else { return }
+        guard let header = Self.read(socket, 5), header[0] == 0x52 else { return false }
         let length = header.dropFirst().reduce(0) { $0 << 8 | Int($1) }
-        guard length <= Self.maxRequest, let request = Self.read(socket, length) else { return }
-        guard worker.send(request), let answer = cancellingOnClose(socket, worker.answer) else {
+        guard length <= Self.maxRequest, let request = Self.read(socket, length) else { return false }
+        guard let worker = worker.withLock({ $0 }) else {
+            log("no worker; closing the guest connection without an answer")
+            return false
+        }
+        guard worker.send(request), let answer = cancellingOnClose(socket, worker) else {
             log("worker lost; closing the guest connection without an answer")
-            return
+            return true
         }
         Self.write(socket, WorkerChannel.frame(0x41, answer))
+        return false
     }
 
-    /// Runs `body` while the guest closing its end cancels the worker's
-    /// request. It starts once the worker has the request: nothing more is
-    /// expected from the guest, so the socket turning readable means it closed
-    /// its end (or broke the protocol), and a guest that closed earlier is
-    /// seen at once. The socket stays open until the watch has let go of it.
-    private func cancellingOnClose<T>(_ socket: Int32, _ body: () -> T) -> T {
+    /// Starts a new worker in place of the lost one. The lock is held until
+    /// it is ready, so `finish` ends the new worker rather than missing it.
+    private func replaceWorker() {
+        worker.withLock { worker in
+            do {
+                worker = try startWorker()
+                log("started a new worker")
+            } catch {
+                worker = nil
+                log("cannot start a new worker: \(error); every later rewrite fails")
+            }
+        }
+    }
+
+    /// The worker's answer, while the guest closing its end cancels the
+    /// worker's request. The watch starts once the worker has the request:
+    /// nothing more is expected from the guest, so the socket turning readable
+    /// means it closed its end (or broke the protocol), and a guest that
+    /// closed earlier is seen at once. The socket stays open until the watch
+    /// has let go of it.
+    private func cancellingOnClose(_ socket: Int32, _ worker: WorkerChannel) -> Data? {
         let closed = DispatchSource.makeReadSource(fileDescriptor: socket, queue: watch)
         let released = DispatchSemaphore(value: 0)
-        closed.setEventHandler { [worker, unowned closed] in
+        closed.setEventHandler { [unowned closed] in
             worker.cancel()
             closed.cancel()
         }
@@ -65,7 +102,7 @@ final class Relay: Sendable {
             closed.cancel()
             released.wait()
         }
-        return body()
+        return worker.answer()
     }
 
     private static func read(_ socket: Int32, _ count: Int) -> Data? {

@@ -85,7 +85,7 @@ def test_a_payload_that_is_not_utf8_is_kept_whole_in_base64():
 # Rebuilding calls and matching them to cases.
 
 
-def test_calls_are_rebuilt_from_the_events_with_their_cancels():
+def test_calls_and_worker_processes_are_rebuilt_from_the_events():
     events = [
         {"t": 0, "kind": "spawn", "pid": 7, "tap": 6},
         {"t": 5, "kind": "out", "frame": "Y"},
@@ -97,13 +97,21 @@ def test_calls_are_rebuilt_from_the_events_with_their_cancels():
         {"t": 40, "kind": "out", "frame": "A", "status": 499, "base64": "AA=="},
         {"t": 50, "kind": "in", "frame": "R", "text": request("three")},
         {"t": 60, "kind": "exit", "status": -9},
+        # The host starts a new worker after the loss.
+        {"t": 70, "kind": "spawn", "pid": 9, "tap": 8},
+        {"t": 82, "kind": "out", "frame": "Y"},
+        {"t": 90, "kind": "in", "frame": "R", "text": request("four")},
+        {"t": 95, "kind": "out", "frame": "A", "status": 200, "text": reply(["FOUR"])},
+        {"t": 99, "kind": "exit", "status": 0},
     ]
     worker = measures.worker_from_events(events)
-    assert (worker.pid, worker.load_seconds, worker.exit_status, worker.cancels_after_answer) == (7, 5e-9, -9, 1)
-    one, two, three = worker.calls
+    assert [(p.pid, p.load_seconds, p.exit_status) for p in worker.processes] == [(7, 5e-9, -9), (9, 12e-9, 0)]
+    assert worker.cancels_after_answer == 1
+    one, two, three, four = worker.calls
     assert (one.texts, one.status, one.finish_reason, one.worker_seconds) == (["one"], 200, "stop", 10e-9)
     assert (two.cancels_ns, two.status, two.reply, two.reply_base64) == ([31], 499, None, "AA==")
-    assert (three.answered_ns, three.worker_seconds) == (None, None)
+    assert (three.answered_ns, three.worker_seconds) == (None, None)  # lost with the first worker
+    assert (four.texts, four.status, four.worker_seconds) == (["four"], 200, 5e-9)
 
 
 def test_calls_are_split_among_cases_in_order_one_per_user_turn():
@@ -207,6 +215,18 @@ def test_a_resource_window_takes_peaks_cpu_and_swap_between_its_ends():
     assert (w["system_gpu_percent_mean"], w["system_gpu_percent_max"]) == (40, 60)
 
 
+def test_a_window_across_a_new_worker_keeps_its_peak_but_no_cpu_figure():
+    def sample(t, pid, worker):
+        return {"t": t, "worker": worker, "worker_pid": pid, "vm": None, "host": [10, 10, 0], "swap_used": 0,
+                "pressure": 1, "free_percent": 40, "gpu_percent": None, "gpu_memory": None}
+
+    samples = [sample(0, 7, [500, 500, 9_000_000_000]), sample(10, None, None), sample(20, 8, [300, 300, 1_000_000_000])]
+    w = measures.window(samples, 0, 20)
+    assert w["worker_peak_footprint_bytes"] == 500
+    assert "worker_cpu_seconds" not in w
+    assert w["host_cpu_seconds"] == 0
+
+
 # The plan and the record.
 
 
@@ -244,14 +264,20 @@ ART = {"sha256": "a" * 64}
 CONF = {"sha256": "c" * 64}
 
 
-def fake_boot(cases: list[dict], calls: list[Call], results: dict, started: int = 0) -> boot.Boot:
-    """A boot as boot.run returns it, rebuilt from calls and results."""
+def fake_boot(cases: list[dict], calls: list[Call], results: dict, started: int = 0,
+              losses: tuple[int, ...] = ()) -> boot.Boot:
+    """A boot as boot.run returns it, rebuilt from calls and results. At each
+    time in `losses` the worker is killed and the host starts a new one."""
     events = [{"t": started + 1, "kind": "spawn", "pid": 7, "tap": 6}, {"t": started + 2, "kind": "out", "frame": "Y"}]
+    for pid, t in enumerate(losses, start=8):
+        events += [{"t": t, "kind": "exit", "status": -9}, {"t": t + 1, "kind": "spawn", "pid": pid, "tap": 6},
+                   {"t": t + 2, "kind": "out", "frame": "Y"}]
     for call in calls:
         events.append({"t": call.sent_ns, "kind": "in", "frame": "R", "text": call.request})
         events += [{"t": t, "kind": "in", "frame": "C"} for t in call.cancels_ns]
         if call.answered_ns is not None:
             events.append({"t": call.answered_ns, "kind": "out", "frame": "A", "status": call.status, "text": call.reply})
+    events.sort(key=lambda e: e["t"])
     end = max(e["t"] for e in events) + 10
     console = [(started + 3, "cloak-guest: started")]
     console += [(r["_t"], json.dumps({k: v for k, v in r.items() if k != "_t"})) for r in results.values()]
@@ -292,7 +318,7 @@ def test_a_boot_becomes_a_record_with_every_call_and_its_hashes():
                              "expected_output_bytes": 3, "output_bytes": 3}
     assert two["eval06"]["band"] == "257-512" and two["eval06"]["output_bytes"] is None
     assert (big["calls"], gone["outcome"], gone["seconds"]) == ([], None, None)
-    assert record["worker"]["load_seconds"] == 1e-9
+    assert [p["load_seconds"] for p in record["worker"]["processes"]] == [1e-9]
     assert measures.latency(record["cases"])["cases"] == 4
 
 
@@ -303,13 +329,13 @@ def test_the_summary_counts_every_case_of_every_boot():
     plan["main"] = [c for c in plan["main"] if c["group"] != "long"]
     boots, start = {}, 0
     for name, cases in plan.items():
-        calls, results, t = [], {}, start + 10
+        calls, results, t, losses = [], {}, start + 10, []
         for case in cases:
             texts = [m["content"] for m in case["body"]["messages"] if m["role"] == "user"]
-            if case.get("kill_after_ms") or (name == "worker_loss" and case["name"] == "loss-after-probe"):
-                if case.get("kill_after_ms"):
-                    calls.append(Call(sent_ns=t, request=request(texts[0])))
+            if case.get("kill_after_ms"):
+                calls.append(Call(sent_ns=t, request=request(texts[0])))
                 results[case["name"]] = result(case["name"], "stopped", 2.0, t + 5)
+                losses.append(t + 6)
             elif case.get("cancel_after_ms"):
                 calls.append(answered(texts[0], t, 3000, status=499, cancels=[t + 2000]))
                 results[case["name"]] = result(case["name"], "stopped", 3.0, t + 3001)
@@ -320,7 +346,8 @@ def test_the_summary_counts_every_case_of_every_boot():
                 results[case["name"]] = result(case["name"], "rewritten", 1.0, t, [texts[-1].upper()])
             t += 3002
         counts = {m["id"]: 10 for m in messages}
-        boots[name] = stage3.analyse(name, cases, fake_boot(cases, calls, results, start), ART, CONF, counts, {})
+        boots[name] = stage3.analyse(name, cases, fake_boot(cases, calls, results, start, tuple(losses)),
+                                     ART, CONF, counts, {})
         start = t + 100
     summary = stage3.summarise(boots, [{"case": "kill-prose-16384", "call_was_open": True}])
     assert summary["eval06"]["cases"] == 3 and summary["eval06"]["rewritten"] == 3
@@ -328,8 +355,10 @@ def test_the_summary_counts_every_case_of_every_boot():
     assert summary["history"][0]["outcome"] == "rewritten" and len(summary["history"][0]["calls"]) == 4
     assert summary["cancellation"]["case"]["stop_reason"] == "cancelled"
     assert summary["cancellation"]["cancel_to_answer_seconds"] == pytest.approx(1000e-9)
-    assert [c["stop_reason"] for c in summary["worker_loss"]["cases"]] == [None, "worker lost", "worker lost"]
+    assert [c["stop_reason"] for c in summary["worker_loss"]["cases"]] == [None, "worker lost", None]
+    assert summary["worker_loss"]["worker_processes"] == [{"pid": 7, "load_seconds": 1e-9, "exit_status": -9},
+                                                          {"pid": 8, "load_seconds": 1e-9, "exit_status": None}]
     every = summary["end_to_end"]["all_cases"]
     assert every["cases"] == sum(len(c) for c in plan.values())
-    assert every["stopped_by_reason"] == {"cancelled": 1, "worker lost": 2}
+    assert every["stopped_by_reason"] == {"cancelled": 1, "worker lost": 1}
     assert summary["restart"]["load_seconds"] == 1e-9

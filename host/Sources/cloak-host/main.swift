@@ -6,8 +6,8 @@ import Virtualization
 //
 // Starts the native worker, boots the guest with a fresh channel token and
 // rewriter key, relays the guest's rewrite requests to the worker one at a
-// time, and exits when the guest powers off. The guest's console is this
-// process's standard output.
+// time, starts a new worker after a lost one, and exits when the guest powers
+// off. The guest's console is this process's standard output.
 
 let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter> --name <model> --dir <model directory>"
 let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir"]
@@ -39,13 +39,13 @@ func hex(_ data: Data) -> Data { Data(data.map { String(format: "%02x", $0) }.jo
 // as that loss, instead of ending the host.
 signal(SIGPIPE, SIG_IGN)
 
-// The worker.
+// The worker. The relay starts it the same way again after a loss.
+let startWorker: @Sendable () throws -> WorkerChannel = {
+    [executable = path("--worker"), workerArguments = ["--name", arguments["--name"]!, "--dir", arguments["--dir"]!]] in
+    try WorkerChannel(executable: executable, arguments: workerArguments)
+}
 let channel: WorkerChannel
-do {
-    channel = try WorkerChannel(executable: path("--worker"), arguments: [
-        "--name", arguments["--name"]!, "--dir", arguments["--dir"]!,
-    ])
-} catch { fail("cannot start the worker: \(error)") }
+do { channel = try startWorker() } catch { fail("cannot start the worker: \(error)") }
 
 // The guest: two cores, 1 GiB, a console, the channel socket and an entropy
 // source. No network device and no disk. Its initrd is written just before it
@@ -92,11 +92,9 @@ guard FileManager.default.createFile(atPath: bootInitrd.path, contents: initrd, 
 
 final class Supervisor: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListenerDelegate {
     let relay: Relay
-    let worker: WorkerChannel
 
-    init(relay: Relay, worker: WorkerChannel) {
+    init(relay: Relay) {
         self.relay = relay
-        self.worker = worker
     }
 
     func listener(
@@ -120,12 +118,12 @@ final class Supervisor: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
     }
 
     private func finish(_ status: Int32) {
-        worker.finish()
+        relay.finish()
         exit(status)
     }
 }
 
-let supervisor = Supervisor(relay: Relay(token: token, worker: channel), worker: channel)
+let supervisor = Supervisor(relay: Relay(token: token, worker: channel, startWorker: startWorker))
 let listener = VZVirtioSocketListener()
 listener.delegate = supervisor
 let machine = VZVirtualMachine(configuration: configuration)
