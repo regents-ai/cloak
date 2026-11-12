@@ -23,6 +23,9 @@ idle --request--> preparing --generation starts--> generating
   A request while not idle breaks the protocol and stops the worker.
 - The worker goes idle before it writes the answer, because the host sends
   its next request as soon as it has read this one.
+- **End of the channel** (the host's shutdown closes it): a rewrite in
+  progress is cancelled as above and answered 499; the worker exits 0 once
+  that answer is written, or at once when idle.
 
 Before: a busy flag (an atomic) and a run record (a cancelled flag and the
 generation) under a separate lock described the same state twice. No fault
@@ -38,6 +41,14 @@ it reached the worker after their own 90-second deadlines, and so did every
 later one in that boot. Check: `test_cancel_stops_the_rewrite_while_it_reads_the_prompt`
 (the stand-in answered 9.4 s after the cancel before the fix) and
 `test_a_client_that_gives_up_while_the_real_worker_reads_a_long_prompt_frees_it`.
+
+Before (the same run, whose main boot's worker ended at exit status -11):
+the worker exited as soon as its channel closed, even mid-rewrite. Exiting
+ran the model library's teardown, which released the GPU command encoder the
+rewrite was still writing to, and the rewrite then crashed (SIGSEGV),
+leaving a crash report. Check:
+`test_closing_the_channel_mid_rewrite_stops_the_rewrite_and_ends_the_worker`
+(exit status -11 and no answer before the fix).
 
 ## 2. The host's channel to the worker (`host/Sources/cloak-host/WorkerChannel.swift`)
 
@@ -108,7 +119,8 @@ is seen at once, because its socket is already readable. Check:
 ## 4. The frames between host and worker (both sides)
 
 ```
-worker: Y once, then for each request: R in, A out; C may come in between
+worker: Y once, then for each request: R in, A out; C may come in between;
+        the end of input ends the worker, after the A it owes
 ```
 
 - A cancel may cross the answer and arrive when the worker is idle; both
@@ -127,6 +139,9 @@ worker ready --> guest checked --> boot files written --> guest starting
 ```
 
 The boot files carry the per-boot channel token and rewriter key.
+"Worker finished" closes the worker's channel and waits for it to exit; a
+busy worker first stops its rewrite (section 1), so the rewrite in progress
+fails and is not sent again.
 
 Before: they were written before the guest's configuration was checked, so a
 failed check left them on disk, and their removal was written in two places.

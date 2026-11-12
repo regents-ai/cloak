@@ -46,10 +46,11 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
 
 - The native worker (`worker/`) loads a model only when every file matches
   the pins built into it, rewrites one request at a time, stops on a cancel
-  (also while it reads a long prompt), and stops on any protocol fault. It
-  runs in Apple's App Sandbox with no
+  (also while it reads a long prompt), and stops on any protocol fault. When
+  the host shuts down mid-rewrite, the worker stops that rewrite, which
+  fails, and exits cleanly. It runs in Apple's App Sandbox with no
   network entitlement and reads files only in
-  `~/Library/Application Support/Regents Cloak/models/`. 24 checks in
+  `~/Library/Application Support/Regents Cloak/models/`. 25 checks in
   `tests/test_worker.py` pass, including: a program signed with the worker's
   entitlements is refused a connection the same program makes unsandboxed,
   the installed worker carries exactly those entitlements, and the worker
@@ -285,6 +286,10 @@ started; both faults above came from the old code, so this run's
 cancellation and worker loss lines are not measures of the candidate, and
 nor are the 128 KiB prose and 16 KiB literal inputs, which reached the
 worker 4.3 s and 132 s late, behind timed-out calls it was still reading.
+The main boot's worker crashed at power-off (exit status -11): it was still
+on the cancellation case's rewrite, which it never answered, when the host
+closed its channel. Since the shutdown fix of 12 November, a worker in that
+position stops the rewrite, which fails, and exits cleanly.
 
 The weights were deleted after the run, as Sean asked; a later run fetches
 and verifies them again.

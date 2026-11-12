@@ -26,14 +26,17 @@ final class Worker: Sendable {
     /// A cancel while preparing cancels the request's own task, which stops
     /// the model reading the prompt at its next chunk, or the generation as
     /// it starts; a cancel while generating stops the generation; a cancel
-    /// while idle is one that crossed the answer, and does nothing.
+    /// while idle is one that crossed the answer, and does nothing. The end
+    /// of the supervisor's channel cancels the same way, then waits for the
+    /// request's task to write its answer.
     private enum State {
         case idle
         /// The request's task checks it, builds its prompt and has the model
         /// read the prompt.
         case preparing(Task<Void, Never>)
-        /// The generation runs, and is the one a cancel stops.
-        case generating(Task<Void, Never>)
+        /// The generation runs, and is the one a cancel stops; the request's
+        /// task waits for it, then writes the answer.
+        case generating(request: Task<Void, Never>, generation: Task<Void, Never>)
     }
 
     let pin: ModelPin
@@ -53,12 +56,31 @@ final class Worker: Sendable {
                 state = .preparing(Task { await answer(frame.payload) })
             }
         case .cancel:
-            state.withLock { state in
-                switch state {
-                case .idle: break
-                case .preparing(let request): request.cancel()
-                case .generating(let generation): generation.cancel()
-                }
+            _ = cancel()
+        }
+    }
+
+    /// The supervisor closed the channel: stops the rewrite in progress as a
+    /// cancel does, and returns once its answer is written. The program ends
+    /// only after this, because ending it tears down the model library's GPU
+    /// state, which a running rewrite would still be using.
+    func finish() async {
+        await cancel()?.value
+    }
+
+    /// Cancels the rewrite in progress and returns its request's task; nil
+    /// when idle.
+    private func cancel() -> Task<Void, Never>? {
+        state.withLock { state in
+            switch state {
+            case .idle:
+                return nil
+            case .preparing(let request):
+                request.cancel()
+                return request
+            case .generating(let request, let generation):
+                generation.cancel()
+                return request
             }
         }
     }
@@ -115,10 +137,10 @@ final class Worker: Sendable {
                 parameters: GenerateParameters(maxTokens: request.maxTokens, temperature: 0),
                 context: context)
             self.state.withLock { state in
-                guard case .preparing = state else {
+                guard case .preparing(let request) = state else {
                     preconditionFailure("a generation started outside a request")
                 }
-                state = .generating(generation)
+                state = .generating(request: request, generation: generation)
                 if Task.isCancelled { generation.cancel() }
             }
             var tokens: [Int] = []

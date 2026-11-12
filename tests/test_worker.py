@@ -149,6 +149,20 @@ def test_closing_the_channel_ends_the_worker(worker):
     assert worker.wait(timeout=30) == 0
 
 
+def test_closing_the_channel_mid_rewrite_stops_the_rewrite_and_ends_the_worker(worker):
+    # The host's shutdown closes the channel. The stand-in reads 128 KiB of
+    # prose for about ten seconds; the channel closes one second in.
+    prose = json.loads((ROOT / "reference/eval05-inputs.json").read_text())["prose"][:128 << 10]
+    send(worker, b"R", request_body(NAME, [prose]))
+    time.sleep(1.0)
+    worker.stdin.close()
+    closed = time.monotonic()
+    assert worker.wait(timeout=30) == 0
+    assert time.monotonic() - closed < 2
+    kind, payload = read_frame(worker.stdout)
+    assert (kind, answer(payload)) == (b"A", (499, {"error": {"message": "cancelled"}}))
+
+
 def altered_model(case: str, alter) -> Path:
     """The stand-in's files with one alteration, built on first use: hard links
     for the weights, real copies of the small files."""

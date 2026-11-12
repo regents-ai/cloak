@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Stage 2: a worker still rewriting when the host shuts down now stops that
+  rewrite, answers it as cancelled and exits cleanly; before, it crashed
+  (the lead's main boot ended with its worker at exit status -11).
 - Stage 3: a stand-in feasibility run after the cancellation and worker loss
   fixes (development only, counted toward no gate) is in
   evidence/stage3/standin/; the probe after the killed worker is now
