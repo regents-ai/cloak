@@ -295,13 +295,18 @@ def fake_boot(cases: list[dict], calls: list[Call], results: dict, started: int 
             events.append({"t": call.answered_ns, "kind": "out", "frame": "A", "status": call.status, "text": call.reply})
     events.sort(key=lambda e: e["t"])
     end = max(e["t"] for e in events) + 10
+    # The host starts tor once the worker is ready, and the guest once tor
+    # has bootstrapped.
+    stderr = [(started + 2, "cloak-host: tor: Nov 12 12:00:00.000 [notice] Tor 0.4.9.16 running on Darwin\n"),
+              (started + 2, "cloak-host: tor: Nov 12 12:00:00.000 [notice] Bootstrapped 0% (starting): Starting\n"),
+              (started + 3, "cloak-host: tor: Nov 12 12:00:09.000 [notice] Bootstrapped 100% (done): Done\n")]
     console = [(started + 3, "cloak-guest: started")]
     console += [(r["_t"], json.dumps({k: v for k, v in r.items() if k != "_t"})) for r in results.values()]
     samples = [{"t": t, "worker": [100 + t, 100 + t, t * 1000], "vm": [50, 50, 0], "host": [5, 5, 0],
                 "swap_used": 0, "pressure": 1, "free_percent": 50, "gpu_percent": 10, "gpu_memory": 0}
                for t in range(started, end + 1, 5)]
     return boot.Boot(name="x", started_ns=started, ended_ns=end, host_status=0, over_time=False,
-                     console=console, host_stderr="", results={k: {kk: vv for kk, vv in v.items() if kk != "_t"}
+                     console=console, host_stderr=stderr, results={k: {kk: vv for kk, vv in v.items() if kk != "_t"}
                                                                for k, v in results.items()},
                      events=events, worker_log=[], samples=samples, vm_pid=8, system_start={}, system_end={})
 
@@ -335,7 +340,19 @@ def test_a_boot_becomes_a_record_with_every_call_and_its_hashes():
     assert two["eval06"]["band"] == "257-512" and two["eval06"]["output_bytes"] is None
     assert (big["calls"], gone["outcome"], gone["seconds"]) == ([], None, None)
     assert [p["load_seconds"] for p in record["worker"]["processes"]] == [1e-9]
+    assert record["tor"] == {"started_ns": 2, "bootstrapped_ns": 3}
+    assert "Bootstrapped 100% (done)" in record["host_stderr"]
     assert measures.latency(record["cases"])["cases"] == 4
+
+
+def test_tor_is_timed_from_its_first_line_to_its_bootstrap():
+    host = (1, "cloak-host: the worker is ready\n")
+    started = (5, "cloak-host: tor: [notice] Tor 0.4.9.16 running on Darwin\n")
+    unreachable = (8, "cloak-host: cannot reach tor (Connection refused); closed a Tor port connection without an answer\n")
+    done = (9, "cloak-host: tor: [notice] Bootstrapped 100% (done): Done\n")
+    assert stage3.tor_start([host, started, unreachable, done]) == {"started_ns": 5, "bootstrapped_ns": 9}
+    # Stopped at the host's limit, or exited first.
+    assert stage3.tor_start([host, started, unreachable]) == {"started_ns": 5, "bootstrapped_ns": None}
 
 
 def test_the_summary_counts_every_case_of_every_boot():
@@ -379,3 +396,5 @@ def test_the_summary_counts_every_case_of_every_boot():
     assert every["cases"] == sum(len(c) for c in plan.values())
     assert every["stopped_by_reason"] == {"cancelled": 1, "worker lost": 1}
     assert summary["restart"]["load_seconds"] == 1e-9
+    # tor's bootstrap is its own figure, apart from the worker's load.
+    assert summary["cold"]["tor_bootstrap_seconds"] == summary["restart"]["tor_bootstrap_seconds"] == 1e-9

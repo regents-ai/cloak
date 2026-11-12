@@ -50,7 +50,7 @@ def fake(tmp_path: Path) -> Path:
 
 def fake_tor(tmp_path: Path) -> Path:
     launcher = tmp_path / "fake-tor"
-    launcher.write_text(f'#!/bin/sh\nexport FAKE_TOR_LOG="{tmp_path}" FAKE_TOR_EXIT=0\n'
+    launcher.write_text(f'#!/bin/sh\nexport FAKE_TOR_LOG="{tmp_path}" FAKE_TOR_START=ready\n'
                         f'exec "{sys.executable}" -I "{FAKE_TOR}" "$@"\n')
     launcher.chmod(0o755)
     return launcher

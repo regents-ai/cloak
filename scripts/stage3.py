@@ -83,9 +83,14 @@ TEMPERATURE = 0
 # for the worker's cache and the rest of the path.
 HEADROOM_BYTES = 5 << 30
 # How long one boot may take before it is stopped and recorded as stopped:
-# the cold load, then the daemon's own deadline for every call it can make.
+# the cold load and tor's bootstrap (which the host gives at most 90 s), then
+# the daemon's own deadline for every call it can make.
 LOAD_ALLOWANCE_S = 900
 BOOT_ALLOWANCE_S = 60
+
+# tor's own line once it can build circuits, which the host waits for before
+# it starts the guest (host/Sources/cloak-host/Tor.swift).
+TOR_BOOTSTRAPPED = "Bootstrapped 100% (done)"
 
 DEVELOPMENT_ONLY = ("Development stand-in, not a candidate. Proves the kit end to end; never evaluated "
                     "and never counted toward a gate in docs/plan.md.")
@@ -423,11 +428,21 @@ def analyse(boot_name: str, cases: list[dict], run: boot.Boot, art: dict, conf: 
                                              "exit_ns": p.exit_ns, "exit_status": p.exit_status}
                                             for p in worker.processes],
                               "cancels_after_answer": worker.cancels_after_answer},
+        "tor": tor_start(run.host_stderr),
         "system_start": run.system_start, "system_end": run.system_end,
         "cases": out_cases, **extra,
         "console": [line for _, line in run.console if not line.startswith("{")],
-        "host_stderr": run.host_stderr, "worker_log": run.worker_log, "samples": run.samples,
+        "host_stderr": "".join(line for _, line in run.host_stderr),
+        "worker_log": run.worker_log, "samples": run.samples,
     }
+
+
+def tor_start(host_stderr: list[tuple[int, str]]) -> dict:
+    """When tor started (its first line in the host's log) and when it said
+    it had bootstrapped; None for what the log never showed."""
+    tor = [(t, line) for t, line in host_stderr if line.startswith("cloak-host: tor: ")]
+    return {"started_ns": tor[0][0] if tor else None,
+            "bootstrapped_ns": next((t for t, line in tor if TOR_BOOTSTRAPPED in line), None)}
 
 
 def call_record(call: measures.Call, figures: dict | None, art: dict, conf: dict, origin: int) -> dict:
@@ -509,8 +524,11 @@ def summarise(boots: dict[str, dict], kills: list[dict]) -> dict:
                    "window": window_of(main, "eval06")},
         "cold": {"load_seconds": first_worker(main).get("load_seconds"),
                  "load_includes": "the worker's sha256 check of every pinned file, then the model load",
+                 "tor_bootstrap_seconds": tor_bootstrap_seconds(main),
+                 "tor_bootstrap_includes": TOR_BOOTSTRAP_INCLUDES,
                  "first_call": brief(group(main, "cold")[0]),
                  "host_start_to_first_result_seconds": first_result_seconds(main),
+                 "first_result_includes": FIRST_RESULT_INCLUDES,
                  "load_window": load_window(main)},
         "history": [brief(c) for c in group(main, "history")],
         "long": {"cases": [brief(c) | {"input_characters": len(c["body"]["messages"][0]["content"])}
@@ -526,6 +544,7 @@ def summarise(boots: dict[str, dict], kills: list[dict]) -> dict:
                         "worker_processes": [{k: p[k] for k in ("pid", "load_seconds", "exit_status")}
                                              for p in (loss["worker"] or {}).get("processes", [])]},
         "restart": {"load_seconds": first_worker(restart).get("load_seconds"),
+                    "tor_bootstrap_seconds": tor_bootstrap_seconds(restart),
                     "host_start_to_first_result_seconds": first_result_seconds(restart),
                     "cases": [brief(c) for c in group(restart, "restart")]},
         "memory_cpu_gpu": {name: {"whole_boot": measures.window(b["samples"], b["started_ns"], b["ended_ns"])
@@ -533,6 +552,17 @@ def summarise(boots: dict[str, dict], kills: list[dict]) -> dict:
         "end_to_end": {"path_overhead": path_overhead(every),
                        "all_cases": measures.latency(every)},
     }
+
+
+TOR_BOOTSTRAP_INCLUDES = ("tor's start, with no saved state, to its 'Bootstrapped 100% (done)' line; the host "
+                          "starts tor once the worker is ready and the guest once tor has bootstrapped. None: tor "
+                          "never bootstrapped, and the host stopped it at its 90 s limit or it exited")
+FIRST_RESULT_INCLUDES = "the cold load, tor's bootstrap, the guest's boot and the first call"
+
+
+def tor_bootstrap_seconds(boot_record: dict) -> float | None:
+    tor = boot_record["tor"]
+    return (tor["bootstrapped_ns"] - tor["started_ns"]) / 1e9 if tor["bootstrapped_ns"] else None
 
 
 def first_result_seconds(boot_record: dict) -> float | None:
@@ -680,6 +710,10 @@ def seconds(value: float | None) -> str:
     return "none (a stopped call holds that rank)" if value is None else f"{value:.2f} s"
 
 
+def tor_seconds(value: float | None) -> str:
+    return "never (Tor connections in that boot failed)" if value is None else f"{value:.2f} s"
+
+
 def gib(value: int | None) -> str:
     return "not seen" if value is None else f"{value / 2**30:.2f} GiB"
 
@@ -690,7 +724,8 @@ def print_feasibility(record: dict, path: Path) -> None:
     if record["development_only"]:
         print(f"\n{record['label']}")
     print(f"\nRecord: {path}")
-    print(f"Cold load {seconds(s['cold']['load_seconds'])}; first result {seconds(s['cold']['host_start_to_first_result_seconds'])} after the host started")
+    print(f"Cold load {seconds(s['cold']['load_seconds'])}; tor bootstrapped in {tor_seconds(s['cold']['tor_bootstrap_seconds'])}; "
+          f"first result {seconds(s['cold']['host_start_to_first_result_seconds'])} after the host started")
     print(f"EVAL06: {e['rewritten']} of {e['cases']} rewritten; p50 {seconds(e['p50_seconds'])}, p95 {seconds(e['p95_seconds'])}; "
           f"proposed targets {'met' if e['meets_proposed_targets'] else 'not met'}")
     if e["stopped_by_reason"]:
@@ -705,6 +740,7 @@ def print_feasibility(record: dict, path: Path) -> None:
           f"worker processes (exit status, load): "
           f"{[(p['exit_status'], seconds(p['load_seconds'])) for p in s['worker_loss']['worker_processes']]}")
     print(f"Restart: cold load {seconds(s['restart']['load_seconds'])}; "
+          f"tor bootstrapped in {tor_seconds(s['restart']['tor_bootstrap_seconds'])}; "
           f"{[(c['name'], c['outcome']) for c in s['restart']['cases']]}")
     whole = s["memory_cpu_gpu"]["main"]["whole_boot"]
     if whole:

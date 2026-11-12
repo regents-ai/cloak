@@ -13,15 +13,27 @@ import Foundation
 /// process's standard error. It is never restarted: once it has stopped,
 /// every Tor connection from the guest fails.
 final class Tor: Sendable {
+    /// How long, from its start, tor has to bootstrap. tor itself never gives
+    /// up. 90 s is the default of the Tor Project's own controller library,
+    /// stem, whose `launch_tor` waits for the same line in tor's output; it
+    /// says a tor with no saved state, as this one always is, usually
+    /// bootstraps "in 50 seconds or so". Here it took 7 to 9 s.
+    static let bootstrapLimit = 90
+    /// tor's own line once it can build circuits; before it, tor refuses
+    /// every request.
+    static let bootstrapped = "[notice] Bootstrapped 100% (done)"
+
     /// tor's SOCKS port on 127.0.0.1.
     let port: UInt16
     private let folder: URL
     private let process: Process
 
-    /// Starts tor and returns once its SOCKS port listens, without waiting
-    /// for it to reach the Tor network. This host is its owning process: a
-    /// host that dies without stopping it ends it within about 15 seconds,
-    /// leaving its folder behind.
+    /// Starts tor and returns once it has bootstrapped, so that no task
+    /// starts before tor can carry it, or once it is unavailable: exited, or
+    /// stopped here at `bootstrapLimit`. Either way every Tor connection from
+    /// the guest then fails, as after any later exit. This host is its
+    /// owning process: a host that dies without stopping it ends it within
+    /// about 15 seconds, leaving its folder behind.
     init(executable: URL) throws {
         folder = FileManager.default.temporaryDirectory.appending(path: "cloak-tor-\(String(decoding: hex(randomBytes(8)), as: UTF8.self))")
         // Never written: tor reads no configuration file.
@@ -46,17 +58,25 @@ final class Tor: Sendable {
             try? FileManager.default.removeItem(at: folder)
             throw error
         }
+        let limit = DispatchTime.now() + .seconds(Self.bootstrapLimit)
         var lines = Lines(output: output.fileHandleForReading)
-        guard let port = lines.untilReady() else {
+        guard let port = lines.untilListening() else {
             process.waitUntilExit()
             try? FileManager.default.removeItem(at: folder)
             throw TorError(description: "it exited before its SOCKS port opened")
         }
         self.port = port
+        let done = DispatchSemaphore(value: 0)
         Thread { [lines] in
             var rest = lines
+            rest.untilBootstrapped()
+            done.signal()
             rest.forward()
         }.start()
+        if done.wait(timeout: limit) == .timedOut {
+            log("tor did not bootstrap within \(Self.bootstrapLimit) seconds; stopped it, so every Tor connection fails")
+            process.terminate()
+        }
     }
 
     /// Stops tor and removes its folder, with its state.
@@ -78,12 +98,18 @@ private struct Lines: Sendable {
 
     /// Copies lines until the one that says the SOCKS port listens, and
     /// returns that port; nil if tor's output ends first.
-    mutating func untilReady() -> UInt16? {
-        let ready = "Opened Socks listener connection (ready) on 127.0.0.1:"
+    mutating func untilListening() -> UInt16? {
+        let listening = "Opened Socks listener connection (ready) on 127.0.0.1:"
         while let line = next() {
-            if let at = line.range(of: ready), let port = UInt16(line[at.upperBound...]) { return port }
+            if let at = line.range(of: listening), let port = UInt16(line[at.upperBound...]) { return port }
         }
         return nil
+    }
+
+    /// Copies lines until the one that says tor has bootstrapped, or until
+    /// tor's output ends.
+    mutating func untilBootstrapped() {
+        while let line = next(), !line.contains(Tor.bootstrapped) {}
     }
 
     /// Copies the rest, until tor exits.

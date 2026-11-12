@@ -6,15 +6,26 @@ its owner from --__OwningControllerProcess.
 
 On its SOCKS port it plays tor with no way onto the Tor network: each
 connection goes through the SOCKS5 steps (greeting, user name and password,
-request) and is then refused with a general failure, never connected
-anywhere. Each connection is noted when it ends, whichever step it reached,
-as one line of FAKE_TOR_LOG/tor.jsonl: the identity it presented (the first
-16 hex digits of sha256(user, 0, password), or "none") and the destination it
-asked for (null if it never asked).
+request) and is then refused with a general failure (or answered as
+connected in the late start, below), never connected anywhere. Each
+connection is noted when it ends, whichever step it reached, as one line of
+FAKE_TOR_LOG/tor.jsonl: the identity it presented (the first 16 hex digits
+of sha256(user, 0, password), or "none") and the destination it asked for
+(null if it never asked).
 
-With FAKE_TOR_EXIT=1 it exits as soon as it has said it is ready, as a tor
-that stops after starting. Like tor, it exits on SIGTERM and once its owner
-has gone.
+It says it has bootstrapped in tor's own line ("Bootstrapped 100% (done):
+Done") as FAKE_TOR_START says:
+
+- ready: at once.
+- late: LATE_S seconds after its port opened, as tor takes a while to fetch
+  the Tor network's directory. From then on it answers each request as
+  connected, though it connects nowhere, so the daemon's route check passes
+  and closes the stream; before then it refuses, as tor does.
+- never: never.
+- exits: it exits right after its first bootstrap line, as a tor that stops
+  while starting.
+
+Like tor, it exits on SIGTERM and once its owner has gone.
 """
 
 import hashlib
@@ -24,11 +35,16 @@ import select
 import socket
 import sys
 import threading
+import time
 from pathlib import Path
 
 LOG = Path(os.environ["FAKE_TOR_LOG"]) / "tor.jsonl"
-EXIT = os.environ["FAKE_TOR_EXIT"] == "1"
+START = os.environ["FAKE_TOR_START"]
+# tor bootstrapped about 9 s after it started, in one check on the public
+# Tor network (docs/plan.md, "Tor out of the guest").
+LATE_S = 10
 written = threading.Lock()
+bootstrapped = threading.Event()
 
 
 def argument(name: str) -> str:
@@ -76,11 +92,13 @@ def steps(conn: socket.socket, attempt: dict) -> None:
     if (port := read_exactly(conn, 2)) is None:
         return
     attempt["destination"] = f"{host}:{int.from_bytes(port, 'big')}"
-    # General failure: nothing is connected.
-    conn.sendall(b"\x05\x01\x00\x01" + bytes(6))
+    # Succeeded (late, once bootstrapped), with nothing connected; otherwise
+    # a general failure.
+    reply = 0 if START == "late" and bootstrapped.is_set() else 1
+    conn.sendall(bytes([5, reply, 0, 1]) + bytes(6))
 
 
-def refuse(conn: socket.socket) -> None:
+def answer(conn: socket.socket) -> None:
     attempt = {"identity": "none", "destination": None}
     try:
         conn.settimeout(30)
@@ -96,7 +114,13 @@ def refuse(conn: socket.socket) -> None:
 def serve(server: socket.socket) -> None:
     while True:
         conn, _ = server.accept()
-        threading.Thread(target=refuse, args=(conn,), daemon=True).start()
+        threading.Thread(target=answer, args=(conn,), daemon=True).start()
+
+
+def bootstrap(after_s: float) -> None:
+    time.sleep(after_s)
+    bootstrapped.set()
+    print("[notice] Bootstrapped 100% (done): Done", flush=True)
 
 
 def main() -> None:
@@ -105,9 +129,14 @@ def main() -> None:
     server.bind(("127.0.0.1", 0))
     server.listen()
     print(f"[notice] Opened Socks listener connection (ready) on 127.0.0.1:{server.getsockname()[1]}", flush=True)
-    if EXIT:
+    print("[notice] Bootstrapped 0% (starting): Starting", flush=True)
+    if START == "exits":
         return
     threading.Thread(target=serve, args=(server,), daemon=True).start()
+    if START == "ready":
+        bootstrap(0)
+    elif START == "late":
+        threading.Thread(target=bootstrap, args=(LATE_S,), daemon=True).start()
     owner_exit = select.kqueue()
     owner_exit.control([select.kevent(owner, select.KQ_FILTER_PROC, select.KQ_EV_ADD, select.KQ_NOTE_EXIT)], 0)
     owner_exit.control(None, 1)

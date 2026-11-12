@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Stage 2: the host starts the guest only once tor says it has bootstrapped
+  ("Bootstrapped 100% (done)" in tor's own log), so a task at the start of a
+  boot passes its Tor route; before, it stopped there, as tor refuses every
+  request for its first seconds. A cold start is longer by tor's bootstrap
+  (7.4 s in one run). A tor that exits while bootstrapping, or has not
+  finished 90 seconds after it started (the default of the Tor Project's
+  stem library for the same wait), is treated as gone: the host stops one
+  still running, the guest starts, and every Tor connection fails; nothing
+  is retried or routed another way. The stage 3 record gives tor's
+  bootstrap as its own figure; the first result after the host started now
+  includes it. Two new checks in `tests/test_tor_path.py` (a task started
+  with the host; a tor that never bootstraps), the stopped-tor check now
+  covers one that exits while bootstrapping, and the live check no longer
+  waits for tor itself.
+
 - Stage 2: the input limit and deadline of decision 6 (Sean, 12 November).
   A user turn of more than 10,000 characters (Unicode scalar values) is
   refused before any call, with a message giving its length and the limit;

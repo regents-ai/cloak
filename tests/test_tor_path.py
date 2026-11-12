@@ -10,23 +10,26 @@ SOCKS port.
 
 Only the first check sends anything off the Mac. It runs the Tor Project's
 tor (from host/build.sh) on the public Tor network: tor's own connections to
-build its circuits; one name lookup of check.torproject.org through Tor
-(earlier lookups, made while tor is still starting, are refused by tor on
-the Mac); one HTTPS request through Tor to
-https://check.torproject.org/api/ip; and one Pi task's Tor route check, whose
-destination (openrouter.ai:443) this check's tor maps to
-check.torproject.org:443, so a Tor exit opens a connection there that the
-daemon closes at once, and no model provider is contacted. The other checks
-use the stand-in tor (fake_tor.py), or tor whose only way onto the network is
-a closed port on the Mac's loopback.
+build its circuits; one name lookup of check.torproject.org through Tor; one
+HTTPS request through Tor to https://check.torproject.org/api/ip; and the
+Tor route checks of one Pi task (one for each time Pi sends its request,
+which it repeats after the wallet companion's error), whose destination
+(openrouter.ai:443) this check's tor maps to check.torproject.org:443, so a
+Tor exit opens a connection there that the daemon closes at once, sending
+nothing, and no model provider is contacted. The other checks use the
+stand-in tor (fake_tor.py), or tor whose only way onto the network is a
+closed port on the Mac's loopback.
 
-Each check boots the guest once; the guest prints one result per case.
+The host starts the guest only once tor has bootstrapped, or after it has
+exited or been stopped at the host's 90-second limit. Each check boots the
+guest once; the guest prints one result per case.
 """
 
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -72,8 +75,9 @@ def fake(tmp_path: Path) -> Path:
     return launcher(tmp_path, "fake-worker", f'export FAKE_WORKER_READ_DELAY=0\nexec "{sys.executable}" -I "{FAKE}" "$@"\n')
 
 
-def fake_tor(tmp_path: Path, exits: bool = False) -> Path:
-    return launcher(tmp_path, "fake-tor", f'export FAKE_TOR_LOG="{tmp_path}" FAKE_TOR_EXIT={int(exits)}\n'
+def fake_tor(tmp_path: Path, start: str) -> Path:
+    """The stand-in tor, started as FAKE_TOR_START says (fake_tor.py)."""
+    return launcher(tmp_path, "fake-tor", f'export FAKE_TOR_LOG="{tmp_path}" FAKE_TOR_START={start}\n'
                                           f'exec "{sys.executable}" -I "{FAKE_TOR}" "$@"\n')
 
 
@@ -113,20 +117,15 @@ def unreachable(output: str) -> bool:
     return "Network is unreachable" in output
 
 
-# tor refuses every request at once until it has enough of the Tor network's
-# directory to build circuits; this waits, up to 4 minutes, until a name
-# lookup through it is answered.
-TOR_READY = ("i=0; until node -e 'require(\"dns\").lookup(\"check.torproject.org\", e => process.exit(e ? 1 : 0))' 2>/dev/null; "
-             "do i=$((i+1)); [ $i -lt 80 ] || break; sleep 3; done; ")
-
-
 def test_tor_carries_the_guest_and_a_program_that_skips_torsocks_reaches_nothing(tmp_path):
+    # The host starts the guest only once tor has bootstrapped, so the
+    # request through Tor is sent at once.
     results, err = boot(tmp_path, [
         sandbox("devices", "cat /proc/net/dev"),
-        sandbox("through tor", TOR_READY + fetch("https://check.torproject.org/api/ip", 60_000)),
+        sandbox("through tor", fetch("https://check.torproject.org/api/ip", 60_000)),
         agent("pi", PROMPT),
         # The stage 1 routing check's static probe, run the same way: in the
-        # agent's sandbox, once tor has bootstrapped.
+        # agent's sandbox, with tor bootstrapped.
         sandbox("static probe", "cloak-routing-probe"),
         sandbox("no torsocks", "env -u LD_PRELOAD " + fetch("https://93.184.215.14/", 10_000)),
         sandbox("tcp ipv4", "busybox nc -w 3 93.184.215.14 443 </dev/null 2>&1; echo $?"),
@@ -161,7 +160,7 @@ def test_the_relay_passes_only_a_socks5_greeting_and_no_other_port_answers(tmp_p
         sandbox("vsock socks5", "cloak-vsock-probe 9050 '\\x05\\x01\\x00'"),
         sandbox("vsock other ports", "for port in 22 53 80 443 1080 8080 9051; do cloak-vsock-probe $port x; done"),
         sandbox("vsock rewrite port", "cloak-vsock-probe 8012 x"),
-    ], fake_tor(tmp_path))
+    ], fake_tor(tmp_path, "ready"))
     out = {name: r["output"] for name, r in results.items()}
     for name in ["http", "socks4", "socks5 gssapi only", "socks5 no methods"]:
         assert out[name].strip() == "0", name
@@ -176,23 +175,54 @@ def test_the_relay_passes_only_a_socks5_greeting_and_no_other_port_answers(tmp_p
     assert routes(tmp_path) == [{"identity": "none", "destination": None}] * 2
 
 
-def test_a_tor_that_stops_stops_the_task(tmp_path):
+def test_a_task_started_with_the_host_passes_its_tor_route_once_tor_has_bootstrapped(tmp_path):
+    # The stand-in bootstraps 10 s after its port opens and refuses every
+    # request until then, as tor does; the Pi task is the boot's first, and
+    # reaches its Tor route within 2 s of the host starting the guest.
+    results, err = boot(tmp_path, [agent("pi", PROMPT)], fake_tor(tmp_path, "late"))
+    assert TOR_STOP not in results["pi"]["output"]
+    assert "The wallet companion could not be reached" in results["pi"]["output"]
+    # Pi sends the request again after the companion's error, and each try
+    # prepares the route again: every route the stand-in saw was this task's
+    # conversation's.
+    seen = routes(tmp_path)
+    assert seen and {(r["identity"], r["destination"]) for r in seen} == {(seen[0]["identity"], "openrouter.ai:443")}
+    assert seen[0]["identity"] != "none"
+
+
+LIMIT = "tor did not bootstrap within 90 seconds; stopped it"
+
+
+def test_a_tor_that_exits_while_bootstrapping_stops_the_task(tmp_path):
     results, err = boot(tmp_path, [agent("pi", PROMPT), sandbox("static probe", "cloak-routing-probe")],
-                        fake_tor(tmp_path, exits=True))
+                        fake_tor(tmp_path, "exits"))
     assert results["pi"]["output"].strip() == TOR_STOP
     assert "tcp: blocked" in results["static probe"]["output"]
     assert "tor exited with status 0" in err and "cannot reach tor" in err
+    assert LIMIT not in err
+    assert routes(tmp_path) == []
+
+
+def test_a_tor_that_never_bootstraps_is_stopped_at_the_limit_and_the_task_stops(tmp_path):
+    started = time.monotonic()
+    results, err = boot(tmp_path, [agent("pi", PROMPT), sandbox("static probe", "cloak-routing-probe")],
+                        fake_tor(tmp_path, "never"))
+    assert time.monotonic() - started >= 90
+    assert LIMIT in err and "cannot reach tor" in err
+    assert results["pi"]["output"].strip() == TOR_STOP
+    assert "tcp: blocked" in results["static probe"]["output"] and "udp dns: blocked" in results["static probe"]["output"]
+    # Stopped before the guest started, the stand-in saw nothing.
     assert routes(tmp_path) == []
 
 
 def test_a_tor_that_cannot_reach_the_network_stops_the_task(tmp_path):
-    # tor's only way onto the network is a closed port on the Mac's loopback.
+    # tor's only way onto the network is a closed port on the Mac's loopback,
+    # so it never bootstraps and the host stops it at the limit.
     results, err = boot(tmp_path, [agent("pi", PROMPT),
                                    sandbox("through tor", fetch("https://check.torproject.org/api/ip", 30_000))],
                         tor(tmp_path, "--Socks5Proxy", "127.0.0.1:1"))
     assert results["pi"]["output"].strip() == TOR_STOP
-    # Refused by Node's own connect timeout or by tor's answer to torsocks's
-    # name lookup, whichever comes first.
     assert any(line.startswith("refused ") for line in results["through tor"]["output"].splitlines())
     assert "The connection to the SOCKS5 proxy server at 127.0.0.1:1 just failed" in err
     assert "Bootstrapped 100%" not in err
+    assert LIMIT in err and "cannot reach tor" in err

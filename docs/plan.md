@@ -264,12 +264,26 @@ How B works:
   tor on the Mac. Every program on the Mac can reach that port, as every
   program on the reference's machine can reach its tor. Its log goes to the
   host's standard error. The host is its owning process: a host that dies
-  without stopping it ends it within about 15 seconds. The host waits for
-  tor's SOCKS port, never for its bootstrap, and never restarts it.
-- **Before tor can build circuits**: tor refuses every request at once until
-  it has enough of the Tor network's directory (9 seconds after it started,
-  in one check), so a task in that time stops at its Tor route, as with tor
-  gone. It does not wait.
+  without stopping it ends it within about 15 seconds. The host never
+  restarts it.
+- **The host waits for tor's bootstrap** (decided 12 November): tor refuses
+  every request at once until it has enough of the Tor network's directory
+  and has built a circuit (about 9 seconds after it started in one check,
+  7.4 s in another), so the host starts the guest only once tor says so,
+  in its own log line "Bootstrapped 100% (done)". The host already reads
+  tor's log to find its SOCKS port and keeps reading for that line,
+  waiting on it with one limit and no polling: 90 seconds from tor's
+  start. tor itself never gives up; 90 s is the default of the Tor
+  Project's own controller library, stem, whose `launch_tor` waits for the
+  same line and says a tor with no saved state, as this one always is,
+  usually bootstraps "in 50 seconds or so". A cold start is longer by
+  tor's bootstrap, the secret boot files are written only after it, and a
+  task at the start of a boot no longer stops at its Tor route. A tor
+  that exits while bootstrapping ends the wait at once; one not done at
+  90 s is stopped by the host. Either way the guest then starts with tor
+  gone, so every Tor connection fails and each task stops at its Tor
+  route, while rewrites, which need no Tor, still run. Nothing is retried,
+  tor is not restarted, and nothing is routed another way.
 - **Built first on a socket file, and moved**: the design put tor's SOCKS
   port on a socket file in its private folder, to open no listener at all.
   There tor answers each SOCKS request in its 22-byte form, where on a TCP
@@ -295,16 +309,18 @@ How B works:
   live in its memory) is in a private per-boot folder, inside the host's
   private temporary folder, and is removed when the host stops tor. Nothing
   passes from one guest to the next.
-- **Fails closed**: with tor gone or unable to build a circuit, the
-  daemon's own route check stops the task ("no direct fallback was used"),
-  and nothing else in the guest has a way out.
+- **Fails closed**: with tor gone (exited, or stopped at the bootstrap
+  limit) or unable to build a circuit, the daemon's own route check stops
+  the task ("no direct fallback was used"), and nothing else in the guest
+  has a way out.
 
-Four checks in `tests/test_tor_path.py` pass, with the stand-in model's
+Six checks in `tests/test_tor_path.py` pass, with the stand-in model's
 fake worker; development evidence only, so A06 stays open:
 
 - **Through Tor, and nothing else** (the only check that reaches the Tor
-  network): tor bootstraps; Node under torsocks in the agent's sandbox
-  fetches https://check.torproject.org/api/ip through Tor, which answers
+  network): with no wait of its own, as the host has waited for tor's
+  bootstrap, Node under torsocks in the agent's sandbox fetches
+  https://check.torproject.org/api/ip through Tor, which answers
   that the request came from Tor; a Pi task passes its Tor route check and
   stops at the next step not built, the wallet companion ("The wallet
   companion could not be reached"). In the same sandbox the reference's
@@ -322,21 +338,32 @@ fake worker; development evidence only, so A06 stays open:
   vsock either; a SOCKS5 greeting is answered by tor both ways; vsock ports 22, 53, 80, 443, 1080, 8080 and
   9051 refuse the connection; the rewrite port closes a connection without
   its token. The stand-in tor saw exactly the two greetings.
-- **A tor that stops stops the task**: tor exits after opening its port; the
-  Pi task stops with the daemon's Tor route message ("no direct fallback was
-  used"), the relay logs that it cannot reach tor, and the stand-in saw
+- **A task started with the host passes its Tor route**: a stand-in tor
+  that bootstraps 10 s after it starts and refuses every request until
+  then, as tor does; the boot's first case, a Pi task, which reaches its Tor
+  route within 2 s of the guest starting, passes it and stops at the wallet
+  companion. Before the host waited, the same check stopped at the Tor
+  route.
+- **A tor that exits while bootstrapping stops the task**: the stand-in
+  exits after opening its port, before bootstrapping; the host stops
+  waiting at once, the Pi task stops with the daemon's Tor route message
+  ("no direct fallback was used"), the relay logs that it cannot reach tor,
+  and the stand-in saw nothing.
+- **A tor that never bootstraps is stopped at the limit**: the host waits
+  90 s, stops the stand-in and says so; the Pi task stops with the same
+  message, the static probe finds TCP and DNS blocked, and the stand-in saw
   nothing.
 - **A tor that cannot reach the network stops the task**: the pinned tor,
-  whose only way onto the network is a closed port on the Mac's loopback;
-  the Pi task stops with the same message and the Node request is refused.
+  whose only way onto the network is a closed port on the Mac's loopback,
+  never bootstraps and is stopped at the limit; the Pi task stops with the
+  same message and the Node request is refused.
 
 Open for Sean: tor on the Mac instead of in the guest; tor's SOCKS port on
 the Mac's loopback, reachable by every program on the Mac; a fresh guard
 each boot, where Tor by default, and the reference's Debian tor, keep
-theirs; the host not waiting for tor's bootstrap, so a task in the first
-seconds of a boot stops at its Tor route; and whether tor on the Mac gets
-its own confinement (it runs unconfined; Apple's App Sandbox refused it as a
-bare program with no bundle identifier).
+theirs; and whether tor on the Mac gets its own confinement (it runs
+unconfined; Apple's App Sandbox refused it as a bare program with no bundle
+identifier).
 
 ## Stage 3 so far
 
@@ -380,6 +407,15 @@ bare program with no bundle identifier).
   guest's virtual machine and the host, plus swap, memory pressure and the
   system's GPU use. It also records the installed size and the end-to-end
   time per case.
+- Since 12 November the host starts the guest only once tor has
+  bootstrapped ("Tor out of the guest" above), so "first result after the
+  host started" now holds the cold load, tor's bootstrap, the guest's boot
+  and the first call. Each record gives tor's bootstrap as its own figure
+  (from tor's first log line to its "Bootstrapped 100% (done)" line, or none
+  when tor never got there), beside the cold load, which is the worker's
+  alone and unchanged. No record before then has tor in its first result;
+  in one kit boot with the fake worker, tor took 7.40 s and the first
+  result came 8.59 s after the host started.
 - Needs a person, listed in each record with no result: sleep and wake
   during a call, a run on battery, the declared ordinary load, induced memory
   pressure, and the first run after the Mac restarts.

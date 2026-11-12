@@ -5,7 +5,9 @@ worker. While the boot runs, a sampler reads every second the memory and CPU
 of the worker (the newest, once the host has started a new one after a
 loss), the guest's virtual machine and the host, and the system's
 swap, memory pressure and GPU use; the worker's own log lines (token counts
-and timings, never content) are streamed from the unified log.
+and timings, never content) are streamed from the unified log. The guest's
+console and the host's own log, tor's lines included, are timed line by line
+as they arrive.
 
 Times are nanoseconds on CLOCK_MONOTONIC_RAW, shared with the tap and the
 log; it keeps counting while the Mac sleeps.
@@ -149,7 +151,7 @@ class Boot:
     host_status: int | None
     over_time: bool
     console: list[tuple[int, str]]
-    host_stderr: str
+    host_stderr: list[tuple[int, str]]
     results: dict[str, dict]
     events: list[dict]
     worker_log: list[dict]
@@ -267,7 +269,7 @@ def run(name: str, cases: list[dict], worker: Path, model: str, model_dir: Path,
         try:
             sampler = _Sampler(host.pid, events, vms_before)
             console: list[tuple[int, str]] = []
-            stderr: list[str] = []
+            stderr: list[tuple[int, str]] = []
 
             def read_console():
                 for line in host.stdout:
@@ -276,7 +278,7 @@ def run(name: str, cases: list[dict], worker: Path, model: str, model_dir: Path,
 
             def read_stderr():
                 for line in host.stderr:
-                    stderr.append(line)
+                    stderr.append((clock(), line))
 
             readers = [threading.Thread(target=read_console), threading.Thread(target=read_stderr)]
             for reader in readers:
@@ -302,7 +304,7 @@ def run(name: str, cases: list[dict], worker: Path, model: str, model_dir: Path,
                     results[result["name"]] = result
             return Boot(
                 name=name, started_ns=started, ended_ns=ended, host_status=host.returncode,
-                over_time=over_time, console=console, host_stderr="".join(stderr), results=results,
+                over_time=over_time, console=console, host_stderr=stderr, results=results,
                 events=[json.loads(line) for line in events.read_text().splitlines()] if events.exists() else [],
                 worker_log=worker_log, samples=samples, vm_pid=sampler.vm_pid,
                 system_start=system_start, system_end=system_snapshot())

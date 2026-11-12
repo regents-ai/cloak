@@ -148,7 +148,7 @@ worker: Y once, then for each request: R in, A out; C may come in between;
 ## 5. The host's life and the secret boot files (`host/Sources/cloak-host/main.swift`)
 
 ```
-worker ready --> guest checked --> Tor listening --> boot files written --> guest starting
+worker ready --> guest checked --> Tor listening --> waiting for tor --> boot files written --> guest starting
              --> boot files removed --> listening --> guest stopped --> worker finished --> Tor stopped
 ```
 
@@ -157,7 +157,18 @@ The boot files carry the per-boot channel token and rewriter key.
 busy worker first stops its rewrite (section 1), so the rewrite in progress
 fails and is not sent again. "Tor listening" is tor's SOCKS port open
 (section 7a); every way the host ends after it, a failure included, stops
-tor and removes its folder.
+tor and removes its folder. "Waiting for tor" ends when tor says it has
+bootstrapped, when it exits, or 90 seconds after it started, when the host
+stops it; only then does the guest start, so no task starts before tor can
+carry it. In the last two cases every Tor connection from the guest fails
+(section 7a). The secret boot files are written only after the wait.
+
+Before (12 November): the host waited only for tor's SOCKS port, and tor
+refuses every request until it has bootstrapped (about 9 seconds), so a
+task in a boot's first seconds stopped at its Tor route. Check:
+`test_a_task_started_with_the_host_passes_its_tor_route_once_tor_has_bootstrapped`
+(`tests/test_tor_path.py`; the task stopped at its Tor route before the
+fix).
 
 Before: they were written before the guest's configuration was checked, so a
 failed check left them on disk, and their removal was written in two places.
@@ -200,7 +211,8 @@ port, which refused each SOCKS connection and recorded what it read. The Tor
 port is now `cloak-tor-port`, so the observer is gone; the checks' stand-in
 tor (`tests/fake_tor.py`) does the same from the host, in the same steps
 (greeting, password, request, refusal), recording what it read whichever
-step the connection ends at.
+step the connection ends at. It says it has bootstrapped at once, later,
+never, or exits first, as each check needs.
 
 ## 7. One request in the guest adapter (`guest/adapter/main.go`)
 
@@ -229,11 +241,24 @@ any other vsock port -------------------------> | refused                      |
 tor's life, as the host's child:
 
 ```
-started --> SOCKS port open --> bootstrapping --> can build circuits --> stopped --> folder removed
+started --> SOCKS port open --> bootstrapping --> bootstrapped (100%) --> stopped --> folder removed
 exits before its port opens --> the host fails before the boot files are written
-bootstrapping --> every request refused at once (a task then stops at its Tor route)
+bootstrapping --> every request refused at once; the host waits, and starts no guest
+exits while bootstrapping --> the host stops waiting; every Tor connection fails; never restarted
+not bootstrapped 90 s after it started --> stopped by the host; every Tor connection fails; never restarted
 exits later --> every later Tor connection fails; never restarted
 ```
+
+The host learns each step from tor's own log lines on its standard output,
+which it already reads to find the SOCKS port: "Opened Socks listener
+connection (ready)" and "Bootstrapped 100% (done)". It waits for the second
+on a semaphore with a 90-second limit, no polling. 90 s is the default of
+the Tor Project's controller library, stem, which waits for the same line;
+tor itself never gives up. Checks (`tests/test_tor_path.py`):
+`test_a_task_started_with_the_host_passes_its_tor_route_once_tor_has_bootstrapped`,
+`test_a_tor_that_exits_while_bootstrapping_stops_the_task`,
+`test_a_tor_that_never_bootstraps_is_stopped_at_the_limit_and_the_task_stops`
+and `test_a_tor_that_cannot_reach_the_network_stops_the_task`.
 
 One Tor relay connection:
 
