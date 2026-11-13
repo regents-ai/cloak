@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stage 3: a development run of the GGUF stand-in on llama.cpp (decision
+  8) is recorded in evidence/stage3/standin-gguf/ and set beside the MLX
+  stand-in's latest run in docs/plan.md: 38 of 40 ordinary messages
+  rewritten against 24, median 0.37 s, the whole product's peak 3.27 GiB
+  against 2.90 GiB. Development only; it counts toward no gate.
+
 - Stage 5 has started, with a development build of the app's core. One
   supervisor (`app/`) checks the Mac and every installed part against the
   bundle's manifest, starts tor, the worker and a check guest, watches tor

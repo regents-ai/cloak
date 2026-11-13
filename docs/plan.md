@@ -774,6 +774,19 @@ worked. Development only. MLX held 0.99 GiB active and
 boot's worker peaked at 2.31 GiB, tor at 0.02 GiB and the whole product at
 2.90 GiB; at most one worker was alive at any sample.
 
+Feasibility on llama.cpp (decision 8), `standin-gguf`,
+[feasibility-20261113T235334Z.json](../evidence/stage3/standin-gguf/feasibility-20261113T235334Z.json),
+13 November, kit commit `6287726`, on battery with the load at 38 to 73.
+Development only, and a different 4-bit file from the MLX stand-in's, so
+its replies differ. Beside the MLX run above: EVAL06 38 of 40 rewritten
+(1 malformed, 1 truncated) against 24, median 0.37 s against 2.43 s (0.36 s
+in MLX's quieter first run); the main boot's worker peaked at 2.54 GiB
+against 2.31 and the whole product at 3.27 GiB against 2.90. llama.cpp held
+1.18 GiB after the load, and its Metal memory peaked at 1.52 GiB in a
+rewrite. It finished the cancellation case (1.71 s) before its cancel and
+the worker-loss case before its kill at 2 s, so neither was exercised here;
+`tests/test_worker.py` covers both on this worker.
+
 EVAL01 development screen,
 [eval01-20261111T072816Z.json](../evidence/stage3/standin/eval01-20261111T072816Z.json),
 kit commit `de16729`: 14 of the daemon's 16 cases rewritten, 2 stopped
