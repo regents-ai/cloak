@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Stage 3 and 4 kits: each model's `engine` picks its worker (decision
+  8). `scripts/drive_worker.py` starts the installed worker of the model's
+  engine (its `--worker` option is gone). The stage 3 kit checks, runs and
+  sizes that worker, records the engine and its pinned source (llama.cpp's
+  commit, or the mlx-swift and mlx-swift-lm revisions) in each record's
+  configuration, and reads each engine's own memory lines: for the llama
+  worker, the weights' size and llama.cpp's Metal memory after the load,
+  and each rewrite's context size and Metal memory. A record's memory
+  figures are named for its engine (`mlx` and `mlx_memory`, or `llama` and
+  `llama_memory`). The GGUF pair joins the candidate list, so both kits
+  take six. `tests/test_worker.py` runs every check on both workers, each
+  with its stand-in (55 checks), its altered model folders now under
+  `.checks/<model>/`. New `tests/test_llama_worker.py`: the llama worker
+  gives the model the same prompt tokens as the MLX worker on six requests,
+  chat markers in the text among them; each worker refuses the other
+  engine's models; the llama worker links no network or server code; it
+  logs numbers only, and llama.cpp writes nothing.
+
 - Stage 2: the llama worker (decision 8). `llama-worker/` builds
   `cloak-rewriter-llama`, a drop-in for the MLX worker: the same frames,
   command line, replies and pinned-file check, signed into the App Sandbox

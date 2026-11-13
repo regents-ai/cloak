@@ -43,6 +43,8 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/wrapper/` | The reconstructed Pi sandbox wrapper and its Tor settings |
 | `reference/host/` | The Linux reference host used for stage 1 |
 | `worker/` | The native rewrite worker (Swift, MLX), its sandbox entitlements and install script |
+| `llama-worker/` | The second rewrite worker (decision 8): Swift over llama.cpp, built from its pinned source with Metal, with the same sandbox and its own install script |
+| `rewriter-kit/` | What both workers share: the frames to and from the host, the daemon's request, the replies and the model pins |
 | `host/` | The host supervisor: boots the guest and relays its rewrites to the worker |
 | `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
@@ -90,6 +92,18 @@ built into the worker, so rebuild after `reference/models.json` changes:
 worker/install.sh
 ```
 
+The second worker (decision 8) runs GGUF models on llama.cpp. Build
+llama.cpp from its pinned source (`reference/src/llama.cpp`, fetched above;
+CMake comes through uv) with Metal, then the worker, signed with the same
+entitlements and installed beside the first, and fetch its stand-in. Each
+model a worker runs names its `engine` (`mlx` or `llama`) in
+`reference/models.json`, and the kits start that engine's worker:
+
+```bash
+llama-worker/install.sh
+uv run scripts/fetch_model.py standin-gguf
+```
+
 Send the installed worker one rewrite request built exactly as the daemon
 builds it:
 
@@ -97,10 +111,13 @@ builds it:
 uv run scripts/drive_worker.py --name standin "a text to rewrite"
 ```
 
-Run the worker's functional checks against the stand-in model:
+Run both workers' functional checks, each against its stand-in (`standin`
+and `standin-gguf`), then the llama worker's own: the same prompt tokens as
+the MLX worker, no network code linked, and numbers-only logs:
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_worker.py
+uv run --with pytest==8.4.2 pytest tests/test_llama_worker.py
 ```
 
 Build the guest (Go cross-builds and a pinned Debian image in Docker, two
@@ -177,8 +194,9 @@ uv run scripts/stage3.py eval01 lead
 ```
 
 The candidates are `lead`, `challenger`, `small-lead` and `small-challenger`
-(decision 7 in `docs/plan.md` added the last two). Any other model, such as
-`standin`, gets a record marked development only, which counts toward no
+(decision 7 in `docs/plan.md` added the last two), and `small-lead-gguf` and
+`small-challenger-gguf` on llama.cpp (decision 8). Any other model, such as
+`standin` or `standin-gguf`, gets a record marked development only, which counts toward no
 gate.
 
 Run the kit's own checks:

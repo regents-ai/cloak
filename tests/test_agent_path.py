@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-from drive_worker import INSTALLED, request_body  # noqa: E402
+from drive_worker import WORKERS, request_body  # noqa: E402
 from fetch_model import DEST  # noqa: E402
 
 HOST = ROOT / "host/.build/release/cloak-host"
@@ -167,6 +167,6 @@ def test_the_sandbox_holds(tmp_path):
 
 def test_pi_with_the_real_worker(tmp_path):
     prompt = "Hey, could you please find me the three best vegan restaurants in Tallinn? Thanks!!"
-    results = boot(tmp_path, [agent("pi", prompt)], INSTALLED)
+    results = boot(tmp_path, [agent("pi", prompt)], WORKERS["mlx"])
     assert results["pi"]["output"].strip() == TOR_STOP
     assert [a["destination"] for a in routes(tmp_path)] == ["openrouter.ai:443"]

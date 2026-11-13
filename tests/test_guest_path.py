@@ -30,12 +30,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-from drive_worker import INSTALLED, request_body  # noqa: E402
+from drive_worker import WORKERS, request_body  # noqa: E402
 from fetch_model import DEST  # noqa: E402
 from measures import MAX_INPUT_CHARACTERS, deadline_s  # noqa: E402
 
 HOST = ROOT / "host/.build/release/cloak-host"
-WORKER = INSTALLED
+WORKER = WORKERS["mlx"]
 FAKE = ROOT / "tests/fake_worker.py"
 FAKE_TOR = ROOT / "tests/fake_tor.py"
 NAME = "standin"

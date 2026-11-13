@@ -5,7 +5,7 @@ worker. While the boot runs, a sampler reads every second the memory and CPU
 of every worker process alive (a new one follows each loss), the guest's
 virtual machine, the host and the host's tor, and the system's swap, memory
 pressure and GPU use; the worker's own log lines (token counts, timings and
-MLX's memory, never content) are streamed from the unified log. The guest's
+its engine's memory, never content) are streamed from the unified log. The guest's
 console and the host's own log, tor's lines included, are timed line by line
 as they arrive.
 

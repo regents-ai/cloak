@@ -107,7 +107,7 @@ def texts_to_rewrite(dataset: str, data: dict) -> list[tuple[str, str]]:
 
 def one_boot(label: str, name: str, model: dict, model_dir: Path, pairs: list[tuple[str, str]]) -> dict:
     cases = [{"name": i, "group": label, "body": stage3.user(text)} for i, text in pairs]
-    run = boot.run(label, [stage3.guest_case(c) for c in cases], stage3.INSTALLED, name, model_dir,
+    run = boot.run(label, [stage3.guest_case(c) for c in cases], stage3.worker(model), name, model_dir,
                    stage3.time_limit(cases))
     art, conf = stage3.artifact(model), stage3.configuration(model)
     analysed = stage3.analyse(label, cases, run, art, conf, {}, {})

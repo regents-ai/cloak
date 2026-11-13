@@ -273,13 +273,15 @@ def window(samples: list[dict], start: int, end: int) -> dict:
     return out
 
 
-# MLX's own memory as the worker logs it (worker/Sources/cloak-rewriter):
-# what its arrays hold, what it keeps cached, and the most its arrays have held
-# since the worker started.
+# Each engine's own memory figures, as its worker logs them (decision 8).
+# MLX's (worker/Sources/cloak-rewriter): what its arrays hold, what it keeps
+# cached, and the most its arrays have held since the worker started.
+# llama.cpp's (llama-worker/Sources/cloak-rewriter-llama): the model's weights,
+# the context a rewrite reserved, in tokens, and what the worker's Metal
+# device holds allocated.
 _MLX = r"MLX active (\d+), cache (\d+), peak (\d+) bytes"
-_REWRITE_LINE = re.compile(
-    rf"rewrite (\w+): (\d+) prompt tokens in ([\d.]+) s, (\d+) generated in ([\d.]+) s; {_MLX}")
-_LOADED_LINE = re.compile(rf"loaded \S+; {_MLX}; after the cache clear, {_MLX}")
+_METAL = r"Metal allocated (\d+) bytes"
+_REWRITE = r"rewrite (\w+): (\d+) prompt tokens in ([\d.]+) s, (\d+) generated in ([\d.]+) s; "
 
 
 def _mlx(found: re.Match, first: int) -> dict:
@@ -287,31 +289,47 @@ def _mlx(found: re.Match, first: int) -> dict:
             "peak_bytes": int(found[first + 2])}
 
 
-def load_figures(log: list[dict], processes: list[Process]) -> list[dict | None]:
-    """MLX's memory for each worker process once its model loaded, before and
-    after the worker cleared MLX's cache, from its log line: the line written
-    after the process started (the last one started before it). A process
-    that never loaded has None."""
+# Per engine: its load line and rewrite line, and the memory each one gives.
+_LOADED_LINE = {
+    "mlx": (re.compile(rf"loaded \S+; {_MLX}; after the cache clear, {_MLX}"),
+            lambda found: {"loaded": _mlx(found, 1), "after_cache_clear": _mlx(found, 4)}),
+    "llama": (re.compile(rf"loaded \S+; weights (\d+) bytes, {_METAL}"),
+              lambda found: {"weights_bytes": int(found[1]), "metal_allocated_bytes": int(found[2])}),
+}
+_REWRITE_LINE = {
+    "mlx": (re.compile(_REWRITE + _MLX), lambda found: _mlx(found, 6)),
+    "llama": (re.compile(_REWRITE + rf"context (\d+) tokens, {_METAL}"),
+              lambda found: {"context_tokens": int(found[6]), "metal_allocated_bytes": int(found[7])}),
+}
+
+
+def load_figures(engine: str, log: list[dict], processes: list[Process]) -> list[dict | None]:
+    """The engine's memory for each worker process once its model loaded
+    (MLX's before and after the worker cleared its cache), from its log line:
+    the line written after the process started (the last one started before
+    it). A process that never loaded has None."""
+    pattern, memory = _LOADED_LINE[engine]
     figures: list[dict | None] = [None] * len(processes)
     for line in log:
-        found = _LOADED_LINE.fullmatch(line["message"])
+        found = pattern.fullmatch(line["message"])
         if not found:
             continue
         index = max((i for i, p in enumerate(processes) if p.spawn_ns <= line["t"]), default=None)
         if index is None:
             raise ValueError("a load was logged before any worker started")
-        figures[index] = {"loaded": _mlx(found, 1), "after_cache_clear": _mlx(found, 4)}
+        figures[index] = memory(found)
     return figures
 
 
-def worker_figures(log: list[dict], calls: list[Call]) -> list[dict | None]:
-    """The worker's own token counts, timings and MLX memory for each call,
-    from its log line for that rewrite: the line written while the call was
-    open (the last call sent before it). A call with no such line (rejected,
-    failed or lost) has None."""
+def worker_figures(engine: str, log: list[dict], calls: list[Call]) -> list[dict | None]:
+    """The worker's own token counts, timings and engine memory (under the
+    engine's name) for each call, from its log line for that rewrite: the
+    line written while the call was open (the last call sent before it). A
+    call with no such line (rejected, failed or lost) has None."""
+    pattern, memory = _REWRITE_LINE[engine]
     figures: list[dict | None] = [None] * len(calls)
     for line in log:
-        found = _REWRITE_LINE.fullmatch(line["message"])
+        found = pattern.fullmatch(line["message"])
         if not found:
             continue
         index = max((i for i, c in enumerate(calls) if c.sent_ns <= line["t"]), default=None)
@@ -323,6 +341,6 @@ def worker_figures(log: list[dict], calls: list[Call]) -> list[dict | None]:
             "prompt_seconds": float(found[3]),
             "generated_tokens": int(found[4]),
             "generate_seconds": float(found[5]),
-            "mlx": _mlx(found, 6),
+            engine: memory(found),
         }
     return figures

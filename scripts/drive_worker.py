@@ -20,10 +20,12 @@ import subprocess
 import time
 from pathlib import Path
 
-from fetch_model import DEST
+from fetch_model import DEST, MODELS
 
-# Where worker/install.sh puts the signed, sandboxed worker.
-INSTALLED = DEST.parent / "worker" / "cloak-rewriter"
+# Where worker/install.sh and llama-worker/install.sh put the signed,
+# sandboxed workers, by the `engine` each model entry names (decision 8).
+WORKERS = {"mlx": DEST.parent / "worker" / "cloak-rewriter",
+           "llama": DEST.parent / "worker" / "cloak-rewriter-llama"}
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "reference/src/zkapi/zkapi-clientd/internal/rewriter/rewriter.go"
@@ -88,13 +90,13 @@ def answer(payload: bytes) -> tuple[int, dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--worker", default=INSTALLED)
     parser.add_argument("--name", required=True)
     parser.add_argument("--max-tokens", type=int, default=16384)
     parser.add_argument("texts", nargs="+")
     args = parser.parse_args()
 
-    worker = spawn(args.worker, args.name)
+    models = {m["name"]: m for m in json.loads(MODELS.read_text())["models"]}
+    worker = spawn(WORKERS[models[args.name]["engine"]], args.name)
     started = time.monotonic()
     if read_frame(worker.stdout) != (b"Y", b""):
         raise SystemExit(f"worker did not become ready: {worker.stderr.read().decode()}")
