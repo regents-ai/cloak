@@ -3,11 +3,11 @@ import Foundation
 /// The daemon's rewrite request, and nothing else
 /// (`reference/rewriter-contract.md`): exactly these keys, a system message
 /// then a user message, greedy decoding, no streaming.
-struct ChatRequest: Decodable, Sendable {
-    let model: String
-    let maxTokens: Int
-    let system: String
-    let user: String
+public struct ChatRequest: Decodable, Sendable {
+    public let model: String
+    public let maxTokens: Int
+    public let system: String
+    public let user: String
 
     static let maxTokensLimit = 16384
 
@@ -30,7 +30,7 @@ struct ChatRequest: Decodable, Sendable {
         }
     }
 
-    init(from decoder: any Decoder) throws {
+    public init(from decoder: any Decoder) throws {
         try requireExactKeys(CodingKeys.self, in: decoder)
         let container = try decoder.container(keyedBy: CodingKeys.self)
         model = try container.decode(String.self, forKey: .model)
@@ -47,7 +47,7 @@ struct ChatRequest: Decodable, Sendable {
         user = messages[1].content
     }
 
-    var templateMessages: [[String: any Sendable]] {
+    public var templateMessages: [[String: any Sendable]] {
         [["role": "system", "content": system], ["role": "user", "content": user]]
     }
 }

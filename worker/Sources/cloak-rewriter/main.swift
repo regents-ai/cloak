@@ -2,12 +2,13 @@ import Foundation
 import MLX
 import MLXLLM
 import MLXLMCommon
+import RewriterKit
 
 // cloak-rewriter --name <model> --dir <model directory>
 //
 // Checks that the directory holds exactly the pinned files, loads the model
 // from them, signals ready, then answers one rewrite request at a time over
-// the frames in Frames.swift until the supervisor closes standard input or
+// rewriter-kit's frames (Frames.swift) until the supervisor closes standard input or
 // breaks the protocol. It then stops the rewrite in progress, as a cancel
 // does, and exits once that rewrite's answer is written: with status 0 at the
 // end of the channel, 2 after a protocol fault.
@@ -33,7 +34,7 @@ let directory = URL(filePath: dir, directoryHint: .isDirectory)
 
 let worker: Worker
 do {
-    let pin = try ModelPin.load(name: name)
+    let pin = try ModelPin.load(name: name, engine: "mlx")
     try pin.verify(directory: directory)
     let container = try await LLMModelFactory.shared.loadContainer(
         from: directory, using: TokenizerFiles())

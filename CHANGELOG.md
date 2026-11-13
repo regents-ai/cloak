@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Stage 2: the llama worker (decision 8). `llama-worker/` builds
+  `cloak-rewriter-llama`, a drop-in for the MLX worker: the same frames,
+  command line, replies and pinned-file check, signed into the App Sandbox
+  with the MLX worker's entitlements and installed beside it by
+  `llama-worker/install.sh`. It has no inference code of its own: llama.cpp,
+  built from the pinned v1.0.0 source with Metal by
+  `llama-worker/build-llama.sh` (llama.cpp's own CMake build, static, its
+  shaders built in, without its server, tools or HTTP client), reads the one
+  GGUF file into memory, renders the pinned vendor chat template with
+  thinking off, and decodes greedily. Every llama.cpp setting that could
+  change a result or the memory a rewrite takes is written out, and
+  llama.cpp's GGML_ and LLAMA_ environment settings are cleared. Each
+  rewrite gets a context of its own, sized for its prompt and every token
+  it allows, so nothing carries over between rewrites. The prompt is read
+  512 tokens at a time, with a check for a cancel before each chunk and each
+  token; a second request while busy, a bad frame or the end of the channel
+  stops the rewrite first, then the worker. It logs numbers only, among
+  them the weights' size and llama.cpp's Metal memory; llama.cpp's own log
+  is dropped but for errors while loading. The frames, the daemon's
+  request, the replies and the model pins move from `worker/` into
+  `rewriter-kit/`, one local package both workers use, and each worker
+  refuses a model pinned for the other engine. Each install script also
+  builds a check tool that prints the prompt tokens its worker gives the
+  model.
+
 - Stage 1: llama.cpp joins as a second rewriter engine, for a measured
   choice (decision 8, Sean, 13 November). llama.cpp release v1.0.0 (commit
   b1b770d9) is pinned in reference/sources.json, and three GGUF models are

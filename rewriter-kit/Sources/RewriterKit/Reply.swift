@@ -1,7 +1,7 @@
 import Foundation
 
 /// OpenAI-style reply bodies, carrying the fields the daemon reads.
-enum Reply {
+public enum Reply {
     private struct Body: Encodable {
         struct Choice: Encodable {
             struct Message: Encodable {
@@ -30,20 +30,22 @@ enum Reply {
         let error: Detail
     }
 
-    static func completion(model: String, completion: Completion, finishReason: String) -> Data {
+    public static func completion(
+        model: String, text: String, promptTokens: Int, completionTokens: Int, finishReason: String
+    ) -> Data {
         encode(
             Body(
                 id: "chatcmpl-\(UUID().uuidString.lowercased())",
                 created: Int(Date().timeIntervalSince1970),
                 model: model,
-                choices: [.init(message: .init(content: completion.text), finish_reason: finishReason)],
+                choices: [.init(message: .init(content: text), finish_reason: finishReason)],
                 usage: .init(
-                    prompt_tokens: completion.info.promptTokenCount,
-                    completion_tokens: completion.info.generationTokenCount,
-                    total_tokens: completion.info.promptTokenCount + completion.info.generationTokenCount)))
+                    prompt_tokens: promptTokens,
+                    completion_tokens: completionTokens,
+                    total_tokens: promptTokens + completionTokens)))
     }
 
-    static func error(_ message: String) -> Data {
+    public static func error(_ message: String) -> Data {
         encode(ErrorBody(error: .init(message: message)))
     }
 

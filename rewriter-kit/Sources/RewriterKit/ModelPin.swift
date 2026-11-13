@@ -4,22 +4,24 @@ import Foundation
 /// One model entry of `reference/models.json`, which is built into the worker:
 /// the files the worker may load and the chat template settings frozen with
 /// them.
-struct ModelPin: Sendable {
-    struct File: Decodable, Sendable {
-        let path: String
+public struct ModelPin: Sendable {
+    public struct File: Decodable, Sendable {
+        public let path: String
         let size: Int
         let sha256: String
     }
 
-    let name: String
-    let files: [File]
-    let chatTemplateContext: [String: Bool]
+    public let name: String
+    public let files: [File]
+    public let chatTemplateContext: [String: Bool]
 
-    /// Only models whose chat template settings are frozen carry
-    /// `chat_template_context`; the worker loads no other.
-    static func load(name: String) throws -> ModelPin {
+    /// Only models a worker runs carry an `engine` (decision 8 in
+    /// docs/plan.md) and frozen chat template settings
+    /// (`chat_template_context`); a worker loads only its own engine's models.
+    public static func load(name: String, engine: String) throws -> ModelPin {
         struct Entry: Decodable {
             let name: String
+            let engine: String?
             let files: [File]
             let chat_template_context: [String: Bool]?
         }
@@ -27,6 +29,9 @@ struct ModelPin: Sendable {
         let models = try JSONDecoder().decode(Manifest.self, from: Data(PackageResources.models_json)).models
         guard let entry = models.first(where: { $0.name == name }) else {
             throw WorkerError("no pinned model named \(name)")
+        }
+        guard entry.engine == engine else {
+            throw WorkerError("\(name) is not a model for the \(engine) worker")
         }
         guard let context = entry.chat_template_context else {
             throw WorkerError("\(name) has no frozen chat template settings")
@@ -36,7 +41,7 @@ struct ModelPin: Sendable {
 
     /// The directory must hold exactly the pinned files, as regular files with
     /// the pinned size and sha256. Anything else stops the worker.
-    func verify(directory: URL) throws {
+    public func verify(directory: URL) throws {
         var found = Set<String>()
         let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey]
         // The sandbox hides folders outside the models folder; an unreadable
@@ -82,7 +87,7 @@ struct ModelPin: Sendable {
     }
 }
 
-struct WorkerError: Error, CustomStringConvertible {
-    let description: String
-    init(_ description: String) { self.description = description }
+public struct WorkerError: Error, CustomStringConvertible {
+    public let description: String
+    public init(_ description: String) { self.description = description }
 }

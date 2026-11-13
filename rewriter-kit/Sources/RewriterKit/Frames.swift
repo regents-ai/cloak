@@ -7,13 +7,13 @@ import Foundation
 /// In: `R` a request body, `C` cancel the request in progress.
 /// Out: `Y` ready (empty), `A` an answer: 2-byte big-endian HTTP status, then
 /// the reply body.
-enum Frames {
+public enum Frames {
     static let maxPayload = 1 << 20
 
-    struct Incoming: Sendable {
-        enum Kind: UInt8 { case request = 0x52, cancel = 0x43 }
-        let kind: Kind
-        let payload: Data
+    public struct Incoming: Sendable {
+        public enum Kind: UInt8, Sendable { case request = 0x52, cancel = 0x43 }
+        public let kind: Kind
+        public let payload: Data
     }
 
     /// Frames go to a private copy of standard output, and standard output
@@ -25,11 +25,11 @@ enum Frames {
         return FileHandle(fileDescriptor: channel, closeOnDealloc: true)
     }()
 
-    static func claimOutput() { _ = output }
+    public static func claimOutput() { _ = output }
 
-    static func ready() { write(kind: 0x59, payload: Data()) }
+    public static func ready() { write(kind: 0x59, payload: Data()) }
 
-    static func answer(status: UInt16, body: Data) {
+    public static func answer(status: UInt16, body: Data) {
         write(kind: 0x41, payload: Data([UInt8(status >> 8), UInt8(status & 0xff)]) + body)
     }
 
@@ -47,7 +47,7 @@ enum Frames {
     /// rewrite runs. The stream ends when the supervisor closes the channel,
     /// and fails with a `ProtocolFault` at a frame the worker cannot take; no
     /// frame is read after either.
-    static func incoming() -> AsyncThrowingStream<Incoming, any Error> {
+    public static func incoming() -> AsyncThrowingStream<Incoming, any Error> {
         AsyncThrowingStream { continuation in
             Thread {
                 do {
@@ -85,7 +85,7 @@ enum Frames {
 
 /// The supervisor broke the frame protocol. The worker stops for it, once
 /// the rewrite in progress has stopped.
-struct ProtocolFault: Error, CustomStringConvertible {
-    let description: String
-    init(_ description: String) { self.description = description }
+public struct ProtocolFault: Error, CustomStringConvertible {
+    public let description: String
+    public init(_ description: String) { self.description = description }
 }

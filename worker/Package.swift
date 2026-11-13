@@ -13,6 +13,7 @@ let package = Package(
     name: "cloak-rewriter",
     platforms: [.macOS(.v15)],
     dependencies: [
+        .package(path: "../rewriter-kit"),
         .package(
             url: "https://github.com/ml-explore/mlx-swift-lm",
             revision: "f5b0677f6b52b81d068871611cfcb82d1e7a0005",
@@ -24,16 +25,22 @@ let package = Package(
         .executableTarget(
             name: "cloak-rewriter",
             dependencies: [
+                .product(name: "RewriterKit", package: "rewriter-kit"),
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ],
-            // The model pins are built into the worker, so the signed binary
-            // decides which files it will load.
-            resources: [.embedInCode("models.json")],
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", infoPlist])
-            ])
+            ]),
+        // A check tool, never installed: the prompt tokens this worker gives
+        // the model, for tests/test_llama_worker.py.
+        .executableTarget(
+            name: "prompt-tokens",
+            dependencies: [
+                .product(name: "RewriterKit", package: "rewriter-kit"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+            ]),
     ]
 )

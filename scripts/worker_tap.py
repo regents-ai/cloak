@@ -3,7 +3,7 @@ kit. The host starts it in place of the worker; it starts the real, sandboxed
 worker with the same arguments and copies every frame both ways unchanged,
 noting each one with its time in an events file. That is how the kit keeps
 each call's raw reply and the worker's own timing without changing the host,
-the worker or their frames (worker/Sources/cloak-rewriter/Frames.swift).
+the worker or their frames (rewriter-kit/Sources/RewriterKit/Frames.swift).
 
     worker_tap.py <events file> <worker> <worker arguments...>
 

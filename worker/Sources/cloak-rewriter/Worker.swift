@@ -1,18 +1,9 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import RewriterKit
 import Synchronization
 import os
-
-let log = Logger(subsystem: "sh.regents.cloak", category: "rewriter")
-
-/// Exits the worker. The supervisor treats any exit as the loss of the worker
-/// and fails the request in progress.
-func stop(_ reason: String) -> Never {
-    log.error("stopping: \(reason, privacy: .public)")
-    FileHandle.standardError.write(Data("cloak-rewriter: \(reason)\n".utf8))
-    exit(2)
-}
 
 /// MLX's own memory figures, numbers only: what its arrays hold, what it keeps
 /// cached for reuse, and the most its arrays have held since the worker
@@ -124,11 +115,18 @@ final class Worker: Sendable {
         log.info(
             "rewrite \(String(describing: info.stopReason), privacy: .public): \(info.promptTokenCount) prompt tokens in \(info.promptTime, format: .fixed(precision: 2)) s, \(info.generationTokenCount) generated in \(info.generateTime, format: .fixed(precision: 2)) s; \(mlxMemory(memory), privacy: .public)"
         )
+        let finishReason: String
         switch info.stopReason {
-        case .stop: return (200, Reply.completion(model: pin.name, completion: completion, finishReason: "stop"))
-        case .length: return (200, Reply.completion(model: pin.name, completion: completion, finishReason: "length"))
+        case .stop: finishReason = "stop"
+        case .length: finishReason = "length"
         case .cancelled: return (499, Reply.error("cancelled"))
         }
+        return (
+            200,
+            Reply.completion(
+                model: pin.name, text: completion.text, promptTokens: info.promptTokenCount,
+                completionTokens: info.generationTokenCount, finishReason: finishReason)
+        )
     }
 
     /// Applies the model's own chat template with the pinned settings, then
