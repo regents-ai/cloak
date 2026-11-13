@@ -20,7 +20,8 @@ A01 to A26 is in [docs/plan.md](docs/plan.md).
 Stage 3 of 6: the feasibility kit is ready and waits for the candidates'
 weights, which Sean decides when to fetch. The stage 4 qualification kit is
 built and proven on development data only; its holdouts need people to
-write them. Stages 1 and 2 stay open in
+write them. Stage 5 has started with a development build of the app's
+core, on the stand-in model only. Stages 1 and 2 stay open in
 [docs/plan.md](docs/plan.md). Nothing here is a release, and no protection is
 claimed as proven. A gate counts only when its evidence
 is recorded in [docs/plan.md](docs/plan.md).
@@ -45,7 +46,8 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `worker/` | The native rewrite worker (Swift, MLX), its sandbox entitlements and install script |
 | `llama-worker/` | The second rewrite worker (decision 8): Swift over llama.cpp, built from its pinned source with Metal, with the same sandbox and its own install script |
 | `rewriter-kit/` | What both workers share: the frames to and from the host, the daemon's request, the replies and the model pins |
-| `host/` | The host supervisor: boots the guest and relays its rewrites to the worker |
+| `host/` | The host library (tor, the worker's channel, the relay, the guest) and the `cloak-host` command the kits run |
+| `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build |
 | `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
 | `evidence/stage4/` | Stage 4 development records and every score, one folder per model |
@@ -253,6 +255,58 @@ Run the kit's own checks:
 ```bash
 uv run --with pytest==8.4.2 --with scikit-learn==1.9.1 --with numpy==2.5.4 \
     --with scipy==1.18.1 --with tokenizers==0.22.1 pytest tests/test_stage4.py
+```
+
+## Stage 5 commands
+
+Stage 5 has started with a development build of the app's core: one
+supervisor, run by a menu-bar app and by the `cloak` command. It uses only
+the development stand-in model (`standin`), and has no sessions, payment,
+wallet or cover traffic. Running means tor and the worker are up and a
+startup check sent one rewrite through a guest, the daemon and the worker.
+
+With the guest, the host's tor and the worker built and installed (stage 2
+commands) and the stand-in fetched, build `app/build/Regents Cloak.app`,
+signed ad hoc with the virtualization entitlement, with a manifest that pins
+the guest, tor and the installed worker (rebuild after reinstalling any of
+them):
+
+```bash
+app/build.sh
+```
+
+The app opens Paused in the menu bar, and never starts by itself. `cloak`
+is inside it; `cloak start` opens the app if it isn't open:
+
+```bash
+cloak="app/build/Regents Cloak.app/Contents/MacOS/cloak"
+"$cloak" start
+"$cloak" status --json
+"$cloak" pause
+"$cloak" doctor
+```
+
+The commands are `status`, `start`, `pause`, `resume`, `stop`, `verify`
+(the startup check, then stop) and `doctor` (the Mac and every installed
+part against its pin). Each waits until its change has finished; `--json`
+prints the versioned status with its reason and next action, and the exit
+status is 1 when a command is refused, the app isn't open, or it needs
+attention. `cloak` takes no task text and prints no prompt text or keys.
+It talks to the app over a socket only the same user can reach, in
+`~/Library/Application Support/Regents Cloak/control/`.
+
+Run the supervisor's checks (state changes, stand-in tor and worker
+processes, the control socket and its JSON):
+
+```bash
+swift test --package-path app
+```
+
+Check that a lost worker that ignores being stopped is killed 10 seconds
+later, before a new one starts (through the guest, with the stand-in tor):
+
+```bash
+uv run --with pytest==8.4.2 pytest tests/test_worker_stop.py
 ```
 
 ## Progress

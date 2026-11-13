@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Stage 5 has started, with a development build of the app's core. One
+  supervisor (`app/`) checks the Mac and every installed part against the
+  bundle's manifest, starts tor, the worker and a check guest, watches tor
+  and the worker, and stops everything through one shutdown. Its six states
+  are one state machine (docs/state-machines.md, section 9). Any failure
+  ends in Needs attention with a reason code, everything stopped and
+  nothing restarted; every launch, sleep and relaunch leaves it Paused. A
+  menu-bar app, `Regents Cloak.app`, and the `cloak` command (`status`,
+  `start`, `pause`, `resume`, `stop`, `verify`, `doctor`, with versioned
+  JSON) drive the same supervisor over an owner-only local socket. It runs
+  only the development stand-in, labelled as such, and has no sessions,
+  payment, wallet or cover. `app/build.sh` builds it, signed ad hoc. The
+  host's parts are now a library (`host/Sources/CloakHost/`) used by the
+  app and by `cloak-host`, whose command line is unchanged. A lost worker,
+  a finished worker and tor now each get 10 seconds to exit before they are
+  killed; before, the host waited for them without limit, so a worker that
+  ignored being stopped hung it. New checks: the supervisor's state
+  machine, its failures with stand-in processes, the JSON for each status
+  and the socket's refusals (`swift test --package-path app`), and a lost
+  worker that ignores being stopped (`tests/test_worker_stop.py`).
+
 - Stage 3 kit: when the worker-loss boot's kill comes after the worker has
   already ended, the kit records the kill as not made (`killed: false`) and
   carries on; before, it stopped with an error and wrote no record. The

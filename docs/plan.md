@@ -14,7 +14,7 @@ not a pass. Progress lives here.
 | 2. Build the local path | Minimal guest adapter and native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
 | 3. Check feasibility early | Runs of each of the six candidates (the lead, the challenger, decision 7's small pair and decision 8's GGUF pair on llama.cpp) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the lead has two runs, the small lead one, the other four candidates none |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner among the six candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split for six candidates is to be re-declared before any holdout opens (decisions 7 and 8) |
-| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | Not started |
+| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, on the stand-in only ("Stage 5 so far"); no signed full bundle, setup, recovery, updates, sessions, payment or cover |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
 Stage 2 builds and tests the path with a small model labelled as a
@@ -936,6 +936,45 @@ candidates, so the split has to be re-declared before any holdout opens.
 8. The usability gate (A18): five first-time users through the full
    journey and an interruption exercise.
 
+## Stage 5 so far
+
+- A development build of the app's core (13 November): one supervisor
+  (`app/Sources/CloakSupervisor/`), driven by a menu-bar app,
+  `Regents Cloak.app`, and by the `cloak` command, built by `app/build.sh`
+  and signed ad hoc. Its states are the spec's six, as one state machine
+  ([state-machines.md](state-machines.md), section 9). The host's parts
+  (tor, the worker's channel, the relay, the guest) are now a library,
+  `host/Sources/CloakHost/`, used by the supervisor and by `cloak-host`,
+  whose command line is unchanged; every child it stops gets 10 seconds,
+  then is killed.
+- What exists: the checks of the Mac and of each installed part against
+  the bundle's manifest; tor, the MLX worker and a check guest started in
+  turn, each once the one before is up; a startup check that sends one
+  rewrite through the guest, the daemon and the worker; tor and the worker
+  watched; one shutdown; Needs attention with a reason code on any failure,
+  with nothing restarted and no other route or model; Paused at every
+  launch, after sleep and after a relaunch; `cloak status`, `start`,
+  `pause`, `resume`, `stop`, `verify` and `doctor`, with versioned JSON
+  (INS01, INS02), over an owner-only socket that checks the peer's user
+  (MAC05). One model, named in the manifest: the stand-in, labelled as a
+  development stand-in, with no picker.
+- What does not exist yet: sessions (Running has no session guest; the
+  check guest powers off once its check is done), payment, wallets, cover
+  traffic, the OS-approval and funding states, setup and model download
+  from the app, updates, recovery, a Developer ID signature and
+  notarization, and clearing leftover boot files at launch.
+- Live run on the development Mac, 13 November, stand-in only: from Paused,
+  `cloak start` reached Running in about 6 s, the check's rewrite taking
+  0.25 s through the real guest path; `pause` stopped tor and the worker;
+  with the worker killed by its process number while Running, the app went
+  to Needs attention (`worker_stopped`), stopped tor, and started nothing
+  again; `resume` was refused there; `start`, then `stop` (Ready), `verify`
+  and `doctor` passed; quitting stopped everything and removed the socket;
+  a relaunch came back Paused; with the app closed, `cloak start` opened it
+  and reached Running. Not shown: screenshots of the menu and the Details
+  window (no screen-recording permission in the session that built it), a
+  VoiceOver pass, and a live sleep and wake.
+
 ## Decisions
 
 1. Candidate tokenizer and template files. Decided 30 October (Sean, 1a):
@@ -1061,14 +1100,14 @@ candidates, so the split has to be re-declared before any holdout opens.
 | ID | Test | State | Evidence |
 | --- | --- | --- | --- |
 | A01 | Reference integrity | Open: sources, wrapper (reconstructed), contract and model files pinned; reference inference settings and payment deployment unknown | [baseline](../reference/baseline.md), [contract](../reference/rewriter-contract.md), [models](../reference/models.md) |
-| A02 | Clean Mac installation | Open | |
-| A03 | GUI and CLI equivalence | Open | |
+| A02 | Clean Mac installation | Open: only a development build exists (`app/build.sh`, signed ad hoc), which needs the guest, tor and worker built and installed by hand first; no setup, and no run on a clean Mac | `app/build.sh` |
+| A03 | GUI and CLI equivalence | Open: the menu-bar app and `cloak` drive one supervisor, with the same manifest, states and reason codes (development build, stand-in only); no sessions or payment exist yet to be shared | `app/`, `app/Tests/CloakTests/` |
 | A04 | Fidelity | Open: scoring kit built and proven on development data only; no holdout | `scripts/stage4.py`, `scripts/fidelity.py` |
 | A05 | Whole-agent containment | Open | |
 | A06 | Complete routing | Open: the reference wrapper fails it (static program bypass); in Cloak's guest, which has no network device and one relay to tor, the same static probe and a program without torsocks reach nothing (development evidence only, stand-in) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction), `tests/test_tor_path.py` |
 | A07 | Conversation isolation | Open | |
 | A08 | Cover behaviour | Open | |
-| A09 | Failure and pause | Open | |
+| A09 | Failure and pause | Open: in the app, a tor, worker or guest failure stops all work and ends in Needs attention with its reason, with nothing restarted and no other route or model; Pause and Quit stop everything, and a relaunch starts nothing (checks with stand-in processes, and a live run with one worker kill; development build, stand-in only); sleep pauses in the state machine's checks, but no live sleep and wake has been tried; no sessions, cover or payment yet to stop | [state machines](state-machines.md), `app/Tests/CloakTests/` |
 | A10 | Local authority | Open | |
 | A11 | Actual paid workflow | Open: no qualified deployment exists yet | |
 | A12 | Financial interruption | Open | |
@@ -1084,5 +1123,5 @@ candidates, so the split has to be re-declared before any holdout opens.
 | A22 | Authorship and linkability | Open: attack 1 and the sign-flip bound built and proven on synthetic development data only; attack 2 not built; no holdout | `scripts/stage4.py`, `scripts/privacy.py` |
 | A23 | Long and cold tasks | Open | |
 | A24 | Artifact provenance | Open: files pinned for the reference and all four candidates; each conversion's tokenizer or template differs from its vendor's, so each candidate takes those files from its vendor (decision 1) | [models](../reference/models.md) |
-| A25 | Single implementation | Open | |
+| A25 | Single implementation | Open: the app runs one model and one worker, named in its bundle's manifest (the stand-in until stage 4 picks a winner), with no picker, no switching by hardware and no fallback; the repository still holds two engines for decision 8's measurement | `app/release.json`, `app/manifest.py` |
 | A26 | Performance claims | Open | |

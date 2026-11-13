@@ -63,7 +63,7 @@ with the same crash. Check:
 one case per fault (exit status -11 and no answer in all four before the
 fix).
 
-## 2. The host's channel to the worker (`host/Sources/cloak-host/WorkerChannel.swift`)
+## 2. The host's channel to the worker (`host/Sources/CloakHost/WorkerChannel.swift`, `host/Sources/CloakHost/Child.swift`)
 
 ```
 idle --send--> running --cancel--> cancelling
@@ -79,10 +79,30 @@ any fault --> lost (never ends)
 - `answer` waits outside the lock, so a cancel can reach the worker meanwhile.
 - A cancel in any state but running does nothing.
 - A channel is one worker process; lost ends that channel, not the host's
-  work. Becoming lost stops the worker and waits, under the lock, for it to
-  exit; a cancel meanwhile waits, then finds it lost. Only then does the
-  relay start a new worker on a new channel (section 3), so two workers
-  never hold the model at once.
+  work. Becoming lost marks the worker lost and asks it to stop (SIGTERM);
+  a cancel from then on finds it lost. The relay then waits for it to exit
+  (section 3) before anything takes its place, so two workers never hold the
+  model at once.
+
+The worker and tor are each a child process (`Child`) with one way to wait
+for a stop:
+
+```
+asked to stop --> exited within 10 s --> stopped
+              --> still running at 10 s --> killed (SIGKILL) --> exited --> stopped
+```
+
+The wait is a task group racing the process's exit against a 10-second
+sleep; whichever ends first cancels the other, so nothing polls. The same
+wait ends a lost worker, a worker whose channel is closed at the end of a
+run, and tor.
+
+Before (13 November, stage 5): every one of those waits had no limit, and a
+lost worker was waited for under the channel's lock. A worker that ignored
+being stopped hung the host for good, with the relay's queue held. Check:
+`test_a_lost_worker_that_ignores_being_stopped_is_killed_before_its_replacement_starts`
+(`tests/test_worker_stop.py`, with its own stand-in,
+`tests/fake_stuck_worker.py`, which ignores SIGTERM).
 
 Before (13 November): becoming lost stopped the worker without waiting, so
 the new worker could load while the old one still held the model's memory.
@@ -99,7 +119,7 @@ call. Two faults:
   with signal 13 before the fix).
 - **An early cancel was lost.** See section 3; part of the fix is here.
 
-## 3. One guest connection (`host/Sources/cloak-host/Relay.swift`)
+## 3. One guest connection (`host/Sources/CloakHost/Relay.swift`)
 
 ```
 token --> request header --> request body --> handed to the worker
@@ -111,12 +131,20 @@ without an answer. The watch turns the guest closing its end into a cancel.
 
 A worker lost during the connection (gone mid-rewrite, or found gone when
 its request is handed over) closes it without an answer; its request is
-never sent again. Once the lost worker has exited (section 2), and before
-the next connection, the relay starts a new worker, from the same program
-and pinned files, holding the worker's lock until it is ready so the host's
-shutdown waits for it and ends it. A new
-worker that cannot start leaves none, with no further tries, and every later
-connection closes without an answer.
+never sent again. What the relay sends requests to is one slot:
+
+```
+serving --loss--> replacing --lost worker exited (section 2), afterLoss decided--> serving a new worker, or none
+any but replacing --finish--> finished
+```
+
+While replacing, no connection is served. What follows the lost worker is
+the relay's owner's to decide (`afterLoss`): `cloak-host` starts a new
+worker from the same program and pinned files; the app's supervisor
+(section 9) starts none, because there a lost worker is a failure. With
+none, every later connection closes without an answer, with no further
+tries. `finish` (the end of a run) waits out a replacement first, so it ends
+the worker that replacement started.
 
 Before: the host never replaced a lost worker, so every later rewrite in
 that boot failed; only a new boot recovered. The spec asks that a worker
@@ -153,7 +181,12 @@ worker: Y once, then for each request: R in, A out; C may come in between;
   worker is gone" could not be shown with it: the checks now start it as the
   host's own child, as the real worker is.
 
-## 5. The host's life and the secret boot files (`host/Sources/cloak-host/main.swift`)
+## 5. The host's life and the secret boot files (`host/Sources/cloak-host/main.swift`, `host/Sources/CloakHost/Guest.swift`)
+
+Since stage 5, `host/` is a library, `CloakHost` (tor, the worker's
+channel, the relay and the guest), with `cloak-host` a thin command over
+it, whose command line, output and exit statuses are unchanged; the app's
+supervisor (section 9) uses the same library.
 
 ```
 worker ready --> guest checked --> waiting for tor --> boot files written --> guest starting
@@ -164,7 +197,8 @@ waiting for tor --> tor's SOCKS port never opened --> tor stopped --> failed
 The boot files carry the per-boot channel token and rewriter key.
 "Worker finished" closes the worker's channel and waits for it to exit; a
 busy worker first stops its rewrite (section 1), so the rewrite in progress
-fails and is not sent again. "Waiting for tor" is one wait, with one limit
+fails and is not sent again. "Worker finished" and "Tor stopped" each wait
+at most 10 seconds before killing it (section 2). "Waiting for tor" is one wait, with one limit
 of 90 seconds from tor's start, for both of tor's lines (section 7a): its
 SOCKS port open, then its bootstrap. It ends when tor says it has
 bootstrapped, when it exits, or at the limit, when the host stops it. If
@@ -198,8 +232,9 @@ the start, and removed in one place when the start ends, whether it worked
 or not, or straight away if writing them fails.
 
 Limit: a host killed during the start (under a second) leaves them in its
-private temporary folder, readable only by the person. The stage 4 app,
-which will run the host, owns that case. A host killed at any time leaves
+private temporary folder, readable only by the person. The stage 5 app
+starts its guest the same way and has the same limit; it does not clear
+leftovers at launch yet. A host killed at any time leaves
 tor running for up to about 15 seconds, until tor sees its owner gone and
 exits. The stage 3 kit stops a boot over its time limit this way.
 
@@ -241,7 +276,7 @@ checked --> host connection --> request sent --> answer header --> reply copied
 Go's request context carries the state: the daemon giving up closes the host
 connection, which cancels the rewrite. No hidden flags; no change.
 
-## 7a. Tor's way out (`host/Sources/cloak-host/Tor.swift`, `host/Sources/cloak-host/TorRelay.swift`, `guest/torport/main.go`)
+## 7a. Tor's way out (`host/Sources/CloakHost/Tor.swift`, `host/Sources/CloakHost/TorRelay.swift`, `guest/torport/main.go`)
 
 Built 12 November to the design in [plan.md](plan.md) ("Tor out of the
 guest"); the checks are `tests/test_tor_path.py`. Where the bytes go:
@@ -353,6 +388,81 @@ and `test_a_prompt_over_the_input_limit_stops_its_task_with_the_length_and_the_l
   `<file>.part`, is checked, then renamed; a mismatch is kept as `<file>.bad`.
   Any leftover makes the worker refuse the folder as holding extra files, so
   a broken download stops work instead of loading. No change.
+
+## 9. The app's supervisor (`app/Sources/CloakSupervisor/Phase.swift`, `app/Sources/CloakSupervisor/Supervisor.swift`)
+
+Stage 5's development build. The spec's six states (section 6) are one
+enum, `Phase`; every transition is named by the event that causes it, in
+`Phase.after`, and anything not listed there does not apply. The menu-bar
+app and `cloak` send their commands to the same supervisor, the app through
+its menu and `cloak` over the control socket.
+
+```
+launch, relaunch --> Paused
+Paused, Ready, Needs attention --start--> Preparing (run)          Paused --resume--> Preparing (run)
+Paused, Ready, Needs attention --verify--> Preparing (verify)
+Preparing (verify) --start--> Preparing (run)
+Preparing (run) --prepared--> Running
+Preparing (verify) --prepared--> Stopping (to Ready)
+Preparing, Running --failed(reason)--> Stopping (to Needs attention, reason)
+Preparing, Running --pause, sleep--> Stopping (to Paused)
+Preparing, Running --stop--> Stopping (to Ready)
+Ready, Needs attention --pause--> Paused
+any --quit--> Stopping (to quit) --stopped--> the app ends
+Stopping (to Paused, Ready or Needs attention) --stopped--> that state
+```
+
+- **Preparing** takes each step only once the one before it is up: the
+  checks (the Mac; each installed part's SHA-256 against the bundle's
+  manifest; the model's files and sizes, whose hashes the worker checks
+  itself), then tor, started and bootstrapped, then the worker, started and
+  ready, then a check guest, which sends one rewrite through the daemon, the
+  relay and the worker and powers off. The first failure is the reason.
+- **Running** means tor and the worker are up and that check passed. No
+  session guest is built yet: the guest is gone once the check ends.
+- **Watches**: from its start until the run ends, tor exiting raises
+  `tor_stopped` and the worker exiting raises `worker_stopped`. The relay
+  replaces no lost worker (section 3): a worker the relay loses is stopped,
+  and its exit is the failure.
+- **Stopping** is the one shutdown, for every destination: it cancels the
+  preparation and the watches, waits for the preparation to end, then stops
+  the guest, the worker and tor, in that order, each within its limit
+  (section 2). An event from work being stopped (a watch seeing its part
+  stopped, a late failure) does not apply, and is dropped.
+- **Needs attention** keeps its reason, and the failure's technical detail,
+  until the next start. Nothing is started again, and no other route or
+  model is tried (REF04).
+- **Refused**: any command while Stopping (`busy`), and `resume` anywhere but
+  Paused (`not_paused`). A refused command changes nothing.
+- **Sleep** pauses, so a wake finds nothing running; a relaunch starts
+  Paused, having started nothing.
+
+What `cloak --json` prints for each phase (INS02):
+
+| Phase | `state` | `status` | `next_action` |
+|---|---|---|---|
+| Paused | `paused` | `paused` | `start` |
+| Preparing | `preparing` | `checking` | `wait` |
+| Running | `running` | `running` | `pause` |
+| Ready | `ready` | `ready` | `start` |
+| Stopping | `stopping` | `paused`; `failed` or `unsupported_hardware` when it ends in Needs attention | `wait` |
+| Needs attention | `needs_attention` | `unsupported_hardware` for that reason, else `failed` | `none` for `unsupported_hardware`, else `start` |
+
+`needs_os_approval` and `needs_funding` are never printed: this build has no
+step that needs the system's approval, and no payment. The reasons are
+`unsupported_hardware`, `part_missing`, `part_changed`, `model_missing`,
+`tor_unavailable`, `tor_stopped`, `worker_unavailable`, `worker_stopped`,
+`guest_failed` and `check_failed`.
+
+Checks (`app/Tests/CloakTests/`): `PhaseTests.swift` (every failure from
+Preparing or Running ends in Needs attention; nothing starts again unless
+asked; sleep pauses; quit from every phase goes through the shutdown;
+commands during a shutdown are refused), `SupervisorTests.swift` (stand-in
+tor and worker processes: a guest, tor or worker failure ends in Needs
+attention with everything stopped and nothing started again; a relaunch
+comes back Paused; pausing while tor bootstraps stops it) and
+`ControlTests.swift` (the JSON for each status; the socket answers only its
+owner's well-formed requests).
 
 ## Looked at, nothing to name
 
