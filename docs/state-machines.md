@@ -79,7 +79,14 @@ any fault --> lost (never ends)
 - `answer` waits outside the lock, so a cancel can reach the worker meanwhile.
 - A cancel in any state but running does nothing.
 - A channel is one worker process; lost ends that channel, not the host's
-  work. The relay then starts a new worker on a new channel (section 3).
+  work. Becoming lost stops the worker and waits, under the lock, for it to
+  exit; a cancel meanwhile waits, then finds it lost. Only then does the
+  relay start a new worker on a new channel (section 3), so two workers
+  never hold the model at once.
+
+Before (13 November): becoming lost stopped the worker without waiting, so
+the new worker could load while the old one still held the model's memory.
+Check: `test_a_lost_worker_has_exited_before_its_replacement_starts`.
 
 Before: an in-flight flag and a lost flag, with a separate "wait until ready"
 call. Two faults:
@@ -104,9 +111,10 @@ without an answer. The watch turns the guest closing its end into a cancel.
 
 A worker lost during the connection (gone mid-rewrite, or found gone when
 its request is handed over) closes it without an answer; its request is
-never sent again. Before the next connection, the relay starts a new
-worker, from the same program and pinned files, holding the worker's lock
-until it is ready so the host's shutdown waits for it and ends it. A new
+never sent again. Once the lost worker has exited (section 2), and before
+the next connection, the relay starts a new worker, from the same program
+and pinned files, holding the worker's lock until it is ready so the host's
+shutdown waits for it and ends it. A new
 worker that cannot start leaves none, with no further tries, and every later
 connection closes without an answer.
 

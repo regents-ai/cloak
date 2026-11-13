@@ -14,6 +14,13 @@ func stop(_ reason: String) -> Never {
     exit(2)
 }
 
+/// MLX's own memory figures, numbers only: what its arrays hold, what it keeps
+/// cached for reuse, and the most its arrays have held since the worker
+/// started.
+func mlxMemory(_ memory: Memory.Snapshot) -> String {
+    "MLX active \(memory.activeMemory), cache \(memory.cacheMemory), peak \(memory.peakMemory) bytes"
+}
+
 /// Runs one rewrite at a time (spec MAC03). A second request while one runs is
 /// a protocol fault and stops the worker, once that rewrite has stopped.
 final class Worker: Sendable {
@@ -113,8 +120,9 @@ final class Worker: Sendable {
             return (500, Reply.error("rewrite failed"))
         }
         let info = completion.info
+        let memory = Memory.snapshot()
         log.info(
-            "rewrite \(String(describing: info.stopReason), privacy: .public): \(info.promptTokenCount) prompt tokens in \(info.promptTime, format: .fixed(precision: 2)) s, \(info.generationTokenCount) generated in \(info.generateTime, format: .fixed(precision: 2)) s"
+            "rewrite \(String(describing: info.stopReason), privacy: .public): \(info.promptTokenCount) prompt tokens in \(info.promptTime, format: .fixed(precision: 2)) s, \(info.generationTokenCount) generated in \(info.generateTime, format: .fixed(precision: 2)) s; \(mlxMemory(memory), privacy: .public)"
         )
         switch info.stopReason {
         case .stop: return (200, Reply.completion(model: pin.name, completion: completion, finishReason: "stop"))

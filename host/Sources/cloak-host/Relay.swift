@@ -10,8 +10,9 @@ import Synchronization
 ///
 /// A lost worker fails the request it had, or the one that found it gone:
 /// that connection closes without an answer, and its request is never sent
-/// again. A new worker then starts, from the same program and pinned files,
-/// before the next connection is served. A new worker that cannot start
+/// again. Once the lost worker has exited, a new worker starts, from the same
+/// program and pinned files, before the next connection is served, so two
+/// workers never hold the model at once. A new worker that cannot start
 /// leaves none, and every later request fails.
 final class Relay: Sendable {
     static let port: UInt32 = 8012

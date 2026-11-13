@@ -2,10 +2,10 @@
 rewrite code in the guest, the adapter, the host relay and the sandboxed
 worker, with the copy-only tap (worker_tap.py) between the host and the
 worker. While the boot runs, a sampler reads every second the memory and CPU
-of the worker (the newest, once the host has started a new one after a
-loss), the guest's virtual machine and the host, and the system's
-swap, memory pressure and GPU use; the worker's own log lines (token counts
-and timings, never content) are streamed from the unified log. The guest's
+of every worker process alive (a new one follows each loss), the guest's
+virtual machine, the host and the host's tor, and the system's swap, memory
+pressure and GPU use; the worker's own log lines (token counts, timings and
+MLX's memory, never content) are streamed from the unified log. The guest's
 console and the host's own log, tor's lines included, are timed line by line
 as they arrive.
 
@@ -204,45 +204,76 @@ class _LogStream:
         return self.lines
 
 
+def tor_process_of(host_pid: int) -> int | None:
+    """The tor the host runs as its child."""
+    found = subprocess.run(["pgrep", "-P", str(host_pid), "-x", "tor"], capture_output=True, text=True).stdout.split()
+    return int(found[0]) if found else None
+
+
 class _Sampler:
     def __init__(self, host_pid: int, events: Path, vms_before: set[int]):
         self.host_pid, self.events, self.vms_before = host_pid, events, vms_before
         self.samples: list[dict] = []
-        self.worker_pid: int | None = None
+        # Every worker the host has started, from the tap's spawn events, read
+        # as the events file grows; a worker found gone is never read again,
+        # so a reused pid is not mistaken for it.
+        self.worker_pids: list[int] = []
+        self.workers_gone: set[int] = set()
+        self.events_read = 0
         self.vm_pid: int | None = None
+        self.tor_pid: int | None = None
         self.done = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
-    def _newest_worker(self) -> int | None:
-        """The worker the host started last: a new one follows each loss."""
+    def _read_spawns(self) -> None:
         if not self.events.exists():
-            return None
-        spawns = [e for line in self.events.read_text().splitlines() if '"spawn"' in line
-                  if (e := json.loads(line))["kind"] == "spawn"]
-        return spawns[-1]["pid"] if spawns else None
+            return
+        with self.events.open("rb") as f:
+            f.seek(self.events_read)
+            for line in f:
+                if not line.endswith(b"\n"):
+                    break  # still being written; read it next time
+                self.events_read += len(line)
+                if b'"spawn"' in line and (e := json.loads(line))["kind"] == "spawn":
+                    self.worker_pids.append(e["pid"])
+
+    def _workers(self) -> dict[str, list[int]]:
+        """A reading of every worker alive: a lost worker may still be
+        exiting while its replacement loads."""
+        self._read_spawns()
+        readings = {}
+        for pid in self.worker_pids:
+            if pid in self.workers_gone:
+                continue
+            if reading := process_reading(pid):
+                readings[str(pid)] = reading
+            else:
+                self.workers_gone.add(pid)
+        return readings
+
+    def sample(self) -> dict:
+        if self.vm_pid is None:
+            self.vm_pid = vm_process_of(self.host_pid, self.vms_before)
+        if self.tor_pid is None:
+            self.tor_pid = tor_process_of(self.host_pid)
+        gpu_percent, gpu_memory = gpu_reading()
+        return {
+            "t": clock(),
+            "workers": self._workers(),
+            "vm": self.vm_pid and process_reading(self.vm_pid),
+            "host": process_reading(self.host_pid),
+            "tor": self.tor_pid and process_reading(self.tor_pid),
+            "swap_used": swap_used(),
+            "pressure": sysctl_int("kern.memorystatus_vm_pressure_level"),
+            "free_percent": sysctl_int("kern.memorystatus_level"),
+            "gpu_percent": gpu_percent,
+            "gpu_memory": gpu_memory,
+        }
 
     def _run(self):
         while not self.done.is_set():
-            worker = self.worker_pid and process_reading(self.worker_pid)
-            if not worker:
-                self.worker_pid = self._newest_worker()
-                worker = self.worker_pid and process_reading(self.worker_pid)
-            if self.vm_pid is None:
-                self.vm_pid = vm_process_of(self.host_pid, self.vms_before)
-            gpu_percent, gpu_memory = gpu_reading()
-            self.samples.append({
-                "t": clock(),
-                "worker": worker,
-                "worker_pid": self.worker_pid,
-                "vm": self.vm_pid and process_reading(self.vm_pid),
-                "host": process_reading(self.host_pid),
-                "swap_used": swap_used(),
-                "pressure": sysctl_int("kern.memorystatus_vm_pressure_level"),
-                "free_percent": sysctl_int("kern.memorystatus_level"),
-                "gpu_percent": gpu_percent,
-                "gpu_memory": gpu_memory,
-            })
+            self.samples.append(self.sample())
             self.done.wait(SAMPLE_EVERY_S)
 
     def stop(self) -> list[dict]:

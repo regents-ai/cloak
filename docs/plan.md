@@ -67,10 +67,12 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
 - The host (`host/`) boots the guest with Virtualization.framework, checks
   the token, relays to the worker, turns a dropped guest connection into a
   cancel, and treats a lost worker as a failure for the rewrite it had (never
-  sent again); it then starts a new worker from the same program and pinned
-  files for the next rewrite. A new worker that cannot start leaves every
-  later rewrite failing.
-- 22 checks in `tests/test_guest_path.py` pass: the request reaches the
+  sent again); once the lost worker has exited, it starts a new worker from
+  the same program and pinned files for the next rewrite, so two workers
+  never hold the model at once. A new worker that cannot start leaves every
+  later rewrite failing. After loading, the worker gives MLX's cache back to
+  the system before it takes a request.
+- 23 checks in `tests/test_guest_path.py` pass: the request reaches the
   worker byte for byte; nine kinds of bad reply are refused by the daemon's
   code and the next rewrite still works; a client that gives up cancels the
   worker, even before the worker has its request; under decision 6, a short
@@ -80,7 +82,8 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   is refused at once, naming its length and the limit, with nothing sent to
   the worker; a lost worker (fake or real, killed mid-rewrite, or gone
   between rewrites) fails only the rewrite it had or the one that found it
-  gone, and a new worker serves the next; a new worker that cannot start
+  gone, and a new worker serves the next, started only once the lost one has
+  exited, even when it is slow to exit; a new worker that cannot start
   fails every later rewrite; the real worker rewrites through the whole path
   and is free again within seconds of a cancel, also one 300 ms into the
   longest prompt accepted.
@@ -471,9 +474,13 @@ refused it as a bare program with no bundle identifier).
   covers the cold load, the cold first call, the 40 EVAL06 messages warm, the
   rebuild after cache loss, the long inputs and outputs, and a cancellation
   and the call after it. Then the worker is killed mid-rewrite, then a
-  restart. Every second it samples the memory and CPU of the worker, the
-  guest's virtual machine and the host, plus swap, memory pressure and the
-  system's GPU use. It also records the installed size and the end-to-end
+  restart. Every second it samples the memory and CPU of every worker
+  process alive (summed), the guest's virtual machine, the host and the
+  host's tor, plus swap, memory pressure and the system's GPU use; the
+  whole-product peak is the sum of all of them. Since 13 November it also
+  keeps MLX's own memory figures (active, cache and peak) from the worker's
+  log: after each load, before and after the worker clears MLX's cache, and
+  after each rewrite. It also records the installed size and the end-to-end
   time per case.
 - Since 12 November the host starts the guest only once tor has
   bootstrapped ("Tor out of the guest" above), so "first result after the
@@ -492,9 +499,8 @@ refused it as a bare program with no bundle identifier).
   pressure, and the first run after the Mac restarts.
 - Not measured by this kit: the full stack (the guest now runs the daemon's
   local API and carries Pi, and the host runs tor for it on the public Tor
-  network, but there is no cover traffic or payment vault, tor's own memory
-  and CPU are not sampled, and the kit's calls do not come from Pi, so stage
-  3's exit condition stays unmet), the
+  network, but there is no cover traffic or payment vault, and the kit's
+  calls do not come from Pi, so stage 3's exit condition stays unmet), the
   daemon's full serve path (A11), per-process GPU use (macOS gives it only to
   root), and a 32 GB Mac (decision 2).
 - What a real run needs. Disk: the lead is 16,077,680,950 bytes and the
@@ -714,6 +720,16 @@ as in the run above:
   started. The worker peaked at 3.20 GiB and the whole product at 3.80 GiB.
   The path added a median of 1 ms; the most, 1.64 s, was the probe's wait
   for the new worker to load.
+
+Feasibility with the memory fixes (cache cleared after load, a lost worker
+waited for, every worker and tor sampled),
+[feasibility-20261113T193557Z.json](../evidence/stage3/standin/feasibility-20261113T193557Z.json),
+13 November, kit commit `2add247` with these changes not yet committed, on
+battery (8 %) with the one-minute load rising from 27 to 177 as other lanes
+worked. Development only. MLX held 0.99 GiB active and
+0.78 GiB cached after the load, and 0 cached after the clear. The main
+boot's worker peaked at 2.31 GiB, tor at 0.02 GiB and the whole product at
+2.90 GiB; at most one worker was alive at any sample.
 
 EVAL01 development screen,
 [eval01-20261111T072816Z.json](../evidence/stage3/standin/eval01-20261111T072816Z.json),
@@ -960,8 +976,10 @@ candidates, so the split has to be re-declared before any holdout opens.
    departs from HW01; the spec file stays byte for byte as received (its
    sha256 is at the top of this file). The memory pass line is 10 GiB for
    the whole running product: the worker, the guest's virtual machine and
-   the host together, as the stage 3 record's whole-product peak. 9.3 GiB is
-   the working aim. The lead's two runs peaked at 21.04 and 18.74 GiB.
+   the host together, as the stage 3 record's whole-product peak (since
+   13 November that peak also counts tor and every worker alive at a
+   sample). 9.3 GiB is the working aim. The lead's two runs peaked at 21.04
+   and 18.74 GiB, before tor was sampled.
    Exactly one model still ships (A25 unchanged): the selection rule picks
    one of the four or none. Each small candidate faces stage 4 from scratch;
    nothing measured on the lead or the challenger counts for it. To settle

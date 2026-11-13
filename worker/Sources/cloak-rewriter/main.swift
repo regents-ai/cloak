@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 import MLXLLM
 import MLXLMCommon
 
@@ -40,7 +41,13 @@ do {
 } catch {
     stop("cannot load \(name): \(error)")
 }
-log.info("loaded \(name, privacy: .public)")
+// Loading leaves buffers in MLX's cache; give them back to the system before
+// the first request.
+let loaded = Memory.snapshot()
+Memory.clearCache()
+log.info(
+    "loaded \(name, privacy: .public); \(mlxMemory(loaded), privacy: .public); after the cache clear, \(mlxMemory(Memory.snapshot()), privacy: .public)"
+)
 Frames.ready()
 
 do {

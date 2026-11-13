@@ -8,6 +8,8 @@ raw reply and hashes. No guest boots here; the kit's stand-in runs do that.
 """
 
 import json
+import os
+import signal
 import struct
 import subprocess
 import sys
@@ -73,6 +75,56 @@ def test_the_tap_copies_frames_both_ways_unchanged_and_notes_each(tmp_path):
     assert struct.pack(">H", noted[3]["status"]) + noted[3]["text"].encode() == answer  # the host got the reply as sent
     assert noted[4]["status"] == 0
     assert [e["t"] for e in noted] == sorted(e["t"] for e in noted)
+
+
+def test_a_terminated_tap_exits_only_after_its_worker(tmp_path):
+    launcher = tmp_path / "fake-worker"
+    launcher.write_text(f'#!/bin/sh\necho start >> "{tmp_path}/starts"\n'
+                        f'export FAKE_WORKER_LOG="{tmp_path}" FAKE_WORKER_READ_DELAY=0\n'
+                        f'exec "{sys.executable}" -I "{FAKE}" "$@"\n')
+    launcher.chmod(0o755)
+    tap = subprocess.Popen([sys.executable, "-I", ROOT / "scripts/worker_tap.py", tmp_path / "events.jsonl",
+                            launcher], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    assert tap.stdout.read(5) == b"Y\0\0\0\0"
+    # This fake worker takes two seconds to exit once terminated.
+    body = request("case:bad-frame now").encode()
+    tap.stdin.write(b"R" + struct.pack(">I", len(body)) + body)
+    tap.stdin.flush()
+    assert tap.stdout.read(5) == b"X\0\0\0\0"
+    tap.terminate()
+    assert tap.wait(timeout=10) == 143
+    assert (tmp_path / "exited").exists()
+
+
+def test_the_sampler_reads_every_worker_alive_and_the_hosts_tor(tmp_path):
+    tor = tmp_path / "tor"
+    tor.symlink_to("/bin/sleep")
+    # A stand-in host whose child is named tor, as the host's tor is.
+    host = subprocess.Popen([sys.executable, "-I", "-c", "import subprocess, sys\n"
+                             f"print(subprocess.Popen([{str(tor)!r}, '60']).pid, flush=True)\nsys.stdin.read()"],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    tor_pid = int(host.stdout.readline())
+    workers = [subprocess.Popen(["/bin/sleep", "60"]) for _ in range(2)]
+    try:
+        events = tmp_path / "events.jsonl"
+        events.write_text("".join(json.dumps({"t": 0, "kind": "spawn", "pid": w.pid, "tap": 1}) + "\n"
+                                  for w in workers))
+        sampler = boot._Sampler(host.pid, events, boot.vm_processes())
+        sampler.stop()  # samples taken here, one at a time
+        both = sampler.sample()
+        workers[0].kill()
+        workers[0].wait()
+        one = sampler.sample()
+        assert set(both["workers"]) == {str(w.pid) for w in workers}
+        assert set(one["workers"]) == {str(workers[1].pid)}
+        assert sampler.tor_pid == tor_pid and both["tor"] and one["tor"]
+    finally:
+        for process in workers:
+            process.kill()
+            process.wait()
+        os.kill(tor_pid, signal.SIGKILL)
+        host.stdin.close()
+        host.wait()
 
 
 def test_a_payload_that_is_not_utf8_is_kept_whole_in_base64():
@@ -154,15 +206,34 @@ def test_every_stopped_case_is_named_with_its_reason(outcome, body, calls, cance
     assert reason is None or reason in measures.STOP_REASONS
 
 
+LOADED = ("loaded standin; MLX active 3000, cache 900, peak 3500 bytes; "
+          "after the cache clear, MLX active 3000, cache 0, peak 3500 bytes")
+
+
 def test_worker_log_lines_go_to_the_call_that_was_open():
     calls = [answered("a", 100, 50), answered("b", 200, 50), Call(sent_ns=300, request=request("c"))]
-    log = [{"t": 90, "message": "loaded standin"},
-           {"t": 140, "message": "rewrite stop: 412 prompt tokens in 0.21 s, 55 generated in 0.63 s"},
-           {"t": 245, "message": "rewrite length: 9000 prompt tokens in 4.00 s, 16384 generated in 80.10 s"}]
+    log = [{"t": 90, "message": LOADED},
+           {"t": 140, "message": "rewrite stop: 412 prompt tokens in 0.21 s, 55 generated in 0.63 s; "
+                                 "MLX active 3100, cache 200, peak 3600 bytes"},
+           {"t": 245, "message": "rewrite length: 9000 prompt tokens in 4.00 s, 16384 generated in 80.10 s; "
+                                 "MLX active 3200, cache 700, peak 5000 bytes"}]
     first, second, third = measures.worker_figures(log, calls)
     assert first == {"stop": "stop", "prompt_tokens": 412, "prompt_seconds": 0.21,
-                     "generated_tokens": 55, "generate_seconds": 0.63}
-    assert (second["stop"], second["generated_tokens"], third) == ("length", 16384, None)
+                     "generated_tokens": 55, "generate_seconds": 0.63,
+                     "mlx": {"active_bytes": 3100, "cache_bytes": 200, "peak_bytes": 3600}}
+    assert (second["stop"], second["generated_tokens"], second["mlx"]["peak_bytes"], third) == (
+        "length", 16384, 5000, None)
+
+
+def test_each_worker_process_gets_the_mlx_memory_it_logged_after_loading():
+    processes = [measures.Process(spawn_ns=0, pid=7, tap_pid=6), measures.Process(spawn_ns=100, pid=9, tap_pid=6),
+                 measures.Process(spawn_ns=200, pid=11, tap_pid=6)]
+    log = [{"t": 50, "message": LOADED},
+           {"t": 150, "message": LOADED.replace("cache 900", "cache 40")}]  # the third never loaded
+    first, second, third = measures.load_figures(log, processes)
+    assert first == {"loaded": {"active_bytes": 3000, "cache_bytes": 900, "peak_bytes": 3500},
+                     "after_cache_clear": {"active_bytes": 3000, "cache_bytes": 0, "peak_bytes": 3500}}
+    assert (second["loaded"]["cache_bytes"], third) == (40, None)
 
 
 # Denominators and percentiles.
@@ -201,32 +272,44 @@ def test_the_proposed_targets_need_both_figures_within_bounds():
         "1-128", "1-128", "129-256", "129-256", "257-512", "257-512"]
 
 
-def test_a_resource_window_takes_peaks_cpu_and_swap_between_its_ends():
-    def sample(t, worker, vm, swap, pressure=1, free=40, gpu=None):
-        return {"t": t, "worker": worker, "vm": vm, "host": [10, 10, t * 10], "swap_used": swap,
-                "pressure": pressure, "free_percent": free, "gpu_percent": gpu, "gpu_memory": None}
+def sample(t, workers=None, vm=None, tor=None, swap=0, pressure=1, free=40, gpu=None):
+    """One resource sample as the sampler takes it."""
+    return {"t": t, "workers": workers or {}, "vm": vm, "host": [10, 10, t * 10], "tor": tor, "swap_used": swap,
+            "pressure": pressure, "free_percent": free, "gpu_percent": gpu, "gpu_memory": None}
 
-    samples = [sample(0, None, None, 100), sample(10, [500, 500, 1_000_000_000], [300, 300, 0], 100, gpu=20),
-               sample(20, [900, 900, 3_000_000_000], [200, 300, 0], 160, pressure=2, free=25, gpu=60),
-               sample(30, [400, 900, 4_000_000_000], [100, 300, 0], 150, gpu=40)]
+
+def test_a_resource_window_takes_peaks_cpu_and_swap_between_its_ends():
+    samples = [sample(0, swap=100),
+               sample(10, {"7": [500, 500, 1_000_000_000]}, [300, 300, 0], [20, 20, 0], 100, gpu=20),
+               sample(20, {"7": [900, 900, 3_000_000_000]}, [200, 300, 0], [30, 30, 500_000_000], 160,
+                      pressure=2, free=25, gpu=60),
+               sample(30, {"7": [400, 900, 4_000_000_000]}, [100, 300, 0], [25, 30, 1_000_000_000], 150, gpu=40)]
     w = measures.window(samples, 10, 30)
     assert (w["samples"], w["worker_peak_footprint_bytes"], w["vm_peak_footprint_bytes"]) == (3, 900, 300)
-    assert w["worker_cpu_seconds"] == 3.0
-    assert w["product_peak_footprint_bytes"] == 900 + 200 + 10
+    assert (w["worker_cpu_seconds"], w["workers_alive_max"]) == (3.0, 1)
+    assert (w["tor_peak_footprint_bytes"], w["tor_cpu_seconds"]) == (30, 1.0)
+    assert w["product_peak_footprint_bytes"] == 900 + 200 + 10 + 30  # tor is part of the product
     assert (w["swap_growth_bytes"], w["pressure_levels_seen"], w["lowest_free_percent"]) == (50, [1, 2], 25)
     assert (w["system_gpu_percent_mean"], w["system_gpu_percent_max"]) == (40, 60)
 
 
-def test_a_window_across_a_new_worker_keeps_its_peak_but_no_cpu_figure():
-    def sample(t, pid, worker):
-        return {"t": t, "worker": worker, "worker_pid": pid, "vm": None, "host": [10, 10, 0], "swap_used": 0,
-                "pressure": 1, "free_percent": 40, "gpu_percent": None, "gpu_memory": None}
+def test_workers_alive_at_once_are_summed():
+    # A lost worker still exiting while its replacement loads: both count.
+    samples = [sample(0, {"7": [500, 500, 0]}), sample(10, {"7": [450, 500, 0], "8": [300, 300, 0]}),
+               sample(20, {"8": [600, 600, 0]})]
+    w = measures.window(samples, 0, 20)
+    assert (w["worker_peak_footprint_bytes"], w["workers_alive_max"]) == (750, 2)
+    assert w["product_peak_footprint_bytes"] == 750 + 10
 
-    samples = [sample(0, 7, [500, 500, 9_000_000_000]), sample(10, None, None), sample(20, 8, [300, 300, 1_000_000_000])]
+
+def test_a_window_across_a_new_worker_keeps_its_peak_but_no_cpu_figure():
+    samples = [sample(0, {"7": [500, 500, 9_000_000_000]}), sample(10),
+               sample(20, {"8": [300, 300, 1_000_000_000]})]
     w = measures.window(samples, 0, 20)
     assert w["worker_peak_footprint_bytes"] == 500
     assert "worker_cpu_seconds" not in w
-    assert w["host_cpu_seconds"] == 0
+    assert (w["host_cpu_seconds"], w["tor_peak_footprint_bytes"]) == (200 / 1e9, None)
+    assert "tor_cpu_seconds" not in w
 
 
 # The plan and the record.
@@ -302,13 +385,16 @@ def fake_boot(cases: list[dict], calls: list[Call], results: dict, started: int 
               (started + 3, "cloak-host: tor: Nov 12 12:00:09.000 [notice] Bootstrapped 100% (done): Done\n")]
     console = [(started + 3, "cloak-guest: started")]
     console += [(r["_t"], json.dumps({k: v for k, v in r.items() if k != "_t"})) for r in results.values()]
-    samples = [{"t": t, "worker": [100 + t, 100 + t, t * 1000], "vm": [50, 50, 0], "host": [5, 5, 0],
-                "swap_used": 0, "pressure": 1, "free_percent": 50, "gpu_percent": 10, "gpu_memory": 0}
+    samples = [{"t": t, "workers": {"7": [100 + t, 100 + t, t * 1000]}, "vm": [50, 50, 0], "host": [5, 5, 0],
+                "tor": [20, 20, 0], "swap_used": 0, "pressure": 1, "free_percent": 50, "gpu_percent": 10,
+                "gpu_memory": 0}
                for t in range(started, end + 1, 5)]
+    worker_log = [{"t": started + 2, "message": LOADED}]
     return boot.Boot(name="x", started_ns=started, ended_ns=end, host_status=0, over_time=False,
                      console=console, host_stderr=stderr, results={k: {kk: vv for kk, vv in v.items() if kk != "_t"}
                                                                for k, v in results.items()},
-                     events=events, worker_log=[], samples=samples, vm_pid=8, system_start={}, system_end={})
+                     events=events, worker_log=worker_log, samples=samples, vm_pid=8, system_start={},
+                     system_end={})
 
 
 def result(name: str, outcome: str, seconds: float, t: int, texts=None) -> dict:
@@ -340,6 +426,7 @@ def test_a_boot_becomes_a_record_with_every_call_and_its_hashes():
     assert two["eval06"]["band"] == "257-512" and two["eval06"]["output_bytes"] is None
     assert (big["calls"], gone["outcome"], gone["seconds"]) == ([], None, None)
     assert [p["load_seconds"] for p in record["worker"]["processes"]] == [1e-9]
+    assert record["worker"]["processes"][0]["mlx_memory"]["after_cache_clear"]["cache_bytes"] == 0
     assert record["tor"] == {"started_ns": 2, "bootstrapped_ns": 3}
     assert "Bootstrapped 100% (done)" in record["host_stderr"]
     assert measures.latency(record["cases"])["cases"] == 4

@@ -372,8 +372,8 @@ MANUAL_STEPS = [
 
 NOT_MEASURED = [
     "The full stack: the guest runs the daemon's local API and has Pi in the reference wrapper, and the host "
-    "runs tor for it on the public Tor network, but there is no cover traffic or payment vault yet, tor's own "
-    "memory and CPU are not sampled, and this kit's calls come from the daemon's rewrite code, not from Pi; "
+    "runs tor for it on the public Tor network, but there is no cover traffic or payment vault yet, and this "
+    "kit's calls come from the daemon's rewrite code, not from Pi; "
     "so 'with the full stack loaded' (stage 3's exit condition) is not met by any record from this kit.",
     "The daemon's full serve path: its payment vault is not deployed at the pinned commit; the kit drives the "
     "daemon's rewrite code as its client does before target inference (A11 stays open).",
@@ -396,6 +396,7 @@ def analyse(boot_name: str, cases: list[dict], run: boot.Boot, art: dict, conf: 
     calls = worker.calls if worker else []
     split = measures.attribute([c["body"] for c in cases], calls)
     figures = dict(zip(map(id, calls), measures.worker_figures(run.worker_log, calls)))
+    loads = measures.load_figures(run.worker_log, worker.processes) if worker else []
     finished = {}
     for t, line in run.console:
         if line.startswith("{"):
@@ -427,8 +428,9 @@ def analyse(boot_name: str, cases: list[dict], run: boot.Boot, art: dict, conf: 
         "stopped_over_time": run.over_time, "vm_pid_seen": run.vm_pid is not None,
         "worker": worker and {"processes": [{"pid": p.pid, "load_seconds": p.load_seconds,
                                              "spawn_ns": p.spawn_ns, "ready_ns": p.ready_ns,
-                                             "exit_ns": p.exit_ns, "exit_status": p.exit_status}
-                                            for p in worker.processes],
+                                             "exit_ns": p.exit_ns, "exit_status": p.exit_status,
+                                             "mlx_memory": load}
+                                            for p, load in zip(worker.processes, loads)],
                               "cancels_after_answer": worker.cancels_after_answer},
         "tor": tor_start(run.host_stderr),
         "system_start": run.system_start, "system_end": run.system_end,
@@ -526,6 +528,7 @@ def summarise(boots: dict[str, dict], kills: list[dict]) -> dict:
                    "window": window_of(main, "eval06")},
         "cold": {"load_seconds": first_worker(main).get("load_seconds"),
                  "load_includes": "the worker's sha256 check of every pinned file, then the model load",
+                 "mlx_memory": first_worker(main).get("mlx_memory"),
                  "tor_bootstrap_seconds": tor_bootstrap_seconds(main),
                  "tor_bootstrap_includes": TOR_BOOTSTRAP_INCLUDES,
                  "first_call": brief(group(main, "cold")[0]),
@@ -747,8 +750,13 @@ def print_feasibility(record: dict, path: Path) -> None:
           f"{[(c['name'], c['outcome']) for c in s['restart']['cases']]}")
     whole = s["memory_cpu_gpu"]["main"]["whole_boot"]
     if whole:
-        print(f"Main boot peaks: worker {gib(whole['worker_peak_footprint_bytes'])}, guest VM {gib(whole['vm_peak_footprint_bytes'])}, "
+        print(f"Main boot peaks: workers {gib(whole['worker_peak_footprint_bytes'])} (at most {whole['workers_alive_max']} "
+              f"alive at once), guest VM {gib(whole['vm_peak_footprint_bytes'])}, tor {gib(whole['tor_peak_footprint_bytes'])}, "
               f"whole product {gib(whole['product_peak_footprint_bytes'])}; swap growth {whole['swap_growth_bytes'] / 2**20:.0f} MiB")
+    if mlx := s["cold"]["mlx_memory"]:
+        print(f"MLX after the cold load: active {gib(mlx['loaded']['active_bytes'])}, cache {gib(mlx['loaded']['cache_bytes'])}; "
+              f"after the cache clear: active {gib(mlx['after_cache_clear']['active_bytes'])}, "
+              f"cache {gib(mlx['after_cache_clear']['cache_bytes'])}, peak {gib(mlx['after_cache_clear']['peak_bytes'])}")
     a = s["end_to_end"]["all_cases"]
     print(f"All cases: {a['rewritten']} of {a['cases']} rewritten; stopped {a['stopped_by_reason']}")
     print(f"Installed on disk: {gib(record['installed_size']['total_on_disk_bytes'])}")

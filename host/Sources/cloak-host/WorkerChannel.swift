@@ -3,9 +3,9 @@ import Synchronization
 
 /// The native worker as a child process, spoken to in frames over its
 /// standard input and output (see worker/Sources/cloak-rewriter/Frames.swift).
-/// One request at a time. The first fault marks the worker lost and stops it,
-/// and every later request on this channel fails; the relay starts a new
-/// worker on a new channel.
+/// One request at a time. The first fault marks the worker lost, stops it and
+/// waits for it to exit, and every later request on this channel fails; the
+/// relay then starts a new worker on a new channel.
 final class WorkerChannel: Sendable {
     /// The largest answer accepted. The worker's 16,384-token limit keeps real
     /// answers far below it; a larger one means the worker is broken. Answers
@@ -112,9 +112,13 @@ final class WorkerChannel: Sendable {
         process.waitUntilExit()
     }
 
+    /// Stops the worker and waits for it to exit, so its memory is free
+    /// before the relay starts a new one. A cancel meanwhile waits on the
+    /// lock, then finds the worker lost.
     private func lose(_ state: inout State) {
         state = .lost
         process.terminate()
+        process.waitUntilExit()
     }
 
     private func readFrame() -> (UInt8, Data)? {

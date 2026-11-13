@@ -17,10 +17,12 @@ A frame's payload is kept whole: as text when it is UTF-8, otherwise in base64.
 The worker's life is the tap's: when the worker exits, the tap closes its
 output and exits, so the host sees the loss; when the host closes the tap's
 input, the tap closes the worker's; when the host terminates the tap, the tap
-terminates the worker.
+terminates the worker and exits once the worker has, so the host's wait for
+the tap is a wait for the worker too.
 """
 
 import base64
+import contextlib
 import json
 import os
 import signal
@@ -70,6 +72,10 @@ def main() -> None:
     def terminated(signum, frame) -> None:
         note("terminated")
         process.terminate()
+        # os.waitpid, not process.wait: the main thread may be inside
+        # process.wait, holding the lock it takes.
+        with contextlib.suppress(ChildProcessError):
+            os.waitpid(process.pid, 0)
         os._exit(143)
 
     signal.signal(signal.SIGTERM, terminated)

@@ -237,22 +237,32 @@ def nearest(samples: list[dict], t: int) -> dict:
     return min(samples, key=lambda s: abs(s["t"] - t))
 
 
+def _workers_footprint(sample: dict) -> int:
+    return sum(reading[0] for reading in sample["workers"].values())
+
+
 def window(samples: list[dict], start: int, end: int) -> dict:
-    """Resource figures between two times: peak memory of each process seen,
-    the peak of their sum, CPU seconds used, and the system's swap, pressure
-    and GPU readings. CPU uses the samples nearest each end, and is left out
-    when they read different worker processes (a new worker after a loss)."""
+    """Resource figures between two times: peak memory of the workers (every
+    worker alive at a sample, summed), the guest's virtual machine, the host
+    and tor, the peak of the whole product's sum, CPU seconds used, and the
+    system's swap, pressure and GPU readings. CPU uses the samples nearest
+    each end; it is left out for a process missing at either end, and for the
+    workers when those samples read different worker processes (a new worker
+    after a loss)."""
     inside = [s for s in samples if start <= s["t"] <= end] or [nearest(samples, end)]
     first, last = nearest(samples, start), nearest(samples, end)
-    processes = ("worker", "vm", "host")
     out = {"seconds": (end - start) / 1e9, "samples": len(inside)}
-    for name in processes:
-        seen = [s[name] for s in inside if s.get(name)]
-        out[f"{name}_peak_footprint_bytes"] = max((p[0] for p in seen), default=None)
-        if first.get(name) and last.get(name) and first.get(f"{name}_pid") == last.get(f"{name}_pid"):
+    out["worker_peak_footprint_bytes"] = max((_workers_footprint(s) for s in inside if s["workers"]), default=None)
+    out["workers_alive_max"] = max(len(s["workers"]) for s in inside)
+    if first["workers"] and first["workers"].keys() == last["workers"].keys():
+        out["worker_cpu_seconds"] = sum(last["workers"][pid][2] - first["workers"][pid][2]
+                                        for pid in first["workers"]) / 1e9
+    for name in ("vm", "host", "tor"):
+        out[f"{name}_peak_footprint_bytes"] = max((s[name][0] for s in inside if s[name]), default=None)
+        if first[name] and last[name]:
             out[f"{name}_cpu_seconds"] = (last[name][2] - first[name][2]) / 1e9
     out["product_peak_footprint_bytes"] = max(
-        sum(s[name][0] for name in processes if s.get(name)) for s in inside)
+        _workers_footprint(s) + sum(s[name][0] for name in ("vm", "host", "tor") if s[name]) for s in inside)
     out["swap_used_start_bytes"], out["swap_used_end_bytes"] = first["swap_used"], last["swap_used"]
     out["swap_growth_bytes"] = last["swap_used"] - first["swap_used"]
     out["pressure_levels_seen"] = sorted({s["pressure"] for s in inside})
@@ -263,15 +273,42 @@ def window(samples: list[dict], start: int, end: int) -> dict:
     return out
 
 
+# MLX's own memory as the worker logs it (worker/Sources/cloak-rewriter):
+# what its arrays hold, what it keeps cached, and the most its arrays have held
+# since the worker started.
+_MLX = r"MLX active (\d+), cache (\d+), peak (\d+) bytes"
 _REWRITE_LINE = re.compile(
-    r"rewrite (\w+): (\d+) prompt tokens in ([\d.]+) s, (\d+) generated in ([\d.]+) s")
+    rf"rewrite (\w+): (\d+) prompt tokens in ([\d.]+) s, (\d+) generated in ([\d.]+) s; {_MLX}")
+_LOADED_LINE = re.compile(rf"loaded \S+; {_MLX}; after the cache clear, {_MLX}")
+
+
+def _mlx(found: re.Match, first: int) -> dict:
+    return {"active_bytes": int(found[first]), "cache_bytes": int(found[first + 1]),
+            "peak_bytes": int(found[first + 2])}
+
+
+def load_figures(log: list[dict], processes: list[Process]) -> list[dict | None]:
+    """MLX's memory for each worker process once its model loaded, before and
+    after the worker cleared MLX's cache, from its log line: the line written
+    after the process started (the last one started before it). A process
+    that never loaded has None."""
+    figures: list[dict | None] = [None] * len(processes)
+    for line in log:
+        found = _LOADED_LINE.fullmatch(line["message"])
+        if not found:
+            continue
+        index = max((i for i, p in enumerate(processes) if p.spawn_ns <= line["t"]), default=None)
+        if index is None:
+            raise ValueError("a load was logged before any worker started")
+        figures[index] = {"loaded": _mlx(found, 1), "after_cache_clear": _mlx(found, 4)}
+    return figures
 
 
 def worker_figures(log: list[dict], calls: list[Call]) -> list[dict | None]:
-    """The worker's own token counts and timings for each call, from its
-    log line for that rewrite: the line written while the call was open (the
-    last call sent before it). A call with no such line (rejected, failed or
-    lost) has None."""
+    """The worker's own token counts, timings and MLX memory for each call,
+    from its log line for that rewrite: the line written while the call was
+    open (the last call sent before it). A call with no such line (rejected,
+    failed or lost) has None."""
     figures: list[dict | None] = [None] * len(calls)
     for line in log:
         found = _REWRITE_LINE.fullmatch(line["message"])
@@ -286,5 +323,6 @@ def worker_figures(log: list[dict], calls: list[Call]) -> list[dict | None]:
             "prompt_seconds": float(found[3]),
             "generated_tokens": int(found[4]),
             "generate_seconds": float(found[5]),
+            "mlx": _mlx(found, 6),
         }
     return figures

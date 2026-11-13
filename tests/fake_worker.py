@@ -14,6 +14,7 @@ write, with the worker's arguments, which it ignores.
 import json
 import os
 import select
+import signal
 import struct
 import sys
 import time
@@ -117,6 +118,18 @@ def main() -> None:
             case "exit":
                 time.sleep(0.5)
                 sys.exit(3)
+            case "bad-frame":
+                # Answers with a frame that is not an answer, so the host
+                # loses it. Once terminated it takes two seconds to exit,
+                # then notes in FAKE_WORKER_LOG/exited how many workers had
+                # started by then (FAKE_WORKER_LOG/starts, one line each).
+                def exit_slowly(signum, frame):
+                    time.sleep(2)
+                    (LOG / "exited").write_text(str(len((LOG / "starts").read_text().splitlines())))
+                    os._exit(0)
+
+                signal.signal(signal.SIGTERM, exit_slowly)
+                send(b"X")
             case "exit-after-answer":
                 # Gone between rewrites: its input is closed before it answers,
                 # so the host's next request meets a closed channel.

@@ -202,6 +202,16 @@ def test_a_lost_worker_fails_its_rewrite_and_a_new_worker_serves_the_next(tmp_pa
     assert not (tmp_path / "2.json").exists()
 
 
+def test_a_lost_worker_has_exited_before_its_replacement_starts(tmp_path):
+    # The worker breaks the protocol, so the host loses it; once stopped it
+    # takes two seconds to exit, and notes how many workers had started then.
+    results = boot(tmp_path, [case("bad", "case:bad-frame now"), case("after", "case:ok and this")], fake(tmp_path))
+    assert (results["bad"]["outcome"], results["bad"]["error"]) == ("stopped", FAILED)
+    assert results["after"]["outcome"] == "rewritten"
+    assert (tmp_path / "exited").read_text() == "1"
+    assert starts(tmp_path) == 2
+
+
 def test_a_worker_lost_between_rewrites_fails_only_the_next_rewrite(tmp_path):
     results = boot(tmp_path, [case("last", "case:exit-after-answer now"), case("after", "case:ok and this"),
                               case("later", "case:ok and this too")], fake(tmp_path))

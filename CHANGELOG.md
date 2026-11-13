@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Stage 2 and 3: memory. The worker gives MLX's cache back to the system
+  after loading, before its first request (on the stand-in, 0.83 GB of
+  loading leftovers), and logs MLX's own active, cache and peak memory, as
+  numbers only, after the load and with each rewrite. The host now waits for
+  a lost worker to exit before it starts the next one, so two workers never
+  hold the model at once; the stage 3 kit's tap likewise exits only after
+  its worker. The kit's samples add up every worker process alive, read the
+  host's tor as its own figure, and count both in the whole-product peak;
+  each record keeps MLX's figures per load and per call. The samples' shape
+  changed outright (`workers` by pid, and `tor`, in place of `worker` and
+  `worker_pid`). New checks: a lost worker has exited before its
+  replacement starts; a terminated tap exits only after its worker; the
+  sampler reads every worker alive and the host's tor; a window sums
+  workers alive at once and counts tor. The stand-in's outputs are byte for
+  byte the same before and after (13 development items, three runs each),
+  and a stand-in feasibility run after the change peaked at 2.90 GiB for
+  the whole product, development only.
+
 - Stage 1: two smaller candidates join the lead and the challenger (decision
   7, Sean, 13 November): the small lead, `mlx-community/Qwen3.5-9B-4bit`,
   and the small challenger, `mlx-community/gemma-4-12B-it-4bit`, each pinned
