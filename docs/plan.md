@@ -644,6 +644,49 @@ whole output's length is not known, so this is an estimate, not a result.
 
 The weights were deleted after the run, as Sean asked.
 
+### Small lead, first run ("run 3", 13 November 2026)
+
+[feasibility-20261113T222740Z.json](../evidence/stage3/small-lead/feasibility-20261113T222740Z.json),
+kit commit `66c8420`, by Sean's "run a v3 version with the smaller ~10 gb
+model" and "run it now". The artifact is `mlx-community/Qwen3.5-9B-4bit` at
+the pinned revision (5,973,260,772 bytes). A candidate record under
+decision 7. It closes no gate: the five hand-run steps are open, cover
+traffic and the payment vault are missing, and the Mac was on AC power but
+not at the declared load (one-minute load about 26).
+
+What it showed:
+
+- Memory, against decision 7's 10 GiB line: the whole product peaked at
+  7.22 GiB in the main boot (worker 6.60 GiB, guest's virtual machine
+  0.52 GiB, tor 0.02 GiB), never more than one worker alive. Swap did not
+  grow. MLX held 4.69 GiB after the load and its cache was empty after the
+  clear. Under the line and under the 9.3 GiB aim.
+- EVAL06: 36 of 40 ordinary messages rewritten; 4 stopped malformed (the
+  daemon refused the reply: two chatty messages, one plain, one literal SQL
+  message; three of the four in the 257 to 512 token band). Median 1.08 s
+  against a proposed 5 s. The 95th percentile is not reached, because a
+  stopped call holds that rank, so the proposed targets are not met. The
+  lead rewrote 40 of 40 in both its runs.
+- Cold load 4.27 s; tor bootstrapped in 2.38 s from saved state; the first
+  result came 8.56 s after the host started. After a restart the cold load
+  was 3.35 s and three probes were rewritten.
+- Long inputs: 4,096 characters rewritten in 2.64 s; 10,000 characters, the
+  cap, in 5.80 s against a 290 s deadline. Whether those short rewrites
+  kept what they had to keep is not judged here (stage 4, and EVAL01).
+  Every input over the cap was refused at once.
+- The four-turn conversation was rebuilt in 4.31 s over four calls.
+- Cancellation and worker loss behaved as in the lead's second run; the
+  replacement worker loaded in 3.31 s.
+- All cases: 46 of 59 rewritten; stopped: 7 over the input limit, 4
+  malformed, 1 cancelled, 1 worker lost. Installed on disk: 5.71 GiB.
+
+To settle: why the four replies were malformed (the raw replies are in the
+record), and the EVAL01 screen, which has not been run on this candidate.
+A stopped message is a stopped task (spec DATA09), so 4 in 40 counts
+against it whatever its speed.
+
+The weights were deleted after the run.
+
 ### Stand-in proof (development only)
 
 These runs prove the kit works end to end on the development stand-in. The

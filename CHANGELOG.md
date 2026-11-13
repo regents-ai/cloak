@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stage 3: the small lead's first feasibility run ("run 3", 13 November) is
+  recorded in evidence/stage3/small-lead/ and written up in docs/plan.md.
+  The whole product peaked at 7.22 GiB against the 10 GiB line; 36 of 40
+  ordinary messages were rewritten and 4 stopped malformed; median 1.08 s.
+  No gate closes on it. The weights were deleted afterwards.
+
 - Stage 2 and 3: memory. The worker gives MLX's cache back to the system
   after loading, before its first request (on the stand-in, 0.83 GB of
   loading leftovers), and logs MLX's own active, cache and peak memory, as
