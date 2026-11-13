@@ -290,7 +290,8 @@ def test_a_holdout_compares_only_the_reference_with_a_candidate():
         stage4.check_arms(holdout, ("reference", {}), ("standin", {}))
     with pytest.raises(SystemExit):
         stage4.read_record("originals", holdout, DEV_FIDELITY)
-    stage4.check_arms(holdout, ("reference", {}), ("challenger", {}))
+    for candidate in stage4.stage3.GATE_MODELS:
+        stage4.check_arms(holdout, ("reference", {}), (candidate, {}))
     stage4.check_arms({"kind": "development"}, ("originals", None), ("standin", {}))
 
 

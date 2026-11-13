@@ -69,7 +69,8 @@ uv run scripts/pin_models.py
 
 Download one pinned model into
 `~/Library/Application Support/Regents Cloak/models/<name>/`, the only folder
-the sandboxed worker may read, checking every file's size and hash (the stand-in is 1.75 GB; each candidate is about 16 GB, so check free
+the sandboxed worker may read, checking every file's size and hash (a
+model's size is its `total_bytes` in `reference/models.json`, so check free
 disk first):
 
 ```bash
@@ -150,9 +151,9 @@ uv run --with pytest==8.4.2 pytest tests/test_tor_path.py
 
 ## Stage 3 commands
 
-With the stage 2 parts built and a candidate's weights on disk (each about
-16 GB; fetched only when Sean decides), one command writes that candidate's
-feasibility record (EVAL05, EVAL06 and EVAL07):
+With the stage 2 parts built and a candidate's weights on disk (fetched only
+when Sean decides), one command writes that candidate's feasibility record
+(EVAL05, EVAL06 and EVAL07):
 
 ```bash
 uv run scripts/stage3.py feasibility lead
@@ -175,8 +176,10 @@ own checks) through the same path:
 uv run scripts/stage3.py eval01 lead
 ```
 
-A model other than `lead` or `challenger`, such as `standin`, gets a record
-marked development only, which counts toward no gate.
+The candidates are `lead`, `challenger`, `small-lead` and `small-challenger`
+(decision 7 in `docs/plan.md` added the last two). Any other model, such as
+`standin`, gets a record marked development only, which counts toward no
+gate.
 
 Run the kit's own checks:
 
@@ -210,7 +213,7 @@ and its key, give the packet to the reviewers, then score a candidate
 against the reference with their answers:
 
 ```bash
-uv run scripts/stage4.py review <file> <reference record> <lead record> <challenger record>
+uv run scripts/stage4.py review <file> <reference record> <candidate record>...
 uv run scripts/stage4.py fidelity <file> --reference <record> --candidate <record> --key <key> --reviews <answers>
 ```
 
@@ -225,7 +228,7 @@ Scores hold no text and go to `evidence/stage4/<candidate>/`. Also:
 measure run-to-run variation, and `sample-size --from <fidelity score>`
 gives the EVAL02 holdout size from development rates. In a development
 comparison `originals` may stand for an arm; on a holdout every arm is a run
-record and only `lead` or `challenger` may rewrite it.
+record and only a candidate may rewrite it.
 
 Run the kit's own checks:
 

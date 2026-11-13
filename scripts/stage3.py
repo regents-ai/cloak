@@ -26,9 +26,9 @@ and raw reply, the worker's token counts and timings, the artifact and
 configuration hashes) and why it stopped. Stopped cases stay in every
 denominator.
 
-Records go to evidence/stage3/<name>/<kind>-<UTC time>.json. A model other
-than the lead or the challenger is a development stand-in: its record says
-so and counts toward no gate in docs/plan.md.
+Records go to evidence/stage3/<name>/<kind>-<UTC time>.json. A model not in
+GATE_MODELS, the candidates, is a development stand-in: its record says so
+and counts toward no gate in docs/plan.md.
 """
 
 import argparse
@@ -52,7 +52,9 @@ from fetch_model import DEST, MODELS
 
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE = ROOT / "evidence/stage3"
-GATE_MODELS = ("lead", "challenger")
+# The candidates: the lead and the challenger, and the small pair decision 7
+# in docs/plan.md added. The stage 4 kit takes its list from here too.
+GATE_MODELS = ("lead", "challenger", "small-lead", "small-challenger")
 
 # The fixed inputs, pinned before any candidate ran on them.
 EVAL05 = ROOT / "reference/eval05-inputs.json"
@@ -768,7 +770,8 @@ def print_eval01(record: dict, path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("kind", choices=("feasibility", "eval01"))
-    parser.add_argument("name", help="a pinned model in reference/models.json, such as lead or challenger")
+    parser.add_argument("name", help="a pinned model in reference/models.json; the candidates are "
+                        + ", ".join(GATE_MODELS))
     args = parser.parse_args()
     # Stopped from outside (a watcher, a person): unwind, so each boot stops
     # its guest and removes its scratch files. No record is written.

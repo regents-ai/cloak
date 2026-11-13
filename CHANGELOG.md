@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Stage 1: two smaller candidates join the lead and the challenger (decision
+  7, Sean, 13 November): the small lead, `mlx-community/Qwen3.5-9B-4bit`,
+  and the small challenger, `mlx-community/gemma-4-12B-it-4bit`, each pinned
+  file by file in `reference/models.json` with the vendor checkpoint it was
+  made from (`Qwen/Qwen3.5-9B`, `google/gemma-4-12B-it`) and, as decision 1
+  says, taking its tokenizer and chat template files from that vendor. The
+  six earlier entries are unchanged. `reference/models.md` records their
+  sizes, licences and provenance findings. The stage 3 and stage 4 kits take
+  the four candidates from one list, `GATE_MODELS` in `scripts/stage3.py`.
+  `docs/plan.md` records decision 7, a departure from spec section 1, which
+  names two candidates: the memory pass line is 10 GiB for the whole running
+  product (9.3 GiB the aim), one model still ships, each small candidate
+  faces stage 4 from scratch, and the protocol's confidence split, which
+  assumes two candidates, must be re-declared before any holdout opens.
+
+- The repository is private on GitHub at regents-ai/cloak; `AGENTS.md` now
+  says agents commit and push to main, and that public release, signing
+  keys and notarization remain Sean's.
+
 - Stage 2: tor keeps its state between runs. Its data folder is no longer
   a new temporary folder removed when tor stops, which made every boot pick
   new entry guards and bootstrap from nothing; it is one lasting folder the

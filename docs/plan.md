@@ -12,14 +12,15 @@ not a pass. Progress lives here.
 | --- | --- | --- | --- |
 | 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
 | 2. Build the local path | Minimal guest adapter and native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
-| 3. Check feasibility early | Lead and challenger runs on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready, waiting for the weights |
-| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet |
+| 3. Check feasibility early | Runs of each of the four candidates (the lead, the challenger and decision 7's small pair) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the lead has two runs, the other three candidates none |
+| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner among the four candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split for four candidates is to be re-declared before any holdout opens (decision 7) |
 | 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | Not started |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
 Stage 2 builds and tests the path with a small model labelled as a
 development stand-in, so it runs light on the development Mac (an M4 Max with
-48 GB, macOS 27.0). The candidates' 16 GB weights are first loaded in stage 3,
+48 GB, macOS 27.0). The candidates' weights (about 16 GB each for the lead
+and the challenger, 6 to 7 GB for the small pair) are first loaded in stage 3,
 after a free memory and disk check.
 
 Mac skills by stage (rules in [AGENTS.md](../AGENTS.md)): stage 2's native
@@ -33,9 +34,10 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   builds, and passes its own tests. Pi 1.3.0 is pinned by package hash.
 - The rewriter contract is captured and identical at both pins:
   [rewriter-contract.md](../reference/rewriter-contract.md).
-- The reference model, both candidates and their vendor checkpoints are pinned
-  file by file: [models.md](../reference/models.md). Two provenance findings
-  there need decision 1.
+- The reference model, the four candidates and their vendor checkpoints are
+  pinned file by file: [models.md](../reference/models.md). Decision 1 settled
+  the provenance findings there: each candidate takes its tokenizer and chat
+  template files from its vendor.
 - The sandbox wrapper is reconstructed and is the Regents reference (Sean,
   29 October). A static program inside it bypasses Tor.
 - Unknown and recorded as such: the reference's inference server,
@@ -435,8 +437,9 @@ refused it as a bare program with no bundle identifier).
 - The feasibility kit is ready: `uv run scripts/stage3.py feasibility <name>`
   writes one candidate's stage 3 record (EVAL05, EVAL06, EVAL07) to
   `evidence/stage3/<name>/`, and `uv run scripts/stage3.py eval01 <name>`
-  runs the development screen. The lead candidate has one feasibility run
-  ("Lead candidate, first run" below); the challenger has none.
+  runs the development screen. The candidates are the lead, the challenger,
+  the small lead and the small challenger (decision 7). The lead has two
+  feasibility runs (below); the other three have none.
 - Every call goes through the real path: the daemon's rewrite code in the
   guest, the adapter, the host relay and the sandboxed worker. A copy-only
   tap between the host and the worker (`scripts/worker_tap.py`) keeps each
@@ -496,10 +499,13 @@ refused it as a bare program with no bundle identifier).
   root), and a 32 GB Mac (decision 2).
 - What a real run needs. Disk: the lead is 16,077,680,950 bytes and the
   challenger 15,373,590,134 (29.3 GiB together); with about 58 GiB free on
-  11 November and 50 GiB kept free, neither fits until space is made.
-  Memory: the kit refuses to boot unless the model's size plus 5 GiB is
-  available (20.0 GiB for the lead, 19.3 GiB for the challenger); this
-  shared Mac had about 13.8 GiB available on 11 November.
+  11 November and 50 GiB kept free, neither fits until space is made. The
+  small lead is 5,973,260,772 bytes and the small challenger 6,773,361,970
+  (11.9 GiB together); about 106 GiB was free on 13 November. Memory: the
+  kit refuses to boot unless the model's size plus 5 GiB is available
+  (20.0 GiB for the lead, 19.3 GiB for the challenger, 10.6 GiB for the
+  small lead, 11.3 GiB for the small challenger); this shared Mac had about
+  13.8 GiB available on 11 November.
 
 ### Lead candidate, first run (12 November 2026)
 
@@ -828,6 +834,10 @@ sign-flip bound as written: writers with no difference make the bound
 exactly zero, which the parity rule would pass. The kit reports such a
 bound as unresolved, never a pass, by Sean's ruling (decision 4).
 
+The protocol splits its 95 % confidence over two candidates, 97.5 % for
+each bound, and the kit bounds at 97.5 %. Decision 7 makes four
+candidates, so the split has to be re-declared before any holdout opens.
+
 ### Not built, and why
 
 - Attack 2, the learned authorship embedding. It needs a text encoder: one
@@ -938,6 +948,27 @@ bound as unresolved, never a pass, by Sean's ruling (decision 4).
    keeps the daemon's. EVAL05 stays as pinned; the cases the cap forces are
    in [eval05-cap-inputs.json](../reference/eval05-cap-inputs.json) (stage
    3 above).
+7. The small pair, and the memory line. Decided 13 November (Sean). Two
+   smaller candidates join the lead and the challenger: the small lead,
+   `mlx-community/Qwen3.5-9B-4bit`, and the small challenger,
+   `mlx-community/gemma-4-12B-it-4bit`, each pinned with the vendor
+   checkpoint it was made from in [models.json](../reference/models.json)
+   and, under decision 1, using its conversion's weights with the vendor's
+   own tokenizer and chat template files
+   ([models.md](../reference/models.md)). This departs from spec section 1,
+   which names exactly two candidates, by Sean's ruling, as decision 2
+   departs from HW01; the spec file stays byte for byte as received (its
+   sha256 is at the top of this file). The memory pass line is 10 GiB for
+   the whole running product: the worker, the guest's virtual machine and
+   the host together, as the stage 3 record's whole-product peak. 9.3 GiB is
+   the working aim. The lead's two runs peaked at 21.04 and 18.74 GiB.
+   Exactly one model still ships (A25 unchanged): the selection rule picks
+   one of the four or none. Each small candidate faces stage 4 from scratch;
+   nothing measured on the lead or the challenger counts for it. To settle
+   before any holdout opens: the frozen protocol's confidence split assumes
+   two candidates ("Two candidates are compared with the reference, so each
+   bound is at 97.5 % (Bonferroni)"); with four it has to be re-declared.
+   Until then the protocol and the stage 4 kit's statistics stay as frozen.
 
 ## Gates
 
@@ -966,6 +997,6 @@ bound as unresolved, never a pass, by Sean's ruling (decision 4).
 | A21 | Host–guest worker boundary | Open: one token-checked virtio socket, guest has no network device, host relays only rewrite frames, worker sandboxed with no network (development signing; stand-in model) | `host/`, `guest/`, `worker/cloak-rewriter.entitlements`, `tests/test_guest_path.py`, `tests/test_worker.py` |
 | A22 | Authorship and linkability | Open: attack 1 and the sign-flip bound built and proven on synthetic development data only; attack 2 not built; no holdout | `scripts/stage4.py`, `scripts/privacy.py` |
 | A23 | Long and cold tasks | Open | |
-| A24 | Artifact provenance | Open: files pinned; two conversion mismatches found | [models](../reference/models.md) |
+| A24 | Artifact provenance | Open: files pinned for the reference and all four candidates; each conversion's tokenizer or template differs from its vendor's, so each candidate takes those files from its vendor (decision 1) | [models](../reference/models.md) |
 | A25 | Single implementation | Open | |
 | A26 | Performance claims | Open | |

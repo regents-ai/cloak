@@ -13,7 +13,7 @@ touches, plus `write-swift` for all Swift. Sean requires them.
 | `macos-settings-ui` | The utility windows: settings, activity, balance, updates, recovery | Few words on screen; technical detail only on demand |
 | `macos-notch-ui` | The running or paused indicator on Macs with a notch, beside the menu-bar control | The menu-bar control stays the main interface; the indicator never shows prompts or amounts |
 | `macos-auto-update` | Updates, with Sparkle | UPD01 to UPD02 and NET09: an update check is maintenance traffic, never carries task content, and an update never silently resumes spending |
-| `macos-release` | Signed, notarized releases (stages 3 and 5) | MAC06 Developer ID; publishing needs a GitHub remote Sean creates, and signing keys are Sean's |
+| `macos-release` | Signed, notarized releases (stages 3 and 5) | MAC06 Developer ID; public release, signing keys and notarization remain Sean's |
 
 Interface copy also follows `better-writing`, `better-accessibility` and
 `apple-design`.
@@ -63,8 +63,9 @@ The contract is [docs/spec-v0.4.md](docs/spec-v0.4.md). Read sections 1, 4, 7,
 
 ## Git and progress
 
-This repository is local only; there is no remote until Sean creates one.
-Agents commit their own work here with a message saying what changed and why,
-and add a CHANGELOG entry in the same commit.
+This repository is private on GitHub at regents-ai/cloak. Agents commit their
+own work with a message saying what changed and why, add a CHANGELOG entry in
+the same commit, and push to main. Public release, signing keys and
+notarization remain Sean's.
 
 Progress lives in [docs/plan.md](docs/plan.md); `bd` is not used.

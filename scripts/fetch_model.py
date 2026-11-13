@@ -9,7 +9,8 @@ Every file is fetched at its pinned repository and revision (a candidate's
 vendor tokenizer and template files from the vendor checkpoint) and must match
 its recorded size and sha256; a file already present and matching is kept. Any mismatch stops
 the run with a non-zero exit and leaves the bad file in place as `<file>.bad`.
-Check free disk space before fetching a candidate (about 16 GB each).
+Check free disk space before fetching: a model needs its `total_bytes` in
+reference/models.json.
 """
 
 import hashlib

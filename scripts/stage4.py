@@ -28,8 +28,9 @@ runs a development set several times to measure run-to-run variation.
 A record holding holdout text stays beside the holdout, outside this
 repository (`<holdout folder>/records/<name>/`); development records go to
 evidence/stage4/<name>/. Scores, which hold no text, go to
-evidence/stage4/<candidate>/. A model other than the lead or the challenger,
-or any development set, is development only and counts toward no gate.
+evidence/stage4/<candidate>/. A model not in stage3.GATE_MODELS, the
+candidates, or any development set, is development only and counts toward
+no gate.
 
 In a development run `originals` may stand for an arm: the input text
 unchanged. In a holdout run the reference arm must be the reference's own
@@ -120,7 +121,8 @@ def one_boot(label: str, name: str, model: dict, model_dir: Path, pairs: list[tu
 def prepared(name: str, dataset: str, path: Path) -> tuple[dict, dict, Path, dict]:
     data = holdouts.load(path, dataset)
     if data["kind"] == "holdout" and name not in stage3.GATE_MODELS:
-        raise SystemExit(f"{name} is not a candidate; a holdout is rewritten only by the lead or the challenger")
+        raise SystemExit(f"{name} is not a candidate; a holdout is rewritten only by "
+                         f"{', '.join(stage3.GATE_MODELS)}")
     model = stage3.pinned(name)
     model_dir = DEST / name
     checks = stage3.preflight(model, model_dir)
@@ -195,7 +197,7 @@ def check_arms(data: dict, reference: tuple[str, dict | None], candidate: tuple[
         if reference[0] != "reference":
             raise SystemExit("on a holdout the reference arm is the reference's own record")
         if candidate[0] not in stage3.GATE_MODELS:
-            raise SystemExit("on a holdout the candidate is the lead or the challenger")
+            raise SystemExit(f"on a holdout the candidate is one of {', '.join(stage3.GATE_MODELS)}")
 
 
 def score_header(kind: str, data: dict, path: Path, arms: list[dict]) -> dict:
