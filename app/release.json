@@ -1,0 +1,6 @@
+{
+  "release": "0.5.0-dev",
+  "model": "standin",
+  "model_label": "development stand-in",
+  "minimum_memory_gib": 32
+}
