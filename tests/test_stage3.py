@@ -488,7 +488,7 @@ def test_the_summary_counts_every_case_of_every_boot():
         boots[name] = stage3.analyse(name, cases, fake_boot(cases, calls, results, start, tuple(losses)),
                                      ART, CONF, counts, {})
         start = t + 100
-    summary = stage3.summarise(boots, [{"case": "kill-prose-10000", "call_was_open": True}], "mlx")
+    summary = stage3.summarise(boots, [{"case": "kill-prose-10000", "killed": True, "call_was_open": True}], "mlx")
     assert summary["eval06"]["cases"] == 3 and summary["eval06"]["rewritten"] == 3
     assert summary["eval06"]["by_band"]["1-128"]["cases"] == 3 and summary["eval06"]["by_band"]["257-512"] is None
     assert summary["history"][0]["outcome"] == "rewritten" and len(summary["history"][0]["calls"]) == 4
@@ -503,3 +503,24 @@ def test_the_summary_counts_every_case_of_every_boot():
     assert summary["restart"]["load_seconds"] == 1e-9
     # tor's bootstrap is its own figure, apart from the worker's load.
     assert summary["cold"]["tor_bootstrap_seconds"] == summary["restart"]["tor_bootstrap_seconds"] == 1e-9
+
+
+class RunningHost:
+    def poll(self):
+        return None
+
+
+def test_a_worker_gone_before_the_kill_is_recorded_as_not_killed(tmp_path):
+    # A fast model answers the call and the boot ends before the kill comes.
+    # macOS gives no process a pid this high, so nothing can be killed.
+    gone = 1 << 22
+    cases = [{"name": "probe", "body": user("a")}, {"name": "kill", "body": user("b"), "kill_after_ms": 0}]
+    events = tmp_path / "events.jsonl"
+    events.write_text("".join(json.dumps(e) + "\n" for e in [
+        {"t": 1, "kind": "spawn", "pid": gone, "tap": 6},
+        {"t": 2, "kind": "in", "frame": "R"}, {"t": 3, "kind": "out", "frame": "A"},
+        {"t": 4, "kind": "in", "frame": "R"}, {"t": 5, "kind": "out", "frame": "A"},
+        {"t": 6, "kind": "exit", "status": 0}]))
+    kills = []
+    stage3.killer(cases, kills)(events, RunningHost())
+    assert [(k["case"], k["pid"], k["killed"], k["call_was_open"]) for k in kills] == [("kill", gone, False, False)]

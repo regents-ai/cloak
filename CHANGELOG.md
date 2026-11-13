@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Stage 3 kit: when the worker-loss boot's kill comes after the worker has
+  already ended, the kit records the kill as not made (`killed: false`) and
+  carries on; before, it stopped with an error and wrote no record. The
+  GGUF stand-in found it: it rewrote the 10,000-character input, and the
+  boot's last call, inside the 2 s before the pinned kill point, so the host
+  had ended the worker. Each kill now notes `killed` beside
+  `call_was_open`, and the printout shows both.
+
 - Stage 3 and 4 kits: each model's `engine` picks its worker (decision
   8). `scripts/drive_worker.py` starts the installed worker of the model's
   engine (its `--worker` option is gone). The stage 3 kit checks, runs and

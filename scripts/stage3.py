@@ -616,7 +616,9 @@ def load_window(boot_record: dict) -> dict | None:
 def killer(cases: list[dict], kills: list[dict]):
     """The `during` hook for the worker-loss boot: once the case marked
     kill_after_ms has sent its request, wait that long and kill the worker
-    (SIGKILL), noting when and whether its call was still open."""
+    (SIGKILL), noting when, whether its call was still open, and whether the
+    worker was still there to kill: a fast model can finish the boot's calls,
+    and the host end the worker, before the kill comes."""
     index = next(i for i, c in enumerate(cases) if "kill_after_ms" in c)
     after_ms = cases[index]["kill_after_ms"]
     requests_before = sum(len(measures.expected_texts(c["body"])) for c in cases[:index]) + 1
@@ -629,12 +631,16 @@ def killer(cases: list[dict], kills: list[dict]):
                 time.sleep(after_ms / 1000)
                 pid = next(e["pid"] for e in lines if e["kind"] == "spawn")
                 at = boot.clock()
-                os.kill(pid, signal.SIGKILL)
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    killed = True
+                except ProcessLookupError:
+                    killed = False
                 answered = any(e["kind"] == "out" and e["frame"] == "A" and e["t"] > sent[-1]["t"]
                                for e in events_so_far(events))
                 kills.append({"case": cases[index]["name"], "pid": pid, "signal": "SIGKILL",
                               "after_request_seconds": (at - sent[-1]["t"]) / 1e9,
-                              "call_was_open": not answered})
+                              "killed": killed, "call_was_open": not answered})
                 return
             time.sleep(0.05)
 
@@ -770,6 +776,7 @@ def print_feasibility(record: dict, path: Path) -> None:
     print(f"Cancellation: worker answered {seconds(s['cancellation']['cancel_to_answer_seconds'])} after the cancel; "
           f"next call {s['cancellation']['next_call']['outcome']} in {seconds(s['cancellation']['next_call']['seconds'])}")
     print(f"Worker loss: {[(c['name'], c['stop_reason'] or c['outcome']) for c in s['worker_loss']['cases']]}; "
+          f"kills (killed, call open): {[(k['killed'], k['call_was_open']) for k in s['worker_loss']['kills']]}; "
           f"worker processes (exit status, load): "
           f"{[(p['exit_status'], seconds(p['load_seconds'])) for p in s['worker_loss']['worker_processes']]}")
     print(f"Restart: cold load {seconds(s['restart']['load_seconds'])}; "
