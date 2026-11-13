@@ -2,11 +2,12 @@ import Foundation
 import Synchronization
 
 /// The native worker as a child process, spoken to in frames over its
-/// standard input and output (see worker/Sources/cloak-rewriter/Frames.swift).
-/// One request at a time. The first fault marks the worker lost, stops it and
-/// waits for it to exit, and every later request on this channel fails; the
-/// relay then starts a new worker on a new channel.
-final class WorkerChannel: Sendable {
+/// standard input and output (see rewriter-kit/Sources/RewriterKit/Frames.swift).
+/// One request at a time. The first fault marks the worker lost and stops it,
+/// and every later request on this channel fails; the relay then waits for
+/// the worker to exit (`end`), killing it if it has not within
+/// `Child.exitLimit`, before anything takes its place.
+public final class WorkerChannel: Sendable {
     /// The largest answer accepted. The worker's 16,384-token limit keeps real
     /// answers far below it; a larger one means the worker is broken. Answers
     /// over the daemon's own reply limit still pass, so the daemon refuses them.
@@ -31,26 +32,41 @@ final class WorkerChannel: Sendable {
         case lost
     }
 
-    private let process: Process
+    private let child: Child
     private let input: FileHandle
     private let output: FileHandle
     private let state = Mutex(State.idle)
 
-    /// Starts the worker and returns once it has signalled ready.
-    init(executable: URL, arguments: [String]) throws {
+    /// Starts the worker and returns once it has signalled ready. The calling
+    /// thread waits while the worker loads; `start` waits without holding one.
+    public init(executable: URL, arguments: [String]) throws {
         let toWorker = Pipe(), fromWorker = Pipe()
-        process = Process()
+        let process = Process()
         process.executableURL = executable
         process.arguments = arguments
         process.standardInput = toWorker
         process.standardOutput = fromWorker
-        try process.run()
+        child = try Child(process) { _ in }
         input = toWorker.fileHandleForWriting
         output = fromWorker.fileHandleForReading
         guard let (kind, payload) = readFrame(), kind == 0x59, payload.isEmpty else {
             process.terminate()
             throw ChannelError(description: "it did not become ready")
         }
+    }
+
+    /// Starts the worker and returns once it has signalled ready, waiting on a
+    /// thread of its own while the worker loads.
+    public static func start(executable: URL, arguments: [String]) async throws -> WorkerChannel {
+        try await onThread { try WorkerChannel(executable: executable, arguments: arguments) }
+    }
+
+    /// The worker's process.
+    public var processIdentifier: Int32 { child.process.processIdentifier }
+
+    /// How the worker ended, once it has, for whatever reason.
+    public func exited() async -> Termination {
+        await child.exited()
     }
 
     /// Hands a request to the idle worker. False when the worker is lost.
@@ -106,19 +122,27 @@ final class WorkerChannel: Sendable {
         }
     }
 
-    /// Ends the worker by closing its input, and waits for it to exit.
-    func finish() {
+    /// Ends the worker by closing its input, and returns once it has exited.
+    /// A busy worker first stops its rewrite, which fails. One that has not
+    /// exited within `Child.exitLimit` is killed.
+    public func finish() async {
         try? input.close()
-        process.waitUntilExit()
+        await child.stopped("the worker")
     }
 
-    /// Stops the worker and waits for it to exit, so its memory is free
-    /// before the relay starts a new one. A cancel meanwhile waits on the
-    /// lock, then finds the worker lost.
+    /// Stops a lost worker and returns once it has exited, so its memory is
+    /// free before anything takes its place. One that has not exited within
+    /// `Child.exitLimit` is killed.
+    func end() async {
+        child.process.terminate()
+        await child.stopped("the lost worker")
+    }
+
+    /// Marks the worker lost and asks it to stop; `end` waits for it. A
+    /// cancel from now on finds it lost.
     private func lose(_ state: inout State) {
         state = .lost
-        process.terminate()
-        process.waitUntilExit()
+        child.process.terminate()
     }
 
     private func readFrame() -> (UInt8, Data)? {

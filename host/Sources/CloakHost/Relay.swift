@@ -10,27 +10,43 @@ import Synchronization
 ///
 /// A lost worker fails the request it had, or the one that found it gone:
 /// that connection closes without an answer, and its request is never sent
-/// again. Once the lost worker has exited, a new worker starts, from the same
-/// program and pinned files, before the next connection is served, so two
-/// workers never hold the model at once. A new worker that cannot start
-/// leaves none, and every later request fails.
-final class Relay: Sendable {
+/// again. Nothing more is served until the lost worker has exited (killed if
+/// it has not within `Child.exitLimit`) and `afterLoss` has decided what
+/// follows it: the worker it returns serves the next connection; with none,
+/// every later request fails. Two workers never hold the model at once.
+public final class Relay: Sendable {
+    /// What follows a lost worker, once it has exited: a new worker, or none.
+    public typealias AfterLoss = @Sendable () async -> WorkerChannel?
+
     static let port: UInt32 = 8012
     static let maxRequest = 1 << 20
     /// How long a connection may take to deliver its request.
     static let requestTimeout = timeval(tv_sec: 10, tv_usec: 0)
 
-    private let token: Data
-    private let startWorker: @Sendable () throws -> WorkerChannel
-    /// The worker requests go to; nil once a new one could not start.
-    private let worker: Mutex<WorkerChannel?>
+    /// The worker requests go to:
+    ///
+    ///     serving --loss--> replacing --afterLoss--> serving, or none
+    ///     any but replacing --finish--> finished
+    ///
+    /// `finish` waits out a replacement first, so it ends the worker that
+    /// replacement started.
+    private enum Slot {
+        case serving(WorkerChannel)
+        case replacing(Task<Void, Never>)
+        case none
+        case finished
+    }
+
+    /// The per-boot channel token the guest must present.
+    let token = randomBytes(32)
+    private let afterLoss: AfterLoss
+    private let slot: Mutex<Slot>
     private let queue = DispatchQueue(label: "sh.regents.cloak.relay")
     private let watch = DispatchQueue(label: "sh.regents.cloak.relay.watch")
 
-    init(token: Data, worker: WorkerChannel, startWorker: @escaping @Sendable () throws -> WorkerChannel) {
-        self.token = token
-        self.worker = Mutex(worker)
-        self.startWorker = startWorker
+    public init(worker: WorkerChannel, afterLoss: @escaping AfterLoss) {
+        self.slot = Mutex(.serving(worker))
+        self.afterLoss = afterLoss
     }
 
     /// Takes ownership of the socket.
@@ -38,50 +54,66 @@ final class Relay: Sendable {
         queue.async { [self] in
             let lost = serve(socket)
             close(socket)
-            if lost { replaceWorker() }
+            guard let lost else { return }
+            // Nothing more is served until the replacement has settled. The
+            // task is made under the lock, so its own use of the slot comes
+            // after this one.
+            queue.suspend()
+            slot.withLock { $0 = .replacing(Task { await replace(lost) }) }
         }
     }
 
-    /// Ends the worker, waiting first for one that is starting.
-    func finish() {
-        worker.withLock { $0?.finish() }
+    /// Ends the worker, after any replacement in progress has settled.
+    public func finish() async {
+        while true {
+            let next: Slot = slot.withLock { slot in
+                let current = slot
+                if case .replacing = current { return current }
+                slot = .finished
+                return current
+            }
+            switch next {
+            case .replacing(let replacement):
+                await replacement.value
+            case .serving(let worker):
+                await worker.finish()
+                return
+            case .none, .finished:
+                return
+            }
+        }
     }
 
-    /// Serves one connection. True when the worker was lost during it.
-    private func serve(_ socket: Int32) -> Bool {
+    /// Serves one connection. The worker, when it was lost during it.
+    private func serve(_ socket: Int32) -> WorkerChannel? {
         var timeout = Self.requestTimeout
         setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         guard let presented = Self.read(socket, 32), Self.same(presented, token) else {
             log("refused a connection without the channel token")
-            return false
+            return nil
         }
-        guard let header = Self.read(socket, 5), header[0] == 0x52 else { return false }
+        guard let header = Self.read(socket, 5), header[0] == 0x52 else { return nil }
         let length = header.dropFirst().reduce(0) { $0 << 8 | Int($1) }
-        guard length <= Self.maxRequest, let request = Self.read(socket, length) else { return false }
-        guard let worker = worker.withLock({ $0 }) else {
+        guard length <= Self.maxRequest, let request = Self.read(socket, length) else { return nil }
+        guard case .serving(let worker) = slot.withLock({ $0 }) else {
             log("no worker; closing the guest connection without an answer")
-            return false
+            return nil
         }
         guard worker.send(request), let answer = cancellingOnClose(socket, worker) else {
             log("worker lost; closing the guest connection without an answer")
-            return true
+            return worker
         }
         Self.write(socket, WorkerChannel.frame(0x41, answer))
-        return false
+        return nil
     }
 
-    /// Starts a new worker in place of the lost one. The lock is held until
-    /// it is ready, so `finish` ends the new worker rather than missing it.
-    private func replaceWorker() {
-        worker.withLock { worker in
-            do {
-                worker = try startWorker()
-                log("started a new worker")
-            } catch {
-                worker = nil
-                log("cannot start a new worker: \(error); every later rewrite fails")
-            }
-        }
+    /// Waits for the lost worker to exit, puts what `afterLoss` decides in its
+    /// place, and serves again.
+    private func replace(_ lost: WorkerChannel) async {
+        await lost.end()
+        let next = await afterLoss()
+        slot.withLock { $0 = next.map(Slot.serving) ?? .none }
+        queue.resume()
     }
 
     /// The worker's answer, while the guest closing its end cancels the
@@ -136,6 +168,12 @@ final class Relay: Sendable {
     }
 }
 
-func log(_ message: String) {
+/// One line on standard error, as `cloak-host: <message>`.
+public func log(_ message: String) {
     FileHandle.standardError.write(Data("cloak-host: \(message)\n".utf8))
+}
+
+func randomBytes(_ count: Int) -> Data {
+    var generator = SystemRandomNumberGenerator()
+    return Data((0..<count).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
 }
