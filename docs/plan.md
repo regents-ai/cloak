@@ -569,6 +569,69 @@ position stops the rewrite, which fails, and exits cleanly.
 The weights were deleted after the run, as Sean asked; a later run fetches
 and verifies them again.
 
+### Lead candidate, second run (13 November 2026)
+
+[feasibility-20261113T032834Z.json](../evidence/stage3/lead/feasibility-20261113T032834Z.json),
+kit commit `8bf4381`, clean tree, by Sean's "go Cloak run 2". The same
+artifact at the same pinned revision, fetched and verified again. The
+preflight saw 24.4 GiB available against 20.0 GiB needed. A candidate
+record, and the first with Tor in the path. It closes no gate: the five
+hand-run steps are open, cover traffic and the payment vault are still
+missing, and the Mac was neither on AC power nor at the declared load for
+the whole run. The record says "Battery Power, 12%; discharging". The run
+started by itself at 03:16Z when the one-minute load fell to 6.6; other
+lanes then started work, and the load was 70 when it ended at 03:28Z. The
+40 ordinary messages ran first, in the quiet part; the long inputs and the
+fault cases ran in the busy part.
+
+What it showed:
+
+- Cold load 10.92 s; tor bootstrapped in 9.86 s; the first result came
+  24.44 s after the host started. After a restart the cold load was 17.11 s,
+  tor bootstrapped in 2.41 s from its saved state, and three probes were
+  rewritten.
+- EVAL06: 40 of 40 ordinary messages rewritten, none stopped. Median 2.81 s
+  against a proposed 5 s; 95th percentile 13.78 s against a proposed 15 s.
+  The proposed targets are met. By input size: up to 128 tokens, median
+  2.66 s (28 messages); 129 to 256, 6.54 s (6); 257 to 512, 13.44 s (6).
+  Generation ran at a median of 28.6 tokens a second (16.0 in the first
+  run, on a busier Mac). Outputs were a median 1.05 times their expected
+  length. The slowest message took 15.98 s.
+- The four-turn conversation was rebuilt in 13.55 s over four calls.
+- Long inputs: 4,096 characters of prose were rewritten in 53.68 s (1,028
+  tokens generated in 45.47 s). 10,000 characters, the cap, stopped at its
+  290 s deadline with 1,985 tokens generated in 256.09 s, about 7.8 tokens a
+  second. That is under a third of the ordinary messages' rate, during the
+  busy part of the run, so this does not show whether the deadline holds
+  the cap on a quiet Mac. Every input over 10,000 characters was refused at
+  once, as it should be.
+- Cancellation: the cancelled call stopped in 3.00 s, the worker answered
+  5.38 s after the cancel, and the next call was rewritten. The first run's
+  fault is gone.
+- Worker loss: the probe before was rewritten; the call during which the
+  worker was killed reported the worker lost; the probe after it was
+  rewritten by a new worker in the same boot, loaded in 14.71 s. The first
+  run's fault is gone.
+- Memory: the worker peaked at 18.11 GiB, the guest's virtual machine at
+  0.56 GiB and the whole product at 18.74 GiB during the main boot; during
+  the 40 ordinary messages the product peaked at 16.37 GiB. Swap did not
+  grow.
+- All cases: 49 of 59 rewritten; stopped: 7 over the input limit, 1 timed
+  out, 1 cancelled, 1 worker lost, each the expected outcome except the
+  timeout at the cap. Installed on disk: 15.12 GiB.
+
+What it did not show: fidelity or privacy (stage 4), the challenger, the
+five hand-run steps (sleep and wake, battery, declared load, induced memory
+pressure, first run after a restart), per-process GPU use, the daemon's
+full serve path, and anything on a 32 GB Mac.
+
+To settle: whether 10,000 characters finish inside 290 s on a Mac that
+stays quiet. At this run's quiet rate (28.6 tokens a second) the 1,985
+tokens generated before the stop would have taken about 70 s, but the
+whole output's length is not known, so this is an estimate, not a result.
+
+The weights were deleted after the run, as Sean asked.
+
 ### Stand-in proof (development only)
 
 These runs prove the kit works end to end on the development stand-in. The
