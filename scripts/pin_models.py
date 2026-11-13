@@ -14,6 +14,11 @@ A candidate with `vendor_files` (decision 1) takes those files from its vendor
 checkpoint instead of its conversion: each listed file is recorded from the
 vendor entry named in `from`, marked with that name, and replaces the
 conversion's file of the same name. Everything else stays the conversion's.
+
+A model with `only` takes just those files from its repository, each of which
+must be there: a GGUF repository holds several quantizations, and the model is
+one of them. Each model a worker runs names that worker's `engine` (`mlx` or
+`llama`, decision 8); the script carries it unchanged.
 """
 
 import hashlib
@@ -36,8 +41,13 @@ def record(model: dict) -> dict:
     info = json.loads(get(f"{HUB}/api/models/{repo}/revision/{revision}?blobs=true"))
     if info["sha"] != revision:
         raise SystemExit(f"{repo}: hub answered revision {info['sha']}, pinned {revision}")
+    siblings = info["siblings"]
+    if "only" in model:
+        siblings = [s for s in siblings if s["rfilename"] in model["only"]]
+        if len(siblings) != len(model["only"]):
+            raise SystemExit(f"{repo}@{revision} lacks some of {model['only']}")
     files, small = [], {}
-    for sibling in sorted(info["siblings"], key=lambda s: s["rfilename"]):
+    for sibling in sorted(siblings, key=lambda s: s["rfilename"]):
         path = sibling["rfilename"]
         if "lfs" in sibling:
             files.append({"path": path, "size": sibling["lfs"]["size"], "sha256": sibling["lfs"]["sha256"]})
@@ -72,7 +82,7 @@ def compose(model: dict, recorded: dict[str, dict]) -> dict:
 
 def main() -> None:
     manifest = json.loads(MODELS.read_text())
-    keep = ("name", "role", "repo", "revision", "vendor_files", "chat_template_context")
+    keep = ("name", "role", "engine", "repo", "revision", "only", "vendor_files", "chat_template_context")
     recorded = {m["name"]: record({k: m[k] for k in keep if k in m}) for m in manifest["models"]}
     manifest["models"] = [compose(m, recorded) if "vendor_files" in m else m for m in recorded.values()]
     MODELS.write_text(json.dumps(manifest, indent=2) + "\n")

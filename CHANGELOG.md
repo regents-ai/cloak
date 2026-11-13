@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Stage 1: llama.cpp joins as a second rewriter engine, for a measured
+  choice (decision 8, Sean, 13 November). llama.cpp release v1.0.0 (commit
+  b1b770d9) is pinned in reference/sources.json, and three GGUF models are
+  pinned file by file in reference/models.json: a development stand-in,
+  `standin-gguf` (Unsloth's Q4_K_M of Qwen3.5-2B), and two candidates,
+  `small-lead-gguf` (Unsloth's Q4_K_M of Qwen3.5-9B) and
+  `small-challenger-gguf` (Google's own Q4_0 GGUF of Gemma 4 12B), each
+  with the vendor chat template its MLX twin uses. Every model a worker runs
+  now names its `engine`, `mlx` or `llama`. scripts/pin_models.py takes one
+  file of a repository that holds several (`only`); rerun, it reproduces
+  the file byte for byte. reference/models.md records sizes, licences and
+  provenance: no vendor GGUF exists for the Qwen models, and Google's GGUF
+  is a different checkpoint from the MLX conversion's. docs/plan.md records
+  decision 8, a departure from spec section 1 and MAC02 for the experiment
+  only: exactly one engine ships and the other is deleted. AGENTS.md's
+  one-implementation rule names that exception.
+
 - Stage 3: the small lead's first feasibility run ("run 3", 13 November) is
   recorded in evidence/stage3/small-lead/ and written up in docs/plan.md.
   The whole product peaked at 7.22 GiB against the 10 GiB line; 36 of 40

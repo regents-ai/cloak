@@ -43,6 +43,15 @@
       "sha256": "0b7d022017c31e3f972d06465bcd7ac50feb66ac825547419a934914fe4bb156",
       "size": 19005562,
       "role": "The Tor Project's own tor for the Mac (Decision 5), run by the host for the guest: tor 0.4.9.16 from the macOS arm64 expert bundle; the stage 1 reference host ran Debian's 0.4.9.15. Hash as listed in the Tor Project's sha256sums-signed-build.txt for 16.0.1 on 12 Nov 2026; that list's signature was not checked."
+    },
+    {
+      "name": "llama.cpp",
+      "kind": "git",
+      "url": "https://github.com/ggml-org/llama.cpp.git",
+      "ref": "v1.0.0",
+      "commit": "b1b770d90d94cad9e9ea5b993bdbc383a522fb28",
+      "full_history": false,
+      "role": "The second rewriter engine under decision 8, built from this source by llama-worker/build-llama.sh with Metal for macOS arm64. Release v1.0.0, published 13 Nov 2026 10:20Z; the tag is annotated (tag object a6d1a74dbebce3a16f4f2ceddbf38c21a08d8674, made by github-actions[bot]) and names this commit."
     }
   ]
 }

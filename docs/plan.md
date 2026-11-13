@@ -12,8 +12,8 @@ not a pass. Progress lives here.
 | --- | --- | --- | --- |
 | 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
 | 2. Build the local path | Minimal guest adapter and native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
-| 3. Check feasibility early | Runs of each of the four candidates (the lead, the challenger and decision 7's small pair) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the lead has two runs, the other three candidates none |
-| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner among the four candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split for four candidates is to be re-declared before any holdout opens (decision 7) |
+| 3. Check feasibility early | Runs of each of the six candidates (the lead, the challenger, decision 7's small pair and decision 8's GGUF pair on llama.cpp) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the lead has two runs, the small lead one, the other four candidates none |
+| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner among the six candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split for six candidates is to be re-declared before any holdout opens (decisions 7 and 8) |
 | 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | Not started |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
@@ -1030,6 +1030,31 @@ candidates, so the split has to be re-declared before any holdout opens.
    two candidates ("Two candidates are compared with the reference, so each
    bound is at 97.5 % (Bonferroni)"); with four it has to be re-declared.
    Until then the protocol and the stage 4 kit's statistics stay as frozen.
+8. A second engine, for a measured choice. Decided 13 November (Sean: "use
+   this: https://github.com/ggml-org/llama.cpp"). llama.cpp with Metal and a
+   GGUF model is built as a second rewriter engine, the llama worker
+   (`llama-worker/`), and measured beside the MLX worker on the same
+   candidates through the same path: the same frames, command line,
+   pinned-file check and sandbox, so the host and the kits start either one
+   by its path, picked by the `engine` each model names in
+   [models.json](../reference/models.json). Exactly one engine, model and
+   configuration ships (A25 unchanged); when the choice is made, the other
+   engine is deleted from the repository. This departs from spec section 1
+   and MAC02, which name one MLX path, and from the one-implementation rule
+   in [AGENTS.md](../AGENTS.md), by Sean's ruling and for the experiment
+   only, as decision 2 departs from HW01; the spec file stays byte for byte
+   as received. A GGUF quantization and an MLX 4-bit conversion are
+   different artifacts, so each is its own candidate and faces stage 4 on
+   its own: `small-lead-gguf` (Unsloth's Q4_K_M of `Qwen/Qwen3.5-9B`) and
+   `small-challenger-gguf` (Google's own Q4_0 GGUF of Gemma 4 12B, from its
+   quantization-aware-trained checkpoint, not the instruct weights its MLX
+   twin came from; [models.md](../reference/models.md)). Nothing measured
+   on an MLX twin counts for its GGUF one. llama.cpp is pinned at release
+   v1.0.0 (commit `b1b770d9`) in [sources.json](../reference/sources.json)
+   and built from that source; every llama.cpp setting that could change a
+   result or the memory a rewrite takes is set in the worker
+   (`llama-worker/Sources/CLlama/cloak_llama.cpp`). The confidence split
+   decision 7 leaves to re-declare now covers six candidates, not four.
 
 ## Gates
 

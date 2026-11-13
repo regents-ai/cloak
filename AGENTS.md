@@ -38,7 +38,10 @@ The contract is [docs/spec-v0.4.md](docs/spec-v0.4.md). Read sections 1, 4, 7,
 - Model files load only from local files matching `reference/models.json`;
   never fetch from a model hub at runtime.
 - One implementation. No second engine, runtime abstraction or optional path
-  kept "just in case".
+  kept "just in case". The one exception is decision 8 in `docs/plan.md`,
+  for the engine experiment only: the llama.cpp worker in `llama-worker/` is
+  measured beside the MLX worker, and when one engine is chosen the other is
+  deleted.
 - No fallback, ever (spec REF04). When a model, daemon, sandbox, route, cover
   worker or payment prerequisite fails, affected work stops.
 - Hard cutover: no shims, aliases, compatibility branches or dual shapes.

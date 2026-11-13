@@ -1,13 +1,15 @@
 # Pinned models and their provenance (spec A24)
 
-Every file of the reference model, the four candidates and the vendor
+Every file of the reference model, the six candidates and the vendor
 checkpoints they were converted from is pinned by revision, size and sha256 in
 [models.json](models.json). `uv run scripts/pin_models.py` rewrites that file
 from the hub without downloading weights; a revision cannot change, so a run
 that changes it means the hub served different bytes. Recorded 30 October
 2026; the small lead and small challenger (decision 7 in
 [docs/plan.md](../docs/plan.md)) and their vendor checkpoints on 13 November
-2026.
+2026; the GGUF files for llama.cpp (decision 8) later that day. Each model a
+worker runs names its `engine`, `mlx` or `llama`, and only that engine's
+worker loads it.
 
 | Name | Repository @ revision | Weights | Licence | Made from |
 | --- | --- | --- | --- | --- |
@@ -20,8 +22,14 @@ that changes it means the hub served different bytes. Recorded 30 October
 | small-lead-base | `Qwen/Qwen3.5-9B` @ `c2022362` | 4 files, 19.31 GB | apache-2.0 | vendor; weights and tokenizer unchanged since upload on 27 Feb |
 | small-challenger | `mlx-community/gemma-4-12B-it-4bit` @ `73bcf090` | 2 files, 6.74 GB, 4-bit affine, group 64 | none stated (the weights are Google's, apache-2.0) | `google/gemma-4-12B-it` @ `5926caa4` (4 June), found by its configuration; the card names no source or tool |
 | small-challenger-base | `google/gemma-4-12B-it` @ `43c9d014` | 1 file, 23.92 GB | apache-2.0 (Gemma 4 licence link) | vendor; weights unchanged since upload on 3 June |
+| small-lead-gguf | `unsloth/Qwen3.5-9B-GGUF` @ `3885219b`, `Qwen3.5-9B-Q4_K_M.gguf` | 1 file, 5,680,522,464 bytes, Q4_K_M | apache-2.0 (Qwen's licence link) | `Qwen/Qwen3.5-9B` by Unsloth; vendor revision, tool version and calibration text not stated |
+| small-challenger-gguf | `google/gemma-4-12B-it-qat-q4_0-gguf` @ `29d09777`, `gemma-4-12b-it-qat-q4_0.gguf` | 1 file, 6,975,879,296 bytes, Q4_0 | apache-2.0 (Gemma 4 licence link) | Google's own file, from `google/gemma-4-12B-it-qat-q4_0-unquantized`: quantization-aware training, not the instruct weights the MLX conversion was made from |
+| standin-gguf | `unsloth/Qwen3.5-2B-GGUF` @ `f6d5376b`, `Qwen3.5-2B-Q4_K_M.gguf` | 1 file, 1,280,835,840 bytes, Q4_K_M | apache-2.0 (Qwen's licence link) | `Qwen/Qwen3.5-2B` by Unsloth; development only, never a candidate |
 
-None is gated. Weight sizes are the files alone; the memory a running worker
+None is gated. Each GGUF candidate takes one file of a repository that holds
+several quantizations (`only` in [models.json](models.json)), plus the vendor
+`chat_template.jinja` and `tokenizer.json` (decision 1); the stand-in takes
+those two from `standin`, whose template is byte for byte Qwen's. Weight sizes are the files alone; the memory a running worker
 needs is measured in stage 3 (spec HW02, EVAL07), not inferred from these.
 
 ## Findings
@@ -82,6 +90,33 @@ and the small challenger `chat_template.jinja`, `tokenizer.json` and
 worker checks the combined list like any other. That the combination loads
 and rewrites is first shown when a candidate is downloaded in stage 3.
 
+**No vendor GGUF exists for the Qwen models.** Neither Qwen nor ggml-org
+publishes a GGUF of Qwen3.5-2B or Qwen3.5-9B, so both come from Unsloth, the
+most used converter (Bartowski's and LM Studio's also exist). Unsloth's cards
+state only the source repository and licence: no source revision, no
+llama.cpp version, no calibration data. The stand-in's file says in its own
+metadata that it was quantized with an importance matrix from Unsloth's
+calibration text (`unsloth_calibration_Qwen3.5-2B.txt`, unpublished); the
+9B file was not downloaded, so how it was made is unverified.
+
+**Google's GGUF of Gemma 4 12B is a different checkpoint from the MLX
+conversion's.** Google publishes its own GGUF only of the
+quantization-aware-trained model (Q4_0), whose base is
+`google/gemma-4-12B-it-qat-q4_0-unquantized`, not `google/gemma-4-12B-it`.
+The quantized plain instruct model exists as GGUF from ggml-org
+(`ggml-org/gemma-4-12B-it-GGUF` @ `501d13db`, Q4_0, 7,219,673,216 bytes) and
+from Unsloth and Bartowski (Q4_K_M). Each is its own candidate (decision 8);
+the pin follows the vendor-first rule, and changing it is Sean's call.
+
+**A GGUF file carries its own vocabulary, so decision 1 reaches only the
+template.** The llama worker renders the pinned vendor `chat_template.jinja`
+in place of the one the file carries, but tokenizes with the vocabulary in
+the GGUF file; the pinned `tokenizer.json` serves only the kit's EVAL06
+token counts. For the stand-in the prompt tokens equal the MLX worker's
+(`tests/test_llama_worker.py`). Google's GGUF predates the 30 October
+`tokenizer.json` fix, so it presumably still has the 239 merges Google
+removed; unverified without the file.
+
 ## Configuration still to freeze per candidate
 
 Each item becomes part of the candidate before the final holdout opens (spec
@@ -94,6 +129,12 @@ EVAL03) and cannot change afterwards without fresh evidence.
 | Thinking | off, pinned as `enable_thinking: false` (spec DATA02 proposes non-thinking). The daemon request sets no thinking field and Qwen's template defaults to thinking on, so the worker sets it off as fixed configuration, not per request | off, pinned as `enable_thinking: false`. Google's template (pinned, `ae53464b`) already defaults to off; pinning it keeps the setting explicit | off, pinned as `enable_thinking: false`; Qwen's template defaults to thinking on, as for the lead | off, pinned as `enable_thinking: false`; Google's template defaults to off, as for the challenger |
 | Sampling | greedy, from the daemon's `temperature: 0` | greedy | greedy | greedy |
 | Loader | one pinned MLX loader (spec MAC02); both conversions were made with mlx-vlm | same loader | same loader; it has the model type `qwen3_5` | same loader; it has the model type `gemma4_unified` |
+
+The GGUF pair (decision 8) freezes the same items on llama.cpp: the one
+pinned file each; the vendor's chat template, with the file's own vocabulary
+(finding above); thinking off as for its MLX twin; greedy sampling; and the
+llama worker's pinned llama.cpp settings, listed in
+`llama-worker/Sources/CLlama/cloak_llama.cpp`.
 
 ## Reference unknowns
 
