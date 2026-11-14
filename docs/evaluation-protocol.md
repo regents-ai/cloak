@@ -5,7 +5,7 @@ when it is committed with the word **Frozen** in place of **Draft** below,
 before any final holdout is opened. After that, a change motivated by results
 needs a fresh confirmatory design (spec EVAL03, EVAL04).
 
-**Status: Frozen, 30 October 2026** (Sean, 1a, 17:45Z: every proposed value signed off as written).
+**Status: Draft** (Sean, 14 November 2026: "don't freeze anything yet? this is still super active development"). It was marked Frozen on 30 October 2026; no holdout was opened under it, so no result depends on that freeze. It is frozen again, by Sean, before any holdout opens.
 
 ## What is compared
 
@@ -16,8 +16,8 @@ Three artifacts, each an exact pinned configuration from
 | Arm | Artifact | Runs on |
 | --- | --- | --- |
 | R | the reference, `Qwen/Qwen3.8-Flash-Next`, at the reference's actual settings | high-memory reference hardware; synthetic fixtures only if rented |
-| L | the lead, the Qwen3.8-27B 4-bit MLX conversion | each specified Mac |
-| C | the challenger, the Gemma 4 26B-A4B 4-bit MLX conversion | each specified Mac |
+| L | the lead, `small-lead-gguf-grammar`: Qwen3.5-9B, Q4_K_M GGUF, on llama.cpp under the reply grammar | each specified Mac |
+| C | the challenger, `small-challenger-gguf-grammar`: Gemma 4 12B, QAT q4_0 GGUF, on llama.cpp under the reply grammar | each specified Mac |
 
 Every call goes through the daemon's real request and reply checks
 ([rewriter-contract.md](../reference/rewriter-contract.md)): same instruction
