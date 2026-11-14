@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `RewriteTests` builds the daemon's reply check for each use in a folder
+  it then removes, where it left one folder in the temporary folder per
+  run.
+
 - Stage 5: the Chat window's first checks (14 November), written up in
   docs/plan.md, with three dark shots in `docs/shots/`: two real rewordings
   with the small lead (1.3 s and about 2 s), text wrapping at the default

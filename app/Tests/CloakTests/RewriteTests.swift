@@ -163,7 +163,7 @@ enum Reply {
     }
 }
 
-/// tests/daemon_reply, built once, as tests/test_llama_worker.py builds it.
+/// tests/daemon_reply, as tests/test_llama_worker.py builds it.
 enum DaemonReply {
     struct Verdict: Decodable {
         let accepted: Bool
@@ -173,23 +173,10 @@ enum DaemonReply {
 
     static let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-    private static let tool = Result { try build() }
 
-    private static func build() throws -> URL {
-        let daemon = root.appending(path: "reference/src/zkapi/zkapi-clientd")
-        let out = URL(filePath: NSTemporaryDirectory()).appending(path: "cloak-daemon-reply-\(UUID().uuidString.prefix(8))")
-        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-        let overlay = ["Replace": [daemon.appending(path: "cmd/cloak-daemon-reply/main.go").path: root.appending(path: "tests/daemon_reply/main.go").path]]
-        try JSONEncoder().encode(overlay).write(to: out.appending(path: "overlay.json"))
-        let binary = out.appending(path: "cloak-daemon-reply")
-        try run(
-            ["go", "build", "-p", "2", "-trimpath", "-overlay", out.appending(path: "overlay.json").path, "-o", binary.path,
-             "./cmd/cloak-daemon-reply"],
-            in: daemon, environment: ["CGO_ENABLED": "0"])
-        return binary
-    }
-
-    /// The daemon's verdict on each reply to a request for its texts.
+    /// The daemon's verdict on each reply to a request for its texts, from
+    /// the tool built for this call (Go's cache makes that quick) in a
+    /// folder removed afterwards.
     static func judge(_ cases: [([String], [UInt8])]) throws -> [Verdict] {
         struct Line: Encodable {
             let texts: [String]
@@ -199,7 +186,18 @@ enum DaemonReply {
         for (texts, reply) in cases {
             input += try JSONEncoder().encode(Line(texts: texts, reply: Data(reply))) + Data("\n".utf8)
         }
-        let output = try run([try tool.get().path], in: root, input: input)
+        let daemon = root.appending(path: "reference/src/zkapi/zkapi-clientd")
+        let out = URL(filePath: NSTemporaryDirectory()).appending(path: "cloak-daemon-reply-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: out) }
+        let overlay = ["Replace": [daemon.appending(path: "cmd/cloak-daemon-reply/main.go").path: root.appending(path: "tests/daemon_reply/main.go").path]]
+        try JSONEncoder().encode(overlay).write(to: out.appending(path: "overlay.json"))
+        let tool = out.appending(path: "cloak-daemon-reply")
+        try run(
+            ["go", "build", "-p", "2", "-trimpath", "-overlay", out.appending(path: "overlay.json").path, "-o", tool.path,
+             "./cmd/cloak-daemon-reply"],
+            in: daemon, environment: ["CGO_ENABLED": "0"])
+        let output = try run([tool.path], in: root, input: input)
         let verdicts = try output.split(separator: UInt8(ascii: "\n")).map { try JSONDecoder().decode(Verdict.self, from: Data($0)) }
         #expect(verdicts.count == cases.count)
         return verdicts
