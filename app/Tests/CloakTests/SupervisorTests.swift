@@ -121,6 +121,31 @@ struct SupervisorTests {
         #expect(fixture.starts(.worker).isEmpty)
     }
 
+    /// A pause or a quit while the model loads takes effect at once: the
+    /// load is cancelled and the worker stopped, well within the 10 s a
+    /// stopped part has before it is killed.
+    @Test(.timeLimit(.minutes(1)), arguments: [Phase.Event.pause, .quit])
+    func pausingOrQuittingWhileTheModelLoadsStopsTheWorkerAtOnce(event: Phase.Event) async throws {
+        let fixture = try Fixture(worker: Fixture.loadingWorker)
+        defer { fixture.remove() }
+        let supervisor = try fixture.supervisor()
+        supervisor.send(.start)
+        try await eventually { !fixture.starts(.worker).isEmpty }
+        let clock = ContinuousClock()
+        let asked = clock.now
+        if event == .quit {
+            await withCheckedContinuation { quit in
+                supervisor.quit { quit.resume() }
+            }
+            #expect(supervisor.phase == .stopping(.quit))
+        } else {
+            #expect(supervisor.send(.pause) == nil)
+            #expect(await supervisor.settled() == .paused)
+        }
+        #expect(clock.now - asked < .seconds(3))
+        #expect(!(fixture.starts(.tor) + fixture.starts(.worker)).contains(where: isRunning))
+    }
+
     @Test func quittingStopsEverythingThroughTheShutdown() async throws {
         let fixture = try Fixture(tor: Fixture.slowTor)
         defer { fixture.remove() }

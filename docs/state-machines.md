@@ -478,7 +478,12 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   preparation and the watches, waits for the preparation to end, then stops
   the guest, the worker and tor, in that order, each within its limit
   (section 2). An event from work being stopped (a watch seeing its part
-  stopped, a late failure) does not apply, and is dropped.
+  stopped, a late failure) does not apply, and is dropped. Each wait in
+  the preparation ends when it is cancelled: tor's bootstrap, the guest's
+  boot and check, and the worker's model load, whose worker is stopped
+  there and then, so a pause or a quit takes effect at once in any step.
+  Before (13 November): the worker's start was waited for until the model
+  had loaded, so a pause or a quit during the load waited for it.
 - **Needs attention** keeps its reason, and the failure's technical detail,
   until the next start. Nothing is started again, and no other route or
   model is tried (REF04).
@@ -515,7 +520,8 @@ asked; sleep pauses; quit from every phase goes through the shutdown;
 commands during a shutdown are refused), `SupervisorTests.swift` (stand-in
 tor and worker processes: a guest, tor or worker failure ends in Needs
 attention with everything stopped and nothing started again; a relaunch
-comes back Paused; pausing while tor bootstraps stops it; a launch removes
+comes back Paused; pausing while tor bootstraps stops it; pausing or
+quitting while the model loads stops the worker at once; a launch removes
 the boot files a killed app left, and nothing else) and
 `ControlTests.swift` (the JSON for each status; the socket answers only its
 owner's well-formed requests).

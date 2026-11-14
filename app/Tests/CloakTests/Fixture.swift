@@ -37,6 +37,13 @@ struct Fixture {
         printf 'Y\\000\\000\\000\\000'
         exec cat > /dev/null
         """
+    /// Never signals ready, as a worker still loading its model, and runs
+    /// until stopped.
+    static let loadingWorker = """
+        #!/bin/sh
+        echo $$ >> "$(dirname "$0")/starts"
+        exec sleep 600
+        """
     /// Exits before it signals ready.
     static let failingWorker = """
         #!/bin/sh

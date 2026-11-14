@@ -37,9 +37,8 @@ public final class WorkerChannel: Sendable {
     private let output: FileHandle
     private let state = Mutex(State.idle)
 
-    /// Starts the worker and returns once it has signalled ready. The calling
-    /// thread waits while the worker loads; `start` waits without holding one.
-    public init(executable: URL, arguments: [String]) throws {
+    /// Starts the worker; `start` waits for it to signal ready.
+    private init(executable: URL, arguments: [String]) throws {
         let toWorker = Pipe(), fromWorker = Pipe()
         let process = Process()
         process.executableURL = executable
@@ -49,16 +48,30 @@ public final class WorkerChannel: Sendable {
         child = try Child(process) { _ in }
         input = toWorker.fileHandleForWriting
         output = fromWorker.fileHandleForReading
-        guard let (kind, payload) = readFrame(), kind == 0x59, payload.isEmpty else {
-            process.terminate()
-            throw ChannelError(description: "it did not become ready")
-        }
     }
 
     /// Starts the worker and returns once it has signalled ready, waiting on a
-    /// thread of its own while the worker loads.
+    /// thread of its own while the worker loads. A start that is cancelled
+    /// stops the worker at once, which ends the wait. Throws, once the worker
+    /// has exited, when it was cancelled, or when the worker ended or sent
+    /// anything else first.
     public static func start(executable: URL, arguments: [String]) async throws -> WorkerChannel {
-        try await onThread { try WorkerChannel(executable: executable, arguments: arguments) }
+        let channel = try WorkerChannel(executable: executable, arguments: arguments)
+        let ready = try await withTaskCancellationHandler {
+            try await onThread { () -> Bool in
+                guard let (kind, payload) = channel.readFrame() else { return false }
+                return kind == 0x59 && payload.isEmpty
+            }
+        } onCancel: {
+            channel.child.process.terminate()
+        }
+        guard ready, !Task.isCancelled else {
+            channel.child.process.terminate()
+            await channel.child.stopped("the worker")
+            try Task.checkCancellation()
+            throw ChannelError(description: "it did not become ready")
+        }
+        return channel
     }
 
     /// The worker's process.

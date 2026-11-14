@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The app: Pause or Quit while the worker loads its model now takes effect
+  at once; the worker is stopped there and then. Before, the app waited
+  for the load to end first. Tor's bootstrap and the guest's boot already
+  stopped at once. New check in `swift test --package-path app`.
+
 - The app's Details window now comes to the front and takes the keyboard
   when it opens from the menu. Before, it could open behind the app in
   front, since a menu-bar app is never the app in front. While the window
