@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Sealed conversations (`app/Sources/CloakChat`): one file per
+  conversation in `conversations/` beside the app's other folders, sealed
+  with ChaCha20-Poly1305 (CryptoKit's combined form, a fresh nonce on every
+  write, the conversation's id as authenticated data), written owner-only
+  and atomically into an owner-only folder. Nothing is on disk unsealed,
+  titles included. The one 256-bit key is a generic password in the login
+  keychain, usable only on this Mac while it is unlocked, made on first use
+  and never made over existing files: a missing key or a file that does not
+  open is shown as such, and the files are left exactly as they are.
+  `WordDiff` finds the words taken out and put in, by
+  `CollectionDifference` over each text's words. `StoreTests` uses its own
+  folder and keys, never the real ones.
+
 - The app can reword a message itself (`Supervisor.rewrite`, `Rewrite`),
   only while Running, through the relay to the same worker the guest uses.
   The request is the pinned daemon's byte for byte: its system message

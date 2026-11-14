@@ -109,6 +109,9 @@ public struct Layout: Sendable {
     /// Where each guest's boot files are while it starts: in the owner-only
     /// control folder.
     var bootFiles: URL { support.appending(path: "control/boot") }
+
+    /// The Chat window's sealed conversations, one file each.
+    public var conversations: URL { support.appending(path: "conversations") }
 }
 
 extension JSONDecoder {
