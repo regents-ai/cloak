@@ -1182,9 +1182,26 @@ candidates, so the split has to be re-declared before any holdout opens.
   again; `resume` was refused there; `start`, then `stop` (Ready), `verify`
   and `doctor` passed; quitting stopped everything and removed the socket;
   a relaunch came back Paused; with the app closed, `cloak start` opened it
-  and reached Running. Not shown: screenshots of the menu and the Details
-  window (no screen-recording permission in the session that built it), a
-  VoiceOver pass, and a live sleep and wake.
+  and reached Running. A live sleep and wake is not shown.
+- App pass on the development Mac, 14 November, stand-in only: the menu and
+  the Details window in each state (Paused, Preparing, Running, Needs
+  attention with the worker killed by its process number, and Ready after a
+  stop) are in [shots/](shots/), captured from the app's own windows only:
+  the Details window light and dark, the menu and the status icon dark
+  only, since they follow the Mac's menu bar and the Mac was not switched
+  to light. Read through the accessibility tree, as VoiceOver reads it,
+  every control has its name, the menu's items carry Command-S (Start),
+  Command-P (Pause), Command-D (Details…) and Command-Q (Quit), and
+  Technical details opens from VoiceOver. Command-D chosen in the open menu
+  brings Details to the front; Escape and Command-W close it, and the app
+  keeps running. Pause during the model load stopped everything in 0.05 s,
+  and during the check guest's boot in 0.08 s; Quit during Preparing ended
+  the app 0.05 s after it was chosen; each relaunch came back Paused. Not
+  shown: the Tab order with the Mac's Keyboard navigation on (off on this
+  Mac, where Tab reaches no control in Details, as on any Mac with it off),
+  where Technical details cannot take the keyboard focus though the Login
+  switch can, so Tab would likely pass it; a spoken VoiceOver run; and a
+  live sleep and wake.
 
 ## Decisions
 

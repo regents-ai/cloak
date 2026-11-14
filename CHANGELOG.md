@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Screenshots of the app in each of its states, in `docs/shots/`: the
+  Details window light and dark, the menu and the status icon dark. The
+  plan's "Stage 5 so far" records the pass behind them: the names VoiceOver
+  reads, the menu's shortcuts, Pause and Quit during a start, and what is
+  not shown yet (the Tab order with Keyboard navigation on, where Technical
+  details likely cannot be reached).
+
 - The app: VoiceOver can now open and close "Technical details" in the
   Details window. In the window's form, the disclosure offered VoiceOver no
   action to press.
