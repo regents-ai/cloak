@@ -285,18 +285,18 @@ def test_the_attack_is_the_same_for_every_arm_and_privacy_never_passes_without_a
 def test_a_holdout_compares_only_the_reference_with_a_candidate():
     holdout = {"kind": "holdout"}
     with pytest.raises(SystemExit):
-        stage4.check_arms(holdout, ("originals", None), ("lead", {}))
+        stage4.check_arms(holdout, ("originals", None), ("small-lead-gguf-grammar", {}))
     with pytest.raises(SystemExit):
-        stage4.check_arms(holdout, ("reference", {}), ("standin", {}))
+        stage4.check_arms(holdout, ("reference", {}), ("standin-gguf-grammar", {}))
     with pytest.raises(SystemExit):
         stage4.read_record("originals", holdout, DEV_FIDELITY)
     for candidate in stage4.stage3.GATE_MODELS:
         stage4.check_arms(holdout, ("reference", {}), (candidate, {}))
-    stage4.check_arms({"kind": "development"}, ("originals", None), ("standin", {}))
+    stage4.check_arms({"kind": "development"}, ("originals", None), ("standin-gguf-grammar", {}))
 
 
 def test_a_holdout_is_never_rewritten_by_a_stand_in(tmp_path, pins):
     path = as_holdout(tmp_path, DEV_FIDELITY)
     holdouts.pin(path, "EVAL02")
     with pytest.raises(SystemExit, match="not a candidate"):
-        stage4.prepared("standin", "EVAL02", path)
+        stage4.prepared("standin-gguf-grammar", "EVAL02", path)

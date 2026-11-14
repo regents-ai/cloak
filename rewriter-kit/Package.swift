@@ -2,10 +2,9 @@
 
 import PackageDescription
 
-// What both rewriter workers share while decision 8 compares two engines
-// (docs/plan.md): the frames to and from the host supervisor, the daemon's
-// request, the reply shapes and the model pins. The engine that loses is
-// deleted, and this package with it folds back into the one that stays.
+// The rewrite worker's protocol and pins (llama-worker/ is its one user): the
+// frames to and from the host supervisor, the daemon's request, the reply
+// shapes and the model pins.
 let package = Package(
     name: "rewriter-kit",
     platforms: [.macOS(.v15)],

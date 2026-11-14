@@ -4,10 +4,10 @@ import os
 /// The worker's log lines: numbers and fixed words, never request text.
 public let log = Logger(subsystem: "sh.regents.cloak", category: "rewriter")
 
-/// Exits the worker. The supervisor treats any exit as the loss of the worker
-/// and fails the request in progress.
-public func stop(_ reason: String) -> Never {
+/// Exits the worker, with status 2, or `status`. The supervisor treats any
+/// exit as the loss of the worker and fails the request in progress.
+public func stop(_ reason: String, status: Int32 = 2) -> Never {
     log.error("stopping: \(reason, privacy: .public)")
     FileHandle.standardError.write(Data("\(ProcessInfo.processInfo.processName): \(reason)\n".utf8))
-    exit(2)
+    exit(status)
 }

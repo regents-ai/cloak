@@ -9,9 +9,10 @@ public struct Manifest: Codable, Sendable, Equatable {
         case kernel, initrd
         /// tor and the libevent it loads, in the bundle.
         case tor, libevent
-        /// The worker and its shader library, installed by worker/install.sh
-        /// in the Application Support folder, where its sandbox lets it run.
-        case worker, shaders
+        /// The worker, its shaders built in, installed by
+        /// llama-worker/install.sh in the Application Support folder, where
+        /// its sandbox lets it run.
+        case worker
     }
 
     public enum Place: String, Codable, Sendable {

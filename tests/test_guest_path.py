@@ -3,7 +3,7 @@ in the guest, the guest adapter, the host supervisor and a worker. Each check
 boots the guest once and runs a list of cases through the daemon's
 Transcript.Rewrite; the guest prints one result per case.
 
-    worker/install.sh
+    llama-worker/install.sh
     guest/build.sh
     host/build.sh
     uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
@@ -30,15 +30,14 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-from drive_worker import WORKERS, request_body  # noqa: E402
+from drive_worker import WORKER, request_body  # noqa: E402
 from fetch_model import DEST  # noqa: E402
 from measures import MAX_INPUT_CHARACTERS, deadline_s  # noqa: E402
 
 HOST = ROOT / "host/.build/release/cloak-host"
-WORKER = WORKERS["mlx"]
 FAKE = ROOT / "tests/fake_worker.py"
 FAKE_TOR = ROOT / "tests/fake_tor.py"
-NAME = "standin"
+NAME = "standin-gguf-grammar"
 FAILED = "rewriter failed; original prompt was not sent to the target model"
 # The stand-in rewrites this one cleanly.
 PLAIN = "Hey, could you please tell me the three biggest rivers in Europe? Thanks!!"
@@ -251,7 +250,8 @@ def test_a_client_that_gives_up_early_in_the_longest_prompt_frees_the_real_worke
     # The longest prompt the daemon accepts, 10,000 characters of prose; the
     # client gives up 300 ms in, aiming at the stand-in's reading of it, which
     # takes under a second. Nothing here shows where the cancel landed;
-    # tests/test_worker.py checks a cancel during a ten-second read directly.
+    # tests/test_llama_worker.py checks a cancel one second into a long read
+    # directly.
     prose = json.loads((ROOT / "reference/eval05-inputs.json").read_text())["prose"][:MAX_INPUT_CHARACTERS]
     results = boot(tmp_path, [case("long", prose, cancel_after_ms=300), case("plain", PLAIN)], WORKER)
     assert (results["long"]["outcome"], results["long"]["error"]) == ("stopped", FAILED)

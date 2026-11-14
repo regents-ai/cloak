@@ -6,8 +6,8 @@
 The manifest names the release and the build, the one model (from
 app/release.json; its files and sizes from reference/models.json), the memory
 floor, and pins every part the supervisor runs by its sha256: the guest's
-kernel and root, tor and libevent in the bundle, and the worker and its shader
-library as worker/install.sh installed them in the Application Support folder.
+kernel and root, tor and libevent in the bundle, and the worker as
+llama-worker/install.sh installed it in the Application Support folder.
 
     uv run app/manifest.py <Resources folder> <Application Support folder> <build>
 """
@@ -23,8 +23,7 @@ PARTS = [
     ("initrd", "bundle", "guest/initrd.gz"),
     ("tor", "bundle", "tor/tor"),
     ("libevent", "bundle", "tor/libevent-2.1.7.dylib"),
-    ("worker", "support", "worker/cloak-rewriter"),
-    ("shaders", "support", "worker/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"),
+    ("worker", "support", "worker/cloak-rewriter-llama"),
 ]
 
 

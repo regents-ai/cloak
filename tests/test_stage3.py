@@ -206,52 +206,32 @@ def test_every_stopped_case_is_named_with_its_reason(outcome, body, calls, cance
     assert reason is None or reason in measures.STOP_REASONS
 
 
-LOADED = ("loaded standin; MLX active 3000, cache 900, peak 3500 bytes; "
-          "after the cache clear, MLX active 3000, cache 0, peak 3500 bytes")
+LOADED = "loaded standin-gguf-grammar; weights 1200000000 bytes, Metal allocated 1500000000 bytes"
 
 
 def test_worker_log_lines_go_to_the_call_that_was_open():
     calls = [answered("a", 100, 50), answered("b", 200, 50), Call(sent_ns=300, request=request("c"))]
     log = [{"t": 90, "message": LOADED},
            {"t": 140, "message": "rewrite stop: 412 prompt tokens in 0.21 s, 55 generated in 0.63 s; "
-                                 "MLX active 3100, cache 200, peak 3600 bytes"},
-           {"t": 245, "message": "rewrite length: 9000 prompt tokens in 4.00 s, 16384 generated in 80.10 s; "
-                                 "MLX active 3200, cache 700, peak 5000 bytes"}]
-    first, second, third = measures.worker_figures("mlx", log, calls)
-    assert first == {"stop": "stop", "prompt_tokens": 412, "prompt_seconds": 0.21,
-                     "generated_tokens": 55, "generate_seconds": 0.63,
-                     "mlx": {"active_bytes": 3100, "cache_bytes": 200, "peak_bytes": 3600}}
-    assert (second["stop"], second["generated_tokens"], second["mlx"]["peak_bytes"], third) == (
-        "length", 16384, 5000, None)
-
-
-def test_each_worker_process_gets_the_mlx_memory_it_logged_after_loading():
-    processes = [measures.Process(spawn_ns=0, pid=7, tap_pid=6), measures.Process(spawn_ns=100, pid=9, tap_pid=6),
-                 measures.Process(spawn_ns=200, pid=11, tap_pid=6)]
-    log = [{"t": 50, "message": LOADED},
-           {"t": 150, "message": LOADED.replace("cache 900", "cache 40")}]  # the third never loaded
-    first, second, third = measures.load_figures("mlx", log, processes)
-    assert first == {"loaded": {"active_bytes": 3000, "cache_bytes": 900, "peak_bytes": 3500},
-                     "after_cache_clear": {"active_bytes": 3000, "cache_bytes": 0, "peak_bytes": 3500}}
-    assert (second["loaded"]["cache_bytes"], third) == (40, None)
-
-
-def test_the_llama_worker_lines_give_llama_cpps_memory_and_the_mlx_lines_are_not_read():
-    calls = [answered("a", 100, 50), answered("b", 200, 50)]
-    processes = [measures.Process(spawn_ns=0, pid=7, tap_pid=6)]
-    log = [{"t": 50, "message": "loaded standin-gguf; weights 1200000000 bytes, Metal allocated 1500000000 bytes"},
-           {"t": 140, "message": "rewrite stop: 412 prompt tokens in 0.21 s, 55 generated in 0.63 s; "
                                  "context 16896 tokens, Metal allocated 1700000000 bytes"},
-           {"t": 245, "message": "rewrite stop: 9 prompt tokens in 0.01 s, 2 generated in 0.02 s; "
-                                 "MLX active 3200, cache 700, peak 5000 bytes"}]
-    first, second = measures.worker_figures("llama", log, calls)
+           {"t": 245, "message": "rewrite length: 9000 prompt tokens in 4.00 s, 16384 generated in 80.10 s; "
+                                 "context 25384 tokens, Metal allocated 2100000000 bytes"}]
+    first, second, third = measures.worker_figures(log, calls)
     assert first == {"stop": "stop", "prompt_tokens": 412, "prompt_seconds": 0.21,
                      "generated_tokens": 55, "generate_seconds": 0.63,
                      "llama": {"context_tokens": 16896, "metal_allocated_bytes": 1700000000}}
-    assert second is None
-    assert measures.load_figures("llama", log, processes) == [
-        {"weights_bytes": 1200000000, "metal_allocated_bytes": 1500000000}]
-    assert measures.load_figures("mlx", log, processes) == [None]
+    assert (second["stop"], second["generated_tokens"], second["llama"]["context_tokens"], third) == (
+        "length", 16384, 25384, None)
+
+
+def test_each_worker_process_gets_the_memory_it_logged_after_loading():
+    processes = [measures.Process(spawn_ns=0, pid=7, tap_pid=6), measures.Process(spawn_ns=100, pid=9, tap_pid=6),
+                 measures.Process(spawn_ns=200, pid=11, tap_pid=6)]
+    log = [{"t": 50, "message": LOADED},
+           {"t": 150, "message": LOADED.replace("allocated 1500000000", "allocated 1400000000")}]  # the third never loaded
+    first, second, third = measures.load_figures(log, processes)
+    assert first == {"weights_bytes": 1200000000, "metal_allocated_bytes": 1500000000}
+    assert (second["metal_allocated_bytes"], third) == (1400000000, None)
 
 
 # Denominators and percentiles.
@@ -378,7 +358,7 @@ def test_the_screen_applies_the_daemons_own_checks():
 
 
 ART = {"sha256": "a" * 64}
-CONF = {"sha256": "c" * 64, "engine": "mlx"}
+CONF = {"sha256": "c" * 64}
 
 
 def fake_boot(cases: list[dict], calls: list[Call], results: dict, started: int = 0,
@@ -444,7 +424,7 @@ def test_a_boot_becomes_a_record_with_every_call_and_its_hashes():
     assert two["eval06"]["band"] == "257-512" and two["eval06"]["output_bytes"] is None
     assert (big["calls"], gone["outcome"], gone["seconds"]) == ([], None, None)
     assert [p["load_seconds"] for p in record["worker"]["processes"]] == [1e-9]
-    assert record["worker"]["processes"][0]["mlx_memory"]["after_cache_clear"]["cache_bytes"] == 0
+    assert record["worker"]["processes"][0]["llama_memory"]["metal_allocated_bytes"] == 1500000000
     assert record["tor"] == {"started_ns": 2, "bootstrapped_ns": 3}
     assert "Bootstrapped 100% (done)" in record["host_stderr"]
     assert measures.latency(record["cases"])["cases"] == 4
@@ -488,7 +468,7 @@ def test_the_summary_counts_every_case_of_every_boot():
         boots[name] = stage3.analyse(name, cases, fake_boot(cases, calls, results, start, tuple(losses)),
                                      ART, CONF, counts, {})
         start = t + 100
-    summary = stage3.summarise(boots, [{"case": "kill-prose-10000", "killed": True, "call_was_open": True}], "mlx")
+    summary = stage3.summarise(boots, [{"case": "kill-prose-10000", "killed": True, "call_was_open": True}])
     assert summary["eval06"]["cases"] == 3 and summary["eval06"]["rewritten"] == 3
     assert summary["eval06"]["by_band"]["1-128"]["cases"] == 3 and summary["eval06"]["by_band"]["257-512"] is None
     assert summary["history"][0]["outcome"] == "rewritten" and len(summary["history"][0]["calls"]) == 4

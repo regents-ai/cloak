@@ -9,8 +9,6 @@
 reference/src/
 
 # Worker build output
-worker/.build/
-worker/.xcode/
 llama-worker/.llama/
 llama-worker/.xcode/
 

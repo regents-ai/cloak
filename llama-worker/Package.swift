@@ -45,11 +45,6 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", infoPlist])
             ]),
-        // A check tool, never installed: the prompt tokens this worker gives
-        // the model, for tests/test_llama_worker.py.
-        .executableTarget(
-            name: "prompt-tokens-llama",
-            dependencies: ["LlamaEngine", .product(name: "RewriterKit", package: "rewriter-kit")]),
     ],
     cxxLanguageStandard: .cxx17
 )

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- One engine (decision 8, 14 November): the MLX worker (`worker/`), its
+  install script and `tests/test_worker.py` are deleted. The llama.cpp worker
+  in `llama-worker/` is the only one, and every model it runs decodes under
+  the reply grammar. `reference/models.json` keeps three models a worker
+  runs, `small-lead-gguf-grammar`, `small-challenger-gguf-grammar` and the
+  stand-in `standin-gguf-grammar`, with no `engine` field; the other
+  candidates and the MLX conversions are deleted, and their records stay in
+  `evidence/`. The worker exits with status 3 when the model folder is not
+  exactly the pinned files. Its checks are one file,
+  `tests/test_llama_worker.py`.
+
 - Stage 3: the EVAL01 development screen on the small lead, both engines
   (14 November), recorded under evidence/stage3/ and written up in
   docs/plan.md: 9 of 16 on llama.cpp with the grammar, 10 of 16 on MLX,

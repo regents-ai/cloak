@@ -47,22 +47,16 @@ from pathlib import Path
 
 import boot
 import measures
-from drive_worker import SYSTEM_SHA256, WORKERS, go_json, system_message
+from drive_worker import SYSTEM_SHA256, WORKER, go_json, system_message
 from fetch_model import DEST, MODELS
 
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE = ROOT / "evidence/stage3"
-# The candidates: the lead and the challenger, the small pair decision 7 in
-# docs/plan.md added, that pair as GGUF files on llama.cpp (decision 8), and
-# the GGUF pair under the reply grammar (decision 9). The stage 4 kit takes
-# its list from here too.
-GATE_MODELS = ("lead", "challenger", "small-lead", "small-challenger", "small-lead-gguf", "small-challenger-gguf",
-               "small-lead-gguf-grammar", "small-challenger-gguf-grammar")
-# What each engine's install.sh puts in the worker folder: the MLX worker
-# with MLX's shader bundle, and the llama worker, its shaders built in.
-INSTALLED_FILES = {"mlx": ("cloak-rewriter", "mlx-swift_Cmlx.bundle"), "llama": ("cloak-rewriter-llama",)}
+# The candidates: the small pair decision 7 in docs/plan.md added, as GGUF
+# files on llama.cpp (decision 8) under the reply grammar (decision 9). The
+# stage 4 kit takes its list from here too.
+GATE_MODELS = ("small-lead-gguf-grammar", "small-challenger-gguf-grammar")
 SOURCES = ROOT / "reference/sources.json"
-MLX_PACKAGES = ROOT / "worker/Package.resolved"
 
 # The fixed inputs, pinned before any candidate ran on them.
 EVAL05 = ROOT / "reference/eval05-inputs.json"
@@ -247,11 +241,6 @@ def pinned(name: str) -> dict:
     return model
 
 
-def worker(model: dict) -> Path:
-    """The installed worker of the model's engine (decision 8)."""
-    return WORKERS[model["engine"]]
-
-
 def preflight(model: dict, model_dir: Path) -> dict:
     """Everything the run depends on, checked before any boot. The worker
     checks every file's sha256 itself when it loads; here each must be
@@ -260,17 +249,16 @@ def preflight(model: dict, model_dir: Path) -> dict:
         path = model_dir / entry["path"]
         if not path.is_file() or path.stat().st_size != entry["size"]:
             stop(f"{path} is missing or not its pinned size; fetch it with scripts/fetch_model.py")
-    for path in (worker(model), boot.HOST, boot.TOR, boot.KERNEL, boot.INITRD):
+    for path in (WORKER, boot.HOST, boot.TOR, boot.KERNEL, boot.INITRD):
         if not path.is_file():
             stop(f"{path} is not built (README, stage 2 commands)")
-    if MODELS.read_bytes() not in worker(model).read_bytes():
-        stop(f"{worker(model)} was built with other model pins; run its install.sh again")
-    if grammar := model.get("grammar"):
-        path = ROOT / "reference" / grammar["file"]
-        if sha256_file(path) != grammar["sha256"]:
-            stop(f"{path} is not the pinned grammar")
-        if path.read_bytes() not in worker(model).read_bytes():
-            stop(f"{worker(model)} was built with another grammar; run its install.sh again")
+    if MODELS.read_bytes() not in WORKER.read_bytes():
+        stop(f"{WORKER} was built with other model pins; run llama-worker/install.sh again")
+    grammar = ROOT / "reference" / model["grammar"]["file"]
+    if sha256_file(grammar) != model["grammar"]["sha256"]:
+        stop(f"{grammar} is not the pinned grammar")
+    if grammar.read_bytes() not in WORKER.read_bytes():
+        stop(f"{WORKER} was built with another grammar; run llama-worker/install.sh again")
     for path, digest in ((EVAL05, EVAL05_SHA256), (EVAL05_CAP, EVAL05_CAP_SHA256), (EVAL06, EVAL06_SHA256)):
         if sha256_file(path) != digest:
             stop(f"{path} is not the pinned input set")
@@ -320,14 +308,10 @@ def artifact(model: dict) -> dict:
     return {**out, "sha256": sha256_json(out)}
 
 
-def engine_source(engine: str) -> dict[str, str]:
-    """The pinned engine library the worker is built from: llama.cpp's commit
-    (reference/sources.json), or MLX's packages (worker/Package.resolved)."""
-    if engine == "llama":
-        llama = next(s for s in json.loads(SOURCES.read_text())["sources"] if s["name"] == "llama.cpp")
-        return {"llama.cpp": llama["commit"]}
-    return {p["identity"]: p["state"]["revision"] for p in json.loads(MLX_PACKAGES.read_text())["pins"]
-            if p["identity"] in ("mlx-swift", "mlx-swift-lm")}
+def llama_cpp_commit() -> str:
+    """The pinned llama.cpp commit the worker is built from
+    (reference/sources.json)."""
+    return next(s for s in json.loads(SOURCES.read_text())["sources"] if s["name"] == "llama.cpp")["commit"]
 
 
 def configuration(model: dict) -> dict:
@@ -336,12 +320,11 @@ def configuration(model: dict) -> dict:
         "max_tokens": MAX_TOKENS,
         "temperature": TEMPERATURE,
         "chat_template_context": model["chat_template_context"],
-        "grammar": model.get("grammar"),
+        "grammar": model["grammar"],
         "models_json_sha256": sha256_file(MODELS),
         "daemon_sources_sha256": DAEMON_SOURCES,
-        "engine": model["engine"],
-        "engine_source": engine_source(model["engine"]),
-        "worker_sha256": sha256_file(worker(model)),
+        "llama_cpp_commit": llama_cpp_commit(),
+        "worker_sha256": sha256_file(WORKER),
         "host_sha256": sha256_file(boot.HOST),
         "tor_sha256": sha256_file(boot.TOR),
         "kernel_sha256": sha256_file(boot.KERNEL),
@@ -384,9 +367,7 @@ def du_bytes(path: Path) -> int:
 
 
 def installed_size(model: dict, model_dir: Path) -> dict:
-    folder = worker(model).parent
-    parts = {"model_on_disk": du_bytes(model_dir),
-             "worker_with_shaders": sum(du_bytes(folder / f) for f in INSTALLED_FILES[model["engine"]]),
+    parts = {"model_on_disk": du_bytes(model_dir), "worker": du_bytes(WORKER),
              "host": du_bytes(boot.HOST), "tor": du_bytes(boot.TOR.parent), "guest_kernel": du_bytes(boot.KERNEL), "guest_initrd": du_bytes(boot.INITRD)}
     return {"model_pinned_bytes": model["total_bytes"], "on_disk_bytes": parts, "total_on_disk_bytes": sum(parts.values())}
 
@@ -395,7 +376,7 @@ MANUAL_STEPS = [
     ("sleep_and_wake", "Start `feasibility`, close the lid (or choose Sleep) during an EVAL06 call, wake after 60 s; "
      "note whether the call and the next ones finish, and attach the record of that run."),
     ("battery", "Run `feasibility` on battery with no other heavy apps, noting the battery percentage before and "
-     "after and Activity Monitor's Energy column for cloak-rewriter."),
+     "after and Activity Monitor's Energy column for cloak-rewriter-llama."),
     ("declared_load", "State the ordinary Mac load the run had (apps open, other work running); the record holds "
      "only load average, memory and swap."),
     ("induced_memory_pressure", "Rerun with memory pressure raised to warning by other apps (Activity Monitor's "
@@ -425,14 +406,13 @@ def manual_steps() -> list[dict]:
 
 def analyse(boot_name: str, cases: list[dict], run: boot.Boot, art: dict, conf: dict,
             tokenizer_counts: dict[str, int], extra: dict) -> dict:
-    """One boot's cases, calls and resource figures, with the memory figures
-    of the configuration's engine."""
-    engine = conf["engine"]
+    """One boot's cases, calls and resource figures, with the worker's own
+    memory figures."""
     worker = measures.worker_from_events(run.events) if run.events else None
     calls = worker.calls if worker else []
     split = measures.attribute([c["body"] for c in cases], calls)
-    figures = dict(zip(map(id, calls), measures.worker_figures(engine, run.worker_log, calls)))
-    loads = measures.load_figures(engine, run.worker_log, worker.processes) if worker else []
+    figures = dict(zip(map(id, calls), measures.worker_figures(run.worker_log, calls)))
+    loads = measures.load_figures(run.worker_log, worker.processes) if worker else []
     finished = {}
     for t, line in run.console:
         if line.startswith("{"):
@@ -465,7 +445,7 @@ def analyse(boot_name: str, cases: list[dict], run: boot.Boot, art: dict, conf: 
         "worker": worker and {"processes": [{"pid": p.pid, "load_seconds": p.load_seconds,
                                              "spawn_ns": p.spawn_ns, "ready_ns": p.ready_ns,
                                              "exit_ns": p.exit_ns, "exit_status": p.exit_status,
-                                             f"{engine}_memory": load}
+                                             "llama_memory": load}
                                             for p, load in zip(worker.processes, loads)],
                               "cancels_after_answer": worker.cancels_after_answer},
         "tor": tor_start(run.host_stderr),
@@ -540,7 +520,7 @@ def tokens_per_second(cases: list[dict]) -> dict:
             "prompt_p50": measures.percentile(prefill, 50) if prefill else None}
 
 
-def summarise(boots: dict[str, dict], kills: list[dict], engine: str) -> dict:
+def summarise(boots: dict[str, dict], kills: list[dict]) -> dict:
     main, loss, restart = boots["main"], boots["worker_loss"], boots["restart"]
     group = lambda b, g: [c for c in b["cases"] if c["group"] == g]  # noqa: E731
     every = [c for b in boots.values() for c in b["cases"]]
@@ -564,7 +544,7 @@ def summarise(boots: dict[str, dict], kills: list[dict], engine: str) -> dict:
                    "window": window_of(main, "eval06")},
         "cold": {"load_seconds": first_worker(main).get("load_seconds"),
                  "load_includes": "the worker's sha256 check of every pinned file, then the model load",
-                 f"{engine}_memory": first_worker(main).get(f"{engine}_memory"),
+                 "llama_memory": first_worker(main).get("llama_memory"),
                  "tor_bootstrap_seconds": tor_bootstrap_seconds(main),
                  "tor_bootstrap_includes": TOR_BOOTSTRAP_INCLUDES,
                  "first_call": brief(group(main, "cold")[0]),
@@ -712,10 +692,10 @@ def run_feasibility(name: str) -> Path:
         during = killer(cases, kills) if label == "worker_loss" else None
         limit = time_limit(cases)
         print(f"{label}: {len(cases)} cases, stopped after {limit / 60:.0f} min at most", flush=True)
-        run = boot.run(label, [guest_case(c) for c in cases], worker(model), name, model_dir, limit, during)
+        run = boot.run(label, [guest_case(c) for c in cases], WORKER, name, model_dir, limit, during)
         boots[label] = analyse(label, cases, run, art, conf, counts, {})
         wait_for_vm_exit(run.vm_pid)
-    record["summary"] = summarise(boots, kills, model["engine"])
+    record["summary"] = summarise(boots, kills)
     record["installed_size"] = installed_size(model, model_dir)
     record["manual_steps"] = manual_steps()
     record["not_measured"] = NOT_MEASURED
@@ -734,7 +714,7 @@ def run_eval01(name: str) -> Path:
     record["about"] = ("EVAL01, the fast development screen: the daemon's 16 synthetic cases with its own "
                        "mechanical checks. Anyone may see these outputs; never a holdout, never a gate.")
     cases = [{"name": s["name"], "group": "eval01", "body": user(s["input"])} for s in samples]
-    run = boot.run("eval01", [guest_case(c) for c in cases], worker(model), name, model_dir, time_limit(cases))
+    run = boot.run("eval01", [guest_case(c) for c in cases], WORKER, name, model_dir, time_limit(cases))
     analysed = analyse("eval01", cases, run, record["artifact"], record["configuration"], {}, {})
     for case, sample in zip(analysed["cases"], samples):
         case["screen"] = (screen(sample, case["texts"][0]) if case["stop_reason"] is None
@@ -796,10 +776,6 @@ def print_feasibility(record: dict, path: Path) -> None:
         print(f"Main boot peaks: workers {gib(whole['worker_peak_footprint_bytes'])} (at most {whole['workers_alive_max']} "
               f"alive at once), guest VM {gib(whole['vm_peak_footprint_bytes'])}, tor {gib(whole['tor_peak_footprint_bytes'])}, "
               f"whole product {gib(whole['product_peak_footprint_bytes'])}; swap growth {whole['swap_growth_bytes'] / 2**20:.0f} MiB")
-    if mlx := s["cold"].get("mlx_memory"):
-        print(f"MLX after the cold load: active {gib(mlx['loaded']['active_bytes'])}, cache {gib(mlx['loaded']['cache_bytes'])}; "
-              f"after the cache clear: active {gib(mlx['after_cache_clear']['active_bytes'])}, "
-              f"cache {gib(mlx['after_cache_clear']['cache_bytes'])}, peak {gib(mlx['after_cache_clear']['peak_bytes'])}")
     if llama := s["cold"].get("llama_memory"):
         print(f"llama.cpp after the cold load: weights {gib(llama['weights_bytes'])}, "
               f"Metal allocated {gib(llama['metal_allocated_bytes'])}")

@@ -19,35 +19,24 @@ public final class Engine: @unchecked Sendable {
         public let metalAllocatedBytes: UInt64
     }
 
-    /// How a rewrite picks each token: greedily over the whole vocabulary, or
-    /// greedily over the tokens a grammar allows (decision 9 in docs/plan.md).
-    public enum Decoding: Sendable {
-        case greedy
-        case grammar(String)
-    }
-
     private let engine: OpaquePointer
     /// The pinned reply grammar, reference/rewrite-reply.gbnf, built into
-    /// this worker; nil when the pin has no grammar.
-    private let grammar: String?
+    /// this worker (decision 9 in docs/plan.md).
+    private let grammar: String
     /// Rewrites run here, off Swift's own threads, as llama.cpp blocks while
     /// it computes.
     private let queue = DispatchQueue(label: "sh.regents.cloak.rewriter-llama")
 
     /// Loads the pin's one GGUF file with the pin's chat template file,
-    /// `chat_template.jinja`, and its frozen template settings. A pinned
+    /// `chat_template.jinja`, and its frozen template settings. The pinned
     /// grammar must be the one built into this worker, byte for byte.
     public init(pin: ModelPin, directory: URL) throws {
-        if let pinned = pin.grammar {
-            let built = Data(PackageResources.rewrite_reply_gbnf)
-            let digest = SHA256.hash(data: built).map { String(format: "%02x", $0) }.joined()
-            guard pinned.file == "rewrite-reply.gbnf", pinned.sha256 == digest else {
-                throw WorkerError("\(pin.name) pins a grammar this worker was not built with")
-            }
-            grammar = String(decoding: built, as: UTF8.self)
-        } else {
-            grammar = nil
+        let built = Data(PackageResources.rewrite_reply_gbnf)
+        let digest = SHA256.hash(data: built).map { String(format: "%02x", $0) }.joined()
+        guard pin.grammar.file == "rewrite-reply.gbnf", pin.grammar.sha256 == digest else {
+            throw WorkerError("\(pin.name) pins a grammar this worker was not built with")
         }
+        grammar = String(decoding: built, as: UTF8.self)
         let weights = pin.files.map(\.path).filter { $0.hasSuffix(".gguf") }
         guard weights.count == 1 else { throw WorkerError("\(pin.name) pins \(weights.count) GGUF files, not one") }
         let template = try String(contentsOf: directory.appending(path: "chat_template.jinja"), encoding: .utf8)
@@ -73,44 +62,28 @@ public final class Engine: @unchecked Sendable {
 
     public static var metalAllocatedBytes: UInt64 { cloak_metal_allocated_bytes() }
 
-    /// The prompt tokens a rewrite of this request gives the model; nil when
-    /// the chat template fails.
-    public func promptTokens(_ request: ChatRequest) -> [Int32]? {
-        var count = 0
-        guard let tokens = cloak_engine_prompt(engine, request.system, request.user, &count) else { return nil }
-        defer { free(tokens) }
-        return Array(UnsafeBufferPointer(start: tokens, count: count))
-    }
-
     /// Clears the cancel; the worker calls it as it takes a request.
     public func arm() { cloak_engine_arm(engine) }
 
     public func cancel() { cloak_engine_cancel(engine) }
 
-    /// How a rewrite of this request decodes. Without a pinned grammar,
-    /// greedily. With one, under that grammar for exactly as many texts as
-    /// the user message carries: the worker adds the grammar's `texts` rule,
-    /// written out item by item, as llama.cpp repeats a rule at most 2000
-    /// times. Nil when the pin has a grammar and the user message is not the
-    /// daemon's `{"texts":[...]}` with at least one text.
-    public func decoding(for request: ChatRequest) -> Decoding? {
-        guard let grammar else { return .greedy }
+    /// The grammar a rewrite of this request decodes under: the pinned one,
+    /// for exactly as many texts as the user message carries. The worker adds
+    /// the grammar's `texts` rule, written out item by item, as llama.cpp
+    /// repeats a rule at most 2000 times. Nil when the user message is not
+    /// the daemon's `{"texts":[...]}` with at least one text.
+    public func grammar(for request: ChatRequest) -> String? {
         guard let message = try? JSONDecoder().decode([String: [String]].self, from: Data(request.user.utf8)),
             message.count == 1, let texts = message["texts"], !texts.isEmpty
         else { return nil }
-        return .grammar(grammar + "texts ::= item" + String(repeating: " \",\" item", count: texts.count - 1) + "\n")
+        return grammar + "texts ::= item" + String(repeating: " \",\" item", count: texts.count - 1) + "\n"
     }
 
-    public func rewrite(_ request: ChatRequest, _ decoding: Decoding) async -> Rewrite {
+    public func rewrite(_ request: ChatRequest, grammar: String) async -> Rewrite {
         await withCheckedContinuation { continuation in
             queue.async {
-                let maxTokens = Int32(request.maxTokens)
-                var result =
-                    switch decoding {
-                    case .greedy: cloak_engine_rewrite(self.engine, request.system, request.user, maxTokens, nil)
-                    case .grammar(let grammar):
-                        cloak_engine_rewrite(self.engine, request.system, request.user, maxTokens, grammar)
-                    }
+                var result = cloak_engine_rewrite(
+                    self.engine, request.system, request.user, Int32(request.maxTokens), grammar)
                 defer { cloak_result_free(&result) }
                 let finish: Rewrite.Finish
                 switch result.finish {

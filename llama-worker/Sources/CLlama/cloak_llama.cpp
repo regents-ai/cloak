@@ -237,19 +237,6 @@ extern "C" void cloak_engine_free(cloak_engine * engine) {
     delete engine;
 }
 
-extern "C" int32_t * cloak_engine_prompt(cloak_engine * engine, const char * system, const char * user, size_t * count) {
-    std::vector<llama_token> tokens;
-    try {
-        tokens = prompt_tokens(*engine, system, user);
-    } catch (const std::exception &) {
-        return nullptr;
-    }
-    auto * out = static_cast<int32_t *>(malloc(std::max<size_t>(tokens.size(), 1) * sizeof(int32_t)));
-    std::copy(tokens.begin(), tokens.end(), out);
-    *count = tokens.size();
-    return out;
-}
-
 extern "C" void cloak_engine_arm(cloak_engine * engine) {
     engine->cancelled = false;
 }
@@ -288,10 +275,10 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
     }
     result.context_tokens = llama_n_ctx(context.get());
     llama_sampler_ptr greedy(llama_sampler_init_greedy());
-    // llama.cpp's grammar sampler, when the pin has a grammar: it only masks
-    // tokens, and greedy still picks among the rest.
-    llama_sampler_ptr constraint(grammar ? llama_sampler_init_grammar(engine->vocab, grammar, "root") : nullptr);
-    if (grammar && !constraint) {
+    // llama.cpp's grammar sampler: it only masks tokens, and greedy still
+    // picks among the rest.
+    llama_sampler_ptr constraint(llama_sampler_init_grammar(engine->vocab, grammar, "root"));
+    if (!constraint) {
         return fail("grammar", 0);
     }
 
@@ -315,14 +302,12 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
             result.finish = CLOAK_FINISH_CANCELLED;
             return result;
         }
-        llama_token token = llama_sampler_sample(greedy.get(), context.get(), -1);
-        if (constraint) {
-            token = allowed(constraint.get(), greedy.get(), context.get(), engine->vocab, token);
-            if (token == LLAMA_TOKEN_NULL) {
-                return fail("grammar", 1);
-            }
-            llama_sampler_accept(constraint.get(), token);
+        llama_token token = allowed(constraint.get(), greedy.get(), context.get(), engine->vocab,
+                                    llama_sampler_sample(greedy.get(), context.get(), -1));
+        if (token == LLAMA_TOKEN_NULL) {
+            return fail("grammar", 1);
         }
+        llama_sampler_accept(constraint.get(), token);
         if (llama_vocab_is_eog(engine->vocab, token)) {
             result.finish = CLOAK_FINISH_STOP;
             break;
@@ -340,8 +325,8 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
     result.generated_tokens      = static_cast<int32_t>(output.size());
     result.metal_allocated_bytes = cloak_metal_allocated_bytes();
 
-    // The tokens as text, special tokens written out, as the MLX worker
-    // decodes them.
+    // The tokens as text, special tokens written out, so the reply holds
+    // exactly what the model generated.
     const std::string text = common_detokenize(engine->vocab, output, /* special */ true);
     result.text        = static_cast<char *>(malloc(std::max<size_t>(text.size(), 1)));
     result.text_length = text.size();

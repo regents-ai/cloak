@@ -3,7 +3,7 @@ guest"): the guest has no network device, and its Tor port leads over vsock
 to the host's Tor relay, which passes only a SOCKS5 greeting on, to tor's
 SOCKS socket, a file only this user can open.
 
-    worker/install.sh
+    llama-worker/install.sh
     guest/build.sh
     host/build.sh
     uv run --with pytest==8.4.2 pytest tests/test_tor_path.py
@@ -48,7 +48,7 @@ HOST = ROOT / "host/.build/release/cloak-host"
 TOR = ROOT / "host/.build/tor/tor"
 FAKE = ROOT / "tests/fake_worker.py"
 FAKE_TOR = ROOT / "tests/fake_tor.py"
-NAME = "standin"
+NAME = "standin-gguf-grammar"
 TOR_STOP = ("Authenticated Tor route preparation failed before key acquisition. "
             "Check the configured Tor SOCKS listener; no direct fallback was used.")
 PROMPT = "case:ok find the top 5 vegan restaurants in Tallinn"

@@ -6,7 +6,7 @@ host's tor, here the stand-in (fake_tor.py), which never reaches the network:
 it records each SOCKS identity and destination and refuses it, so every
 model request stops at Tor route preparation after its rewrite.
 
-    worker/install.sh
+    llama-worker/install.sh
     guest/build.sh
     host/build.sh
     uv run --with pytest==8.4.2 pytest tests/test_agent_path.py
@@ -22,13 +22,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-from drive_worker import WORKERS, request_body  # noqa: E402
+from drive_worker import WORKER, request_body  # noqa: E402
 from fetch_model import DEST  # noqa: E402
 
 HOST = ROOT / "host/.build/release/cloak-host"
 FAKE = ROOT / "tests/fake_worker.py"
 FAKE_TOR = ROOT / "tests/fake_tor.py"
-NAME = "standin"
+NAME = "standin-gguf-grammar"
 TOR_STOP = ("Authenticated Tor route preparation failed before key acquisition. "
             "Check the configured Tor SOCKS listener; no direct fallback was used.")
 
@@ -167,6 +167,6 @@ def test_the_sandbox_holds(tmp_path):
 
 def test_pi_with_the_real_worker(tmp_path):
     prompt = "Hey, could you please find me the three best vegan restaurants in Tallinn? Thanks!!"
-    results = boot(tmp_path, [agent("pi", prompt)], WORKERS["mlx"])
+    results = boot(tmp_path, [agent("pi", prompt)], WORKER)
     assert results["pi"]["output"].strip() == TOR_STOP
     assert [a["destination"] for a in routes(tmp_path)] == ["openrouter.ai:443"]

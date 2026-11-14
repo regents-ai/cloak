@@ -67,17 +67,16 @@ final class Worker: Sendable {
     }
 
     /// Applies the model's own chat template with the pinned settings, then
-    /// decodes greedily, under the pinned grammar when there is one. The
-    /// reply carries exactly the generated text; the daemon decides whether
-    /// it is acceptable.
+    /// decodes greedily under the pinned grammar. The reply carries exactly
+    /// the generated text; the daemon decides whether it is acceptable.
     private func respond(to body: Data) async -> (UInt16, Data) {
         guard let request = try? JSONDecoder().decode(ChatRequest.self, from: body), request.model == pin.name,
-            let decoding = engine.decoding(for: request)
+            let grammar = engine.grammar(for: request)
         else {
             log.info("rejected a request that is not the daemon's rewrite request")
             return (400, Reply.error("invalid request"))
         }
-        let rewrite = await engine.rewrite(request, decoding)
+        let rewrite = await engine.rewrite(request, grammar: grammar)
         let finishReason: String
         switch rewrite.finish {
         case .stop: finishReason = "stop"

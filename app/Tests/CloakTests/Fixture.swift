@@ -69,8 +69,7 @@ struct Fixture {
             (.initrd, .bundle, "guest/initrd.gz", "not a root"),
             (.tor, .bundle, "tor/tor", tor),
             (.libevent, .bundle, "tor/libevent-2.1.7.dylib", "not a library"),
-            (.worker, .support, "worker/cloak-rewriter", worker),
-            (.shaders, .support, "worker/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib", "not shaders"),
+            (.worker, .support, "worker/cloak-rewriter-llama", worker),
         ]
         var pins = [Manifest.Pin]()
         for (part, place, path, text) in contents {

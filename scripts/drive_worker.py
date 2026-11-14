@@ -8,7 +8,7 @@ in the path. The request is built the way the daemon builds it: the system
 message is read from the pinned daemon source and must match the recorded
 sha256, and the user message is Go-style JSON.
 
-    uv run scripts/drive_worker.py --name standin "text one" "text two"
+    uv run scripts/drive_worker.py --name standin-gguf-grammar "text one" "text two"
 """
 
 import argparse
@@ -20,12 +20,10 @@ import subprocess
 import time
 from pathlib import Path
 
-from fetch_model import DEST, MODELS
+from fetch_model import DEST
 
-# Where worker/install.sh and llama-worker/install.sh put the signed,
-# sandboxed workers, by the `engine` each model entry names (decision 8).
-WORKERS = {"mlx": DEST.parent / "worker" / "cloak-rewriter",
-           "llama": DEST.parent / "worker" / "cloak-rewriter-llama"}
+# Where llama-worker/install.sh puts the signed, sandboxed worker.
+WORKER = DEST.parent / "worker" / "cloak-rewriter-llama"
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "reference/src/zkapi/zkapi-clientd/internal/rewriter/rewriter.go"
@@ -95,8 +93,7 @@ def main() -> None:
     parser.add_argument("texts", nargs="+")
     args = parser.parse_args()
 
-    models = {m["name"]: m for m in json.loads(MODELS.read_text())["models"]}
-    worker = spawn(WORKERS[models[args.name]["engine"]], args.name)
+    worker = spawn(WORKER, args.name)
     started = time.monotonic()
     if read_frame(worker.stdout) != (b"Y", b""):
         raise SystemExit(f"worker did not become ready: {worker.stderr.read().decode()}")

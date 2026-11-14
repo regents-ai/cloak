@@ -21,16 +21,15 @@ public struct ModelPin: Sendable {
     public let name: String
     public let files: [File]
     public let chatTemplateContext: [String: Bool]
-    public let grammar: Grammar?
+    public let grammar: Grammar
 
-    /// Only models a worker runs carry an `engine` (decision 8 in
-    /// docs/plan.md) and frozen chat template settings
-    /// (`chat_template_context`); a worker loads only its own engine's models.
-    /// Only the llama worker applies a grammar.
-    public static func load(name: String, engine: String) throws -> ModelPin {
+    /// Only models the worker runs carry frozen chat template settings
+    /// (`chat_template_context`) and a reply grammar; the reference model and
+    /// the checkpoints the models take files from are pinned for provenance
+    /// only.
+    public static func load(name: String) throws -> ModelPin {
         struct Entry: Decodable {
             let name: String
-            let engine: String?
             let files: [File]
             let chat_template_context: [String: Bool]?
             let grammar: Grammar?
@@ -40,16 +39,10 @@ public struct ModelPin: Sendable {
         guard let entry = models.first(where: { $0.name == name }) else {
             throw WorkerError("no pinned model named \(name)")
         }
-        guard entry.engine == engine else {
-            throw WorkerError("\(name) is not a model for the \(engine) worker")
+        guard let context = entry.chat_template_context, let grammar = entry.grammar else {
+            throw WorkerError("\(name) is not a model the worker runs")
         }
-        guard let context = entry.chat_template_context else {
-            throw WorkerError("\(name) has no frozen chat template settings")
-        }
-        guard entry.grammar == nil || engine == "llama" else {
-            throw WorkerError("\(name) pins a grammar, which only the llama worker applies")
-        }
-        return ModelPin(name: entry.name, files: entry.files, chatTemplateContext: context, grammar: entry.grammar)
+        return ModelPin(name: entry.name, files: entry.files, chatTemplateContext: context, grammar: grammar)
     }
 
     /// The directory must hold exactly the pinned files, as regular files with
@@ -92,8 +85,8 @@ public struct ModelPin: Sendable {
     /// The file's sha256, read 8 MiB at a time. FileHandle's reads are
     /// autoreleased, so each block is read inside a pool of its own and is
     /// gone before the next is read. Without one every block stayed until the
-    /// thread next drained its pool: the whole file, which the llama worker
-    /// then held beside the model as it loaded.
+    /// thread next drained its pool: the whole file, which the worker then
+    /// held beside the model as it loaded.
     private func digest(_ url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }

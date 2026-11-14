@@ -2,7 +2,7 @@ import CloakHost
 import Foundation
 
 // cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl>
-//            --worker <cloak-rewriter> --name <model> --dir <model directory>
+//            --worker <cloak-rewriter-llama> --name <model> --dir <model directory>
 //            --tor <tor> --tor-data <tor's folder>
 //
 // Starts the native worker and tor, waits for tor to open its SOCKS port and
@@ -13,7 +13,7 @@ import Foundation
 // exits when the guest powers off, after stopping both. The guest's console
 // is this process's standard output.
 
-let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder>"
+let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter-llama> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder>"
 let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir", "--tor", "--tor-data"]
 let arguments = {
     var parsed = [String: String]()

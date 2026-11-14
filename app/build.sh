@@ -5,7 +5,7 @@
 # tor and libevent from host/.build/tor, and the manifest that pins them and
 # the installed worker. Signed ad hoc, the app with the virtualization
 # entitlement; no Developer ID and no notarization. Needs guest/build.sh,
-# host/build.sh and worker/install.sh to have run first.
+# host/build.sh and llama-worker/install.sh to have run first.
 set -eu
 cd "$(dirname "$0")/.."
 

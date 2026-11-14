@@ -1,8 +1,8 @@
 // The llama worker's one way into llama.cpp: load a pinned GGUF model with
 // every setting pinned, turn a system and a user message into the model's
 // prompt tokens with llama.cpp's own chat template machinery (common/chat),
-// and run one greedy rewrite at a time, under a grammar when the model's pin
-// has one. cloak_llama.cpp says what each setting is and why.
+// and run one greedy rewrite at a time under the reply grammar.
+// cloak_llama.cpp says what each setting is and why.
 
 #ifndef CLOAK_LLAMA_H
 #define CLOAK_LLAMA_H
@@ -53,11 +53,6 @@ cloak_engine * cloak_engine_load(const char * model_path, const char * chat_temp
 /// before the process exits.
 void cloak_engine_free(cloak_engine * engine);
 
-/// The prompt tokens for one system and one user message, as
-/// cloak_engine_rewrite gives them to the model. Returns a buffer of
-/// `*count` tokens to free with free(), or NULL when the template fails.
-int32_t * cloak_engine_prompt(cloak_engine * engine, const char * system, const char * user, size_t * count);
-
 /// Clears the cancel; called before each rewrite starts.
 void cloak_engine_arm(cloak_engine * engine);
 
@@ -66,10 +61,10 @@ void cloak_engine_arm(cloak_engine * engine);
 void cloak_engine_cancel(cloak_engine * engine);
 
 /// One rewrite: the prompt read in chunks into a context of its own, sized
-/// for the prompt plus `max_tokens`, then greedy decoding until the model
-/// ends its turn or `max_tokens` tokens are out. With a `grammar` (GBNF, its
-/// start rule `root`), greedy picks only among the tokens llama.cpp's
-/// grammar sampler allows; NULL decodes over the whole vocabulary.
+/// for the prompt plus `max_tokens`, then greedy decoding under `grammar`
+/// (GBNF, its start rule `root`) until the model ends its turn or
+/// `max_tokens` tokens are out: greedy picks only among the tokens llama.cpp's
+/// grammar sampler allows.
 cloak_result cloak_engine_rewrite(cloak_engine * engine, const char * system, const char * user, int32_t max_tokens,
                                   const char * grammar);
 
