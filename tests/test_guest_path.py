@@ -41,15 +41,14 @@ NAME = "standin-gguf-grammar"
 FAILED = "rewriter failed; original prompt was not sent to the target model"
 # The stand-in rewrites this one cleanly.
 PLAIN = "Hey, could you please tell me the three biggest rivers in Europe? Thanks!!"
-# 9,788 characters, within the daemon's input limit.
-LONG = " ".join(
-    f"On day {i} the travelling group walked along the river, counted the boats, "
-    "wrote down the weather, and argued about where to sleep that night."
-    for i in range(1, 70))
+# 120 text parts, 9,130 characters, within the daemon's input limit. The
+# reply must hold all 120 texts, so the stand-in rewrites for about 12 s.
+LONG = [{"type": "text", "text": f"Please write a long, friendly paragraph about the history of city number {i}."}
+        for i in range(120)]
 
 
-def case(name: str, text: str, cancel_after_ms: int = 0) -> dict:
-    body = {"model": "target", "messages": [{"role": "user", "content": text}]}
+def case(name: str, content: str | list[dict], cancel_after_ms: int = 0) -> dict:
+    body = {"model": "target", "messages": [{"role": "user", "content": content}]}
     return {"name": name, "body": body, "cancel_after_ms": cancel_after_ms}
 
 
@@ -237,7 +236,7 @@ def test_the_real_worker_rewrites_through_the_daemon(tmp_path):
 
 
 def test_cancelling_frees_the_real_worker(tmp_path):
-    # Uncancelled, this rewrite runs for about nine seconds on the stand-in.
+    # Uncancelled, this rewrite runs for about 12 seconds on the stand-in.
     results = boot(tmp_path, [case("long", LONG, cancel_after_ms=2000),
                               case("plain", PLAIN)], WORKER)
     assert (results["long"]["outcome"], results["long"]["error"]) == ("stopped", FAILED)
@@ -264,7 +263,7 @@ def test_losing_the_real_worker_mid_rewrite_fails_that_rewrite_and_a_new_worker_
         while not (pids := subprocess.run(["pgrep", "-P", str(host.pid)], capture_output=True, text=True).stdout.split()):
             time.sleep(0.1)
         # Model load and boot take well under this, and the long rewrite,
-        # about nine seconds on the stand-in, is under way.
+        # about 12 seconds on the stand-in, is under way.
         time.sleep(8)
         subprocess.run(["kill", "-9", pids[0]], check=True)
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `tests/test_guest_path.py`: the long rewrite that the cancel and the
+  worker kill aim at is now one message of 120 short texts, which the
+  stand-in on llama.cpp rewrites in about 12 s. The old long text took about
+  1 s there, so both came after the rewrite had ended and the two checks
+  failed.
+
 - The app runs the small lead: its manifest names `small-lead-gguf-grammar`,
   shown as Qwen 3.5 9B, on a Mac with Apple silicon and at least 16 GB
   (it was the stand-in and 32 GB). Details shows the release and the model
