@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Stage 5: the Chat window's second checks (14 November), written up in
+  docs/plan.md: the build, the app's 43 tests, the worker's 35 and the
+  guest path's 23 on this round's code; no sockets for the app while its
+  startup check reworded through the relay; a test-time way to show the
+  app light without changing the Mac (`-NSRequiresAquaSystemAppearance
+  YES` at launch), with `docs/shots/chat-not-running-light.png`; and why
+  the timing lines leave the log within minutes (info level, kept in
+  memory only), left as they are. The live rewordings and the other
+  on-screen checks wait for an unlocked screen.
+
 - Chat keeps the end of a conversation in view, if it was in view, when the
   window shrinks: a conversation that fit the window lost its end as soon
   as the window became shorter than it. The same rule covers a

@@ -1347,6 +1347,54 @@ candidates, so the split has to be re-declared before any holdout opens.
   with a number, an edit of a reworded text, a relaunch after a delete, a
   watch of the app's sockets while it rewords, `tests/test_llama_worker.py`
   and `app/build.sh` on the committed tree.
+- Second checks, 14 November, on the code of this round's last change to
+  the app (load averages of 26 to 104 from other apps). `app/build.sh`
+  built it with no warnings; `swift test --package-path app` passed its 43
+  tests; `tests/test_llama_worker.py` passed its 35 in 3 minutes and
+  `tests/test_guest_path.py` its 23 in 9 minutes, each run alone. The
+  Mac's screen was locked throughout. A locked screen hides the contents
+  of the app's windows from accessibility and keeps the app from coming to
+  the front, so nothing could be typed or pressed in Chat; the menu still
+  answered, and the windows could still be captured by their number.
+  - Sockets: from Paused, `cloak verify` reached Ready in 13.5 s, its
+    startup check sending one real rewrite through the relay, the guest's
+    daemon and the worker. 46 samples of the app's internet sockets (`lsof
+    -i`), one every 0.25 s, found none, and one after found none; tor's
+    SOCKS port is a Unix socket. A sample while Chat itself rewords waits
+    for an unlocked screen.
+  - Light: launching the app with the argument
+    `-NSRequiresAquaSystemAppearance YES` shows its windows light for that
+    run only, without changing the Mac's appearance or the app's code.
+    [chat-not-running-light.png](shots/chat-not-running-light.png) is Chat,
+    paused, from the final code, drawn as an inactive window since the
+    locked screen kept it from the front.
+  - Marks: the words taken out are now tinted a lighter red with a dotted
+    underline, where they were struck through, so an original with most of
+    its words taken out still reads easily; the words put in keep a green
+    tint and a solid underline. The `removed-marks-*` shots in
+    [shots/](shots/) show the old and new marks on a message with 77 of its
+    91 words taken out, drawn offscreen in a text view with the app's font
+    and marks.
+  - The end in view: a window of the Chat window's shape (a split view;
+    messages as cards of two of the app's own text boxes; a box below),
+    laid out offscreen and resized by code. Before the change, a
+    conversation that fit lost its end by 103 points when the window was
+    dragged shorter than it; a conversation growing past the window had
+    its newest message cut off by 63 points the first time it stopped
+    fitting; and choosing a longer conversation after a short one, or any
+    after reading one part way up, opened it at the top. After it, the end
+    stayed in view in each case. A conversation read part way up stayed
+    where it was as the window shrank and as a message was added, as before.
+  - Logs: the rewording's timing lines are at the info level, which macOS
+    keeps in memory only by default and does not write to disk, so they
+    leave the log within minutes. They stay as they are: no conversation text is logged,
+    and keeping them longer would mean writing them to disk.
+  - Still to run on an unlocked screen: the four live rewordings, each
+    timed (a path with a number, over 10,000 characters, a cancel part
+    way, an edit after rewording with its marks following); a stopped
+    rewording on screen; a delete, then a relaunch; a socket sample while
+    Chat rewords; the new marks and the end in view in the app itself; and
+    Chat in light with messages.
 
 ## Decisions
 
