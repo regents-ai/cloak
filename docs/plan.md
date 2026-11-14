@@ -984,6 +984,25 @@ daemon takes. `tests/test_llama_worker.py` checks that the grammar changes
 no reply the daemon already accepted, and that no white space between
 tokens runs past 16 characters.
 
+The stand-in under the bounded grammar, `standin-gguf-grammar` again,
+[feasibility-20261114T041104Z.json](../evidence/stage3/standin-gguf-grammar/feasibility-20261114T041104Z.json),
+14 November, kit commit `3d1509d`, on AC power, the one-minute load 38
+before and 31 after.
+Development only. Beside the grammar's first run above:
+
+- EVAL06 39 of 40 rewritten against 38, 39 of them the same bytes as
+  there. e06-10 is rewritten in 0.69 s where it ran to its time limit
+  (91.7 s), closing its reply with the stray `]}` and the start of a note
+  inside its text, as on the worker alone. e06-36 still runs away in
+  words: it reached the 16,384-token limit in 106 s (truncated), where on
+  the busier machine it reached its time limit first (116.6 s).
+- All cases 51 of 59 rewritten against 50; the other seven are over the
+  input limit, as before. The four-turn conversation is rewritten (3.00 s
+  over four calls).
+- Median 0.37 s against 0.60 s, and 126 tokens a second generated against
+  108, on a quieter machine; the worker's sampled peak 2.08 GiB against
+  2.52, and the whole product's 2.66 GiB against 3.26.
+
 EVAL01 development screen,
 [eval01-20261111T072816Z.json](../evidence/stage3/standin/eval01-20261111T072816Z.json),
 kit commit `de16729`: 14 of the daemon's 16 cases rewritten, 2 stopped

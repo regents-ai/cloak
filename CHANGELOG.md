@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stage 3: the stand-in under the bounded reply grammar (14 November) is
+  recorded in evidence/stage3/standin-gguf-grammar/ and written up in
+  docs/plan.md: 39 of 40 ordinary messages rewritten against 38 under the
+  first grammar, e06-10 now rewritten in 0.69 s instead of running to its
+  time limit, and e06-36 still a word runaway. Development only.
+
 - `docs/plan.md`, "Stage 5 so far": removing the boot files a killed app
   left, at each launch, now stands under what exists; it still stood under
   what does not, though it was built on 13 November.
