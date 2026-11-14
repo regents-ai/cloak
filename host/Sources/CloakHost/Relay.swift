@@ -3,10 +3,10 @@ import Synchronization
 
 /// The host end of the guest channel (spec section 7). Each guest connection
 /// carries one request: the 32-byte channel token, then an `R` frame. The
-/// answer goes back as an `A` frame and the connection closes. Connections are
-/// served one at a time, in order. A guest that closes its end once it has
-/// sent its request cancels the rewrite, including while the request is still
-/// being handed to the worker.
+/// answer goes back as an `A` frame and the connection closes. Connections,
+/// and the app's own requests (`answer(to:)`), are served one at a time, in
+/// order. A guest that closes its end once it has sent its request cancels the
+/// rewrite, including while the request is still being handed to the worker.
 ///
 /// A lost worker fails the request it had, or the one that found it gone:
 /// that connection closes without an answer, and its request is never sent
@@ -54,13 +54,84 @@ public final class Relay: Sendable {
         queue.async { [self] in
             let lost = serve(socket)
             close(socket)
-            guard let lost else { return }
-            // Nothing more is served until the replacement has settled. The
-            // task is made under the lock, so its own use of the slot comes
-            // after this one.
-            queue.suspend()
-            slot.withLock { $0 = .replacing(Task { await replace(lost) }) }
+            if let lost { replaceAfter(lost) }
         }
+    }
+
+    /// Answers one request from the app itself, in turn with the guest's
+    /// connections, so it never overlaps one. Nil when there is no worker or
+    /// it was lost on this request, as for a guest connection. Cancelling the
+    /// task cancels the request: before its turn it never reaches the worker;
+    /// at the worker, the worker is told to stop it, and the answer it then
+    /// gives is returned.
+    public func answer(to request: Data) async -> Data? {
+        let call = Call()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.async { [self] in
+                    let (answer, lost) = serve(request, call)
+                    continuation.resume(returning: answer)
+                    if let lost { replaceAfter(lost) }
+                }
+            }
+        } onCancel: {
+            call.cancel()
+        }
+    }
+
+    /// One request from the app, as its task's cancel sees it:
+    ///
+    ///     waiting --its turn--> atWorker --answer--> finished
+    ///     waiting or atWorker --cancel--> cancelled
+    ///
+    /// A cancel at the worker reaches it under the lock, so never after the
+    /// answer has let the next request in.
+    private final class Call: Sendable {
+        private enum State {
+            case waiting
+            case atWorker(WorkerChannel)
+            case cancelled
+            case finished
+        }
+
+        private let state = Mutex(State.waiting)
+
+        /// Hands the request to the worker: nil when it was cancelled first,
+        /// false when the worker is lost.
+        func send(_ request: Data, to worker: WorkerChannel) -> Bool? {
+            state.withLock { state in
+                guard case .waiting = state else { return nil }
+                guard worker.send(request) else { return false }
+                state = .atWorker(worker)
+                return true
+            }
+        }
+
+        func cancel() {
+            state.withLock { state in
+                switch state {
+                case .waiting:
+                    state = .cancelled
+                case .atWorker(let worker):
+                    worker.cancel()
+                    state = .cancelled
+                case .cancelled, .finished:
+                    break
+                }
+            }
+        }
+
+        func finish() {
+            state.withLock { $0 = .finished }
+        }
+    }
+
+    /// Nothing more is served until the replacement has settled. The task is
+    /// made under the lock, so its own use of the slot comes after this one.
+    /// Runs on the queue.
+    private func replaceAfter(_ lost: WorkerChannel) {
+        queue.suspend()
+        slot.withLock { $0 = .replacing(Task { await replace(lost) }) }
     }
 
     /// Ends the worker, after any replacement in progress has settled.
@@ -105,6 +176,22 @@ public final class Relay: Sendable {
         }
         Self.write(socket, WorkerChannel.frame(0x41, answer))
         return nil
+    }
+
+    /// Serves one request from the app: its answer, and the worker when it
+    /// was lost on it.
+    private func serve(_ request: Data, _ call: Call) -> (Data?, WorkerChannel?) {
+        defer { call.finish() }
+        guard case .serving(let worker) = slot.withLock({ $0 }) else {
+            log("no worker; the app's request has no answer")
+            return (nil, nil)
+        }
+        guard let sent = call.send(request, to: worker) else { return (nil, nil) }
+        guard sent, let answer = worker.answer() else {
+            log("worker lost; the app's request has no answer")
+            return (nil, worker)
+        }
+        return (answer, nil)
     }
 
     /// Waits for the lost worker to exit, puts what `afterLoss` decides in its

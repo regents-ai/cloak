@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The relay answers requests from the app itself (`Relay.answer(to:)`), in
+  turn with the guest's connections on the same worker, one at a time, so
+  the app's rewrite never overlaps a guest call. Cancelling one that is
+  still waiting means it never reaches the worker; at the worker, the worker
+  is told to stop. A worker lost on it is replaced as for a guest call.
+
 - Stage 5: a live run of the app with the small lead (14 November),
   written up in docs/plan.md: Start reached Running in about 8 s from Paused
   (10 s with the app closed), three `cloak verify` runs each sent a real
