@@ -24,15 +24,21 @@ struct SendTests {
 
     /// An exchange with a stand-in sender: it gives the turn, reads the
     /// request, reports each of `reports` as a deposit change and waits for
-    /// it to be kept, then answers `answer`. Returns the requests it read.
+    /// it to be kept, then answers what `answer` gives for the request, or
+    /// goes away on nil. Returns the requests it read.
     final class StandIn: @unchecked Sendable {
         let reports: [Data]
-        let answer: Data?
+        let answer: @Sendable ([String: Any]) -> Data?
         private let lock = NSLock()
         private var requests = [[String: Any]]()
 
         init(reports: [Data] = [], answer: Data?) {
             self.reports = reports
+            self.answer = { _ in answer }
+        }
+
+        init(answer: @escaping @Sendable ([String: Any]) -> Data?) {
+            self.reports = []
             self.answer = answer
         }
 
@@ -59,7 +65,7 @@ struct SendTests {
                 write(handle, "S", report)
                 guard let (kind, _) = Self.frame(handle), kind == UInt8(ascii: "K") else { return }
             }
-            if let answer { write(handle, "A", answer) }
+            if let answer = answer(request) { write(handle, "A", answer) }
         }
 
         private func write(_ handle: FileHandle, _ kind: Character, _ payload: Data) {
@@ -86,6 +92,16 @@ struct SendTests {
 
     static func ok(_ value: String) -> Data { Data(#"{"ok":\#(value)}"#.utf8) }
 
+    /// The sender's answer to a send: the provider's completion, as text.
+    static func completed(_ completion: String) -> Data {
+        try! JSONSerialization.data(withJSONObject: ["ok": ["completion": completion]])
+    }
+
+    /// A completion whose one choice says `content`.
+    static func said(_ content: String, finish: String = "stop", more: String = "") -> String {
+        #"{"id":"c1","object":"chat.completion","choices":[{"index":0,"finish_reason":"\#(finish)","message":{"role":"assistant","content":"\#(content)"\#(more)}}]}"#
+    }
+
     static let conversation = Conversation(turns: [
         Turn(original: "Um, what colour is calm?", reworded: "Name a calm colour.", answer: "Sage green."),
         Turn(original: "never mind this one", reworded: "Skip this."),
@@ -94,7 +110,7 @@ struct SendTests {
 
     @Test func aSendCarriesOnlyTheRewordedTurnsAndTheDepositIsKeptSealed() async throws {
         defer { remove() }
-        let standIn = StandIn(reports: [Self.deposit], answer: Self.ok(#"{"answer":"Bubbles."}"#))
+        let standIn = StandIn(reports: [Self.deposit], answer: Self.completed(Self.said("Bubbles.")))
         let turn = Self.conversation.turns[2].id
         let identity = String(repeating: "ab", count: 32)
         let answer = try await Remote.send(
@@ -103,12 +119,17 @@ struct SendTests {
         #expect(answer == "Bubbles.")
 
         let request = try #require(standIn.read.first)
+        #expect(Set(request.keys) == ["op", "key", "deposit", "body", "identity"])
         #expect(request["op"] as? String == "send")
-        #expect(request["model"] as? String == "cheap")
         #expect(request["identity"] as? String == identity)
         #expect(request["key"] as? String == "0x" + String(repeating: "11", count: 32))
         #expect(request["deposit"] is NSNull)
-        #expect(request["messages"] as? [[String: String]] == [
+        let sent = try #require(request["body"] as? String)
+        let body = try #require(JSONSerialization.jsonObject(with: Data(sent.utf8)) as? [String: Any])
+        #expect(Set(body.keys) == ["model", "messages", "stream"])
+        #expect(body["model"] as? String == "cheap")
+        #expect(body["stream"] as? Bool == false)
+        #expect(body["messages"] as? [[String: String]] == [
             ["role": "user", "content": "Name a calm colour."],
             ["role": "assistant", "content": "Sage green."],
             ["role": "user", "content": "Suggest a goldfish name."],
@@ -120,7 +141,7 @@ struct SendTests {
         #expect(try FileManager.default.attributesOfItem(atPath: deposits.file.path)[.posixPermissions] as? Int == 0o600)
 
         // The next request carries the deposit kept by the time its turn came.
-        let next = StandIn(answer: Self.ok(#"{"answer":"Goldie."}"#))
+        let next = StandIn(answer: Self.completed(Self.said("Goldie.")))
         _ = try await Remote.send(
             turn, in: Self.conversation, model: "cheap", identity: identity,
             key: { Self.walletKey }, deposits: deposits, exchange: next.exchange)
@@ -130,7 +151,7 @@ struct SendTests {
 
     @Test func eachStopComesBackWithItsCode() async throws {
         defer { remove() }
-        for code in ["no_funds", "wallet_refused", "model_unavailable", "tor_down", "answer_refused", "failed"] {
+        for code in ["no_funds", "wallet_refused", "model_unavailable", "tor_down", "failed"] {
             let standIn = StandIn(answer: Data(#"{"stop":{"code":"\#(code)","detail":"made up"}}"#.utf8))
             let stop = await #expect(throws: RemoteStop.self) {
                 try await Remote.send(
@@ -139,6 +160,34 @@ struct SendTests {
                     exchange: standIn.exchange)
             }
             #expect(stop?.code.rawValue == code)
+        }
+    }
+
+    /// Chat shows only an answer that says something and finished by
+    /// stopping or at its length.
+    @Test func aCompletionWithoutAnAnswerIsRefused() async throws {
+        defer { remove() }
+        let cases: [(String, RemoteStop.Code?)] = [
+            (Self.said("Bubbles."), nil),
+            (Self.said("Bubbles.", finish: "length"), nil),
+            (Self.said(" \\n "), .answerRefused),
+            (Self.said("Bubbles.", finish: "content_filter"), .answerRefused),
+            (Self.said("Bubbles.", more: #","refusal":"no""#), .answerRefused),
+            (#"{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[]}}]}"#, .answerRefused),
+            (#"{"choices":[]}"#, .failed),
+            ("not json", .failed),
+        ]
+        for (completion, code) in cases {
+            let standIn = StandIn(answer: Self.completed(completion))
+            do {
+                let answer = try await Remote.send(
+                    Self.conversation.turns[2].id, in: Self.conversation, model: "cheap",
+                    identity: String(repeating: "ab", count: 32), key: { Self.walletKey }, deposits: deposits,
+                    exchange: standIn.exchange)
+                #expect(code == nil && answer == "Bubbles.", "\(completion)")
+            } catch {
+                #expect(error.code == code, "\(completion)")
+            }
         }
     }
 
@@ -158,7 +207,7 @@ struct SendTests {
     @Test func aKeyThatCannotBeReadSendsNothing() async throws {
         defer { remove() }
         struct Locked: Error {}
-        let standIn = StandIn(answer: Self.ok(#"{"answer":"unused"}"#))
+        let standIn = StandIn(answer: Self.completed(Self.said("unused")))
         let stop = await #expect(throws: RemoteStop.self) {
             try await Remote.send(
                 Self.conversation.turns[2].id, in: Self.conversation, model: "cheap",

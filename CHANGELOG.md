@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The guest's sender posts the chat request the Mac built, as it is, and
+  brings the provider's completion back as it came; the Mac reads the
+  answer from it. It also gives the provider's list of models as it comes
+  (`models`). Chat's sends are unchanged: the app builds their body,
+  `{"model", "messages", "stream": false}`, and keeps only an answer that
+  says something and finished by stopping or at its length, as the sender
+  did.
+
 - docs/plan.md: decision 10 (14 November), sending in a Development mode,
   and in "Stage 5 so far" its design, what goes out, its checks and its
   live proofs through Tor up to the first payment, with no money moved,

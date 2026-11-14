@@ -2,9 +2,10 @@
 //! stand-in for the guest's Tor port, which records each connection's user
 //! name and destination and passes it to the local server named for that
 //! destination; the provider's MPP root; and the Tempo network's RPC. They
-//! cover what happens after payment (the answer and the ways it stops), the
-//! check of the balance before anything reaches the provider, the headers
-//! that go out, and the Tor identities each connection uses.
+//! cover what happens after payment (the completion and the ways it stops),
+//! the check of the balance before anything reaches the provider, the body
+//! and headers that go out, the provider's list of models, and the Tor
+//! identities each connection uses.
 //!
 //!     cargo test --manifest-path guest/sender/Cargo.toml
 
@@ -272,15 +273,18 @@ fn usable() -> Value {
     })
 }
 
+/// The body as the Mac builds it, with a tool and its settings, which the
+/// sender posts byte for byte.
+const BODY: &str = r#"{"messages":[{"content":"Name a calm colour.","role":"user"},{"content":"Sage green.","role":"assistant"},{"content":"Suggest a goldfish name.","role":"user"}],"model":"cheap","stream":false,"temperature":0.7,"tools":[{"type":"function","function":{"name":"look","parameters":{}}}]}"#;
+
 fn send(identity: &str, deposit: Value) -> Value {
-    json!({
-        "op": "send", "key": key(), "deposit": deposit, "model": "cheap", "identity": identity,
-        "messages": [
-            { "role": "user", "content": "Name a calm colour." },
-            { "role": "assistant", "content": "Sage green." },
-            { "role": "user", "content": "What is a good name for a goldfish?" },
-        ],
-    })
+    json!({ "op": "send", "key": key(), "deposit": deposit, "identity": identity, "body": BODY })
+}
+
+/// The completion the provider stand-in answered with, as the sender
+/// returns it.
+fn answered(completion: &Value) -> Value {
+    json!({ "ok": { "completion": completion.to_string() } })
 }
 
 fn is_identity(user: &str) -> bool {
@@ -288,19 +292,15 @@ fn is_identity(user: &str) -> bool {
 }
 
 #[test]
-fn a_send_carries_only_the_turns_and_brings_the_answer_back() {
-    let stage = Stage::new(
-        200,
-        completion(
-            json!({ "role": "assistant", "content": "Bubbles." }),
-            "stop",
-        ),
-        5_000_000,
+fn a_send_carries_only_the_body_and_brings_the_completion_back() {
+    let bubbles = completion(
+        json!({ "role": "assistant", "content": "Bubbles." }),
+        "stop",
     );
+    let stage = Stage::new(200, bubbles.clone(), 5_000_000);
     let identity = "ab".repeat(32);
-    let request = send(&identity, Value::Null);
-    let (reply, kept) = stage.ask(request.clone());
-    assert_eq!(reply, json!({ "ok": { "answer": "Bubbles." } }));
+    let (reply, kept) = stage.ask(send(&identity, Value::Null));
+    assert_eq!(reply, answered(&bubbles));
     assert!(kept.is_empty());
 
     {
@@ -309,11 +309,7 @@ fn a_send_carries_only_the_turns_and_brings_the_answer_back() {
             panic!("{} requests", requests.len())
         };
         assert_eq!(sent.path, "/mpp/v1/chat/completions");
-        let body: Value = serde_json::from_slice(&sent.body).unwrap();
-        assert_eq!(
-            body,
-            json!({ "model": "cheap", "messages": request["messages"], "stream": false })
-        );
+        assert_eq!(sent.body, BODY.as_bytes());
         let mut names: Vec<_> = sent.headers.keys().map(|name| name.as_str()).collect();
         names.sort();
         eprintln!("headers to the provider: {:?}", sent.headers);
@@ -347,7 +343,7 @@ fn a_send_carries_only_the_turns_and_brings_the_answer_back() {
     // Another conversation's send goes as its own identity.
     let other = "cd".repeat(32);
     let (reply, _) = stage.ask(send(&other, Value::Null));
-    assert_eq!(reply, json!({ "ok": { "answer": "Bubbles." } }));
+    assert_eq!(reply, answered(&bubbles));
     assert_eq!(
         stage
             .connections()
@@ -376,14 +372,52 @@ fn an_unfunded_send_stops_before_anything_reaches_the_provider() {
 
 #[test]
 fn a_deposit_that_can_pay_needs_no_balance() {
-    let stage = Stage::new(
-        200,
-        completion(json!({ "content": "Goldie." }), "length"),
-        0,
-    );
+    let goldie = completion(json!({ "content": "Goldie." }), "length");
+    let stage = Stage::new(200, goldie.clone(), 0);
     let (reply, _) = stage.ask(send(&"ab".repeat(32), usable()));
-    assert_eq!(reply, json!({ "ok": { "answer": "Goldie." } }));
+    assert_eq!(reply, answered(&goldie));
     assert!(stage.seen.rpc.lock().unwrap().is_empty());
+}
+
+/// Whatever completion the provider gives comes back as it is: what to make
+/// of it is for the Mac.
+#[test]
+fn a_completion_comes_back_as_the_provider_gave_it() {
+    for body in [
+        completion(json!({ "content": "Hm." }), "content_filter"),
+        completion(
+            json!({ "content": null, "tool_calls": [{ "id": "1", "type": "function", "function": { "name": "look", "arguments": "{}" } }] }),
+            "tool_calls",
+        ),
+        json!({ "choices": [] }),
+    ] {
+        let stage = Stage::new(200, body.clone(), 0);
+        let (reply, _) = stage.ask(send(&"ab".repeat(32), usable()));
+        assert_eq!(reply, answered(&body));
+    }
+}
+
+#[test]
+fn the_models_are_the_providers_list_as_it_gives_it() {
+    let stage = Stage::new(200, json!({}), 0);
+    let (reply, kept) = stage.ask(json!({ "op": "models" }));
+    let listed: Value = serde_json::from_str(reply["ok"]["models"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        listed,
+        json!({ "data": [
+            { "id": "cheap", "pricing": { "input": 0.1, "output": 0.2 } },
+            { "id": "unpriced" },
+        ] })
+    );
+    assert!(kept.is_empty());
+    let connections = stage.connections();
+    assert!(
+        connections.len() == 1
+            && connections[0].host == PROVIDER
+            && connections[0].named
+            && is_identity(&connections[0].user),
+        "{connections:?}"
+    );
 }
 
 #[test]
@@ -402,22 +436,6 @@ fn each_way_a_send_stops_has_its_code() {
         ),
         (401, json!({}), "wallet_refused"),
         (500, json!({}), "failed"),
-        (
-            200,
-            completion(json!({ "content": "Hm." }), "content_filter"),
-            "answer_refused",
-        ),
-        (
-            200,
-            completion(json!({ "content": null, "refusal": "No." }), "stop"),
-            "answer_refused",
-        ),
-        (
-            200,
-            completion(json!({ "content": "  " }), "stop"),
-            "answer_refused",
-        ),
-        (200, json!({ "choices": [] }), "failed"),
     ];
     for (status, body, code) in cases {
         let stage = Stage::new(status, body.clone(), 0);
@@ -435,6 +453,7 @@ fn a_tor_port_that_refuses_is_tor_down() {
         .unwrap();
     for request in [
         json!({ "op": "wallet", "address": "0x0000000000000000000000000000000000000001", "deposit": null }),
+        json!({ "op": "models" }),
         send(&"ab".repeat(32), Value::Null),
         send(&"ab".repeat(32), usable()),
     ] {

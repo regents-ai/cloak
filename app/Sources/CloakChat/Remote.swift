@@ -114,6 +114,8 @@ public struct RemoteStop: Error, Equatable, Sendable {
         case walletRefused = "wallet_refused"
         case modelUnavailable = "model_unavailable"
         case torDown = "tor_down"
+        /// The completion has no answer Chat can show; found here, never by
+        /// the sender.
         case answerRefused = "answer_refused"
         case failed
         /// The sender was not reached, or went away: Cloak is not running.
@@ -226,9 +228,9 @@ public enum Remote {
     }
 
     /// Sends `turn`'s reworded text, after the conversation's earlier turns
-    /// as they were sent and answered, to `model`, through Tor as
-    /// `identity`, opening or topping up the deposit as needed, at the size
-    /// the provider suggests. Returns the model's answer.
+    /// as they were sent and answered, to `model` (`complete`). Returns the
+    /// model's answer: the first choice's text, when it has one and finished
+    /// by stopping or at its length.
     public static func send(
         _ turn: UUID, in conversation: Conversation, model: String, identity: String,
         key: @escaping Key, deposits: DepositStore, exchange: Exchange
@@ -236,14 +238,58 @@ public enum Remote {
         guard let messages = messages(for: turn, in: conversation) else {
             throw RemoteStop(code: .failed, detail: "the turn is not in the conversation")
         }
-        struct Answered: Decodable { let answer: String }
-        let answered: Answered = try await run(exchange, keep: deposits.keep) {
+        let body: Data
+        do {
+            body = try JSONSerialization.data(
+                withJSONObject: ["model": model, "messages": messages, "stream": false], options: .withoutEscapingSlashes)
+        } catch {
+            throw RemoteStop(code: .failed, detail: "cannot build the body: \(error)")
+        }
+        let completion = try await complete(body, identity: identity, key: key, deposits: deposits, exchange: exchange)
+        struct Completion: Decodable {
+            let choices: [Choice]
+            struct Choice: Decodable {
+                let message: Said
+                let finish_reason: String?
+            }
+            struct Said: Decodable {
+                let content: String?
+                let refusal: String?
+            }
+        }
+        guard let choices = try? JSONDecoder().decode(Completion.self, from: completion).choices else {
+            throw RemoteStop(code: .failed, detail: "the provider's completion did not read")
+        }
+        guard let choice = choices.first else { throw RemoteStop(code: .failed, detail: "the provider gave no choice") }
+        guard let content = choice.message.content, choice.message.refusal == nil, [nil, "stop", "length"].contains(choice.finish_reason),
+            !content.unicodeScalars.allSatisfy(\.properties.isWhitespace)
+        else { throw RemoteStop(code: .answerRefused, detail: "finish reason \(choice.finish_reason ?? "none")") }
+        return content
+    }
+
+    /// Posts `body`, a chat request in OpenAI's shape built on this Mac with
+    /// every user message reworded, to the provider through Tor as
+    /// `identity`, opening or topping up the deposit as needed, at the size
+    /// the provider suggests. Returns the provider's completion as it gave
+    /// it.
+    public static func complete(
+        _ body: Data, identity: String, key: @escaping Key, deposits: DepositStore, exchange: Exchange
+    ) async throws(RemoteStop) -> Data {
+        struct Completed: Decodable { let completion: String }
+        let completed: Completed = try await run(exchange, keep: deposits.keep) {
             [
-                "op": "send", "key": try hexKey(key), "deposit": try deposit(deposits), "model": model,
-                "messages": messages, "identity": identity,
+                "op": "send", "key": try hexKey(key), "deposit": try deposit(deposits),
+                "body": String(decoding: body, as: UTF8.self), "identity": identity,
             ]
         }
-        return answered.answer
+        return Data(completed.completion.utf8)
+    }
+
+    /// The provider's list of models, as it gave it.
+    public static func models(exchange: Exchange) async throws(RemoteStop) -> Data {
+        struct Listed: Decodable { let models: String }
+        let listed: Listed = try await run(exchange, keep: { _ in }) { ["op": "models"] }
+        return Data(listed.models.utf8)
     }
 
     /// Closes the deposit with the provider, which refunds what is unspent.

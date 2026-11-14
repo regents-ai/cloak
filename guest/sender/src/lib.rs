@@ -172,6 +172,8 @@ pub enum Request {
         address: Address,
         deposit: Option<Deposit>,
     },
+    /// The provider's list of models, as it gives it.
+    Models,
     Send(Send),
     /// Closes the deposit with the provider, which refunds what is unspent.
     Close {
@@ -192,6 +194,7 @@ impl Request {
         match self {
             Self::Create => "create",
             Self::Wallet { .. } => "wallet",
+            Self::Models => "models",
             Self::Send(_) => "send",
             Self::Close { .. } => "close",
             Self::Withdraw { .. } => "withdraw",
@@ -199,29 +202,16 @@ impl Request {
     }
 }
 
-/// One message to the model, with the conversation's earlier turns as they
-/// were sent and answered.
+/// One chat request to the model. The Mac builds its body, with every user
+/// message reworded there, and the sender posts those bytes as they are.
 #[derive(Deserialize)]
 pub struct Send {
     key: B256,
     deposit: Option<Deposit>,
-    model: String,
-    messages: Vec<Message>,
+    /// The request body, JSON, as the Mac built it.
+    body: String,
     /// The conversation's SOCKS user name.
     identity: String,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct Message {
-    role: Role,
-    content: String,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    User,
-    Assistant,
 }
 
 /// A token amount in its smallest units, as a decimal string.
@@ -315,7 +305,6 @@ pub enum Code {
     WalletRefused,
     ModelUnavailable,
     TorDown,
-    AnswerRefused,
     Failed,
 }
 
@@ -498,7 +487,6 @@ fn code_name(code: Code) -> &'static str {
         Code::WalletRefused => "wallet_refused",
         Code::ModelUnavailable => "model_unavailable",
         Code::TorDown => "tor_down",
-        Code::AnswerRefused => "answer_refused",
         Code::Failed => "failed",
     }
 }
@@ -514,6 +502,10 @@ async fn run<S: Read + Write + std::marker::Send + 'static>(
             Ok(json!({ "key": signer.to_bytes(), "address": signer.address() }))
         }
         Request::Wallet { address, deposit } => wallet(network, address, deposit).await,
+        Request::Models => {
+            let models = listed(&network.client(&fresh())?, network).await?;
+            Ok(json!({ "models": models }))
+        }
         Request::Send(send) => {
             let keep = Keep::new(send.deposit.clone(), frames);
             send.run(network, keep).await
@@ -550,6 +542,17 @@ struct Pricing {
     output: f64,
 }
 
+/// The provider's list of models, as JSON text.
+async fn listed(client: &reqwest::Client, network: &Network) -> Result<String, Stop> {
+    Ok(client
+        .get(format!("{}/v1/models", network.provider))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?)
+}
+
 async fn wallet(
     network: &Network,
     address: Address,
@@ -571,13 +574,8 @@ async fn wallet(
         )
     };
     let models = async {
-        let models: Models = client
-            .get(format!("{}/v1/models", network.provider))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let models: Models = serde_json::from_str(&listed(&client, network).await?)
+            .map_err(|e| Stop::failed(format!("the provider's models: {e}")))?;
         Ok::<_, Stop>(
             models
                 .data
@@ -635,28 +633,12 @@ impl Send {
         let response = client
             .post(network.chat())
             .header("Accept-Payment", "tempo/session")
-            .json(&json!({ "model": self.model, "messages": self.messages, "stream": false }))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(self.body)
             .send_with_payment(&payer)
             .await?;
         answer(response).await
     }
-}
-
-#[derive(Deserialize)]
-struct Completion {
-    choices: Vec<Choice>,
-}
-
-#[derive(Deserialize)]
-struct Choice {
-    message: Said,
-    finish_reason: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Said {
-    content: Option<String>,
-    refusal: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -671,7 +653,8 @@ struct ProblemDetail {
     kind: Option<String>,
 }
 
-/// The model's answer, or why there is none.
+/// The provider's completion, as JSON text, or why there is none. The Mac
+/// reads the answer from it.
 async fn answer(response: reqwest::Response) -> Result<Value, Stop> {
     let status = response.status();
     if !status.is_success() {
@@ -695,25 +678,7 @@ async fn answer(response: reqwest::Response) -> Result<Value, Stop> {
             _ => Stop::failed(detail),
         });
     }
-    let completion: Completion = response.json().await?;
-    let choice = completion
-        .choices
-        .into_iter()
-        .next()
-        .ok_or_else(|| Stop::failed("the provider gave no choice"))?;
-    match (
-        choice.message.content,
-        choice.message.refusal,
-        choice.finish_reason.as_deref(),
-    ) {
-        (Some(content), None, Some("stop" | "length") | None) if !content.trim().is_empty() => {
-            Ok(json!({ "answer": content }))
-        }
-        (_, _, reason) => Err(Stop::new(
-            Code::AnswerRefused,
-            format!("finish reason {reason:?}"),
-        )),
-    }
+    Ok(json!({ "completion": response.text().await? }))
 }
 
 /// Closes the deposit with the provider. A cooperative close needs one of
