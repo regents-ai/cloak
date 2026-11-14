@@ -60,11 +60,14 @@ struct WalletView: View {
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(16)
+            // Level with the form's boxes.
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
-        // Tall enough for a made wallet with an open deposit, short of the
-        // space a 13-inch screen leaves under the Chat window's toolbar.
-        .frame(width: 540, height: 720)
+        // As tall as what it shows, up to 640 points; past that, or past
+        // the room the Chat window leaves a sheet, the form scrolls.
+        .frame(width: 540)
+        .frame(maxHeight: 640)
         .task { await wallet.refresh() }
     }
 }
@@ -97,14 +100,9 @@ private struct Account: View {
                     .help("Copy")
                 }
             }
-            LabeledContent("Network", value: "Tempo")
-            LabeledContent("Token", value: "USDC.e")
+            LabeledContent("Token", value: "USDC.e on Tempo")
             if let look = wallet.look {
-                if look.setup {
-                    Label("The provider takes USDC.e on Tempo.", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                        .symbolRenderingMode(.multicolor)
-                } else {
+                if !look.setup {
                     Label("The provider no longer names USDC.e on Tempo. Don't add funds.", systemImage: "exclamationmark.triangle.fill")
                         .symbolRenderingMode(.multicolor)
                 }
@@ -182,8 +180,6 @@ private struct Models: View {
                     Text("\(model.id)  \(model.pricing.input.price) in, \(model.pricing.output.price) out").tag(model.id)
                 }
             }
-        } header: {
-            Text("Model")
         } footer: {
             Text("Prices are per million tokens.")
                 .foregroundStyle(.secondary)

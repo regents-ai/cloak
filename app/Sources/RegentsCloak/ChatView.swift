@@ -206,10 +206,13 @@ private struct TurnCard: View {
     let turn: Turn
     let open: Bool
     let rewording: Chat.Rewording?
+    @State private var hovering = false
 
     var body: some View {
         let sending = chat.sending[turn.id]
-        Card {
+        let shrunk = !open && turn.answer == nil
+        // The accent edge says a press opens it.
+        Card(highlighted: hovering && shrunk && chat.rewording == nil) {
             if let reworded = turn.reworded {
                 let diff = WordDiff(original: turn.original, reworded: reworded)
                 HStack(alignment: .top, spacing: 12) {
@@ -274,7 +277,7 @@ private struct TurnCard: View {
             // Over the whole card, text boxes included, so a press anywhere
             // opens it. Off while a rewording is under way, which keeps its
             // own card open.
-            if !open, turn.answer == nil {
+            if shrunk {
                 Button { chat.opened = turn.id } label: {
                     Color.clear
                         .contentShape(.rect(cornerRadius: 12))
@@ -285,6 +288,7 @@ private struct TurnCard: View {
                 .disabled(chat.rewording != nil)
             }
         }
+        .onHover { hovering = $0 }
     }
 }
 
@@ -372,6 +376,8 @@ private struct Progress: View {
 }
 
 private struct Card<Content: View>: View {
+    /// An accent edge in place of the separator's.
+    var highlighted = false
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -380,7 +386,9 @@ private struct Card<Content: View>: View {
         }
         .padding(16)
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(highlighted ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator)))
     }
 }
 

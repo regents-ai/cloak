@@ -66,7 +66,9 @@ struct AgentsView: View {
                 Button("Add") { adding = true }
                     .buttonStyle(.borderedProminent)
             }
-            .padding(16)
+            // Level with the form's boxes.
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
         .frame(width: 520, height: 560)
         .task { await door.load() }
@@ -103,10 +105,15 @@ private struct AppRow: View {
             }
             .accessibilityElement(children: .combine)
             Spacer()
-            Button("Remove", systemImage: "trash", action: remove)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("Remove")
+            Button(action: remove) {
+                // A larger target than the icon alone.
+                Label("Remove", systemImage: "trash")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 24, height: 24)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove")
         }
     }
 

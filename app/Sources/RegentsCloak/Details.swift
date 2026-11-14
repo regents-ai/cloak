@@ -54,15 +54,18 @@ struct DetailsView: View {
                     .foregroundStyle(.secondary)
             }
             Section {
-                DisclosureGroup("Technical details", isExpanded: $technical) {
+                DisclosureGroup(isExpanded: $technical) {
                     Text(status.detail)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    // In a form on macOS the disclosure gives VoiceOver
+                    // nothing to press, so its title has an action of its
+                    // own; the details under it stay text.
+                    Text("Technical details")
+                        .accessibilityAction { technical.toggle() }
                 }
-                // In a form on macOS the disclosure gives VoiceOver nothing
-                // to press, so it has an action of its own.
-                .accessibilityAction { technical.toggle() }
             }
         }
         .formStyle(.grouped)

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Wallet says less so a made wallet fits its sheet: Network and Token are
+  one row, "USDC.e on Tempo"; the line that the provider takes it shows
+  only when it no longer does; the Model box has no second "Model" above it.
+
+- Windows, from pictures of them: Wallet is as tall as what it shows, and
+  its form scrolls only past 640 points or past the room the Chat window
+  leaves it, where it hung below Chat and left an empty band with no
+  deposit open; Refresh, Done and Agents' Add line up with the boxes'
+  right edge; Remove in Agents is as easy to hit as Copy; a shrunk unsent
+  message's edge takes the accent colour under the pointer, since a press
+  opens it; and VoiceOver reads Details' technical details as text, with
+  their title still opening and closing them.
+
 - Chat: a message reworded but not sent can still be finished after
   another is written. Its card shrinks and says "Not sent"; pressed
   anywhere, it opens again to be edited, reworded and sent, and the card
