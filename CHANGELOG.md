@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Agents keeps each app's "last used" current, drawn again each minute,
+  where a reopened window showed the time as it was when it was last
+  drawn. docs/plan.md: the door in "Stage 5 so far", with what the daemon
+  rewords, file by file, the checks and the live run on loopback up to
+  the no-wallet stop; and the sender now posts the body the app built.
+
 - Agents, from the menu: your other apps on this Mac send chat requests in
   OpenAI's shape to `http://127.0.0.1:8742/v1` while Cloak is running,
   each with a pass of its own, shown once when the app is added; Remove

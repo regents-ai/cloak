@@ -94,9 +94,12 @@ private struct AppRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.name)
                     .fontWeight(.medium)
-                Text(use)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                // Drawn again each minute, so "last used" stays true.
+                TimelineView(.everyMinute) { _ in
+                    Text(use)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
             Button("Remove", systemImage: "trash", action: remove)
@@ -110,7 +113,7 @@ private struct AppRow: View {
     private var use: String {
         let added = "Added \(app.added.formatted(date: .abbreviated, time: .omitted))"
         let requests = app.requests == 1 ? "1 request" : "\(app.requests.formatted()) requests"
-        let last = app.lastUsed.map { "last \($0.formatted(.relative(presentation: .named)))" } ?? "not used yet"
+        let last = app.lastUsed.map { "last used \($0.formatted(.relative(presentation: .named)))" } ?? "not used yet"
         return "\(added) · \(requests) · \(last)"
     }
 }

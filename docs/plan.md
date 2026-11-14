@@ -1421,7 +1421,9 @@ candidates, so the split has to be re-declared before any holdout opens.
   - What goes out: the approved reworded text, after the conversation's
     earlier turns as sent and answered, as `{"model", "messages",
     "stream": false}` and nothing else: no instruction, no original. The
-    headers of a send are exactly `accept: */*`, `accept-payment:
+    app builds that body; the sender posts it as given and brings the
+    provider's completion back as it came, and the app reads the answer
+    from it (since the door, below). The headers of a send are exactly `accept: */*`, `accept-payment:
     tempo/session`, `content-length`, `content-type: application/json` and
     `host`; the paid request is the same with the toolkit's credential
     added (`authorization: Payment …`), which names the wallet and its
@@ -1515,6 +1517,104 @@ candidates, so the split has to be re-declared before any holdout opens.
     Close afterwards refunds the rest. Tempo's test network, Moderato (chain
     42431), was not used: Boundless runs on Tempo's main network only, so a
     proof there needs a provider of its own on Moderato and test funds.
+- The door (14 November), in Development mode: the owner's other apps on
+  this Mac send chat requests in OpenAI's shape to
+  `http://127.0.0.1:8742/v1`, each with a pass of its own, and each goes on
+  as Chat's do, reworded on the Mac, then sent from the one wallet.
+  "Agents…" in the menu opens Agents: the address, Open or why not, one
+  sentence on what is reworded, the apps (name, added, requests, last used),
+  Add (a name, then the pass shown once with Copy) and Remove (asked
+  first). `app/Sources/CloakDoor/`.
+  - The listener: Apple's Network framework (`NWListener`), open only while
+    Running, on 127.0.0.1 and port 8742 only (a required local endpoint, no
+    address reuse, local connections only); when another app holds the
+    port, on 127.0.0.1 or on every address, it stays closed and Agents says
+    so. A small strict HTTP/1.1 reader: one request per connection, a head
+    of at most 16 KiB, a body of at most 4 MiB with `Content-Length` (no
+    chunked bodies), the whole request within 30 s; `POST
+    /v1/chat/completions` and `GET /v1/models` only, the latter the
+    provider's list as it gives it.
+  - Passes: "cloak-" and 32 random bytes in hex. Only each pass's SHA-256
+    is kept, with the app's name, count and times, sealed with ChaChaPoly
+    under the conversations' key (`agents`, owner only), and compared in
+    constant time. A request with an `Origin` header, or `Sec-Fetch-Site:
+    cross-site`, gets 403, and no response has CORS headers; no pass, a
+    wrong one or a removed one gets 401, and nothing else happens. The
+    pass is checked before the body is read.
+  - What is reworded, as the pinned daemon does it (paths under
+    `reference/src/zkapi/zkapi-clientd/internal/`): every message whose
+    role is user, replayed as reworded before when the app's last request
+    begins this one, else reworded alone, one call per message
+    (`rewriter/transcript.go:44-137`; unknown user turns are never passed
+    through, line 14). Its text is a string content or each non-blank text
+    part; its images, audio and files, and a user message with no text, go
+    as they are (`rewriter/rewriter.go:115-174`, rebuilt at 254-262). System
+    and developer messages, the model's earlier answers with their tool
+    calls, and tool results go as written (`rewriter/transcript.go:81-83`),
+    as do the tool definitions and the other fields the daemon keeps
+    (`server/server.go:171-245`). A history that is not the last one
+    continued gets a new Tor identity (`zkapi/conversation.go:61-92`).
+    What the door remembers is per app, in memory only: digests of the
+    messages, and the user messages as reworded. The door's transcript
+    gives the daemon's messages and asks the daemon's rewrites, byte for
+    byte, on 16 requests in four conversations run through the daemon's own
+    `Transcript` (`tests/daemon_transcript/main.go`): 13 taken by both, 3
+    refused by both.
+  - Stricter than the daemon, each refused before anything leaves: a role
+    the provider does not take, a text part whose text is not a string,
+    images by link and stored files, `n` other than 1 and `store`. The
+    10,000-character cap counts one message's texts together (decision 6),
+    413 with the daemon's words. `stream_options` is dropped and the
+    request goes with `"stream": false`; `stream: true` gets the whole
+    answer as one server-sent chunk, then `data: [DONE]`.
+  - Sending: the app builds the body, and the sender now posts any body as
+    given and brings the completion back as it came (`models` lists the
+    provider's models), so system messages and tools can go; Chat's body is
+    unchanged. The model must be in the provider's live list, read for each
+    request through Tor (2 to 6 s here). Every stop is OpenAI's error
+    shape: 401, 403, 400, 404 (no such model), 405, 411, 413, 415, 431,
+    505, 402 (no wallet, no funds, wallet refused), 502 (the rewording or the
+    provider failed), 503 (Tor down; Cloak paused or stopped), 504 (the
+    rewording's deadline). No fallback: nothing is sent unless every user
+    message was reworded.
+  - Turns: the door's rewordings and Chat's go through the one relay, in
+    the order asked, so neither starves the other. Pause, Stop and Quit
+    close the door and end each request under way with 503; Quit waits for
+    their answers.
+  - Logs and disk: the log has each answer's status and time, and the
+    rewording's time; no request's text is kept, shown or logged.
+  - Checks: `swift test --package-path app`, 65 tests, nine of them the
+    door's against stand-ins for the worker and the sender (passes, web
+    pages, rewording then sending, earlier turns never sent as written,
+    each stop, closing with a request under way, a taken port, and the
+    daemon's transcript); `cargo test` in `guest/sender/`, 12;
+    `tests/test_guest_path.py`, 23 in 8 min 51 s.
+  - Live, on the development Mac with the small lead (load averages of 31
+    to 199 from other apps; after six five-minute waits the run went on),
+    through the real Tor and provider for the model list only, with no
+    wallet in the keychain: Running in 9.5 s, the door listening on
+    127.0.0.1:8742 only (`lsof`), the LAN address refused. Agents, driven
+    by accessibility actions only, added an app and showed its pass once.
+    With curl on loopback: no pass 401, a made-up pass 401, an `Origin`
+    403 (each within 5 ms); the models 200 in 3.7 s, 26 listed; a harmless
+    chat reworded on the Mac in 0.80 s, then 402 no wallet, 3.0 s in all;
+    over the cap 413 in 5 ms, before any rewording; a made-up model 404 in
+    2.2 s; `stream: true` reworded in 0.74 s, then 402. Pause during a
+    request's model list answered 503 within 0.03 s, and during its
+    rewording (9,776 characters, 1.9 s in) within 0.78 s, the rewording
+    cancelled; after each, nothing listened and curl could not connect.
+    Remove asked first; the removed app's pass then got 401. Agents counted
+    8 requests for the app, and a window reopened 4 minutes after a
+    request read "last used 4 minutes ago" (read through accessibility). Quit from Running closed the door within 2 ms.
+    No request's text was in the app's log, in 4.2 million lines of the
+    Mac's log over the run, or in Cloak's folder; the apps file is sealed.
+    The first Add made the conversations' key in the login keychain, as
+    Chat's first conversation would; this Mac had no conversations, so the
+    run's key and apps file were removed afterwards.
+  - Not proven: an answer through the door, and the no-funds stop live (the
+    keychain has no wallet, and none was made: the stand-in proves it);
+    Quit and Stop during a request live (the tests close the door the same
+    way); Agents in light; a spoken VoiceOver run of Agents.
 
 ## Decisions
 
