@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stage 3: the EVAL01 development screen on the small lead again, on the
+  one-engine tree (14 November), recorded in
+  evidence/stage3/small-lead-gguf-grammar/ and written up in docs/plan.md:
+  the same 16 texts byte for byte as the first run, 9 of 16 passed, median
+  0.82 s, whole product 6.67 GiB at its peak.
+
 - `tests/test_guest_path.py`: the long rewrite that the cancel and the
   worker kill aim at is now one message of 120 short texts, which the
   stand-in on llama.cpp rewrites in about 12 s. The old long text took about

@@ -12,7 +12,7 @@ not a pass. Progress lives here.
 | --- | --- | --- | --- |
 | 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
 | 2. Build the local path | Minimal guest adapter and native worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
-| 3. Check feasibility early | Runs of each of the two candidates (decision 7's small pair, as GGUF files on llama.cpp under the reply grammar: decisions 8 and 9) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the small lead has two feasibility runs and one EVAL01 screen, the small challenger none |
+| 3. Check feasibility early | Runs of each of the two candidates (decision 7's small pair, as GGUF files on llama.cpp under the reply grammar: decisions 8 and 9) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the small lead has two feasibility runs and two EVAL01 screens, the small challenger none |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner of the two candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split is to be settled before any holdout opens (decisions 7 to 9) |
 | 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead ("Stage 5 so far"); no signed full bundle, setup, recovery, updates, sessions, payment or cover |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
@@ -474,8 +474,8 @@ refused it as a bare program with no bundle identifier).
   `evidence/stage3/<name>/`, and `uv run scripts/stage3.py eval01 <name>`
   runs the development screen. The candidates are the small lead and the
   small challenger as GGUF files on llama.cpp under the reply grammar
-  (decisions 7 to 9). The small lead has two feasibility runs and one
-  EVAL01 screen (below); the small challenger has none. The runs of the
+  (decisions 7 to 9). The small lead has two feasibility runs and two
+  EVAL01 screens (below); the small challenger has none. The runs of the
   candidates deleted on 14 November (decision 8) stay below as history.
 - Every call goes through the real path: the daemon's rewrite code in the
   guest, the adapter, the host relay and the sandboxed worker. A copy-only
@@ -892,6 +892,12 @@ Neither engine is ahead on what the rewrites keep. Engine choice
 36 of 40) and memory (6.79 GiB against 7.22 GiB). The MLX worker and its
 candidates are to be deleted. The changed requests above are the small
 model's, not the engine's, and are stage 4's to judge.
+
+Run again on llama.cpp with the grammar once the MLX worker was deleted
+([record](../evidence/stage3/small-lead-gguf-grammar/eval01-20261114T062754Z.json),
+14 November): the same 16 texts byte for byte, so the same 9 passed;
+median 0.82 s, 95th percentile 1.18 s, whole product 6.67 GiB at its peak,
+with load averages of 35 to 41 from other apps.
 
 ### Stand-in proof (development only)
 
