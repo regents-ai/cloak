@@ -9,22 +9,28 @@ import Foundation
 /// for the rest. The guest's kernel is a placeholder, and the test process
 /// has no virtualization entitlement, so a guest never starts here.
 struct Fixture {
-    /// Opens its SOCKS port and bootstraps at once, then runs until stopped.
+    /// Notes the start, and says it opened the SOCKS socket it was given
+    /// (--SocksPort "unix:<path> IsolateSOCKSAuth"), as tor does.
+    private static let opened = """
+        echo $$ >> "$(dirname "$0")/starts"
+        while [ "$1" != --SocksPort ]; do shift; done
+        socket=${2#unix:}
+        echo "[notice] Opened Socks listener connection (ready) on ${socket% IsolateSOCKSAuth}"
+        """
+    /// Opens its SOCKS socket and bootstraps at once, then runs until stopped.
     static let tor = """
         #!/bin/sh
-        echo $$ >> "$(dirname "$0")/starts"
-        echo "[notice] Opened Socks listener connection (ready) on 127.0.0.1:9"
+        \(opened)
         echo "[notice] Bootstrapped 100% (done): Done"
         exec sleep 600
         """
-    /// Opens its SOCKS port and never bootstraps.
+    /// Opens its SOCKS socket and never bootstraps.
     static let slowTor = """
         #!/bin/sh
-        echo $$ >> "$(dirname "$0")/starts"
-        echo "[notice] Opened Socks listener connection (ready) on 127.0.0.1:9"
+        \(opened)
         exec sleep 600
         """
-    /// Exits before its SOCKS port opens.
+    /// Exits before its SOCKS socket opens.
     static let failingTor = """
         #!/bin/sh
         echo $$ >> "$(dirname "$0")/starts"

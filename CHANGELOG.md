@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- tor's SOCKS port is now a socket file in a folder only you can open,
+  made for each start and removed once tor stops, for `cloak-host` and the
+  app alike. Before, it was a port on the Mac's loopback, which any program
+  on the Mac, of any user, could use to send its own traffic through Tor
+  while tor ran. Nothing of tor's listens on the network now. The guest,
+  the daemon and torsocks are unchanged, and each conversation still gets
+  its own circuit: the host's relay passes tor's answers back in the form
+  tor gives on a network port, which torsocks needs. Other programs you
+  run yourself can still open the socket. New check in
+  `tests/test_tor_path.py`.
+
 - The app can open at login: one switch, Login, in the Details window,
   off until you turn it on, which adds the app to the system's login items
   (System Settings opens if it needs your approval there). The app opened

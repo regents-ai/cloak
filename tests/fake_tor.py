@@ -1,13 +1,14 @@
 """A stand-in for tor, for the checks that must not reach the Tor network.
 The host starts it in place of tor, through the launcher the checks write,
-with tor's arguments: like tor with --SocksPort 127.0.0.1:auto, it listens
-on a free loopback port and names it in tor's own ready line, and it takes
-its owner from --__OwningControllerProcess.
+with tor's arguments: like tor with --SocksPort unix:<path>, it listens on
+that socket file and names it in tor's own ready line, and it takes its
+owner from --__OwningControllerProcess.
 
-On its SOCKS port it plays tor with no way onto the Tor network: each
+On its SOCKS socket it plays tor with no way onto the Tor network: each
 connection goes through the SOCKS5 steps (greeting, user name and password,
 request) and is then refused with a general failure (or answered as
-connected in the late start, below), never connected anywhere. Each
+connected in the late start, below), never connected anywhere, in the form
+tor answers on a socket file, with an IPv6 address of all zeros. Each
 connection is noted when it ends, whichever step it reached, as one line of
 FAKE_TOR_LOG/tor.jsonl: the identity it presented (the first 16 hex digits
 of sha256(user, 0, password), or "none") and the destination it asked for
@@ -104,7 +105,7 @@ def steps(conn: socket.socket, attempt: dict) -> None:
     # Succeeded (late, once bootstrapped), with nothing connected; otherwise
     # a general failure.
     reply = 0 if START == "late" and bootstrapped.is_set() else 1
-    conn.sendall(bytes([5, reply, 0, 1]) + bytes(6))
+    conn.sendall(bytes([5, reply, 0, 4]) + bytes(18))
 
 
 def answer(conn: socket.socket) -> None:
@@ -143,10 +144,12 @@ def main() -> None:
         # SIGTERM, unhandled, ends it.
         signal.pause()
     owner = int(argument("--__OwningControllerProcess"))
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(("127.0.0.1", 0))
+    # unix:<path> IsolateSOCKSAuth
+    listener = argument("--SocksPort").removeprefix("unix:").split()[0]
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(listener)
     server.listen()
-    print(f"[notice] Opened Socks listener connection (ready) on 127.0.0.1:{server.getsockname()[1]}", flush=True)
+    print(f"[notice] Opened Socks listener connection (ready) on {listener}", flush=True)
     print("[notice] Bootstrapped 0% (starting): Starting", flush=True)
     if START == "exits":
         return

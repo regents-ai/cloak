@@ -160,13 +160,15 @@ uv run --with pytest==8.4.2 pytest tests/test_agent_path.py
 Check the guest's one way out, the Tor port relayed to the host's tor. The
 host starts the guest only once tor has bootstrapped, or after tor exits or
 is stopped at 90 seconds; a tor whose SOCKS port has not opened by then
-fails the host. Once tor has stopped, nothing more is relayed to its port.
+fails the host. tor's SOCKS port is a socket file in a folder only you can
+open, made for each start; nothing of tor's listens on the network. Once
+tor has stopped, nothing more is relayed to it.
 tor keeps its state (its entry guards and directory cache) in one lasting
 folder the host is given with `--tor-data`: the stage kits use
 `~/Library/Application Support/Regents Cloak/tor`, and the checks a scratch
 folder of their own. The first check runs tor on the public Tor network
 and fetches https://check.torproject.org/api/ip through it; the others
-send nothing off the Mac, and three of them wait out that 90-second limit:
+send nothing off the Mac, and four of them wait out that 90-second limit:
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_tor_path.py

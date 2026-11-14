@@ -1,7 +1,7 @@
 """Functional checks of the guest's one way out (docs/plan.md, "Tor out of the
 guest"): the guest has no network device, and its Tor port leads over vsock
 to the host's Tor relay, which passes only a SOCKS5 greeting on, to tor's
-SOCKS port.
+SOCKS socket, a file only this user can open.
 
     worker/install.sh
     guest/build.sh
@@ -29,6 +29,7 @@ boots the guest once; the guest prints one result per case.
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import stat
@@ -268,27 +269,29 @@ def test_a_tor_that_never_opens_its_port_is_stopped_at_the_limit_and_the_host_fa
             os.kill(int(pid.read_text()), signal.SIGKILL)
 
 
-PORT_OPEN = re.compile(r"Opened Socks listener connection \(ready\) on 127\.0\.0\.1:(\d+)")
+SOCKET_OPEN = re.compile(r"Opened Socks listener connection \(ready\) on (/\S+)")
 
 
-def test_a_program_that_takes_the_port_of_a_tor_that_exited_receives_nothing(tmp_path):
-    # Once the stand-in has exited, a listener here takes its freed port, as
-    # any program on the Mac could, before the guest's first Tor connection
-    # (the guest's first case waits 5 s for that).
-    taken = socket.socket()
-    port = []
+def test_a_program_that_takes_the_socket_of_a_tor_that_exited_receives_nothing(tmp_path):
+    # Once the stand-in has exited, and the host has removed its socket's
+    # folder, a listener here makes the folder again and takes the socket's
+    # name, as any program of this user's could, before the guest's first
+    # Tor connection (the guest's first case waits 5 s for that).
+    taken = socket.socket(socket.AF_UNIX)
+    path = []
 
     def on_log(line: str) -> None:
-        if found := PORT_OPEN.search(line):
-            port.append(int(found[1]))
+        if found := SOCKET_OPEN.search(line):
+            path.append(found[1])
         elif "tor exited" in line:
-            taken.bind(("127.0.0.1", port[0]))
+            os.mkdir(Path(path[0]).parent, 0o700)
+            taken.bind(path[0])
             taken.listen()
 
     try:
         results, err = boot(tmp_path, [sandbox("pause", "sleep 5"), agent("pi", PROMPT)],
                             fake_tor(tmp_path, "exits"), on_log)
-        assert taken.getsockname() == ("127.0.0.1", port[0])
+        assert taken.getsockname() == path[0]
         taken.setblocking(False)
         try:
             connection, _ = taken.accept()
@@ -302,6 +305,8 @@ def test_a_program_that_takes_the_port_of_a_tor_that_exited_receives_nothing(tmp
         assert routes(tmp_path) == []
     finally:
         taken.close()
+        if path and Path(path[0]).parent.is_dir():
+            shutil.rmtree(Path(path[0]).parent)
 
 
 def test_a_second_start_reuses_tors_folder_and_its_state(tmp_path):
@@ -327,3 +332,29 @@ def test_a_tor_that_cannot_reach_the_network_stops_the_task(tmp_path):
     assert "The connection to the SOCKS5 proxy server at 127.0.0.1:1 just failed" in err
     assert "Bootstrapped 100%" not in err
     assert LIMIT in err and "cannot reach tor" in err
+
+
+def test_only_this_user_can_open_tors_socket_and_nothing_of_tors_listens_on_the_network(tmp_path):
+    # tor, whose only way onto the network is a closed port on the Mac's
+    # loopback; 3 s after it opens its SOCKS socket, its socket's folder and
+    # every network socket it has are read.
+    pid = tmp_path / "tor.pid"
+    started = launcher(tmp_path, "tor", f'echo $$ > "{pid}"\nexec "{TOR}" "$@" --Socks5Proxy 127.0.0.1:1\n')
+    seen = {}
+
+    def on_log(line: str) -> None:
+        if found := SOCKET_OPEN.search(line):
+            time.sleep(3)
+            path = seen["socket"] = Path(found[1])
+            seen["modes"] = os.stat(path.parent), os.stat(path)
+            seen["network"] = subprocess.run(["lsof", "-nP", "-a", "-p", pid.read_text().strip(), "-i"],
+                                             capture_output=True, text=True).stdout
+
+    results, err = boot(tmp_path, [sandbox("nothing", "true")], started, on_log)
+    folder, listener = seen["modes"]
+    assert stat.S_ISDIR(folder.st_mode) and stat.S_IMODE(folder.st_mode) == 0o700 and folder.st_uid == os.getuid()
+    assert stat.S_ISSOCK(listener.st_mode) and stat.S_IMODE(listener.st_mode) & 0o077 == 0
+    # tor listens on no network port and has no UDP socket.
+    assert "LISTEN" not in seen["network"] and "UDP" not in seen["network"], seen["network"]
+    # The host removed the folder once tor had stopped.
+    assert LIMIT in err and not seen["socket"].parent.exists()

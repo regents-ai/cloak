@@ -5,7 +5,7 @@ import Foundation
 /// that offers only no authentication or a user name and password (RFC
 /// 1929), which is what torsocks and the daemon send; anything else is
 /// closed without a byte. The greeting and everything after it go to tor's
-/// SOCKS port, and tor's answers come back, until either end closes. The
+/// SOCKS socket, and tor's answers come back, until either end closes. The
 /// relay takes no address from the guest: its one destination is tor, and
 /// once tor has stopped, nothing (`Tor.connect`).
 final class TorRelay: Sendable {
@@ -48,7 +48,7 @@ final class TorRelay: Sendable {
         // fails, then shuts both sockets, which ends the other direction too.
         let answered = DispatchSemaphore(value: 0)
         Thread {
-            Self.copy(from: socks, to: guest)
+            if Self.answer(from: socks, to: guest) { Self.copy(from: socks, to: guest) }
             Self.end(guest, socks)
             answered.signal()
         }.start()
@@ -64,6 +64,25 @@ final class TorRelay: Sendable {
               let methods = Relay.read(socket, Int(head[1])), methods.allSatisfy({ $0 == 0 || $0 == 2 })
         else { return nil }
         return head + methods
+    }
+
+    /// Passes tor's answers to the greeting, to the user name and password
+    /// when tor chose them, and to the request, this last in the form tor
+    /// gives on a network port: on a socket file, tor answers a connection
+    /// request with an IPv6 address of all zeros where on a network port it
+    /// gives an IPv4 one, and torsocks reads the longer form as the shorter
+    /// followed by stray bytes. (A name lookup answered with the address
+    /// `::`, which only a hand-made request brings, comes back as 0.0.0.0:
+    /// both mean no address.) False once either socket fails.
+    private static func answer(from tor: Int32, to guest: Int32) -> Bool {
+        guard let method = Relay.read(tor, 2), Relay.write(guest, method) else { return false }
+        if method[1] == 2 {
+            guard let status = Relay.read(tor, 2), Relay.write(guest, status) else { return false }
+        }
+        guard let head = Relay.read(tor, 4) else { return false }
+        guard head[3] == 4 else { return Relay.write(guest, head) }
+        guard let address = Relay.read(tor, 18) else { return false }
+        return Relay.write(guest, address.allSatisfy { $0 == 0 } ? head.prefix(3) + [1] + Data(count: 6) : head + address)
     }
 
     private static func copy(from source: Int32, to destination: Int32) {

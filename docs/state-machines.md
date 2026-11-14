@@ -330,7 +330,7 @@ guest"); the checks are `tests/test_tor_path.py`. Where the bytes go:
 guest (no network device)                       | Mac: cloak-host              | Tor network
 daemon route check, Pi under torsocks           |                              |
   --> 127.0.0.1:9050 (cloak-tor-port)           |                              |
-  --> vsock port 9050 ------------------------> | Tor relay --loopback port--> tor --> guard, relays, exit
+  --> vsock port 9050 ------------------------> | Tor relay --socket file--> tor --> guard, relays, exit
 a program that skips torsocks --> unreachable   |                              |
 anything but a SOCKS5 greeting on 9050 -------> | closed, no byte              |
 any other vsock port -------------------------> | refused                      |
@@ -339,7 +339,8 @@ any other vsock port -------------------------> | refused                      |
 tor's life, as the host's child:
 
 ```
-started on its lasting folder --> SOCKS port open --> bootstrapping --> bootstrapped (100%) --> stopped; folder kept
+socket folder made (new, owner-only) --> started on its lasting folder --> SOCKS socket open --> bootstrapping
+  --> bootstrapped (100%) --> stopped; lasting folder kept, socket folder removed
 exits before its port opens --> the host fails before the boot files are written
 folder held by another tor --> its port opens, then it exits about 5 s later (exits while bootstrapping, below)
 port not open 90 s after it started --> stopped by the host; the host fails before the boot files are written
@@ -378,26 +379,46 @@ bootstrapped from nothing.
 
 tor counts as stopped from its exit (its process's termination notice) or
 from the host stopping it at the limit, whichever comes first. Its SOCKS
-port may then be another program's, so from that moment the relay connects
-nothing to it, and its connections to tor still open are shut. The check
-and the connection are made under one lock, together with the list of open
-connections.
+socket's name may then be another program's, so from that moment the relay
+connects nothing to it, and its connections to tor still open are shut. The
+check and the connection are made under one lock, together with the list of
+open connections. tor's exit also removes its socket's folder, with the
+socket tor leaves behind.
+
+tor's SOCKS port is a socket file, `socks`, in a folder the host makes for
+each start in the person's temporary folder (`mkdtemp`, so 0700 and new;
+tor refuses a folder others can open). Nothing of tor's listens on the
+network. Check:
+`test_only_this_user_can_open_tors_socket_and_nothing_of_tors_listens_on_the_network`.
+Before (to 14 November): it was a free port on the Mac's loopback, which
+every program on the Mac, of any user, could use while tor ran.
 
 One Tor relay connection:
 
 ```
 accepted --> greeting read (10 s) --> greeting checked --> tor connected (only while tor has not stopped)
-  --> greeting passed on --> copying both ways --> either end closes --> both closed
+  --> greeting passed on --> tor's answers passed back --> copying both ways --> either end closes --> both closed
 tor stops while copying --> both closed
 any step failing, or tor stopped --> closed, without a byte from the host
 ```
 
 Before (12 November, after the bootstrap wait): the relay connected to
 tor's port whatever had become of tor, so after tor exited, a program that
-took its freed port received the guest's Tor connections. Check:
-`test_a_program_that_takes_the_port_of_a_tor_that_exited_receives_nothing`
+took its freed port received the guest's Tor connections. Check, now on
+the socket file: `test_a_program_that_takes_the_socket_of_a_tor_that_exited_receives_nothing`
 (the listener received a connection and the SOCKS5 greeting before the
 fix).
+
+"tor's answers passed back": the relay reads tor's answer to the greeting,
+to the user name and password when tor chose them, and to the request,
+whose answer on a socket file carries an IPv6 address of all zeros (22
+bytes) where on a network port it carries an IPv4 one (10 bytes). That
+answer goes to the guest in the 10-byte form, as torsocks reads only 10;
+every other answer and byte goes unchanged. Check: the TLS fetch through
+torsocks in
+`test_tor_carries_the_guest_and_a_program_that_skips_torsocks_reaches_nothing`
+(the first socket-file design, 12 November, put 12 zero bytes before every
+stream and failed it).
 
 ## 7b. One user turn's rewrite in the daemon (`guest/daemon/rewriter.patch`, `guest/daemon/server.patch`)
 

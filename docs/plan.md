@@ -258,17 +258,21 @@ How B works:
   Only a SOCKS5 greeting offering no authentication or a user name and
   password, which is what torsocks and the daemon send, goes on; anything
   else is closed without a byte. The relay then connects to tor's SOCKS
-  port and copies both ways until either end closes. It takes no address
+  socket, passes tor's answers back in the form tor gives on a network
+  port (below), and copies both ways until either end closes. It takes no
+  address
   from the guest; its one destination is tor. The host listens on no vsock
   port but this one and the rewrite relay's 8012.
 - **tor**: started by the host after the worker and before the boot files,
   with no configuration file. Its settings are the reference's
-  (`SocksPort 127.0.0.1:… IsolateSOCKSAuth`, `Log notice stdout`), with the
-  SOCKS port on the Mac's loopback at a free port tor picks
-  (`127.0.0.1:auto`, read from tor's ready line), so it never meets another
-  tor on the Mac. Every program on the Mac can reach that port, as every
-  program on the reference's machine can reach its tor. Its log goes to the
-  host's standard error. The host is its owning process: a host that dies
+  (`SocksPort … IsolateSOCKSAuth`, `Log notice stdout`), with the SOCKS port
+  on a socket file instead of the Mac's loopback (since 14 November, below):
+  `unix:<folder>/socks`, in a folder the host makes for each start in the
+  person's temporary folder, owner-only (0700; tor refuses any other), and
+  removes once tor has stopped. Nothing of tor's listens on the network.
+  tor takes any user name and password, which it uses only to keep
+  conversations apart, so that folder is what keeps others out. Its log
+  goes to the host's standard error. The host is its owning process: a host that dies
   without stopping it ends it within about 15 seconds. The host never
   restarts it.
 - **The host waits for tor's bootstrap** (decided 12 November): tor refuses
@@ -276,7 +280,7 @@ How B works:
   and has built a circuit (about 9 seconds after it started in one check,
   7.4 s in another), so the host starts the guest only once tor says so,
   in its own log line "Bootstrapped 100% (done)". The host already reads
-  tor's log to find its SOCKS port and keeps reading for that line,
+  tor's log to see its SOCKS port open and keeps reading for that line,
   waiting on it with one limit and no polling: 90 seconds from tor's
   start. tor itself never gives up; 90 s is the default of the Tor
   Project's own controller library, stem, whose `launch_tor` waits for the
@@ -300,8 +304,8 @@ How B works:
   not open within 90 seconds; stopped it"), as it fails when tor exits
   before its port opens.
 - **Nothing reaches tor's port once tor has stopped** (12 November, the
-  same day): tor's SOCKS port is a free port on the Mac's loopback, so once
-  tor has exited another program on the Mac may take it, and the relay
+  same day): tor's SOCKS port was then a free port on the Mac's loopback,
+  so once tor had exited another program on the Mac could take it, and the relay
   still connected guest Tor traffic to it. The host now counts tor as
   stopped from tor's own exit (the process's termination notice) or from
   stopping it at the limit, and from then on the relay connects nothing to
@@ -312,6 +316,9 @@ How B works:
   route check stops the task ("no direct fallback was used"). Left open:
   the moment between tor's exit and the system's notice of it, in which a
   program that took the port at once could still receive a connection.
+  Since tor's port became a socket file (below), the host removes its
+  folder once tor has stopped; only a program of the person's own could
+  make the folder again and take the name, and it receives nothing either.
 - **tor keeps its state** (12 November, after the two notes above): tor's
   folder was new for every boot, in the host's temporary folder, and
   removed when tor stopped, so every boot chose new entry guards and
@@ -333,15 +340,29 @@ How B works:
   tasks stop at their Tor route, as after any exit. Checked offline with
   the pinned tor, whose only way onto the network was a closed loopback
   port.
-- **Built first on a socket file, and moved**: the design put tor's SOCKS
-  port on a socket file in its private folder, to open no listener at all.
-  There tor answers each SOCKS request in its 22-byte form, where on a TCP
-  port it answers in 10 bytes; torsocks reads 10, so 12 zero bytes came
-  before every stream, and TLS through Tor failed ("wrong version number").
-  The live check found it, and both answers were captured from the pinned
-  tor offline. The daemon's own route check reads either form, by its
-  address type (`internal/relay/socks5.go` at the pinned commit), so only
-  torsocks programs were affected.
+- **On a socket file, closed to the rest of the Mac** (14 November): tor's
+  SOCKS port was on the Mac's loopback, so while tor ran any program on the
+  Mac, of any user, could route its own traffic through it. It is now the
+  socket file above, in an owner-only folder made for each start. The
+  design had first put it on a socket file (12 November) and moved off
+  one: there tor answers each SOCKS connection request in its 22-byte form
+  (an IPv6 address, all zeros), where on a TCP port it answers in 10 (an
+  IPv4 one, all zeros); torsocks reads 10, so 12 zero bytes came before
+  every stream, and TLS through Tor failed ("wrong version number"). The
+  live check found it, and both answers were captured from the pinned tor
+  offline. Now the host's relay reads tor's answers to the greeting, the
+  user name and password, and the request, and passes the request's
+  answer on in the 10-byte form when its address is all zeros (both mean
+  no address), and every other answer and byte unchanged, so the guest
+  gets what it got from the TCP port. The guest, the daemon and torsocks
+  are unchanged, and each conversation keeps its own SOCKS identity and so
+  its own circuit. The daemon's own route check reads either form, by its
+  address type (`internal/relay/socks5.go` at the pinned commit).
+  Considered and not taken: tor 0.4.9.16 has no setting that requires a
+  SOCKS password (`IsolateSOCKSAuth` only keeps different ones apart, and
+  the guest's identities are its own), and a loopback port cannot be
+  closed to other users' programs without a packet filter rule, which
+  needs the administrator.
 - **What leaves the Mac**: tor's own connections to the Tor network, and,
   through Tor, only the streams the guest asks for.
 - **Pin**: the Tor Project's macOS arm64 expert bundle 16.0.1, which carries
@@ -362,9 +383,9 @@ How B works:
 - **Fails closed**: with tor gone (exited, or stopped at the bootstrap
   limit) or unable to build a circuit, the daemon's own route check stops
   the task ("no direct fallback was used"), nothing reaches tor's freed
-  port, and nothing else in the guest has a way out.
+  socket, and nothing else in the guest has a way out.
 
-Nine checks in `tests/test_tor_path.py` pass, with the stand-in model's
+Ten checks in `tests/test_tor_path.py` pass, with the stand-in model's
 fake worker; development evidence only, so A06 stays open. Each gives the
 host a scratch folder for tor's state, never the stage kits' folder:
 
@@ -413,12 +434,20 @@ host a scratch folder for tor's state, never the stage kits' folder:
   stops it between 90 and 120 seconds after it started, fails with exit
   status 2 and starts no guest, and the stand-in is not running afterwards.
   Before, the host was still waiting when the check gave up at 300 s.
-- **Nothing reaches a tor's freed port**: once the stand-in has exited, the
-  check takes its port with a listener of its own, as any program on the
-  Mac could; the guest's Pi task then stops at its Tor route with the same
-  message, its connection reached the host's relay, and the listener
-  received no connection. Before, the relay connected to the listener and
-  sent it the SOCKS5 greeting.
+- **Nothing reaches a tor's freed socket**: once the stand-in has exited
+  and the host has removed its socket's folder, the check makes the folder
+  again and takes the socket's name with a listener of its own, as any
+  program of the person's could; the guest's Pi task then stops at its Tor
+  route with the same message, its connection reached the host's relay,
+  and the listener received no connection. Before (on the TCP port), the
+  relay connected to the listener and sent it the SOCKS5 greeting.
+- **Only this user can open tor's socket**: the pinned tor, whose only way
+  onto the network is a closed loopback port; 3 s after it opens its SOCKS
+  socket, the socket's folder belongs to the person and is 0700, the
+  socket itself is open to no other user or group, and tor has no
+  listening network socket and no UDP socket (`lsof`); once tor is stopped
+  at the limit, the folder is gone. TLS through tor over that socket, by
+  torsocks, is the first check's fetch.
 - **A second start reuses tor's folder**: two boots in a row on one
   folder, with a stand-in tor that keeps a state file in its data folder as
   tor does: both starts are given the same folder, the second finds the
@@ -426,10 +455,13 @@ host a scratch folder for tor's state, never the stage kits' folder:
 
 Known gaps:
 
-- **tor's SOCKS port serves the whole Mac**: it listens on the Mac's
-  loopback, so while tor runs, any other program on the same Mac can route
-  its own traffic through it. Accepted until Cloak is packaged as an app,
-  and to be closed then.
+- **tor's SOCKS socket serves the person's own programs**: while tor runs,
+  another program the same person runs on the Mac can open the socket and
+  route its own traffic through Tor, as it can open the control socket
+  (MAC05); other users' programs cannot, and nothing listens on the
+  network. Programs in an app sandbox are probably kept out of the
+  person's temporary folder too; not checked. Before (to 14 November): any
+  program on the Mac, of any user, could use tor's loopback port.
 
 Open for Sean: tor on the Mac instead of in the guest; and whether tor on
 the Mac gets its own confinement (it runs unconfined; Apple's App Sandbox
