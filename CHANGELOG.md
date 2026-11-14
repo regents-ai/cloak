@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Chat keeps the end of a conversation in view, if it was in view, when the
+  window shrinks: a conversation that fit the window lost its end as soon
+  as the window became shorter than it. The same rule covers a
+  conversation growing past the window, whose newest message was cut off
+  the first time it stopped fitting, and choosing a longer conversation
+  after a short one. Each conversation also has a scroll view of its own,
+  so after reading one part way up, the next opens at its newest message
+  instead of at the same height. Shown in a window of the same shape laid
+  out offscreen (docs/plan.md, "Stage 5 so far"); not yet seen in the app,
+  since the Mac's screen was locked.
+
 - Chat marks the words taken out of the Original with a light red tint and
   a dotted red underline, in place of a red tint with a line struck
   through, which made an original with most of its words taken out hard to

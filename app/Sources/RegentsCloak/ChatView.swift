@@ -127,34 +127,48 @@ private struct Turns: View {
 
     var body: some View {
         let rewording = chat.rewording?.conversation == conversation.id ? chat.rewording : nil
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if conversation.turns.isEmpty, rewording == nil {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("New chat")
-                            .font(.title3.weight(.semibold))
-                        Text("Each message is reworded on this Mac first. You see both, and can edit the reworded one.")
-                            .foregroundStyle(.secondary)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if conversation.turns.isEmpty, rewording == nil {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("New chat")
+                                .font(.title3.weight(.semibold))
+                            Text("Each message is reworded on this Mac first. You see both, and can edit the reworded one.")
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 8)
                     }
-                    .padding(.top, 8)
+                    ForEach(conversation.turns) { turn in
+                        TurnCard(
+                            chat: chat, conversation: conversation.id, turn: turn,
+                            newest: turn.id == conversation.turns.last?.id,
+                            rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil })
+                    }
+                    if let rewording, rewording.turn == nil {
+                        PendingCard(chat: chat, rewording: rewording)
+                    }
                 }
-                ForEach(conversation.turns) { turn in
-                    TurnCard(
-                        chat: chat, conversation: conversation.id, turn: turn,
-                        newest: turn.id == conversation.turns.last?.id,
-                        rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil })
-                }
-                if let rewording, rewording.turn == nil {
-                    PendingCard(chat: chat, rewording: rewording)
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id(conversation.id)
+            }
+            // Reads from the top; a long chat opens at its newest message.
+            // While the end is in view it stays in view as messages are added
+            // or the window changes size. The anchor does that, except when a
+            // chat that fit stops fitting, so the end is brought back here.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { old, new in
+                let resized = new.contentSize != old.contentSize || new.containerSize != old.containerSize
+                if resized, old.visibleRect.maxY >= old.contentSize.height - 1 {
+                    proxy.scrollTo(conversation.id, anchor: .bottom)
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // Reads from the top; a long chat opens at its newest message and
-        // follows what is added.
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        // A scroll view of its own for each chat, so one read part way up
+        // leaves the next opening at its newest message too.
+        .id(conversation.id)
     }
 }
 
