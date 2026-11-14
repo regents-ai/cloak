@@ -169,7 +169,7 @@ private struct Turns: View {
                         PendingCard(chat: chat, rewording: rewording)
                     }
                 }
-                .padding(20)
+                .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .id(conversation.id)
             }

@@ -62,7 +62,9 @@ struct WalletView: View {
             }
             .padding(16)
         }
-        .frame(width: 540, height: 620)
+        // Tall enough for a made wallet with an open deposit, short of the
+        // space a 13-inch screen leaves under the Chat window's toolbar.
+        .frame(width: 540, height: 720)
         .task { await wallet.refresh() }
     }
 }
@@ -75,17 +77,22 @@ private struct Account: View {
     var body: some View {
         Section("Wallet") {
             LabeledContent("Address") {
-                HStack(spacing: 8) {
+                HStack(spacing: 4) {
                     Text(address)
                         .font(.body.monospaced())
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
-                    Button("Copy", systemImage: "doc.on.doc") {
+                    Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(address, forType: .string)
+                    } label: {
+                        // A larger target than the icon alone.
+                        Label("Copy", systemImage: "doc.on.doc")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 24, height: 24)
+                            .contentShape(.rect)
                     }
-                    .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
                     .help("Copy")
                 }

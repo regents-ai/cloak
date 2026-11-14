@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Windows, from an accessibility read: Wallet opens tall enough to show
+  everything for a made wallet with an open deposit, still inside a
+  13-inch screen; in Agents each app's words read as text, with Remove a
+  button of its own; a new app's pass shows in full, wrapping, with the
+  address under it on the sheet's one left edge; Copy buttons are easier
+  to hit; the new app's name field has a name for VoiceOver; and Chat's
+  messages line up with the Development bar and the message box.
+
 - Details: the login setting reads "Launch Cloak on startup" (Sean, 14
   November 2026), with one line under it saying Cloak opens paused.
 

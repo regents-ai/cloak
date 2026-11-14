@@ -101,13 +101,13 @@ private struct AppRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .accessibilityElement(children: .combine)
             Spacer()
             Button("Remove", systemImage: "trash", action: remove)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .help("Remove")
         }
-        .accessibilityElement(children: .combine)
     }
 
     private var use: String {
@@ -131,16 +131,18 @@ private struct AddApp: View {
             if let pass {
                 Text(name.trimmingCharacters(in: .whitespacesAndNewlines))
                     .font(.headline)
-                Form {
-                    Section {
-                        LabeledContent("Pass") { Copyable(text: pass) }
-                        LabeledContent("Address") { Copyable(text: door.address) }
-                    } footer: {
-                        Text("Copy the pass now: Cloak shows it only once. Paste it where the app asks for its key, and the address where it asks for one.")
-                            .foregroundStyle(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Pass")
+                        .font(.subheadline.weight(.semibold))
+                    Copyable(text: pass)
                 }
-                .formStyle(.grouped)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Address")
+                        .font(.subheadline.weight(.semibold))
+                    Copyable(text: door.address)
+                }
+                Text("Copy the pass now: Cloak shows it only once. Paste it where the app asks for its key, and the address where it asks for one.")
+                    .foregroundStyle(.secondary)
                 HStack {
                     Spacer()
                     Button("Done") { dismiss() }
@@ -151,6 +153,7 @@ private struct AddApp: View {
                     .font(.headline)
                 TextField("Name", text: $name)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("App name")
                     .onSubmit(add)
                 if let problem = door.problem {
                     Text(problem)
@@ -168,6 +171,8 @@ private struct AddApp: View {
         }
         .padding(20)
         .frame(width: 460)
+        // Its own height, so the pass and the words under it wrap in full.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func add() {
@@ -180,22 +185,25 @@ private struct AddApp: View {
     }
 }
 
-/// Text to paste elsewhere, with Copy.
+/// Text to paste elsewhere, in full, with Copy.
 private struct Copyable: View {
     let text: String
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(text)
                 .font(.body.monospaced())
-                .lineLimit(1)
-                .truncationMode(.middle)
                 .textSelection(.enabled)
-            Button("Copy", systemImage: "doc.on.doc") {
+            Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
+            } label: {
+                // A larger target than the icon alone.
+                Label("Copy", systemImage: "doc.on.doc")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 24, height: 24)
+                    .contentShape(.rect)
             }
-            .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
             .help("Copy")
         }
