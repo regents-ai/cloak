@@ -687,6 +687,38 @@ against it whatever its speed.
 
 The weights were deleted after the run.
 
+### Small lead on llama.cpp, first run (14 November 2026)
+
+[feasibility-20261114T001549Z.json](../evidence/stage3/small-lead-gguf/feasibility-20261114T001549Z.json),
+kit commit `ad16508`, under decision 8. The artifact is
+`unsloth/Qwen3.5-9B-GGUF`, `Qwen3.5-9B-Q4_K_M.gguf`, at the pinned revision,
+on llama.cpp v1.0.0. A candidate record; it closes no gate, for the same
+reasons as the MLX run above. On AC power, one-minute load 21 to 42.
+
+- EVAL06: 27 of 40 ordinary messages rewritten; 13 stopped malformed
+  (MLX: 36 of 40, 4 malformed). Median 1.06 s (MLX 1.08 s).
+- Memory: the whole product peaked at 9.11 GiB (MLX 7.22 GiB): under the
+  10 GiB line, over nothing, but only 0.19 GiB under the 9.3 GiB aim.
+  llama.cpp held 5.28 GiB of weights and 4.75 GiB of Metal memory after
+  the load; each rewrite's context is sized for the prompt plus the
+  16,384-token output limit.
+- Long inputs: 4,096 characters in 2.72 s, 10,000 in 5.16 s. The four-turn
+  conversation stopped on its first call (malformed). Cancellation: the
+  worker answered 0.93 s after the cancel and the next call was rewritten.
+  Worker loss and restart behaved as on MLX.
+- All cases: 36 of 59 rewritten; 14 malformed. Installed: 5.45 GiB.
+
+What the malformed replies are, on both engines: the rewrite is there, but
+the model closes the JSON wrongly, `"}]` or `"]` where the daemon needs
+`"]}`. The daemon rightly refuses them. The 27B lead made no such slip in
+80 messages. Constraining the reply to the daemon's JSON shape while
+decoding (a grammar) would remove this class of failure without touching
+the instruction; spec DATA04 allows it only as an explicit pinned part of
+a candidate, and it does not replace the daemon's check. That is the next
+experiment, as its own candidate entry.
+
+The weights were deleted after the run.
+
 ### Stand-in proof (development only)
 
 These runs prove the kit works end to end on the development stand-in. The

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stage 3: the small lead's first run on llama.cpp (14 November) is recorded
+  in evidence/stage3/small-lead-gguf/ and written up in docs/plan.md: 27 of
+  40 ordinary messages rewritten, 13 stopped malformed, whole product
+  9.11 GiB. On both engines the malformed replies close the JSON wrongly.
+  No gate closes on it. The weights were deleted afterwards.
+
 - Stage 3: a development run of the GGUF stand-in on llama.cpp (decision
   8) is recorded in evidence/stage3/standin-gguf/ and set beside the MLX
   stand-in's latest run in docs/plan.md: 38 of 40 ordinary messages
