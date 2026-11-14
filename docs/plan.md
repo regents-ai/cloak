@@ -868,6 +868,34 @@ what stops one. Whether the rewrites keep what they must is still unjudged
 
 The weights were kept on disk for the EVAL01 screen.
 
+### Small lead, the EVAL01 development screen on both engines (14 November 2026)
+
+[llama.cpp with the grammar](../evidence/stage3/small-lead-gguf-grammar/eval01-20261114T053107Z.json)
+and [MLX](../evidence/stage3/small-lead/eval01-20261114T053453Z.json), the
+daemon's 16 synthetic cases, one run each. A development screen; it closes
+no gate.
+
+- llama.cpp with the grammar: 16 of 16 rewritten, 9 passed the daemon's
+  screen; median 0.88 s, 95th percentile 1.37 s.
+- MLX: 16 of 16 rewritten, 10 passed; median 0.65 s, 95th percentile 1.12 s.
+- The screen looks for exact strings, and most misses are of that kind on
+  both engines: "five" for "5", "three" for "3", "TODO" for "TODOs", the
+  path kept without its backticks.
+- Misses that change the request, read by hand:
+  - both engines answer the Spanish request in English ("fotosíntesis"
+    becomes "photosynthesis");
+  - llama.cpp turns "4 laptops, maximum £900" into "a total cost of exactly
+    £900 or less";
+  - MLX turns the privacy question into an instruction to disable
+    everything "except privacy preservation and skills", and "dinner
+    options" into "dinner recipes".
+
+Neither engine is ahead on what the rewrites keep. Engine choice
+(decision 8): llama.cpp with the grammar, on reply shape (40 of 40 against
+36 of 40) and memory (6.79 GiB against 7.22 GiB). The MLX worker and its
+candidates are to be deleted. The changed requests above are the small
+model's, not the engine's, and are stage 4's to judge.
+
 ### Stand-in proof (development only)
 
 These runs prove the kit works end to end on the development stand-in. The

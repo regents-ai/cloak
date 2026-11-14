@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Stage 3: the EVAL01 development screen on the small lead, both engines
+  (14 November), recorded under evidence/stage3/ and written up in
+  docs/plan.md: 9 of 16 on llama.cpp with the grammar, 10 of 16 on MLX,
+  most misses exact-string ones. Engine choice: llama.cpp with the grammar.
+
 - Stage 3: the small lead on llama.cpp under the bounded reply grammar
   (14 November) is recorded in evidence/stage3/small-lead-gguf-grammar/ and
   written up in docs/plan.md: 40 of 40 ordinary messages rewritten, median
