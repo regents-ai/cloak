@@ -6,12 +6,13 @@ import SwiftUI
 /// Shift-Return starts a new line. It grows with its text up to `maxHeight`,
 /// then scrolls; Tab moves to the next control.
 struct TextBox: NSViewRepresentable {
-    /// How a marked word looks. Each has a mark besides its colour, so the
-    /// marks never rest on colour alone.
+    /// How a marked word looks. Each has a line of its own shape besides its
+    /// colour, so the marks never rest on colour alone.
     enum Mark {
-        /// Tinted red and struck through.
+        /// Lightly tinted red, with a dotted underline: quiet enough that an
+        /// original whose words were nearly all taken out still reads easily.
         case removed
-        /// Tinted green and underlined.
+        /// Tinted green, with a solid underline.
         case added
 
         var tint: NSColor {
@@ -24,8 +25,8 @@ struct TextBox: NSViewRepresentable {
         var attributes: [NSAttributedString.Key: Any] {
             switch self {
             case .removed:
-                [.backgroundColor: tint.withAlphaComponent(0.2), .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                 .strikethroughColor: tint]
+                [.backgroundColor: tint.withAlphaComponent(0.12),
+                 .underlineStyle: NSUnderlineStyle([.single, .patternDot]).rawValue, .underlineColor: tint]
             case .added:
                 [.backgroundColor: tint.withAlphaComponent(0.2), .underlineStyle: NSUnderlineStyle.single.rawValue,
                  .underlineColor: tint]

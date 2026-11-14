@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Chat marks the words taken out of the Original with a light red tint and
+  a dotted red underline, in place of a red tint with a line struck
+  through, which made an original with most of its words taken out hard to
+  read. Words put in keep their green tint and solid underline. One mark
+  means one thing at every length, so the panes never switch what a mark
+  means. `docs/shots/removed-marks-before-light.png` and `-after-light.png`
+  (and `-dark`) show the old and new marks on a message with 77 of its 91
+  words taken out, drawn offscreen in a text view with the app's font and
+  marks.
+
 - The evaluation protocol is a draft, not frozen, in `docs/plan.md` and
   `README.md` too, as in `docs/evaluation-protocol.md` (Sean, 14 November:
   "don't freeze anything yet? this is still super active development"); Sean
