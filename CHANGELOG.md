@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The app: VoiceOver can now open and close "Technical details" in the
+  Details window. In the window's form, the disclosure offered VoiceOver no
+  action to press.
+
 - The reply grammar (decision 9) allows at most 16 white space characters
   at a time between JSON tokens, where it allowed any number, so a reply
   can no longer run on in white space until its deadline (the small lead's

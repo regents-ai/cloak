@@ -109,6 +109,9 @@ struct DetailsView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                // In a form on macOS the disclosure gives VoiceOver nothing
+                // to press, so it has an action of its own.
+                .accessibilityAction { technical.toggle() }
             }
         }
         .formStyle(.grouped)
