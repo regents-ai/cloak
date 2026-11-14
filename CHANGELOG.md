@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Both workers: the hash check before the model loads now lets go of each
+  8 MiB block of a file once it is hashed. Before, the llama worker kept
+  every block until its load had ended, so it held the model file beside
+  the loaded weights: the 9B on llama.cpp peaked at 11.54 GiB over its
+  life (whole product 9.11 GiB, and 10.63 GiB in the worker-loss boot,
+  over the 10 GiB line) against 6.6 to 6.7 GiB after its rewrites. On the
+  GGUF stand-in, the stage 4 repeat before and after
+  (evidence/stage4/standin-gguf/) gives the same 39 outcomes and texts
+  byte for byte, the worker's peak falls from 3.45 to 2.07 GiB and the
+  whole product's from 3.42 to 2.64 GiB. The 9B was not run again.
+  docs/plan.md ("Memory on llama.cpp") also records what was found and
+  left: the allocator's hold on freed load buffers, the stand-in's word
+  table held twice, and each rewrite's context.
+
 - Stage 3: the small lead's first run on llama.cpp (14 November) is recorded
   in evidence/stage3/small-lead-gguf/ and written up in docs/plan.md: 27 of
   40 ordinary messages rewritten, 13 stopped malformed, whole product

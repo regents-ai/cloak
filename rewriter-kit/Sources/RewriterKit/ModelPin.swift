@@ -76,13 +76,20 @@ public struct ModelPin: Sendable {
         }
     }
 
+    /// The file's sha256, read 8 MiB at a time. FileHandle's reads are
+    /// autoreleased, so each block is read inside a pool of its own and is
+    /// gone before the next is read. Without one every block stayed until the
+    /// thread next drained its pool: the whole file, which the llama worker
+    /// then held beside the model as it loaded.
     private func digest(_ url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var hash = SHA256()
-        while let block = try handle.read(upToCount: 8 << 20), !block.isEmpty {
+        while try autoreleasepool(invoking: {
+            guard let block = try handle.read(upToCount: 8 << 20), !block.isEmpty else { return false }
             hash.update(data: block)
-        }
+            return true
+        }) {}
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }

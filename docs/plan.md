@@ -719,6 +719,60 @@ experiment, as its own candidate entry.
 
 The weights were deleted after the run.
 
+### Memory on llama.cpp (14 November 2026)
+
+The 9B's 9.11 GiB peak came at the end of its load, from one fault in the
+hash check both workers share. Before loading, a worker reads every
+pinned file 8 MiB at a time to check its sha256. Each block read stayed in
+memory until the thread's autorelease pool was next emptied, and the llama
+worker's start empties it only after the model has loaded: the whole file
+was held beside the weights for the length of the load. The MLX worker
+empties it when it starts waiting for its loader, before the weights
+load. Hashing the stand-in's file in a program of its own, the old way
+held all 1.20 GiB of it until the program's first wait, the new way none.
+In the 9B's record every boot's highest sample falls at the end of a
+worker's load
+(9.10, 9.94 and 9.58 GiB for the worker; 10.63 GiB for the whole product
+in the worker-loss boot, over the 10 GiB line), the worker's lifetime peak
+reached 11.54 to 11.70 GiB, and after its rewrites it held 6.6 to 6.7 GiB.
+Now each block is let go once hashed (`rewriter-kit`'s `ModelPin`, in
+both workers).
+
+On the stand-in (a 1.19 GiB file), one worker started on its own and given
+one rewrite: 3.45 GiB at ready before, 2.24 GiB after; its lifetime peak
+3.45 GiB before, 2.48 GiB after; 2.17 and 2.08 GiB once settled. The MLX
+worker on its stand-in, after: 1.27 GiB at ready, 2.14 GiB lifetime peak.
+The stage 4 repeat of the GGUF stand-in, three runs of 13 items each,
+before
+([repeat-20261114T005050Z.json](../evidence/stage4/standin-gguf/repeat-20261114T005050Z.json))
+and after
+([repeat-20261114T013607Z.json](../evidence/stage4/standin-gguf/repeat-20261114T013607Z.json)):
+all 39 outcomes and texts the same byte for byte; the worker's lifetime
+peak 3.45 GiB in each run before, 2.05 to 2.07 GiB after; the whole
+product's sampled peak 3.25 to 3.42 GiB before, 2.58 to 2.64 GiB after.
+The 9B was not run again (no candidate is downloaded in this change), so
+its new figures are not measured; its load should now peak near its
+rewrite level instead of about 5.3 GiB above it.
+
+Found and left as they are:
+
+- The system allocator keeps the large blocks llama.cpp frees after the
+  load (one read buffer per tensor, the largest the 398 MiB output table)
+  dirty and counted, about 0.4 GiB on the stand-in, because macOS 27.2
+  clears them on free. Releasing memory on request does nothing for them.
+  The allocator setting `MallocLargeCache=0` in the worker's environment
+  gives them back (stand-in: 1.82 GiB at ready, 2.05 GiB lifetime peak),
+  but it is not documented, so it is not used.
+- The stand-in ties its input and output word tables, and llama.cpp keeps
+  the input one on the CPU, so the table is held twice (398 MiB). Whether
+  the 9B does the same is not checked. Changing it means changing the
+  pinned llama.cpp.
+- Each rewrite's context is the prompt plus the 16,384-token output limit,
+  at 16-bit precision: about 12 KiB a token and 217 MiB in all on the
+  stand-in; on the 9B, Metal memory rose 0.72 GiB from the load to its
+  rewrites. A smaller limit or a quantized cache would cut it, but the
+  first is the daemon's contract and the second changes the outputs.
+
 ### Stand-in proof (development only)
 
 These runs prove the kit works end to end on the development stand-in. The
