@@ -1973,7 +1973,7 @@
       },
       "grammar": {
         "file": "rewrite-reply.gbnf",
-        "sha256": "7bf8ead6d9649e5751d454de49d56e136eeee7a69df38cc3a68cd38112e8dbf7"
+        "sha256": "fed508d5a1c2b97da4c8d2bc1d25cdf40a3e95295880ff993af9a8ddafce71b0"
       },
       "last_modified": "2026-03-02T14:07:35.000Z",
       "gated": false,
@@ -2027,7 +2027,7 @@
       },
       "grammar": {
         "file": "rewrite-reply.gbnf",
-        "sha256": "7bf8ead6d9649e5751d454de49d56e136eeee7a69df38cc3a68cd38112e8dbf7"
+        "sha256": "fed508d5a1c2b97da4c8d2bc1d25cdf40a3e95295880ff993af9a8ddafce71b0"
       },
       "last_modified": "2026-03-02T14:08:36.000Z",
       "gated": false,
@@ -2081,7 +2081,7 @@
       },
       "grammar": {
         "file": "rewrite-reply.gbnf",
-        "sha256": "7bf8ead6d9649e5751d454de49d56e136eeee7a69df38cc3a68cd38112e8dbf7"
+        "sha256": "fed508d5a1c2b97da4c8d2bc1d25cdf40a3e95295880ff993af9a8ddafce71b0"
       },
       "last_modified": "2026-07-17T21:24:41.000Z",
       "gated": false,

@@ -143,7 +143,8 @@ llama worker's pinned llama.cpp settings, listed in
 9) freezes the same, plus the grammar: [rewrite-reply.gbnf](rewrite-reply.gbnf),
 pinned by sha256 in each entry and built into the worker, with the number of
 texts taken from each request. Greedy decoding picks among the tokens the
-grammar allows.
+grammar allows. White space between JSON tokens is at most 16 characters at
+a time (14 November), so a reply cannot run on in white space.
 
 ## Reference unknowns
 

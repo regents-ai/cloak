@@ -190,14 +190,21 @@ def test_a_reply_the_daemon_refused_is_accepted_under_the_grammar(daemon_reply):
     assert daemon_accepts(daemon_reply, [(texts, free), (texts, constrained)]) == [False, True]
 
 
-def test_the_grammar_changes_no_reply_the_daemon_already_accepted(daemon_reply):
+@pytest.fixture(scope="module")
+def eval06_under_the_grammar() -> tuple[list[list[str]], list[tuple[int, bytes]]]:
+    """Every EVAL06 message, one text each, and the worker's answer to each
+    under the grammar, at the daemon's max_tokens."""
+    texts = [[m["text"]] for m in EVAL06]
+    return texts, rewrites(GRAMMAR, [request_body(GRAMMAR, t) for t in texts])
+
+
+def test_the_grammar_changes_no_reply_the_daemon_already_accepted(daemon_reply, eval06_under_the_grammar):
     """Every EVAL06 message, at the daemon's max_tokens. Where the daemon
     accepts the reply decoded without the grammar, the reply under it is the
     same, byte for byte; under it, the daemon accepts every reply the model
     ended, and only those."""
-    texts = [[m["text"]] for m in EVAL06]
+    texts, constrained = eval06_under_the_grammar
     free = rewrites(NAME, [request_body(NAME, t) for t in texts])
-    constrained = rewrites(GRAMMAR, [request_body(GRAMMAR, t) for t in texts])
     assert {status for status, _ in free + constrained} == {200}
     free_accepted = daemon_accepts(daemon_reply, [(t, reply) for t, (_, reply) in zip(texts, free)])
     accepted = daemon_accepts(daemon_reply, [(t, reply) for t, (_, reply) in zip(texts, constrained)])
@@ -215,6 +222,46 @@ def test_under_the_grammar_a_reply_holds_as_many_texts_as_the_request(daemon_rep
     assert (status, generated(reply)[1]) == (200, "stop")
     assert len(json.loads(generated(reply)[0])["texts"]) == 3
     assert daemon_accepts(daemon_reply, [(texts, reply)]) == [True]
+
+
+def outside_strings(content: bytes) -> bytes:
+    """A JSON text without its strings: the bytes outside them, quotes
+    left out."""
+    out, inside, escaped = bytearray(), False, False
+    for byte in content:
+        if escaped:
+            escaped = False
+        elif inside and byte == ord("\\"):
+            escaped = True
+        elif byte == ord('"'):
+            inside = not inside
+        elif not inside:
+            out.append(byte)
+    return bytes(out)
+
+
+def test_under_the_grammar_white_space_between_tokens_never_runs_on(eval06_under_the_grammar):
+    """Outside its strings a reply is {"texts":[...]}'s braces, colon,
+    brackets and commas, with at most 16 white space characters between any
+    two of them, so white space there cannot repeat without end (in the 9B's
+    first run under the grammar, e06-37 wrote white space between tokens
+    until its deadline, and the stand-in's e06-10 did so after its text). A
+    reply cut at max_tokens is a start of that form. Every EVAL06 message,
+    and texts that ask for white space."""
+    texts, answers = eval06_under_the_grammar
+    several = ["first text", "second text\nwith a newline", "  leading and trailing spaces  ", "tabs\tand\r\nlines"]
+    texts, answers = texts + [several], answers + rewrites(GRAMMAR, [request_body(GRAMMAR, several)])
+    for sent, (status, reply) in zip(texts, answers):
+        content, finish, _ = generated(reply)
+        outside = outside_strings(content)
+        tokens = re.sub(rb"[ \t\n\r]", b"", outside)
+        form = b"{:[" + b"," * (len(sent) - 1) + b"]}"
+        assert status == 200
+        assert all(len(run) <= 16 for run in re.findall(rb"[ \t\n\r]+", outside)), content
+        if finish == "stop":
+            assert tokens == form, content
+        else:
+            assert form.startswith(tokens), content
 
 
 def test_under_the_grammar_a_user_message_without_texts_is_refused():

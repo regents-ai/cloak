@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The reply grammar (decision 9) allows at most 16 white space characters
+  at a time between JSON tokens, where it allowed any number, so a reply
+  can no longer run on in white space until its deadline (the small lead's
+  e06-37, the stand-in's e06-10). Removing the white space, as first
+  planned, changed 35 of the stand-in's 40 EVAL06 replies and sent six into
+  word runaways; bounded, 39 are the same bytes as without a grammar and
+  e06-10 now closes its reply. New grammar hash in the three grammar
+  entries of `reference/models.json`, so they are new configurations; the
+  llama worker is rebuilt with it. New check in
+  `tests/test_llama_worker.py`: no white space between tokens runs past 16.
+
 - tor's SOCKS port is now a socket file in a folder only you can open,
   made for each start and removed once tor stops, for `cloak-host` and the
   app alike. Before, it was a port on the Mac's loopback, which any program

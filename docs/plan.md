@@ -829,9 +829,11 @@ load about 30 at the start and 67 at the end).
 - All cases: 49 of 59 rewritten; stopped: 7 over the input limit, 1 timed
   out, 1 cancelled, 1 worker lost. Installed: 5.43 GiB.
 
-To settle: the runaway. The grammar's white space between tokens is to be
-removed (the daemon accepts the reply without it), which makes a new
-grammar hash and so a new candidate configuration, to be run again.
+To settle: the runaway. The grammar's white space between tokens is now
+at most 16 characters at a time (14 November; removing it, as first
+planned, sent the stand-in into other runaways: "Stand-in proof" below),
+which makes a new grammar hash and so a new candidate configuration, to be
+run again.
 Whether the rewrites keep what they must is still unjudged (EVAL01,
 stage 4).
 
@@ -958,6 +960,29 @@ power with the load at 38 to 80. Development only. Beside the run above:
 - The worker peaked at 2.52 GiB over its life against 3.45 GiB, from the
   memory fix ("Memory on llama.cpp" above), not the grammar; the whole
   product's sampled peak was 3.26 GiB against 3.27.
+
+White space between tokens, bounded (14 November), against the runaway
+(the small lead's e06-37 above, and e06-10 here). Each EVAL06 message
+through the stand-in's worker alone, without a grammar and under each
+candidate grammar:
+
+- No white space between tokens, as first planned (`{"texts":[...]}`
+  exactly): 35 of the 40 replies changed, since the stand-in writes the
+  spaced form by itself, and six of them (e06-13, 29, 30, 31, 36 and 37)
+  then ran to the 16,384-token limit repeating words. Not taken.
+- At most 16 white space characters at a time, room for a line break and
+  indentation (taken): 39 of the 40 replies are the same bytes as without
+  a grammar, e06-36 included, which runs to the limit either way. e06-10
+  stops after 66 tokens: its white space is cut at 16 characters, and the
+  reply closes, with a stray `]}` and the start of a note inside its text;
+  the daemon takes it, and EVAL01 would judge it. The longest run of white
+  space in any other reply is 5 characters.
+
+Every other runaway seen on the stand-in repeats words, which bounding
+white space does not touch, and the grammar still allows any text the
+daemon takes. `tests/test_llama_worker.py` checks that the grammar changes
+no reply the daemon already accepted, and that no white space between
+tokens runs past 16 characters.
 
 EVAL01 development screen,
 [eval01-20261111T072816Z.json](../evidence/stage3/standin/eval01-20261111T072816Z.json),
@@ -1286,7 +1311,8 @@ candidates, so the split has to be re-declared before any holdout opens.
    small-model failures are slips in closing the JSON (stage 3 above). The
    grammar, [rewrite-reply.gbnf](../reference/rewrite-reply.gbnf), allows
    the replies the daemon's check accepts: `{"texts":[...]}` with as many
-   texts as the request, any JSON white space, and any text the daemon
+   texts as the request, JSON white space of at most 16 characters between
+   two tokens (14 November, against a runaway), and any text the daemon
    takes, so it is no tighter on what a text may hold. It differs from the
    daemon only on the key, which must be written `"texts"`, once; the
    daemon also takes other letter cases, an escaped key and a repeated key.

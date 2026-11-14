@@ -4,7 +4,9 @@
 # one JSON object {"texts": [...]} with exactly as many strings as it sent,
 # each holding a character that is not white space (Go's unicode.IsSpace) and
 # no control character other than newline and tab. White space between JSON
-# tokens is JSON's own: space, tab, newline and carriage return.
+# tokens is JSON's own: space, tab, newline and carriage return, at most 16
+# characters at a time, which leaves room for a line break and indentation
+# as the model writes them but cannot repeat without end.
 #
 # The worker adds the rule `texts`: n items separated by commas, where n is
 # the number of texts in the request's user message.
@@ -38,4 +40,4 @@ solid-code ::= (
 
 hex ::= [0-9a-fA-F]
 
-ws ::= [ \t\n\r]*
+ws ::= [ \t\n\r]{0,16}
