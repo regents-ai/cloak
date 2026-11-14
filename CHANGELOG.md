@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Details: the login setting reads "Launch Cloak on startup" (Sean, 14
+  November 2026), with one line under it saying Cloak opens paused.
+
 - Chat: Send Original, a checkbox under the message box, sends that
   message as written, with no rewording, still through Tor; its card shows
   the Original alone and the Reworded light off, and Reword on it rewords

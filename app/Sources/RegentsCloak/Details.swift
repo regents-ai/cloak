@@ -47,9 +47,9 @@ struct DetailsView: View {
                 LabeledContent("Last check", value: lastCheck(status.check))
             }
             Section {
-                Toggle("Login", isOn: Binding(get: { login }, set: openAtLogin))
+                Toggle("Launch Cloak on startup", isOn: Binding(get: { login }, set: openAtLogin))
             } footer: {
-                Text("Opens Regents Cloak, paused, when you log in.")
+                Text("Cloak opens paused, so nothing runs until you press Start.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
