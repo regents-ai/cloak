@@ -1164,7 +1164,9 @@ candidates, so the split has to be re-declared before any holdout opens.
   watched; one shutdown; Needs attention with a reason code on any failure,
   with nothing restarted and no other route or model; Paused at every
   launch, after sleep and after a relaunch, and at login, which the Details
-  window's Login switch turns on (off until then); `cloak status`, `start`,
+  window's Login switch turns on (off until then); the boot files a killed
+  app left, removed at each launch (state-machines.md, section 9);
+  `cloak status`, `start`,
   `pause`, `resume`, `stop`, `verify` and `doctor`, with versioned JSON
   (INS01, INS02), over an owner-only socket that checks the peer's user
   (MAC05). One model, named in the manifest: the stand-in, labelled as a
@@ -1172,8 +1174,8 @@ candidates, so the split has to be re-declared before any holdout opens.
 - What does not exist yet: sessions (Running has no session guest; the
   check guest powers off once its check is done), payment, wallets, cover
   traffic, the OS-approval and funding states, setup and model download
-  from the app, updates, recovery, a Developer ID signature and
-  notarization, and clearing leftover boot files at launch.
+  from the app, updates, recovery, and a Developer ID signature and
+  notarization.
 - Live run on the development Mac, 13 November, stand-in only: from Paused,
   `cloak start` reached Running in about 6 s, the check's rewrite taking
   0.25 s through the real guest path; `pause` stopped tor and the worker;

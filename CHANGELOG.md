@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `docs/plan.md`, "Stage 5 so far": removing the boot files a killed app
+  left, at each launch, now stands under what exists; it still stood under
+  what does not, though it was built on 13 November.
+
 - Screenshots of the app in each of its states, in `docs/shots/`: the
   Details window light and dark, the menu and the status icon dark. The
   plan's "Stage 5 so far" records the pass behind them: the names VoiceOver
