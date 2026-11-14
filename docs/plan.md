@@ -16,7 +16,7 @@ or inconclusive check is not a pass. Progress lives here.
 | 2. Build the local path | Minimal guest adapter and native worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
 | 3. Check feasibility early | Runs of each of the two candidates (decision 7's small pair, as GGUF files on llama.cpp under the reply grammar: decisions 8 and 9) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the small lead has two feasibility runs and two EVAL01 screens, the small challenger none |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner of the two candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split is to be settled before any holdout opens (decisions 7 to 9) |
-| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead ("Stage 5 so far"); no signed full bundle, setup, recovery, updates, sessions, payment or cover |
+| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead, with Chat sending in a Development mode only (decision 10; "Stage 5 so far"); no signed full bundle, setup, recovery, updates, sessions, the daemon's own payment or cover |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
 Stage 2 builds and tests the path with a small model labelled as a
@@ -1260,8 +1260,10 @@ candidates, so the split has to be re-declared before any holdout opens.
   lead, `small-lead-gguf-grammar`, shown as Qwen 3.5 9B, on a Mac with at
   least 16 GB (14 November; the stand-in before).
 - What does not exist yet: sessions (Running has no session guest; the
-  check guest powers off once its check is done), payment, wallets, cover
-  traffic, the OS-approval and funding states, setup and model download
+  check guest stays up after its check only to run Development mode's
+  sender, and its end is a failure), the daemon's own payment
+  and wallets (Development mode's one wallet, decision 10, is not them),
+  cover traffic, the OS-approval and funding states, setup and model download
   from the app, updates, recovery, and a Developer ID signature and
   notarization.
 - Live run on the development Mac, 13 November, stand-in only: from Paused,
@@ -1395,6 +1397,124 @@ candidates, so the split has to be re-declared before any holdout opens.
     rewording on screen; a delete, then a relaunch; a socket sample while
     Chat rewords; the new marks and the end in view in the app itself; and
     Chat in light with messages.
+- Sending in a Development mode (decision 10), built 14 November and
+  proven up to the first payment; no money has moved.
+  - The sender, `guest/sender/`: a Rust program in the guest, paying with
+    the official MPP toolkit, `mpp` 0.20.0 (pinned in Cargo.toml and
+    Cargo.lock, built `--locked` in the pinned Rust image, and listed in
+    `reference/sources.json`; past both advisories on the crate,
+    GHSA-fxc9-7j2w-vx54, fixed in 0.8.0, and GHSA-8xhq-x7vw-8rcw, fixed in
+    0.12.0). The guest starts it after the startup check, as a user of its
+    own, and stays up while Running; the guest ending is a failure
+    (`guest_failed`). The host connects to it on vsock port 8020, one
+    request per connection, in frames of a kind byte, a four-byte length
+    and the payload; it serves one connection at a time and gives each its
+    turn before the request is built, so a request always carries the
+    deposit as last kept.
+  - Every connection it makes, to the provider and to the Tempo network,
+    goes to the guest's Tor port, 127.0.0.1:9050, as SOCKS5 with names
+    resolved by Tor, with no proxy from the environment, no redirect
+    followed and 180 s per request. Each conversation has a SOCKS user name
+    of its own (32 random bytes, in the app's memory only), so tor's
+    IsolateSOCKSAuth gives it circuits of its own; reads of the network and
+    the provider's lists each take a fresh one.
+  - What goes out: the approved reworded text, after the conversation's
+    earlier turns as sent and answered, as `{"model", "messages",
+    "stream": false}` and nothing else: no instruction, no original. The
+    headers of a send are exactly `accept: */*`, `accept-payment:
+    tempo/session`, `content-length`, `content-type: application/json` and
+    `host`; the paid request is the same with the toolkit's credential
+    added (`authorization: Payment …`), which names the wallet and its
+    deposit, so the provider can link every chat. No user agent.
+  - The wallet: its key is made by the toolkit in the guest when the owner
+    presses Create, and kept only in the login keychain (service
+    `sh.regents.cloak.wallet`, its account the address, this device only;
+    that attribute binds only in the data protection keychain, which
+    refuses an app signed ad hoc, as for the conversations' key). It goes
+    to the guest in memory, inside the request that signs, and is never in
+    a boot file, the image, a log, a command line, the environment, the
+    control socket, `cloak status` or `cloak doctor`. One wallet only; no
+    spending cap.
+  - The deposit: the toolkit opens one at the size the provider's challenge
+    suggests, 1 USDC.e today, and tops it up by as much when it cannot pay
+    for the next request. Its state is sealed on the Mac
+    (`wallet/deposit`, ChaChaPoly under the conversations' key, owner
+    only); each change is sent to the host and on disk before the toolkit
+    goes on, so a deposit about to open is kept before its payment leaves.
+    Close ends it with the provider (a cooperative close: one unpaid
+    request with made-up text brings a session challenge, and the toolkit's
+    final voucher closes it), which refunds what is unspent; Withdraw asks
+    the network to close it and, pressed again after the 900 s grace
+    period, takes it back, without the provider.
+  - The app: Chat shows Development and the sentence "The provider can link
+    your chats, because one wallet pays for all of them." at the top
+    always. The newest unanswered message has three lights, Reworded (its
+    reworded text is not blank), Routed (Cloak is running, so it goes
+    through Tor) and Unlinked (never good here), and Send. Send is off,
+    with words beside it, only where sending is certain to stop: nothing
+    reworded, Cloak not running, no wallet, or no deposit to pay from and
+    too little for a new one, as the network last showed the wallet. A
+    press while one is under way is sent too. Once sent, the text can no
+    longer be edited or reworded; the answer is kept sealed with its
+    conversation. Wallet, in the toolbar: Create, the address to copy, the
+    network and token with a check that the provider's own setup page
+    still names Tempo's chain 4217 and USDC.e, the balance, the deposit
+    held and spent, Close, Withdraw, and the model, with prices, defaulting
+    to the cheapest, `deepseek/deepseek-v4-flash-0731` ($0.04 in, $0.21
+    out per million tokens on 14 November). Stops in plain words: no funds,
+    wallet refused, model unavailable, Tor down, no answer, failed, not
+    running. No fallback: a stopped send is shown and nothing else is
+    tried.
+  - Not as asked: there is no Deposit size to choose. The toolkit sizes
+    each deposit from the provider's suggestion, using its own default only
+    when a challenge suggests none, and its one limit caps what a deposit
+    pays in all, which would stop sends rather than make deposits smaller;
+    so the screen shows the size held instead, and the least balance a
+    first deposit needs (1 USDC.e).
+  - Checks: `cargo test --manifest-path guest/sender/Cargo.toml`, 10
+    tests against stand-ins for the Tor port, the provider and the
+    network: the request and its exact headers and body, the answer back,
+    each way a send stops and its code, an unfunded send stopping before
+    anything reaches the provider, a deposit that can pay needing no
+    balance, a Tor port that refuses, the wallet's view, a new key, each
+    deposit change kept before the toolkit goes on, and the identities each
+    connection uses. `swift test --package-path app`, 53 tests, among them
+    the send path against a stand-in sender (the request built at its turn,
+    the deposit sealed, each stop, a sender that goes away, a key that
+    cannot be read) and the startup check waiting for the sender.
+    `guest/build.sh`, `host/build.sh` and `app/build.sh` built it; the
+    guest's paths still pass, each file run alone (load averages of 18 to
+    45 from other apps): `tests/test_guest_path.py` 23 in 8 min 51 s,
+    `tests/test_tor_path.py` 10 in 7 min 41 s and
+    `tests/test_agent_path.py` 7 in 46 s.
+  - Live, through the real tor from the guest, with a throwaway key never
+    funded and gone with the run (`cloak-host --serve`, the stand-in
+    worker; load averages near 22): the sender was ready 8.6 s after start;
+    Create took 0.00 s; the wallet's view 2.77 s (balance 0, the setup page
+    naming chain 4217 and USDC.e, 26 priced models, no deposit); an unfunded
+    send stopped as no funds in 5.69 s, before anything reached the
+    provider; and Close with a made-up deposit stopped in 3.43 s with "the
+    deposit is not open on the network", after the provider's 402 had been
+    read and its challenge parsed and checked, before anything was signed.
+    The 402, read with curl through the same tor: HTTP/2 402,
+    `application/problem+json`, three `Payment` challenges (USDC.e, MACH,
+    OUSD; method tempo, intent session, chain 4217, escrow
+    0x4d50…0000, suggested deposit 1000000, 1731 units per request for this
+    model), `cache-control: no-store`, a link to the setup page and
+    CloudFront's headers. Over the whole run, only tor had internet sockets
+    (three relays); `cloak-host`, its children and the virtual machine's
+    process had none, and the key was in neither the console nor the
+    samples.
+  - Not proven: a paid send, a deposit opened or topped up, an answer from
+    the provider, Close and Withdraw on a real deposit, and the app's
+    screens with these parts (the Mac's screen). They need the owner's
+    funded wallet: start Cloak, open Chat, Wallet, press Create, copy the
+    address, send it 2 USDC.e on Tempo (chain 4217; the deposit's 1 USDC.e
+    and a few cents of network fees), press Refresh until the balance
+    shows, then send a harmless message. The first send opens the deposit;
+    Close afterwards refunds the rest. Tempo's test network, Moderato (chain
+    42431), was not used: Boundless runs on Tempo's main network only, so a
+    proof there needs a provider of its own on Moderato and test funds.
 
 ## Decisions
 
@@ -1543,6 +1663,23 @@ candidates, so the split has to be re-declared before any holdout opens.
    (`f5b0677f`) carries a grammar library (MLXGuidedGeneration, on
    xgrammar), but the MLX worker does not link it and nothing was built on
    it.
+10. Sending, in a Development mode. The owner's product decisions, dated
+    14 November 2026 (Sean, through the chief). Send in the Chat window
+    becomes real in a clearly labelled Development mode that is never part
+    of a public release: the approved reworded text goes through Tor to a
+    remote model at Boundless, paid from one wallet through the Machine
+    Payments Protocol (MPP) on Tempo, and the answer comes back into the
+    conversation. Cloak makes one wallet on the Mac and the owner funds it;
+    there is no spending cap, the balance is the limit. The default remote
+    model is a cheap open model, and it can be changed. The person sees
+    Original and Reworded and presses Send on the reworded text. Three
+    lights, Reworded, Routed and Unlinked: nothing is sent unless Reworded
+    and Routed are good, and in Development mode Unlinked is not good,
+    because one wallet pays for every chat and so links them all, which the
+    screen says in plain words. This is not the spec's payment (the
+    daemon's own, not built) and gives up conversation isolation (A07)
+    while it is used; it departs from the spec by the owner's ruling, for
+    development only, as decision 2 departs from HW01.
 
 ## Gates
 

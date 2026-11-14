@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- docs/plan.md: decision 10 (14 November), sending in a Development mode,
+  and in "Stage 5 so far" its design, what goes out, its checks and its
+  live proofs through Tor up to the first payment, with no money moved,
+  and what the owner's funded wallet would prove next.
+
 - Chat sends, in a Development mode marked at the top of the window with
   what it means: the provider can link your chats, because one wallet pays
   for all of them. The newest message has three lights (Reworded, Routed,
