@@ -13,7 +13,9 @@ import SwiftUI
 /// the one in front. While the window is open the app is an ordinary one,
 /// with a Dock icon, so it comes to the front with the window, which takes
 /// the keyboard; closing the window makes it a menu-bar app again, still
-/// running.
+/// running. It comes to the front whatever app is there, since the person
+/// asked for it: chosen with the menu's Command-D, the polite `activate()`
+/// left it behind.
 @MainActor
 final class DetailsWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
@@ -22,7 +24,7 @@ final class DetailsWindow: NSObject, NSWindowDelegate {
         let window = self.window ?? make(supervisor)
         self.window = window
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
 
