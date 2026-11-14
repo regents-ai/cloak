@@ -5,8 +5,9 @@ import CloakSupervisor
 import SwiftUI
 
 /// The Chat window: conversations on the left, newest first; the one shown
-/// on the right, each message as written and as reworded, side by side, and
-/// its answer once sent, with the box to write the next one at the bottom.
+/// on the right, each message as written and as reworded, side by side (or
+/// as written alone when it goes so), and its answer once sent, with the box
+/// to write the next one at the bottom.
 /// Development mode's mark is always at the top.
 struct ChatView: View {
     @Bindable var chat: Chat
@@ -192,10 +193,11 @@ private struct Turns: View {
 }
 
 /// One message: Original and Reworded side by side, the words taken out
-/// marked in one, the words put in marked in the other, then its answer.
-/// The newest unanswered one has the lights and Send: nothing is sent unless
-/// it is reworded and Cloak routes it through Tor, and Unlinked is never
-/// good in Development mode.
+/// marked in one, the words put in marked in the other, then its answer; a
+/// message going as written shows its Original alone. The newest unanswered
+/// one has the lights and Send: nothing is sent unless Cloak routes it
+/// through Tor and, unless its owner chose Send Original, it is reworded.
+/// Unlinked is never good in Development mode.
 private struct TurnCard: View {
     let chat: Chat
     let conversation: UUID
@@ -204,21 +206,27 @@ private struct TurnCard: View {
     let rewording: Chat.Rewording?
 
     var body: some View {
-        let diff = WordDiff(original: turn.original, reworded: turn.reworded)
         let sending = chat.sending[turn.id]
         let open = newest && turn.answer == nil
         Card {
-            HStack(alignment: .top, spacing: 12) {
-                Pane(title: "Original", count: diff.removed.count, mark: .removed) {
-                    TextBox(text: .constant(turn.original), label: "Original", editable: false, marks: diff.removed, mark: .removed)
+            if let reworded = turn.reworded {
+                let diff = WordDiff(original: turn.original, reworded: reworded)
+                HStack(alignment: .top, spacing: 12) {
+                    Pane(title: "Original", count: diff.removed.count, mark: .removed) {
+                        TextBox(text: .constant(turn.original), label: "Original", editable: false, marks: diff.removed, mark: .removed)
+                    }
+                    Pane(title: "Reworded", count: diff.added.count, mark: .added) {
+                        TextBox(
+                            text: open
+                                ? Binding(get: { reworded }, set: { chat.edit(turn.id, in: conversation, to: $0) })
+                                : .constant(reworded),
+                            label: "Reworded", editable: open && sending == nil && chat.rewording == nil, marks: diff.added,
+                            mark: .added)
+                    }
                 }
-                Pane(title: "Reworded", count: diff.added.count, mark: .added) {
-                    TextBox(
-                        text: open
-                            ? Binding(get: { turn.reworded }, set: { chat.edit(turn.id, in: conversation, to: $0) })
-                            : .constant(turn.reworded),
-                        label: "Reworded", editable: open && sending == nil && chat.rewording == nil, marks: diff.added,
-                        mark: .added)
+            } else {
+                Pane(title: "Original", count: nil, mark: .removed) {
+                    TextBox(text: .constant(turn.original), label: "Original", editable: false)
                 }
             }
             if let answer = turn.answer {
@@ -234,7 +242,7 @@ private struct TurnCard: View {
             if let rewording {
                 Progress(chat: chat, started: rewording.started)
             } else if open {
-                Lights(reworded: !Chat.isBlank(turn.reworded), routed: chat.supervisor.phase == .running)
+                Lights(reworded: turn.reworded.map { !Chat.isBlank($0) } ?? false, routed: chat.supervisor.phase == .running)
                 HStack(spacing: 12) {
                     Button("Reword", systemImage: "arrow.clockwise") { chat.reword(turn, in: conversation) }
                         .disabled(!chat.canReword || sending != nil)
@@ -388,8 +396,9 @@ private struct Pane<Content: View>: View {
     }
 }
 
-/// The box for the next message, what stopped the last rewording, and,
-/// unless Cloak is running, why rewording waits and a Start button.
+/// The box for the next message, with Send Original under it, what stopped
+/// the last rewording, and, unless Cloak is running, why rewording waits and
+/// a Start button.
 private struct Compose: View {
     @Bindable var chat: Chat
 
@@ -425,16 +434,20 @@ private struct Compose: View {
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
                     .disabled(!chat.canCompose)
-                Button("Reword", systemImage: "arrow.up") { chat.submit() }
+                let title: LocalizedStringKey = chat.sendOriginal ? "Send" : "Reword"
+                Button(title, systemImage: "arrow.up") { chat.submit() }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
-                    .help("Reword")
+                    .help(title)
                     .disabled(!chat.canSubmit)
                     // Level with a box of one line.
                     .padding(.bottom, 4)
             }
+            Toggle("Send Original", isOn: $chat.sendOriginal)
+                .toggleStyle(.checkbox)
+                .font(.callout)
         }
         .padding(16)
     }
@@ -526,7 +539,7 @@ extension Chat.Stop {
         case .cancelled: ""
         case .stopped: "Start Cloak, then try again."
         }
-        let back = newMessage ? "Your message is back in the box." : "The reworded text is as it was."
+        let back = newMessage ? "Your message is back in the box." : "The message is as it was."
         return next.isEmpty ? back : back + " " + next
     }
 }

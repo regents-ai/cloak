@@ -29,9 +29,9 @@ struct MenuContent: View {
             Button("Start") { supervisor.send(.start) }
                 .keyboardShortcut("s")
         }
-        Button("Chat…", action: showChat)
-        Button("Agents…", action: showAgents)
-        Button("Details…", action: showDetails)
+        Button("Chat", action: showChat)
+        Button("Agents", action: showAgents)
+        Button("Details", action: showDetails)
             .keyboardShortcut("d")
         Divider()
         Button("Quit") { NSApp.terminate(nil) }

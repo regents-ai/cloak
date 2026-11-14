@@ -3,9 +3,10 @@ import CryptoKit
 import Foundation
 import Security
 
-// Development mode (decision 10 in docs/plan.md): a turn's reworded text goes
-// through the guest's sender (guest/sender), through Tor, to a remote model,
-// paid from one wallet. Never part of a release.
+// Development mode (decision 10 in docs/plan.md): a turn's reworded text, or
+// its original when its owner chose Send Original (decision 11), goes through
+// the guest's sender (guest/sender), through Tor, to a remote model, paid
+// from one wallet. Never part of a release.
 
 /// The wallet's key, made by the guest's sender with the payment toolkit's
 /// own key code and kept only here: a generic password in the login
@@ -227,7 +228,7 @@ public enum Remote {
         return look
     }
 
-    /// Sends `turn`'s reworded text, after the conversation's earlier turns
+    /// Sends `turn`'s text as sent, after the conversation's earlier turns
     /// as they were sent and answered, to `model` (`complete`). Returns the
     /// model's answer: the first choice's text, when it has one and finished
     /// by stopping or at its length.
@@ -268,7 +269,8 @@ public enum Remote {
     }
 
     /// Posts `body`, a chat request in OpenAI's shape built on this Mac with
-    /// every user message reworded, to the provider through Tor as
+    /// every user message reworded, but for a Chat message its owner chose to
+    /// send as written, to the provider through Tor as
     /// `identity`, opening or topping up the deposit as needed, at the size
     /// the provider suggests. Returns the provider's completion as it gave
     /// it.
@@ -310,14 +312,15 @@ public enum Remote {
     }
 
     /// The messages for `turn`: each earlier turn that was answered, as sent
-    /// and as answered, then `turn`'s reworded text. Nothing else: no
-    /// instruction, no original.
+    /// and as answered, then `turn`'s text as sent: reworded, or as written
+    /// when its owner chose Send Original. Nothing else: no instruction, and
+    /// no original of a reworded turn.
     static func messages(for turn: UUID, in conversation: Conversation) -> [[String: String]]? {
         guard let index = conversation.turns.firstIndex(where: { $0.id == turn }) else { return nil }
         let earlier = conversation.turns[..<index].flatMap { turn in
-            turn.answer.map { [["role": "user", "content": turn.reworded], ["role": "assistant", "content": $0]] } ?? []
+            turn.answer.map { [["role": "user", "content": turn.sent], ["role": "assistant", "content": $0]] } ?? []
         }
-        return earlier + [["role": "user", "content": conversation.turns[index].reworded]]
+        return earlier + [["role": "user", "content": conversation.turns[index].sent]]
     }
 
     private static func deposit(_ deposits: DepositStore) throws -> Any {

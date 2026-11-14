@@ -149,6 +149,32 @@ struct SendTests {
         #expect(carried["channelId"] as? String == "0x01")
     }
 
+    /// A message its owner chose to send as written goes as written, now or
+    /// replayed later; the reworded ones around it go as reworded.
+    @Test func aTurnGoingAsWrittenIsSentAsWrittenInItsPlace() async throws {
+        defer { remove() }
+        let conversation = Conversation(turns: [
+            Turn(original: "Um, what colour is calm?", reworded: nil, answer: "Sage green."),
+            Turn(original: "and a goldfish name pls", reworded: "Suggest a goldfish name.", answer: "Bubbles."),
+            Turn(original: "now one for a cat", reworded: nil),
+        ])
+        let standIn = StandIn(answer: Self.completed(Self.said("Whiskers.")))
+        let answer = try await Remote.send(
+            conversation.turns[2].id, in: conversation, model: "cheap", identity: String(repeating: "ab", count: 32),
+            key: { Self.walletKey }, deposits: deposits, exchange: standIn.exchange)
+        #expect(answer == "Whiskers.")
+
+        let sent = try #require(standIn.read.first?["body"] as? String)
+        let body = try #require(JSONSerialization.jsonObject(with: Data(sent.utf8)) as? [String: Any])
+        #expect(body["messages"] as? [[String: String]] == [
+            ["role": "user", "content": "Um, what colour is calm?"],
+            ["role": "assistant", "content": "Sage green."],
+            ["role": "user", "content": "Suggest a goldfish name."],
+            ["role": "assistant", "content": "Bubbles."],
+            ["role": "user", "content": "now one for a cat"],
+        ])
+    }
+
     @Test func eachStopComesBackWithItsCode() async throws {
         defer { remove() }
         for code in ["no_funds", "wallet_refused", "model_unavailable", "tor_down", "failed"] {

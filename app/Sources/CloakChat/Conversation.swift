@@ -1,6 +1,7 @@
 import Foundation
 
-/// One chat: its messages, each as written and as reworded, oldest first.
+/// One chat: its messages, each as written and, unless it goes as written,
+/// as reworded, oldest first.
 public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let created: Date
@@ -19,18 +20,23 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
-/// One message: as written, as reworded then edited, and once the reworded
-/// text was sent, the model's answer. A turn without an answer is a draft.
+/// One message: as written, as reworded then edited, and once it was sent,
+/// the model's answer. A turn without an answer is a draft.
 public struct Turn: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let original: String
-    public var reworded: String
+    /// Nil when the message goes as written: its owner ticked Send Original.
+    public var reworded: String?
     public var answer: String?
 
-    public init(id: UUID = UUID(), original: String, reworded: String, answer: String? = nil) {
+    public init(id: UUID = UUID(), original: String, reworded: String?, answer: String? = nil) {
         self.id = id
         self.original = original
         self.reworded = reworded
         self.answer = answer
     }
+
+    /// The text that is sent: the reworded one, or the original when the
+    /// message goes as written.
+    public var sent: String { reworded ?? original }
 }

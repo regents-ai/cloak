@@ -1780,6 +1780,17 @@ candidates, so the split has to be re-declared before any holdout opens.
     daemon's own, not built) and gives up conversation isolation (A07)
     while it is used; it departs from the spec by the owner's ruling, for
     development only, as decision 2 departs from HW01.
+11. Send Original, in Chat. Decided 14 November 2026 (Sean: "There should
+    be a checkbox that says 'Send Original', and it does that without any
+    rewords"). A checkbox under Chat's message box sends that message as
+    written, with no rewording, still through Tor and from the one wallet;
+    its card shows the Original alone and its Reworded light is not good.
+    It is the owner's choice for each message, in Chat only, and off at
+    each launch. It is never a fallback: a rewording that fails still sends
+    nothing, and the original never goes in its place. The door for the
+    owner's other apps (Agents) is unchanged and rewords every user message.
+    This is the one exception to decision 10's "nothing is sent unless
+    Reworded and Routed are good".
 
 ## Gates
 

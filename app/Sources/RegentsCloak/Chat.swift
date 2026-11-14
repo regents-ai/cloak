@@ -6,9 +6,11 @@ import os
 
 /// What the Chat window holds: the saved conversations, the one shown, the
 /// message being written, the one rewording at a time, and the turns being
-/// sent. A turn leaves this Mac only as reworded, and only when its owner
-/// presses Send: in Development mode (decision 10 in docs/plan.md) through
-/// the guest's sender and Tor to a remote model, paid from the one wallet.
+/// sent. A turn leaves this Mac as reworded, or as written when its owner
+/// ticks Send Original for that message (decision 11 in docs/plan.md), and
+/// only when its owner presses Send: in Development mode (decision 10)
+/// through the guest's sender and Tor to a remote model, paid from the one
+/// wallet.
 @MainActor
 @Observable
 final class Chat {
@@ -66,6 +68,9 @@ final class Chat {
     var selection: UUID?
     /// The message being written.
     var draft = ""
+    /// The next message goes as written, without rewording. In memory only:
+    /// off at each launch.
+    var sendOriginal = false
     private(set) var rewording: Rewording?
     var stop: Stop?
     /// By turn.
@@ -103,17 +108,19 @@ final class Chat {
         canCompose && supervisor.phase == .running
     }
 
+    /// A message going as written is added without Cloak running; its card
+    /// then says why Send is off.
     var canSubmit: Bool {
-        canReword && !Self.isBlank(draft)
+        (sendOriginal ? canCompose : canReword) && !Self.isBlank(draft)
     }
 
     /// Why Send is off for `turn` now, or nil when it is on. Off only where
-    /// sending is certain to stop: nothing reworded to send; Cloak not
+    /// sending is certain to stop: a reworded text left blank; Cloak not
     /// running, so nothing is routed through Tor; no wallet; or, as the
     /// network last showed the wallet, no funds. A send under way never
     /// turns it off.
     func sendBlock(_ turn: Turn) -> String? {
-        if Self.isBlank(turn.reworded) { return "Reword it to send." }
+        if let reworded = turn.reworded, Self.isBlank(reworded) { return "Reword it to send." }
         if supervisor.phase != .running { return "Start Cloak to send." }
         if wallet.address == nil { return "Create a wallet to send." }
         if wallet.lacksFunds { return "Add funds to send." }
@@ -190,15 +197,24 @@ final class Chat {
         }
     }
 
-    /// Rewords the message written, as a new turn of the conversation shown.
+    /// Rewords the message written, as a new turn of the conversation shown;
+    /// or, with Send Original ticked, adds it as written and sends it.
     func submit() {
         let original = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard canSubmit, let conversation = selected else { return }
+        guard canSubmit, var conversation = selected else { return }
         draft = ""
-        start(conversation.id, original, turn: nil)
+        if sendOriginal {
+            let turn = Turn(original: original, reworded: nil)
+            conversation.turns.append(turn)
+            update(conversation)
+            send(turn.id, in: conversation.id)
+        } else {
+            start(conversation.id, original, turn: nil)
+        }
     }
 
-    /// Rewords a turn again, from its original, until it is sent.
+    /// Rewords a turn again, or for the first time if it was to go as
+    /// written, from its original, until it is sent.
     func reword(_ turn: Turn, in conversation: UUID) {
         guard canReword, turn.answer == nil, sending[turn.id] == nil else { return }
         start(conversation, turn.original, turn: turn.id)
@@ -218,9 +234,9 @@ final class Chat {
         update(conversation)
     }
 
-    /// Sends the turn as reworded, after the conversation's earlier turns as
-    /// sent and answered, and keeps the answer with it. Each press is sent;
-    /// one under way never stops another.
+    /// Sends the turn, reworded or as written, after the conversation's
+    /// earlier turns as sent and answered, and keeps the answer with it.
+    /// Each press is sent; one under way never stops another.
     func send(_ turn: UUID, in id: UUID) {
         guard let deposits = wallet.deposits, let conversation = conversations.first(where: { $0.id == id }),
             let current = conversation.turns.first(where: { $0.id == turn }), sendBlock(current) == nil

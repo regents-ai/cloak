@@ -44,6 +44,19 @@ struct StoreTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).count == 2)
     }
 
+    /// A chat with messages that went as written opens again as it was saved.
+    @Test func turnsGoingAsWrittenOpenAgainAsSaved() throws {
+        defer { remove() }
+        let store = store()
+        let conversation = Conversation(turns: [
+            Turn(original: "Send this one just as I wrote it", reworded: nil, answer: "Sent."),
+            Turn(original: "Please find my tax receipts from Barcelona", reworded: "Find the tax receipts from Barcelona."),
+            Turn(original: "and the Lisbon ones as written", reworded: nil),
+        ])
+        try store.save(conversation)
+        #expect(try store.load() == [.conversation(conversation)])
+    }
+
     @Test func eachSaveHasAFreshNonce() throws {
         defer { remove() }
         let store = store()

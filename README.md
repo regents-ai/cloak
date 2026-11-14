@@ -311,7 +311,7 @@ file's hash as it loads), with "The model has changed". Either way, remove
 `~/Library/Application Support/Regents Cloak/models/small-lead-gguf-grammar/`,
 fetch it again with the command above, and start again.
 
-"Chat…" in the menu opens a Chat window. While Cloak is running, each
+"Chat" in the menu opens a Chat window. While Cloak is running, each
 message is reworded on the Mac and shown beside the original, with the
 words taken out and put in marked; the reworded text can be edited until
 it is sent. Each conversation, answers included, is kept as one sealed file
@@ -324,10 +324,13 @@ marked as such at the top of Chat, and never part of a release: the
 reworded text, after the conversation's earlier sent and answered turns,
 goes from the guest's sender through Tor to a remote model at Boundless,
 paid through MPP on Tempo from one wallet, so the provider can link every
-chat. Wallet, in Chat's toolbar, makes the wallet when Create is pressed:
-its key is made in the guest and kept only in the login keychain, this Mac
-only; the address to fund takes USDC.e on Tempo. A small deposit, at the
-size the provider suggests (1 USDC.e), pays for chats and is topped up by
+chat. A tick in "Send Original", under the message box, sends that message
+as written, with no rewording, still through Tor, and its Reworded light is
+off; the tick is off at each launch, and apps sending through Agents
+(below) are always reworded. Wallet, in Chat's toolbar, makes the wallet
+when Create is pressed: its key is made in the guest and kept only in the
+login keychain, this Mac only; the address to fund takes USDC.e on Tempo.
+A small deposit, at the size the provider suggests (1 USDC.e), pays for chats and is topped up by
 that much when it cannot pay for the next one; Close ends it with the
 provider, which
 refunds what is unspent, and Withdraw asks the network to close it and,
@@ -337,7 +340,7 @@ conversations' key. The key never reaches the log, the control socket,
 `cloak status` or `cloak doctor`, and no message text does either; the log
 has only why a request stopped.
 
-"Agents…" in the menu lets your other apps on this Mac send through Cloak,
+"Agents" in the menu lets your other apps on this Mac send through Cloak,
 in Development mode too, as to any server that speaks OpenAI's chat
 format. While Cloak is running it answers at `http://127.0.0.1:8742/v1`,
 on 127.0.0.1 only; if another app holds that port, Agents says so and

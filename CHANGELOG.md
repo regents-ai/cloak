@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Chat: Send Original, a checkbox under the message box, sends that
+  message as written, with no rewording, still through Tor; its card shows
+  the Original alone and the Reworded light off, and Reword on it rewords
+  it as usual. Off at each launch; a rewording that fails still never
+  sends the original, and apps using Agents are always reworded (decision
+  11 in docs/plan.md). The menu's Chat, Agents and Details lose their
+  ellipsis, since each only opens a window. Two new checks: a message
+  going as written is sent, and replayed, as written among reworded ones,
+  and a chat holding one opens again as saved.
+
 - Agents keeps each app's "last used" current, drawn again each minute,
   where a reopened window showed the time as it was when it was last
   drawn. docs/plan.md: the door in "Stage 5 so far", with what the daemon
