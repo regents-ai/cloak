@@ -55,6 +55,11 @@ public struct Termination: Sendable, Equatable, CustomStringConvertible {
     public let status: Int32
     public let signalled: Bool
 
+    public init(status: Int32, signalled: Bool) {
+        self.status = status
+        self.signalled = signalled
+    }
+
     public var description: String { signalled ? "signal \(status)" : "exit status \(status)" }
 }
 

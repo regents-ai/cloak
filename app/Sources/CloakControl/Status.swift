@@ -37,7 +37,7 @@ public struct StatusDocument: Codable, Sendable, Equatable {
     /// The model is exactly one, named in the app's manifest.
     public struct Model: Codable, Sendable, Equatable {
         public var name: String
-        /// What the model is, such as "development stand-in".
+        /// The model in plain words, such as "Qwen 3.5 9B".
         public var label: String
 
         public init(name: String, label: String) {
@@ -97,6 +97,7 @@ public enum Reason: String, Codable, Sendable, CaseIterable {
     case partMissing = "part_missing"
     case partChanged = "part_changed"
     case modelMissing = "model_missing"
+    case modelChanged = "model_changed"
     case torUnavailable = "tor_unavailable"
     case torStopped = "tor_stopped"
     case workerUnavailable = "worker_unavailable"
@@ -111,6 +112,7 @@ public enum Reason: String, Codable, Sendable, CaseIterable {
         case .partMissing: "Part of Regents Cloak is missing."
         case .partChanged: "Part of Regents Cloak has changed."
         case .modelMissing: "The model isn't installed."
+        case .modelChanged: "The model has changed."
         case .torUnavailable: "Couldn't connect to Tor."
         case .torStopped: "Tor stopped."
         case .workerUnavailable: "The model couldn't load."
@@ -126,6 +128,7 @@ public enum Reason: String, Codable, Sendable, CaseIterable {
         case .unsupportedHardware: "Use a Mac with Apple silicon and enough memory."
         case .partMissing, .partChanged: "Reinstall Regents Cloak."
         case .modelMissing: "Install the model, then start again."
+        case .modelChanged: "Reinstall the model, then start again."
         case .torUnavailable: "Check your internet connection, then start again."
         case .torStopped, .workerUnavailable, .workerStopped, .guestFailed, .checkFailed: "Start again."
         }

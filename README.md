@@ -21,7 +21,7 @@ Stage 3 of 6: the feasibility kit is ready and waits for the candidates'
 weights, which Sean decides when to fetch. The stage 4 qualification kit is
 built and proven on development data only; its holdouts need people to
 write them. Stage 5 has started with a development build of the app's
-core, on the stand-in model only. Stages 1 and 2 stay open in
+core, running the small lead. Stages 1 and 2 stay open in
 [docs/plan.md](docs/plan.md). Nothing here is a release, and no protection is
 claimed as proven. A gate counts only when its evidence
 is recorded in [docs/plan.md](docs/plan.md).
@@ -43,9 +43,8 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/stage4-dev-fidelity.json`, `stage4-dev-privacy.json` | Development sets for the stage 4 kit; never holdouts |
 | `reference/wrapper/` | The reconstructed Pi sandbox wrapper and its Tor settings |
 | `reference/host/` | The Linux reference host used for stage 1 |
-| `worker/` | The native rewrite worker (Swift, MLX), its sandbox entitlements and install script |
-| `llama-worker/` | The second rewrite worker (decision 8): Swift over llama.cpp, built from its pinned source with Metal, with the same sandbox and its own install script |
-| `rewriter-kit/` | What both workers share: the frames to and from the host, the daemon's request, the replies and the model pins |
+| `llama-worker/` | The native rewrite worker (decision 8): Swift over llama.cpp, built from its pinned source with Metal, its sandbox entitlements and install script |
+| `rewriter-kit/` | The worker's protocol and pins: the frames to and from the host, the daemon's request, the replies and the model pins |
 | `host/` | The host library (tor, the worker's channel, the relay, the guest) and the `cloak-host` command the kits run |
 | `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build |
 | `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), kernel and root build |
@@ -79,50 +78,39 @@ disk first). A download cut short stops the run; running it again carries
 on from where it stopped:
 
 ```bash
-uv run scripts/fetch_model.py standin
+uv run scripts/fetch_model.py standin-gguf-grammar
 ```
 
 ## Stage 2 commands
 
-Build the native worker (two build jobs, low priority; the first build needs
-Apple's Metal toolchain, `xcodebuild -downloadComponent MetalToolchain`), sign
-it into the App Sandbox with no network and reading only the models folder,
-and install it in `~/Library/Application Support/Regents Cloak/worker/` (the
-sandbox cannot start a program kept under `~/Documents`). The model pins are
-built into the worker, so rebuild after `reference/models.json` changes:
-
-```bash
-worker/install.sh
-```
-
-The second worker (decision 8) runs GGUF models on llama.cpp. Build
+Build the native worker, which runs GGUF models on llama.cpp (decision 8):
 llama.cpp from its pinned source (`reference/src/llama.cpp`, fetched above;
-CMake comes through uv) with Metal, then the worker, signed with the same
-entitlements and installed beside the first, and fetch its stand-in. Each
-model a worker runs names its `engine` (`mlx` or `llama`) in
-`reference/models.json`, and the kits start that engine's worker:
+CMake comes through uv) with Metal, then the worker (two build jobs, low
+priority). It is signed into the App Sandbox with no network and reading
+only the models folder, and installed in
+`~/Library/Application Support/Regents Cloak/worker/` (the sandbox cannot
+start a program kept under `~/Documents`). The model pins and the reply
+grammar are built into the worker, so rebuild after `reference/models.json`
+or `reference/rewrite-reply.gbnf` changes:
 
 ```bash
 llama-worker/install.sh
-uv run scripts/fetch_model.py standin-gguf
 ```
 
 Send the installed worker one rewrite request built exactly as the daemon
 builds it:
 
 ```bash
-uv run scripts/drive_worker.py --name standin "a text to rewrite"
+uv run scripts/drive_worker.py --name standin-gguf-grammar "a text to rewrite"
 ```
 
-Run both workers' functional checks, each against its stand-in (`standin`
-and `standin-gguf`, the latter also under the reply grammar as
-`standin-gguf-grammar`, decision 9), then the llama worker's own: the same
-prompt tokens as the MLX worker, no network code linked, numbers-only logs,
-and its replies under the grammar judged by the daemon's own check (built
+Run the worker's functional checks against the stand-in
+(`standin-gguf-grammar`, decoded under the reply grammar, decision 9): the
+channel, cancellation, the model pins, the sandbox, no network code linked,
+numbers-only logs, and its replies judged by the daemon's own check (built
 with Go inside the pinned daemon source):
 
 ```bash
-uv run --with pytest==8.4.2 pytest tests/test_worker.py
 uv run --with pytest==8.4.2 pytest tests/test_llama_worker.py
 ```
 
@@ -181,7 +169,7 @@ when Sean decides), one command writes that candidate's feasibility record
 (EVAL05, EVAL06 and EVAL07):
 
 ```bash
-uv run scripts/stage3.py feasibility lead
+uv run scripts/stage3.py feasibility small-lead-gguf-grammar
 ```
 
 It checks everything first (the pins, each model file's size, the inputs and
@@ -198,16 +186,15 @@ Run the development screen (EVAL01: the daemon's 16 synthetic cases and its
 own checks) through the same path:
 
 ```bash
-uv run scripts/stage3.py eval01 lead
+uv run scripts/stage3.py eval01 small-lead-gguf-grammar
 ```
 
-The candidates are `lead`, `challenger`, `small-lead` and `small-challenger`
-(decision 7 in `docs/plan.md` added the last two), `small-lead-gguf` and
-`small-challenger-gguf` on llama.cpp (decision 8), and the same two under
-the reply grammar, `small-lead-gguf-grammar` and
-`small-challenger-gguf-grammar` (decision 9). Any other model, such as
-`standin`, `standin-gguf` or `standin-gguf-grammar`, gets a record marked
-development only, which counts toward no gate.
+The candidates are `small-lead-gguf-grammar` and
+`small-challenger-gguf-grammar`: the small pair decision 7 in
+`docs/plan.md` added, as GGUF files on llama.cpp (decision 8) under the
+reply grammar (decision 9). Any other model, such as the stand-in
+`standin-gguf-grammar`, gets a record marked development only, which counts
+toward no gate.
 
 Run the kit's own checks:
 
@@ -232,8 +219,8 @@ holdout text stay beside the holdout, in `records/<name>/`; development
 records go to `evidence/stage4/<name>/`:
 
 ```bash
-uv run scripts/stage4.py rewrite lead EVAL02 <file>
-uv run scripts/stage4.py rewrite lead EVAL03 <file>
+uv run scripts/stage4.py rewrite small-lead-gguf-grammar EVAL02 <file>
+uv run scripts/stage4.py rewrite small-lead-gguf-grammar EVAL03 <file>
 ```
 
 Fidelity: make the blinded review packet (the outputs without their arm)
@@ -268,13 +255,20 @@ uv run --with pytest==8.4.2 --with scikit-learn==1.9.1 --with numpy==2.5.4 \
 ## Stage 5 commands
 
 Stage 5 has started with a development build of the app's core: one
-supervisor, run by a menu-bar app and by the `cloak` command. It uses only
-the development stand-in model (`standin`), and has no sessions, payment,
-wallet or cover traffic. Running means tor and the worker are up and a
-startup check sent one rewrite through a guest, the daemon and the worker.
+supervisor, run by a menu-bar app and by the `cloak` command. It runs the
+small lead, Qwen 3.5 9B (`small-lead-gguf-grammar`), needs a Mac with Apple
+silicon and 16 GB of memory, and has no sessions, payment, wallet or cover
+traffic. Running means tor and the worker are up and a startup check sent
+one rewrite through a guest, the daemon and the worker.
 
 With the guest, the host's tor and the worker built and installed (stage 2
-commands) and the stand-in fetched, build `app/build/Regents Cloak.app`,
+commands) and the small lead fetched (5.4 GiB):
+
+```bash
+uv run scripts/fetch_model.py small-lead-gguf-grammar
+```
+
+build `app/build/Regents Cloak.app`,
 signed ad hoc with the virtualization entitlement, with a manifest that pins
 the guest, tor and the installed worker (rebuild after reinstalling any of
 them):
@@ -304,6 +298,13 @@ It talks to the app over a socket only the same user can reach, in
 `~/Library/Application Support/Regents Cloak/control/`. A guest's boot
 files, which hold its keys while it starts, are in `control/boot/`; each
 launch first removes any that a killed app left there.
+
+The app does not download the model. When a file is missing or not its
+pinned size it needs attention with "The model isn't installed"; when the
+model's folder is not exactly the pinned files (the worker checks every
+file's hash as it loads), with "The model has changed". Either way, remove
+`~/Library/Application Support/Regents Cloak/models/small-lead-gguf-grammar/`,
+fetch it again with the command above, and start again.
 
 Run the supervisor's checks (state changes, stand-in tor and worker
 processes, the control socket and its JSON, the boot files a killed app

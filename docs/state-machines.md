@@ -6,21 +6,40 @@ are, and how the code holds them. Found in a read of every source file on
 the order of statements, it is now named in the code; the faults that
 implication hid are listed with the checks that show them fixed.
 
-## 1. The worker's one rewrite (`worker/Sources/cloak-rewriter/Worker.swift`)
+## 1. The worker's one rewrite (`llama-worker/Sources/cloak-rewriter-llama/Worker.swift`, `llama-worker/Sources/CLlama/cloak_llama.cpp`)
+
+The worker (llama.cpp, decision 8) holds two states, `idle` and
+`rewriting`, in one enum under one lock; the rewrite's steps are the order
+of `cloak_engine_rewrite`, which returns how it ended.
 
 ```
-idle --request--> preparing --generation starts--> generating
- ^                    |                                |
- +------------- answer written ------------------------+
+idle --request--> rewriting --answer written--> idle
+
+rewriting: request checked --> prompt rendered --> context made --> grammar made --> reading the prompt --> generating --> stop | length
+           any step --> failed (template, context, grammar, prompt, generation): 500
+           reading the prompt, generating --cancel--> cancelled: 499
 ```
 
-- **preparing**: the request's own task checks it, builds its prompt and has
-  the model read the prompt, in chunks of 512 tokens. A cancel here cancels
-  that task: the reading stops at the next chunk, or the generation stops
-  the moment it starts. The answer is 499.
-- **generating**: a cancel stops the generation; the answer is 499.
+- **request checked**: only the daemon's rewrite request for this model,
+  whose user message is the daemon's `{"texts":[...]}` with at least one
+  text, goes on: the count of texts fixes the grammar's `texts` rule
+  (decision 9). Anything else is answered 400 and never reaches llama.cpp.
+- **context made**: a context of the rewrite's own, sized for the prompt and
+  `max_tokens`; nothing carries over from the rewrite before.
+- **grammar made**: llama.cpp's grammar sampler over the pinned grammar plus
+  the `texts` rule. It fails as `grammar` if it does not parse (code 0).
+- **reading the prompt**, in chunks of 512 tokens, then **generating**, one
+  token at a time: a cancel sets a flag that llama.cpp's loop reads before
+  each chunk and each token, so the rewrite stops within one chunk or one
+  token and is answered 499.
+- **generating**: greedy's token when the grammar allows it, otherwise
+  greedy's among the tokens it allows (llama.cpp's own rejection sampling).
+  The grammar allows the end of the turn only once the reply is complete,
+  and fails the rewrite as `grammar` (code 1) if it ever allows no token. It
+  ends with `stop` at the end of the turn, or `length` at `max_tokens`
+  tokens.
 - **idle**: a cancel here is one that crossed the answer, and does nothing.
-- The worker goes idle before it writes the answer, because the host sends
+  The worker goes idle before it writes the answer, because the host sends
   its next request as soon as it has read this one.
 - **End of the channel** (the host's shutdown closes it): a rewrite in
   progress is cancelled as above and answered 499; the worker exits 0 once
@@ -29,6 +48,18 @@ idle --request--> preparing --generation starts--> generating
   frame, input cut inside a frame): no frame is read after it; a rewrite in
   progress is cancelled and answered 499 the same way, then the worker exits
   2.
+- **Before ready**: the worker exits 3 when the model folder is not exactly
+  the pinned files, and 2 when anything else stops it loading; the app tells
+  the two apart (section 9).
+
+Checks: `tests/test_llama_worker.py` (a cancel while generating and while
+reading the prompt, each protocol fault and the end of the channel
+mid-rewrite, the token limit, each refused model folder, and the replies
+under the grammar).
+
+The faults below were found on the first worker, on MLX (`worker/`,
+deleted on 14 November 2026 when decision 8 chose llama.cpp). The same
+checks run on this worker.
 
 Before: a busy flag (an atomic) and a run record (a cancelled flag and the
 generation) under a separate lock described the same state twice. No fault
@@ -63,49 +94,6 @@ with the same crash. Check:
 one case per fault (exit status -11 and no answer in all four before the
 fix).
 
-## 1a. The llama worker's one rewrite (`llama-worker/Sources/cloak-rewriter-llama/Worker.swift`, `llama-worker/Sources/CLlama/cloak_llama.cpp`)
-
-The llama.cpp worker (decision 8) holds the same two states as section 1's
-worker, `idle` and `rewriting`, in one enum under one lock; the rewrite's
-steps are the order of `cloak_engine_rewrite`, which returns how it ended.
-
-```
-idle --request--> rewriting --answer written--> idle
-
-rewriting: request checked --> prompt rendered --> context made --> [grammar made] --> reading the prompt --> generating --> stop | length
-           any step --> failed (template, context, grammar, prompt, generation): 500
-           reading the prompt, generating --cancel--> cancelled: 499
-```
-
-- **request checked**: only the daemon's rewrite request for this model goes
-  on; anything else is answered 400 and never reaches llama.cpp. For a model
-  with a grammar (decision 9), the user message must also be the daemon's
-  `{"texts":[...]}` with at least one text: their count fixes the grammar's
-  `texts` rule.
-- **context made**: a context of the rewrite's own, sized for the prompt and
-  `max_tokens`; nothing carries over from the rewrite before.
-- **grammar made** (models with a grammar only): llama.cpp's grammar sampler
-  over the pinned grammar plus the `texts` rule. It fails as `grammar` if it
-  does not parse (code 0).
-- **reading the prompt**, in chunks of 512 tokens, then **generating**, one
-  token at a time: a cancel sets a flag that llama.cpp's loop reads before
-  each chunk and each token, so the rewrite stops within one chunk or one
-  token and is answered 499.
-- **generating**: greedy's token each step; under a grammar, greedy's token
-  when the grammar allows it, otherwise greedy's among the tokens it allows
-  (llama.cpp's own rejection sampling). The grammar allows the end of the
-  turn only once the reply is complete, and fails the rewrite as `grammar`
-  (code 1) if it ever allows no token. It ends with `stop` at the end of the
-  turn, or `length` at `max_tokens` tokens.
-- **idle** before the answer is written, as in section 1, and the end of the
-  channel and a protocol fault cancel a rewrite in progress the same way
-  before the worker exits (0 and 2).
-
-Checks: `tests/test_worker.py` runs section 1's checks on this worker, with
-and without the grammar (a cancel while generating and while reading the
-prompt, each protocol fault and the end of the channel mid-rewrite, the
-token limit); `tests/test_llama_worker.py` checks the grammar's replies.
-
 ## 2. The host's channel to the worker (`host/Sources/CloakHost/WorkerChannel.swift`, `host/Sources/CloakHost/Child.swift`)
 
 ```
@@ -116,7 +104,9 @@ any fault --> lost (never ends)
 ```
 
 - Starting is part of creating the channel: it returns only once the worker
-  has signalled ready, so no caller can forget that step.
+  has signalled ready, so no caller can forget that step. A worker that ends,
+  or sends anything else, first fails the start once it has exited, with how
+  it exited (`NotReady`).
 - `send` writes the whole request and moves to running in one step, so a
   cancel can never land inside a request's bytes.
 - `answer` waits outside the lock, so a cancel can reach the worker meanwhile.
@@ -446,7 +436,7 @@ and `test_a_prompt_over_the_input_limit_stops_its_task_with_the_length_and_the_l
 
 ## 8. Files built in steps
 
-- **Altered model folders for the worker checks** (`tests/test_worker.py`):
+- **Altered model folders for the worker checks** (`tests/test_llama_worker.py`):
   built as `<case>.building`, then renamed. A run stopped part way left the
   half-built folder, and every later run failed until it was removed by hand.
   A leftover is now cleared before building.
@@ -489,6 +479,9 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   itself), then tor, started and bootstrapped, then the worker, started and
   ready, then a check guest, which sends one rewrite through the daemon, the
   relay and the worker and powers off. The first failure is the reason.
+  A worker that exits before it is ready because the model folder is not
+  exactly the pinned files (its exit status 3, section 1) is
+  `model_changed`; any other is `worker_unavailable`.
 - **Running** means tor and the worker are up and that check passed. No
   session guest is built yet: the guest is gone once the check ends.
 - **Watches**: from its start until the run ends, tor exiting raises
@@ -535,15 +528,16 @@ What `cloak --json` prints for each phase (INS02):
 `needs_os_approval` and `needs_funding` are never printed: this build has no
 step that needs the system's approval, and no payment. The reasons are
 `unsupported_hardware`, `part_missing`, `part_changed`, `model_missing`,
-`tor_unavailable`, `tor_stopped`, `worker_unavailable`, `worker_stopped`,
-`guest_failed` and `check_failed`.
+`model_changed`, `tor_unavailable`, `tor_stopped`, `worker_unavailable`,
+`worker_stopped`, `guest_failed` and `check_failed`.
 
 Checks (`app/Tests/CloakTests/`): `PhaseTests.swift` (every failure from
 Preparing or Running ends in Needs attention; nothing starts again unless
 asked; sleep pauses; quit from every phase goes through the shutdown;
 commands during a shutdown are refused), `SupervisorTests.swift` (stand-in
 tor and worker processes: a guest, tor or worker failure ends in Needs
-attention with everything stopped and nothing started again; a relaunch
+attention with everything stopped and nothing started again, a worker
+that finds the model changed with `model_changed`; a relaunch
 comes back Paused; pausing while tor bootstraps stops it; pausing or
 quitting while the model loads stops the worker at once; a launch after a
 quit while working, as at a logout and the next login, is Paused and

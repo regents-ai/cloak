@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The app runs the small lead: its manifest names `small-lead-gguf-grammar`,
+  shown as Qwen 3.5 9B, on a Mac with Apple silicon and at least 16 GB
+  (it was the stand-in and 32 GB). Details shows the release and the model
+  in plain words; the build moved to Technical details. A model folder that
+  is not exactly the pinned files now needs attention with "The model has
+  changed. Reinstall the model, then start again." (`model_changed`), where
+  it said the model couldn't load and to start again. The app still does not
+  download the model; README.md says how to fetch it and how to repair it.
+
 - One engine (decision 8, 14 November): the MLX worker (`worker/`), its
   install script and `tests/test_worker.py` are deleted. The llama.cpp worker
   in `llama-worker/` is the only one, and every model it runs decodes under

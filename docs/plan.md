@@ -11,17 +11,17 @@ not a pass. Progress lives here.
 | Stage | Deliverable | Exit condition | State |
 | --- | --- | --- | --- |
 | 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
-| 2. Build the local path | Minimal guest adapter and native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
-| 3. Check feasibility early | Runs of each of the eight candidates (the lead, the challenger, decision 7's small pair, decision 8's GGUF pair on llama.cpp and decision 9's same pair under the reply grammar) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the lead has two runs, the small lead and its GGUF one each, the other five candidates none |
-| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner among the eight candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split for eight candidates is to be re-declared before any holdout opens (decisions 7 to 9) |
-| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, on the stand-in only ("Stage 5 so far"); no signed full bundle, setup, recovery, updates, sessions, payment or cover |
+| 2. Build the local path | Minimal guest adapter and native worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
+| 3. Check feasibility early | Runs of each of the two candidates (decision 7's small pair, as GGUF files on llama.cpp under the reply grammar: decisions 8 and 9) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the small lead has two feasibility runs and one EVAL01 screen, the small challenger none |
+| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner of the two candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split is to be settled before any holdout opens (decisions 7 to 9) |
+| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead ("Stage 5 so far"); no signed full bundle, setup, recovery, updates, sessions, payment or cover |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
 Stage 2 builds and tests the path with a small model labelled as a
 development stand-in, so it runs light on the development Mac (an M4 Max with
-48 GB, macOS 27.0). The candidates' weights (about 16 GB each for the lead
-and the challenger, 6 to 7 GB for the small pair) are first loaded in stage 3,
-after a free memory and disk check.
+48 GB, macOS 27.0). The candidates' weights (5.3 GiB for the small lead,
+6.5 GiB for the small challenger) are first loaded in stage 3, after a free
+memory and disk check.
 
 Mac skills by stage (rules in [AGENTS.md](../AGENTS.md)): stage 2's native
 worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
@@ -34,8 +34,9 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   builds, and passes its own tests. Pi 1.3.0 is pinned by package hash.
 - The rewriter contract is captured and identical at both pins:
   [rewriter-contract.md](../reference/rewriter-contract.md).
-- The reference model, the four candidates and their vendor checkpoints are
-  pinned file by file: [models.md](../reference/models.md). Decision 1 settled
+- The reference model, the two candidates, the stand-in and the checkpoints
+  they take files from are pinned file by file:
+  [models.md](../reference/models.md). Decision 1 settled
   the provenance findings there: each candidate takes its tokenizer and chat
   template files from its vendor.
 - The sandbox wrapper is reconstructed and is the Regents reference (Sean,
@@ -70,8 +71,7 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   sent again); once the lost worker has exited, it starts a new worker from
   the same program and pinned files for the next rewrite, so two workers
   never hold the model at once. A new worker that cannot start leaves every
-  later rewrite failing. After loading, the worker gives MLX's cache back to
-  the system before it takes a request.
+  later rewrite failing.
 - 23 checks in `tests/test_guest_path.py` pass: the request reaches the
   worker byte for byte; nine kinds of bad reply are refused by the daemon's
   code and the next rewrite still works; a client that gives up cancels the
@@ -472,9 +472,11 @@ refused it as a bare program with no bundle identifier).
 - The feasibility kit is ready: `uv run scripts/stage3.py feasibility <name>`
   writes one candidate's stage 3 record (EVAL05, EVAL06, EVAL07) to
   `evidence/stage3/<name>/`, and `uv run scripts/stage3.py eval01 <name>`
-  runs the development screen. The candidates are the lead, the challenger,
-  the small lead and the small challenger (decision 7). The lead has two
-  feasibility runs (below); the other three have none.
+  runs the development screen. The candidates are the small lead and the
+  small challenger as GGUF files on llama.cpp under the reply grammar
+  (decisions 7 to 9). The small lead has two feasibility runs and one
+  EVAL01 screen (below); the small challenger has none. The runs of the
+  candidates deleted on 14 November (decision 8) stay below as history.
 - Every call goes through the real path: the daemon's rewrite code in the
   guest, the adapter, the host relay and the sandboxed worker. A copy-only
   tap between the host and the worker (`scripts/worker_tap.py`) keeps each
@@ -509,11 +511,11 @@ refused it as a bare program with no bundle identifier).
   restart. Every second it samples the memory and CPU of every worker
   process alive (summed), the guest's virtual machine, the host and the
   host's tor, plus swap, memory pressure and the system's GPU use; the
-  whole-product peak is the sum of all of them. Since 13 November it also
-  keeps MLX's own memory figures (active, cache and peak) from the worker's
-  log: after each load, before and after the worker clears MLX's cache, and
-  after each rewrite. It also records the installed size and the end-to-end
-  time per case.
+  whole-product peak is the sum of all of them. It also keeps the worker's
+  own memory figures from its log: the weights and Metal's allocation after
+  each load, and the context reserved and Metal's allocation after each
+  rewrite. It also records the installed size and the end-to-end time per
+  case.
 - Since 12 November the host starts the guest only once tor has
   bootstrapped ("Tor out of the guest" above), so "first result after the
   host started" now holds the cold load, tor's bootstrap, the guest's boot
@@ -535,15 +537,10 @@ refused it as a bare program with no bundle identifier).
   calls do not come from Pi, so stage 3's exit condition stays unmet), the
   daemon's full serve path (A11), per-process GPU use (macOS gives it only to
   root), and a 32 GB Mac (decision 2).
-- What a real run needs. Disk: the lead is 16,077,680,950 bytes and the
-  challenger 15,373,590,134 (29.3 GiB together); with about 58 GiB free on
-  11 November and 50 GiB kept free, neither fits until space is made. The
-  small lead is 5,973,260,772 bytes and the small challenger 6,773,361,970
-  (11.9 GiB together); about 106 GiB was free on 13 November. Memory: the
-  kit refuses to boot unless the model's size plus 5 GiB is available
-  (20.0 GiB for the lead, 19.3 GiB for the challenger, 10.6 GiB for the
-  small lead, 11.3 GiB for the small challenger); this shared Mac had about
-  13.8 GiB available on 11 November.
+- What a real run needs. Disk: the small lead is 5,693,338,202 bytes and
+  the small challenger 7,008,055,140 (11.8 GiB together). Memory: the kit
+  refuses to boot unless the model's size plus 5 GiB is available
+  (10.3 GiB for the small lead, 11.5 GiB for the small challenger).
 
 ### Lead candidate, first run (12 November 2026)
 
@@ -964,8 +961,9 @@ as in the run above:
 - Cancellation as before: the worker answered 0.01 s after the cancel, and
   the next call was rewritten in 0.21 s. The stand-in reads this case's
   prompt in 1.2 s, so the cancel lands while it generates; a cancel while it
-  reads a long prompt is shown by `tests/test_worker.py` and
-  `tests/test_guest_path.py`, not by this run.
+  reads a long prompt is shown by the worker's checks (now
+  `tests/test_llama_worker.py`) and `tests/test_guest_path.py`, not by this
+  run.
 - All 57 cases: 31 rewritten; 14 malformed, 8 truncated, 1 timed out,
   1 cancelled, 1 worker lost, 1 over the input limit.
 - Cold load 1.40 s, and the first result came 2.49 s after the host
@@ -994,7 +992,7 @@ against 2.31 and the whole product at 3.27 GiB against 2.90. llama.cpp held
 1.18 GiB after the load, and its Metal memory peaked at 1.52 GiB in a
 rewrite. It finished the cancellation case (1.71 s) before its cancel and
 the worker-loss case before its kill at 2 s, so neither was exercised here;
-`tests/test_worker.py` covers both on this worker.
+the worker's checks (now `tests/test_llama_worker.py`) cover both.
 
 The same stand-in under the reply grammar (decision 9),
 `standin-gguf-grammar`,
@@ -1037,9 +1035,9 @@ candidate grammar:
 
 Every other runaway seen on the stand-in repeats words, which bounding
 white space does not touch, and the grammar still allows any text the
-daemon takes. `tests/test_llama_worker.py` checks that the grammar changes
-no reply the daemon already accepted, and that no white space between
-tokens runs past 16 characters.
+daemon takes. `tests/test_llama_worker.py` checks that the daemon accepts
+every reply the model ended and only those, and that no white space
+between tokens runs past 16 characters.
 
 The stand-in under the bounded grammar, `standin-gguf-grammar` again,
 [feasibility-20261114T041104Z.json](../evidence/stage3/standin-gguf-grammar/feasibility-20261114T041104Z.json),
@@ -1234,7 +1232,7 @@ candidates, so the split has to be re-declared before any holdout opens.
   whose command line is unchanged; every child it stops gets 10 seconds,
   then is killed.
 - What exists: the checks of the Mac and of each installed part against
-  the bundle's manifest; tor, the MLX worker and a check guest started in
+  the bundle's manifest; tor, the worker and a check guest started in
   turn, each once the one before is up; a startup check that sends one
   rewrite through the guest, the daemon and the worker; tor and the worker
   watched; one shutdown; Needs attention with a reason code on any failure,
@@ -1245,8 +1243,9 @@ candidates, so the split has to be re-declared before any holdout opens.
   `cloak status`, `start`,
   `pause`, `resume`, `stop`, `verify` and `doctor`, with versioned JSON
   (INS01, INS02), over an owner-only socket that checks the peer's user
-  (MAC05). One model, named in the manifest: the stand-in, labelled as a
-  development stand-in, with no picker.
+  (MAC05). One model, named in the manifest, with no picker: the small
+  lead, `small-lead-gguf-grammar`, shown as Qwen 3.5 9B, on a Mac with at
+  least 16 GB (14 November; the stand-in before).
 - What does not exist yet: sessions (Running has no session guest; the
   check guest powers off once its check is done), payment, wallets, cover
   traffic, the OS-approval and funding states, setup and model download
@@ -1400,6 +1399,9 @@ candidates, so the split has to be re-declared before any holdout opens.
    result or the memory a rewrite takes is set in the worker
    (`llama-worker/Sources/CLlama/cloak_llama.cpp`). The confidence split
    decision 7 leaves to re-declare now covers six candidates, not four.
+   The engine is chosen (14 November, the chief): llama.cpp with the reply
+   grammar. The MLX worker and the other candidates were deleted on
+   14 November 2026; their records stay as history.
 9. The reply grammar, as candidates of their own. Decided 14 November (the
    chief). Grammar-constrained decoding is tested as explicit pinned
    candidates on llama.cpp, as spec DATA04 allows, because both engines'
@@ -1450,9 +1452,9 @@ candidates, so the split has to be re-declared before any holdout opens.
 | A18 | Usability | Open | |
 | A19 | Claims | Open | |
 | A20 | Unchanged rewrite API | Open: contract captured; the daemon's own rewrite code runs in the guest, unchanged but for Cloak's input limit and deadline (decision 6, a departure from the spec's limits by Sean's ruling), and refuses nine kinds of bad reply (stand-in model only) | [contract](../reference/rewriter-contract.md), `tests/test_guest_path.py` |
-| A21 | Host–guest worker boundary | Open: one token-checked virtio socket, guest has no network device, host relays only rewrite frames, worker sandboxed with no network (development signing; stand-in model) | `host/`, `guest/`, `worker/cloak-rewriter.entitlements`, `tests/test_guest_path.py`, `tests/test_worker.py` |
+| A21 | Host–guest worker boundary | Open: one token-checked virtio socket, guest has no network device, host relays only rewrite frames, worker sandboxed with no network (development signing; stand-in model) | `host/`, `guest/`, `llama-worker/cloak-rewriter.entitlements`, `tests/test_guest_path.py`, `tests/test_llama_worker.py` |
 | A22 | Authorship and linkability | Open: attack 1 and the sign-flip bound built and proven on synthetic development data only; attack 2 not built; no holdout | `scripts/stage4.py`, `scripts/privacy.py` |
 | A23 | Long and cold tasks | Open | |
-| A24 | Artifact provenance | Open: files pinned for the reference and all four candidates; each conversion's tokenizer or template differs from its vendor's, so each candidate takes those files from its vendor (decision 1) | [models](../reference/models.md) |
-| A25 | Single implementation | Open: the app runs one model and one worker, named in its bundle's manifest (the stand-in until stage 4 picks a winner), with no picker, no switching by hardware and no fallback; the repository still holds two engines for decision 8's measurement | `app/release.json`, `app/manifest.py` |
+| A24 | Artifact provenance | Open: files pinned for the reference, the two candidates and the stand-in; each candidate takes its tokenizer and chat template files from its vendor (decision 1) | [models](../reference/models.md) |
+| A25 | Single implementation | Open: the app runs one model and one worker, named in its bundle's manifest (the small lead until stage 4 picks a winner or none), with no picker, no switching by hardware and no fallback; the repository holds one engine since 14 November (decision 8) | `app/release.json`, `app/manifest.py` |
 | A26 | Performance claims | Open | |

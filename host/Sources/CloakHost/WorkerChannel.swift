@@ -53,8 +53,8 @@ public final class WorkerChannel: Sendable {
     /// Starts the worker and returns once it has signalled ready, waiting on a
     /// thread of its own while the worker loads. A start that is cancelled
     /// stops the worker at once, which ends the wait. Throws, once the worker
-    /// has exited, when it was cancelled, or when the worker ended or sent
-    /// anything else first.
+    /// has exited, when it was cancelled, or `NotReady` when the worker ended
+    /// or sent anything else first.
     public static func start(executable: URL, arguments: [String]) async throws -> WorkerChannel {
         let channel = try WorkerChannel(executable: executable, arguments: arguments)
         let ready = try await withTaskCancellationHandler {
@@ -69,9 +69,16 @@ public final class WorkerChannel: Sendable {
             channel.child.process.terminate()
             await channel.child.stopped("the worker")
             try Task.checkCancellation()
-            throw ChannelError(description: "it did not become ready")
+            throw NotReady(ended: await channel.child.exited())
         }
         return channel
+    }
+
+    /// The worker ended, or sent something else, before it signalled ready;
+    /// `ended` is how it exited.
+    public struct NotReady: Error, CustomStringConvertible {
+        public let ended: Termination
+        public var description: String { "it did not become ready (\(ended))" }
     }
 
     /// The worker's process.
@@ -178,8 +185,4 @@ public final class WorkerChannel: Sendable {
         let n = UInt32(payload.count)
         return Data([kind, UInt8(n >> 24), UInt8(n >> 16 & 0xff), UInt8(n >> 8 & 0xff), UInt8(n & 0xff)]) + payload
     }
-}
-
-struct ChannelError: Error, CustomStringConvertible {
-    let description: String
 }

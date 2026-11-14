@@ -56,6 +56,23 @@ struct SupervisorTests {
         #expect(!fixture.starts(.tor).contains(where: isRunning))
     }
 
+    @Test func aWorkerThatFindsTheModelChangedNeedsAttentionWithModelChanged() async throws {
+        // The worker's exit when the model folder is not exactly the pinned
+        // files.
+        let worker = """
+            #!/bin/sh
+            echo $$ >> "$(dirname "$0")/starts"
+            exit 3
+            """
+        let fixture = try Fixture(worker: worker)
+        defer { fixture.remove() }
+        let supervisor = try fixture.supervisor()
+        supervisor.send(.start)
+        #expect(await supervisor.settled() == .needsAttention(.modelChanged))
+        #expect(supervisor.status.nextAction == .start)
+        #expect(!fixture.starts(.tor).contains(where: isRunning))
+    }
+
     @Test func aTorThatEndsWhileTheWorkerLoadsNeedsAttentionWithTheWorkerStopped() async throws {
         // The worker signals ready only once tor has been killed, as if tor
         // had died while the model loaded.

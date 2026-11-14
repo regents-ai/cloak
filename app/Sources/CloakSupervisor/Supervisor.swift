@@ -123,7 +123,8 @@ public final class Supervisor {
         manifest.status(of: phase, check: check, detail: detail)
     }
 
-    /// What the state means, the last failure, and the processes running.
+    /// What the state means, the last failure, the processes running, and
+    /// the release, build and model.
     public var detail: String {
         var lines = [String]()
         switch phase {
@@ -144,6 +145,7 @@ public final class Supervisor {
         if let check { lines.append("Last check \(check.passed ? "passed" : "failed"): \(check.detail)") }
         if let tor = stack.tor { lines.append("tor: process \(tor.processIdentifier)") }
         if let worker = stack.worker { lines.append("worker: process \(worker.processIdentifier)") }
+        lines.append("release \(manifest.release), build \(manifest.build)")
         lines.append("model: \(manifest.model.name), \(manifest.model.label), in \(layout.model(manifest).path)")
         return lines.joined(separator: "\n")
     }
@@ -176,6 +178,8 @@ public final class Supervisor {
                 worker = try await WorkerChannel.start(
                     executable: layout.url(.worker, in: manifest),
                     arguments: ["--name", manifest.model.name, "--dir", layout.model(manifest).path])
+            } catch let error as WorkerChannel.NotReady where error.ended == Self.modelChanged {
+                throw Failure(.modelChanged, "the worker found the model's files differ from their pins: \(error)")
             } catch {
                 throw Failure(.workerUnavailable, "cannot start the worker: \(error)")
             }
@@ -214,6 +218,11 @@ public final class Supervisor {
             // Cancelled: the shutdown under way stops what has started.
         }
     }
+
+    /// How the worker exits when the model folder does not hold exactly the
+    /// pinned files, which only its sha256 check of each file can find
+    /// (llama-worker/Sources/cloak-rewriter-llama/main.swift).
+    static let modelChanged = Termination(status: 3, signalled: false)
 
     /// Raises `reason` if the part ends while this run lasts.
     private func watch(_ name: String, as reason: Reason, exited: @escaping @Sendable () async -> Termination) {

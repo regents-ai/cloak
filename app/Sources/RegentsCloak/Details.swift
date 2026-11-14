@@ -7,7 +7,8 @@ import SwiftUI
 
 /// The one small window: the state, why it needs attention and what to do,
 /// the release, the model, the last check, whether the app opens at login,
-/// and technical detail on demand. Closing it leaves the supervisor as it is.
+/// and technical detail on demand, the build among it. Closing it leaves the
+/// supervisor as it is.
 ///
 /// A menu-bar app is never the app in front, so its window would open behind
 /// the one in front. While the window is open the app is an ordinary one,
@@ -84,15 +85,8 @@ struct DetailsView: View {
                 }
             }
             Section {
-                LabeledContent("Release", value: "\(status.release) (\(status.build))")
-                LabeledContent("Model") {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(status.model.name)
-                        Text(status.model.label.prefix(1).uppercased() + status.model.label.dropFirst())
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                LabeledContent("Release", value: status.release)
+                LabeledContent("Model", value: status.model.label)
                 LabeledContent("Last check", value: lastCheck(status.check))
             }
             Section {

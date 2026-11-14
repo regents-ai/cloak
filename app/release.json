@@ -1,6 +1,6 @@
 {
   "release": "0.5.0-dev",
-  "model": "standin",
-  "model_label": "development stand-in",
-  "minimum_memory_gib": 32
+  "model": "small-lead-gguf-grammar",
+  "model_label": "Qwen 3.5 9B",
+  "minimum_memory_gib": 16
 }
