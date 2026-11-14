@@ -1106,7 +1106,8 @@ candidates, so the split has to be re-declared before any holdout opens.
   rewrite through the guest, the daemon and the worker; tor and the worker
   watched; one shutdown; Needs attention with a reason code on any failure,
   with nothing restarted and no other route or model; Paused at every
-  launch, after sleep and after a relaunch; `cloak status`, `start`,
+  launch, after sleep and after a relaunch, and at login, which the Details
+  window's Login switch turns on (off until then); `cloak status`, `start`,
   `pause`, `resume`, `stop`, `verify` and `doctor`, with versioned JSON
   (INS01, INS02), over an owner-only socket that checks the peer's user
   (MAC05). One model, named in the manifest: the stand-in, labelled as a

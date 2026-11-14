@@ -490,7 +490,10 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
 - **Refused**: any command while Stopping (`busy`), and `resume` anywhere but
   Paused (`not_paused`). A refused command changes nothing.
 - **Sleep** pauses, so a wake finds nothing running; a relaunch starts
-  Paused, having started nothing.
+  Paused, having started nothing. So does the launch at login, which is
+  off unless the Details window's Login switch turns it on (a login item,
+  through `SMAppService`): the app opens Paused and starts nothing until
+  Start.
 - **Launch**: before anything starts, the supervisor makes its boot folder,
   `control/boot` in the app's Application Support folder, owner-only, and
   removes from it every guest's `cloak-<UUID>` folder a killed app left,
@@ -521,7 +524,9 @@ commands during a shutdown are refused), `SupervisorTests.swift` (stand-in
 tor and worker processes: a guest, tor or worker failure ends in Needs
 attention with everything stopped and nothing started again; a relaunch
 comes back Paused; pausing while tor bootstraps stops it; pausing or
-quitting while the model loads stops the worker at once; a launch removes
+quitting while the model loads stops the worker at once; a launch after a
+quit while working, as at a logout and the next login, is Paused and
+starts nothing; a launch removes
 the boot files a killed app left, and nothing else) and
 `ControlTests.swift` (the JSON for each status; the socket answers only its
 owner's well-formed requests).

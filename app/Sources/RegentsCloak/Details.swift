@@ -1,11 +1,13 @@
 import AppKit
 import CloakControl
 import CloakSupervisor
+import os
+import ServiceManagement
 import SwiftUI
 
 /// The one small window: the state, why it needs attention and what to do,
-/// the release, the model, the last check, and technical detail on demand.
-/// Closing it leaves the supervisor as it is.
+/// the release, the model, the last check, whether the app opens at login,
+/// and technical detail on demand. Closing it leaves the supervisor as it is.
 ///
 /// A menu-bar app is never the app in front, so its window would open behind
 /// the one in front. While the window is open the app is an ordinary one,
@@ -60,6 +62,7 @@ private final class ClosingWindow: NSWindow {
 struct DetailsView: View {
     let supervisor: Supervisor
     @State private var technical = false
+    @State private var login = SMAppService.mainApp.status == .enabled
 
     var body: some View {
         let status = supervisor.status
@@ -91,6 +94,13 @@ struct DetailsView: View {
                 LabeledContent("Last check", value: lastCheck(status.check))
             }
             Section {
+                Toggle("Login", isOn: Binding(get: { login }, set: openAtLogin))
+            } footer: {
+                Text("Opens Regents Cloak, paused, when you log in.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 DisclosureGroup("Technical details", isExpanded: $technical) {
                     Text(status.detail)
                         .font(.system(.caption, design: .monospaced))
@@ -103,6 +113,24 @@ struct DetailsView: View {
         .scrollContentBackground(.hidden)
         .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
+        // The login item can change in System Settings while the window is
+        // away, so the switch reads it again each time the window comes back.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            login = SMAppService.mainApp.status == .enabled
+        }
+    }
+
+    /// Adds the app to the login items, or takes it out. One the user turned
+    /// off in System Settings needs their approval there, which opens.
+    private func openAtLogin(_ on: Bool) {
+        let app = SMAppService.mainApp
+        do {
+            try on ? app.register() : app.unregister()
+        } catch {
+            Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot change the login item: \(String(describing: error), privacy: .public)")
+        }
+        if app.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+        login = app.status == .enabled
     }
 
     private func lastCheck(_ check: StatusDocument.Check?) -> String {

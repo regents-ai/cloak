@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The app can open at login: one switch, Login, in the Details window,
+  off until you turn it on, which adds the app to the system's login items
+  (System Settings opens if it needs your approval there). The app opened
+  at login is Paused, as at every launch, and starts nothing until Start.
+  New check in `swift test --package-path app`.
+
 - The app: Pause or Quit while the worker loads its model now takes effect
   at once; the worker is stopped there and then. Before, the app waited
   for the load to end first. Tor's bootstrap and the guest's boot already

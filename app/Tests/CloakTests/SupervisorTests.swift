@@ -146,6 +146,29 @@ struct SupervisorTests {
         #expect(!(fixture.starts(.tor) + fixture.starts(.worker)).contains(where: isRunning))
     }
 
+    /// Logging out quits the app while it works; the app opened at the next
+    /// login is a launch like any other (spec section 6): Paused, having
+    /// started nothing, and nothing starts until Start.
+    @Test func theLaunchAtLoginIsPausedAndResumesNothing() async throws {
+        let fixture = try Fixture(tor: Fixture.slowTor)
+        defer { fixture.remove() }
+        let working = try fixture.supervisor()
+        working.send(.start)
+        try await eventually { !fixture.starts(.tor).isEmpty }
+        await withCheckedContinuation { quit in
+            working.quit { quit.resume() }
+        }
+        let started = fixture.starts(.tor) + fixture.starts(.worker)
+
+        let atLogin = try fixture.supervisor()
+        #expect(atLogin.phase == .paused)
+        #expect(atLogin.status.nextAction == .start)
+        try await Task.sleep(for: .seconds(2))
+        #expect(atLogin.phase == .paused)
+        #expect(fixture.starts(.tor) + fixture.starts(.worker) == started)
+        #expect(!started.contains(where: isRunning))
+    }
+
     @Test func quittingStopsEverythingThroughTheShutdown() async throws {
         let fixture = try Fixture(tor: Fixture.slowTor)
         defer { fixture.remove() }

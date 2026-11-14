@@ -5,7 +5,7 @@ import CloakControl
 /// section 9 draws it.
 ///
 /// It starts Paused, on every launch: nothing resumes by itself after a
-/// relaunch, a restart or a wake. Any failed requirement stops all work and
+/// relaunch, a restart, a login or a wake. Any failed requirement stops all work and
 /// ends in Needs attention with its reason; nothing is restarted, and no
 /// other route or model is tried (REF04).
 public enum Phase: Sendable, Equatable {
