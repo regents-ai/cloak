@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The app's Details window now comes to the front and takes the keyboard
+  when it opens from the menu. Before, it could open behind the app in
+  front, since a menu-bar app is never the app in front. While the window
+  is open the app shows in the Dock; closing it (its close button,
+  Command-W or Escape) makes it a menu-bar app again, still running.
+  Checked with real clicks on the status item.
+
 - Stage 3: the small lead on llama.cpp with the reply grammar (14 November)
   is recorded in evidence/stage3/small-lead-gguf-grammar/ and written up in
   docs/plan.md: 39 of 40 ordinary messages rewritten, none malformed, one

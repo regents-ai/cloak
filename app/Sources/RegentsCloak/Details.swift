@@ -6,15 +6,26 @@ import SwiftUI
 /// The one small window: the state, why it needs attention and what to do,
 /// the release, the model, the last check, and technical detail on demand.
 /// Closing it leaves the supervisor as it is.
+///
+/// A menu-bar app is never the app in front, so its window would open behind
+/// the one in front. While the window is open the app is an ordinary one,
+/// with a Dock icon, so it comes to the front with the window, which takes
+/// the keyboard; closing the window makes it a menu-bar app again, still
+/// running.
 @MainActor
-final class DetailsWindow {
+final class DetailsWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
     func show(_ supervisor: Supervisor) {
         let window = self.window ?? make(supervisor)
         self.window = window
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
     }
 
     private func make(_ supervisor: Supervisor) -> NSWindow {
@@ -23,6 +34,7 @@ final class DetailsWindow {
             styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Details"
         window.isReleasedWhenClosed = false
+        window.delegate = self
         window.contentViewController = NSHostingController(rootView: DetailsView(supervisor: supervisor))
         window.center()
         return window
