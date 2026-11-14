@@ -839,6 +839,35 @@ stage 4).
 
 The weights were deleted after the run.
 
+### Small lead on llama.cpp with the bounded reply grammar (14 November 2026)
+
+[feasibility-20261114T052945Z.json](../evidence/stage3/small-lead-gguf-grammar/feasibility-20261114T052945Z.json),
+kit commit `ec10834`: the same GGUF file, decoded under the grammar whose
+white space between tokens is at most 16 characters at a time. A candidate
+record; it closes no gate (hand-run steps open, no cover traffic or payment
+vault, the Mac on AC power but busy: one-minute load about 30 at the start
+and 41 at the end).
+
+- EVAL06: 40 of 40 ordinary messages rewritten; none malformed, none timed
+  out. Median 1.12 s and 95th percentile 3.28 s against the proposed 5 s
+  and 15 s: the proposed targets are met. The first grammar: 39 of 40.
+- Memory: the whole product peaked at 6.79 GiB, in the main boot; 6.74 GiB
+  in the worker-loss boot and 6.69 GiB in the restart boot. Under the
+  10 GiB line and the 9.3 GiB aim. No swap growth.
+- Long inputs: 4,096 characters in 2.98 s, 10,000 in 5.22 s. The four-turn
+  conversation was rebuilt in 4.07 s over four calls. Cancellation: the
+  worker answered 1.32 s after the cancel; the next call was rewritten.
+  Worker loss and restart as before.
+- All cases: 50 of 59 rewritten; stopped: 7 over the input limit, 1
+  cancelled, 1 worker lost, each as the case intends. Installed: 5.43 GiB.
+
+One run: the stand-in still has a word runaway under this grammar (e06-36),
+so a runaway on some other input is not ruled out, and the deadline stays
+what stops one. Whether the rewrites keep what they must is still unjudged
+(EVAL01, stage 4).
+
+The weights were kept on disk for the EVAL01 screen.
+
 ### Stand-in proof (development only)
 
 These runs prove the kit works end to end on the development stand-in. The

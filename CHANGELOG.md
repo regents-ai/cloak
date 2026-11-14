@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stage 3: the small lead on llama.cpp under the bounded reply grammar
+  (14 November) is recorded in evidence/stage3/small-lead-gguf-grammar/ and
+  written up in docs/plan.md: 40 of 40 ordinary messages rewritten, median
+  1.12 s, 95th percentile 3.28 s, whole product 6.79 GiB at its peak. A
+  candidate record; it closes no gate.
+
 - Stage 3: the stand-in under the bounded reply grammar (14 November) is
   recorded in evidence/stage3/standin-gguf-grammar/ and written up in
   docs/plan.md: 39 of 40 ordinary messages rewritten against 38 under the
