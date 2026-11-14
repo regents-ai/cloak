@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -152,6 +153,30 @@ std::vector<llama_token> prompt_tokens(const cloak_engine & engine, const char *
     return common_tokenize(engine.vocab, params.prompt.str(), /* add_special */ true, /* parse_special */ true);
 }
 
+// Greedy's own choice when the grammar allows it; otherwise greedy over the
+// tokens the grammar allows, never over a token it masks. This is
+// llama.cpp's own rejection sampling (common_sampler_sample): the same token
+// as masking first, without masking the whole vocabulary at every step.
+// LLAMA_TOKEN_NULL when the grammar allows no token at all.
+llama_token allowed(llama_sampler * grammar, llama_sampler * greedy, llama_context * context, const llama_vocab * vocab,
+                    llama_token token) {
+    llama_token_data       one      = {token, 1.0f, 0.0f};
+    llama_token_data_array just_one = {&one, 1, -1, false};
+    llama_sampler_apply(grammar, &just_one);
+    if (one.logit != -INFINITY) {
+        return token;
+    }
+    const float *                 logits = llama_get_logits_ith(context, -1);
+    std::vector<llama_token_data> candidates(llama_vocab_n_tokens(vocab));
+    for (llama_token id = 0; id < static_cast<llama_token>(candidates.size()); ++id) {
+        candidates[id] = {id, logits[id], 0.0f};
+    }
+    llama_token_data_array all = {candidates.data(), candidates.size(), -1, false};
+    llama_sampler_apply(grammar, &all);
+    llama_sampler_apply(greedy, &all);
+    return all.data[all.selected].logit == -INFINITY ? LLAMA_TOKEN_NULL : all.data[all.selected].id;
+}
+
 double seconds_since(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
@@ -233,7 +258,8 @@ extern "C" void cloak_engine_cancel(cloak_engine * engine) {
     engine->cancelled = true;
 }
 
-extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char * system, const char * user, int32_t max_tokens) {
+extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char * system, const char * user, int32_t max_tokens,
+                                             const char * grammar) {
     cloak_result result = {};
     const auto fail = [&](const char * step, int32_t code) {
         result.finish      = CLOAK_FINISH_FAILED;
@@ -262,6 +288,12 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
     }
     result.context_tokens = llama_n_ctx(context.get());
     llama_sampler_ptr greedy(llama_sampler_init_greedy());
+    // llama.cpp's grammar sampler, when the pin has a grammar: it only masks
+    // tokens, and greedy still picks among the rest.
+    llama_sampler_ptr constraint(grammar ? llama_sampler_init_grammar(engine->vocab, grammar, "root") : nullptr);
+    if (grammar && !constraint) {
+        return fail("grammar", 0);
+    }
 
     auto started = std::chrono::steady_clock::now();
     for (size_t at = 0; at < prompt.size(); at += prompt_chunk) {
@@ -284,6 +316,13 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
             return result;
         }
         llama_token token = llama_sampler_sample(greedy.get(), context.get(), -1);
+        if (constraint) {
+            token = allowed(constraint.get(), greedy.get(), context.get(), engine->vocab, token);
+            if (token == LLAMA_TOKEN_NULL) {
+                return fail("grammar", 1);
+            }
+            llama_sampler_accept(constraint.get(), token);
+        }
         if (llama_vocab_is_eog(engine->vocab, token)) {
             result.finish = CLOAK_FINISH_STOP;
             break;

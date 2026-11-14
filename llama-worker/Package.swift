@@ -33,9 +33,12 @@ let package = Package(
                 .linkedFramework("Foundation"),
                 .linkedFramework("Metal"),
             ]),
+        // The reply grammar (reference/rewrite-reply.gbnf) is built in, as the
+        // model pins are, so the signed binary decides what it decodes under.
         .target(
             name: "LlamaEngine",
-            dependencies: ["CLlama", .product(name: "RewriterKit", package: "rewriter-kit")]),
+            dependencies: ["CLlama", .product(name: "RewriterKit", package: "rewriter-kit")],
+            resources: [.embedInCode("rewrite-reply.gbnf")]),
         .executableTarget(
             name: "cloak-rewriter-llama",
             dependencies: ["LlamaEngine", "CLlama", .product(name: "RewriterKit", package: "rewriter-kit")],

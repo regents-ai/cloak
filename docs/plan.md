@@ -12,8 +12,8 @@ not a pass. Progress lives here.
 | --- | --- | --- | --- |
 | 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
 | 2. Build the local path | Minimal guest adapter and native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
-| 3. Check feasibility early | Runs of each of the six candidates (the lead, the challenger, decision 7's small pair and decision 8's GGUF pair on llama.cpp) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the lead has two runs, the small lead one, the other four candidates none |
-| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner among the six candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split for six candidates is to be re-declared before any holdout opens (decisions 7 and 8) |
+| 3. Check feasibility early | Runs of each of the eight candidates (the lead, the challenger, decision 7's small pair, decision 8's GGUF pair on llama.cpp and decision 9's same pair under the reply grammar) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the lead has two runs, the small lead and its GGUF one each, the other five candidates none |
+| 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner among the eight candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split for eight candidates is to be re-declared before any holdout opens (decisions 7 to 9) |
 | 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, on the stand-in only ("Stage 5 so far"); no signed full bundle, setup, recovery, updates, sessions, payment or cover |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
@@ -873,6 +873,28 @@ rewrite. It finished the cancellation case (1.71 s) before its cancel and
 the worker-loss case before its kill at 2 s, so neither was exercised here;
 `tests/test_worker.py` covers both on this worker.
 
+The same stand-in under the reply grammar (decision 9),
+`standin-gguf-grammar`,
+[feasibility-20261114T013222Z.json](../evidence/stage3/standin-gguf-grammar/feasibility-20261114T013222Z.json),
+14 November, kit commit `2b99c7e` with the grammar not yet committed, on AC
+power with the load at 38 to 80. Development only. Beside the run above:
+
+- EVAL06 again 38 of 40 rewritten, each the same bytes as before, and none
+  malformed; but the two failures both ran on to the 90 s limit. e06-36 ran
+  away as before. e06-10, malformed before, now keeps its stray `]}` inside
+  the text, closes it, then writes white space without end (seen in full on
+  the worker alone, to the 16,384-token limit): the grammar turns a
+  malformed reply into a runaway, which the time limit ends.
+- The four-turn conversation, malformed before, is rewritten (1.71 s over
+  four calls); all cases 50 of 59 rewritten against 49.
+- Median 0.60 s against 0.37 s, and 108 tokens a second generated against
+  134, on a busier machine. Side by side under one load, the other 38
+  EVAL06 messages through both in turn, the grammar cost little: 116
+  against 120 tokens a second, and a median ratio of 1.00 per message.
+- The worker peaked at 2.52 GiB over its life against 3.45 GiB, from the
+  memory fix ("Memory on llama.cpp" above), not the grammar; the whole
+  product's sampled peak was 3.26 GiB against 3.27.
+
 EVAL01 development screen,
 [eval01-20261111T072816Z.json](../evidence/stage3/standin/eval01-20261111T072816Z.json),
 kit commit `de16729`: 14 of the daemon's 16 cases rewritten, 2 stopped
@@ -1193,6 +1215,30 @@ candidates, so the split has to be re-declared before any holdout opens.
    result or the memory a rewrite takes is set in the worker
    (`llama-worker/Sources/CLlama/cloak_llama.cpp`). The confidence split
    decision 7 leaves to re-declare now covers six candidates, not four.
+9. The reply grammar, as candidates of their own. Decided 14 November (the
+   chief). Grammar-constrained decoding is tested as explicit pinned
+   candidates on llama.cpp, as spec DATA04 allows, because both engines'
+   small-model failures are slips in closing the JSON (stage 3 above). The
+   grammar, [rewrite-reply.gbnf](../reference/rewrite-reply.gbnf), allows
+   the replies the daemon's check accepts: `{"texts":[...]}` with as many
+   texts as the request, any JSON white space, and any text the daemon
+   takes, so it is no tighter on what a text may hold. It differs from the
+   daemon only on the key, which must be written `"texts"`, once; the
+   daemon also takes other letter cases, an escaped key and a repeated key.
+   Each entry pins it by sha256 (`grammar` in
+   [models.json](../reference/models.json)); it is built into the llama
+   worker, which refuses a pin naming another, and the worker sets the
+   number of texts from each request. Decoding stays greedy: llama.cpp's
+   own grammar sampler only removes the tokens the grammar does not allow.
+   The daemon's check is unchanged and still decides every reply, and
+   nothing repairs one. The candidates are `small-lead-gguf-grammar` and
+   `small-challenger-gguf-grammar`, each its twin's files under the
+   grammar; each faces stage 4 on its own, as decision 8 has it, and the
+   confidence split now covers eight candidates. `standin-gguf-grammar` is
+   the development stand-in. MLX gets no grammar: the pinned mlx-swift-lm
+   (`f5b0677f`) carries a grammar library (MLXGuidedGeneration, on
+   xgrammar), but the MLX worker does not link it and nothing was built on
+   it.
 
 ## Gates
 

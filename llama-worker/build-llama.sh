@@ -7,8 +7,9 @@
 # libraries with Metal and the Metal shaders built in. Two departures, both
 # for the worker: common/ is built, for the chat template machinery
 # (common/chat), and there is no BLAS and no multimodal library. llama.cpp's
-# server, tools, examples, HTTPS, subprocess and grammar-library code are not
-# built. The libraries are joined into one archive, .llama/lib/libllamacpp.a,
+# server, tools, examples, HTTPS and subprocess code and the llguidance
+# grammar library are not built; its own grammar sampler, part of libllama,
+# is. The libraries are joined into one archive, .llama/lib/libllamacpp.a,
 # which leaves out common's HTTP client library (cpp-httplib) so the worker
 # cannot link any of it. Two build jobs at low priority; CMake comes from
 # PyPI through uv, at one exact version.

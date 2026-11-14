@@ -1,8 +1,8 @@
 // The llama worker's one way into llama.cpp: load a pinned GGUF model with
 // every setting pinned, turn a system and a user message into the model's
 // prompt tokens with llama.cpp's own chat template machinery (common/chat),
-// and run one greedy rewrite at a time. cloak_llama.cpp says what each
-// setting is and why.
+// and run one greedy rewrite at a time, under a grammar when the model's pin
+// has one. cloak_llama.cpp says what each setting is and why.
 
 #ifndef CLOAK_LLAMA_H
 #define CLOAK_LLAMA_H
@@ -28,8 +28,8 @@ typedef enum {
 
 typedef struct {
     cloak_finish finish;
-    const char * failed_step;    ///< "template", "context", "prompt" or "generation"; NULL unless failed
-    int32_t      failed_code;    ///< llama_decode's return code for "prompt" and "generation"
+    const char * failed_step;    ///< "template", "context", "grammar", "prompt" or "generation"; NULL unless failed
+    int32_t      failed_code;    ///< llama_decode's return code for "prompt" and "generation"; for "grammar", 0 when it does not parse, 1 when it allows no token
     char *       text;           ///< the generated text (UTF-8, not terminated); free with cloak_result_free
     size_t       text_length;
     int32_t      prompt_tokens;
@@ -67,8 +67,11 @@ void cloak_engine_cancel(cloak_engine * engine);
 
 /// One rewrite: the prompt read in chunks into a context of its own, sized
 /// for the prompt plus `max_tokens`, then greedy decoding until the model
-/// ends its turn or `max_tokens` tokens are out.
-cloak_result cloak_engine_rewrite(cloak_engine * engine, const char * system, const char * user, int32_t max_tokens);
+/// ends its turn or `max_tokens` tokens are out. With a `grammar` (GBNF, its
+/// start rule `root`), greedy picks only among the tokens llama.cpp's
+/// grammar sampler allows; NULL decodes over the whole vocabulary.
+cloak_result cloak_engine_rewrite(cloak_engine * engine, const char * system, const char * user, int32_t max_tokens,
+                                  const char * grammar);
 
 void cloak_result_free(cloak_result * result);
 

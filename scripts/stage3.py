@@ -53,9 +53,11 @@ from fetch_model import DEST, MODELS
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE = ROOT / "evidence/stage3"
 # The candidates: the lead and the challenger, the small pair decision 7 in
-# docs/plan.md added, and that pair as GGUF files on llama.cpp (decision 8).
-# The stage 4 kit takes its list from here too.
-GATE_MODELS = ("lead", "challenger", "small-lead", "small-challenger", "small-lead-gguf", "small-challenger-gguf")
+# docs/plan.md added, that pair as GGUF files on llama.cpp (decision 8), and
+# the GGUF pair under the reply grammar (decision 9). The stage 4 kit takes
+# its list from here too.
+GATE_MODELS = ("lead", "challenger", "small-lead", "small-challenger", "small-lead-gguf", "small-challenger-gguf",
+               "small-lead-gguf-grammar", "small-challenger-gguf-grammar")
 # What each engine's install.sh puts in the worker folder: the MLX worker
 # with MLX's shader bundle, and the llama worker, its shaders built in.
 INSTALLED_FILES = {"mlx": ("cloak-rewriter", "mlx-swift_Cmlx.bundle"), "llama": ("cloak-rewriter-llama",)}
@@ -263,6 +265,12 @@ def preflight(model: dict, model_dir: Path) -> dict:
             stop(f"{path} is not built (README, stage 2 commands)")
     if MODELS.read_bytes() not in worker(model).read_bytes():
         stop(f"{worker(model)} was built with other model pins; run its install.sh again")
+    if grammar := model.get("grammar"):
+        path = ROOT / "reference" / grammar["file"]
+        if sha256_file(path) != grammar["sha256"]:
+            stop(f"{path} is not the pinned grammar")
+        if path.read_bytes() not in worker(model).read_bytes():
+            stop(f"{worker(model)} was built with another grammar; run its install.sh again")
     for path, digest in ((EVAL05, EVAL05_SHA256), (EVAL05_CAP, EVAL05_CAP_SHA256), (EVAL06, EVAL06_SHA256)):
         if sha256_file(path) != digest:
             stop(f"{path} is not the pinned input set")
@@ -328,6 +336,7 @@ def configuration(model: dict) -> dict:
         "max_tokens": MAX_TOKENS,
         "temperature": TEMPERATURE,
         "chat_template_context": model["chat_template_context"],
+        "grammar": model.get("grammar"),
         "models_json_sha256": sha256_file(MODELS),
         "daemon_sources_sha256": DAEMON_SOURCES,
         "engine": model["engine"],

@@ -1,15 +1,17 @@
 # Pinned models and their provenance (spec A24)
 
-Every file of the reference model, the six candidates and the vendor
+Every file of the reference model, the eight candidates and the vendor
 checkpoints they were converted from is pinned by revision, size and sha256 in
 [models.json](models.json). `uv run scripts/pin_models.py` rewrites that file
 from the hub without downloading weights; a revision cannot change, so a run
 that changes it means the hub served different bytes. Recorded 30 October
 2026; the small lead and small challenger (decision 7 in
 [docs/plan.md](../docs/plan.md)) and their vendor checkpoints on 13 November
-2026; the GGUF files for llama.cpp (decision 8) later that day. Each model a
+2026; the GGUF files for llama.cpp (decision 8) later that day; the GGUF
+pair under the reply grammar (decision 9) on 14 November. Each model a
 worker runs names its `engine`, `mlx` or `llama`, and only that engine's
-worker loads it.
+worker loads it. A model with a `grammar` decodes under that file in this
+folder, pinned by its sha256; only the llama worker takes one.
 
 | Name | Repository @ revision | Weights | Licence | Made from |
 | --- | --- | --- | --- | --- |
@@ -25,6 +27,9 @@ worker loads it.
 | small-lead-gguf | `unsloth/Qwen3.5-9B-GGUF` @ `3885219b`, `Qwen3.5-9B-Q4_K_M.gguf` | 1 file, 5,680,522,464 bytes, Q4_K_M | apache-2.0 (Qwen's licence link) | `Qwen/Qwen3.5-9B` by Unsloth; vendor revision, tool version and calibration text not stated |
 | small-challenger-gguf | `google/gemma-4-12B-it-qat-q4_0-gguf` @ `29d09777`, `gemma-4-12b-it-qat-q4_0.gguf` | 1 file, 6,975,879,296 bytes, Q4_0 | apache-2.0 (Gemma 4 licence link) | Google's own file, from `google/gemma-4-12B-it-qat-q4_0-unquantized`: quantization-aware training, not the instruct weights the MLX conversion was made from |
 | standin-gguf | `unsloth/Qwen3.5-2B-GGUF` @ `f6d5376b`, `Qwen3.5-2B-Q4_K_M.gguf` | 1 file, 1,280,835,840 bytes, Q4_K_M | apache-2.0 (Qwen's licence link) | `Qwen/Qwen3.5-2B` by Unsloth; development only, never a candidate |
+| small-lead-gguf-grammar | as small-lead-gguf | the same file | as small-lead-gguf | small-lead-gguf's files under [rewrite-reply.gbnf](rewrite-reply.gbnf) |
+| small-challenger-gguf-grammar | as small-challenger-gguf | the same file | as small-challenger-gguf | small-challenger-gguf's files under [rewrite-reply.gbnf](rewrite-reply.gbnf) |
+| standin-gguf-grammar | as standin-gguf | the same file | as standin-gguf | standin-gguf's files under [rewrite-reply.gbnf](rewrite-reply.gbnf); development only, never a candidate |
 
 None is gated. Each GGUF candidate takes one file of a repository that holds
 several quantizations (`only` in [models.json](models.json)), plus the vendor
@@ -134,7 +139,11 @@ The GGUF pair (decision 8) freezes the same items on llama.cpp: the one
 pinned file each; the vendor's chat template, with the file's own vocabulary
 (finding above); thinking off as for its MLX twin; greedy sampling; and the
 llama worker's pinned llama.cpp settings, listed in
-`llama-worker/Sources/CLlama/cloak_llama.cpp`.
+`llama-worker/Sources/CLlama/cloak_llama.cpp`. Its grammar pair (decision
+9) freezes the same, plus the grammar: [rewrite-reply.gbnf](rewrite-reply.gbnf),
+pinned by sha256 in each entry and built into the worker, with the number of
+texts taken from each request. Greedy decoding picks among the tokens the
+grammar allows.
 
 ## Reference unknowns
 

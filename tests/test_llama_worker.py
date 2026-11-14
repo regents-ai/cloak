@@ -2,14 +2,22 @@
 (decision 8); tests/test_worker.py runs the checks both workers share. It
 gives the model the same prompt tokens as the MLX worker, each worker refuses
 the other engine's models, it links no network or server code, and it logs
-numbers only, with llama.cpp itself writing nothing.
+numbers only, with llama.cpp itself writing nothing. Under the reply grammar
+(decision 9), the daemon accepts a reply it refused without it, the grammar
+changes no reply the daemon already accepted, and a reply holds as many
+texts as the request; the daemon's own code judges each reply.
 
     worker/install.sh
     llama-worker/install.sh
     uv run --with pytest==8.4.2 pytest tests/test_llama_worker.py
+
+The grammar checks build the daemon's reply check (tests/daemon_reply/) with
+Go, inside the pinned daemon source.
 """
 
+import base64
 import json
+import os
 import re
 import subprocess
 import sys
@@ -20,7 +28,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-from drive_worker import WORKERS, answer, frame, read_frame, request_body, spawn  # noqa: E402
+from drive_worker import WORKERS, answer, frame, go_json, read_frame, request_body, spawn  # noqa: E402
 from fetch_model import DEST  # noqa: E402
 
 NAME = "standin-gguf"
@@ -110,3 +118,118 @@ def test_the_worker_logs_numbers_only_and_llama_cpp_writes_nothing():
     ours = [e["eventMessage"] for e in events if e.get("subsystem") == "sh.regents.cloak"]
     assert len(ours) == 4
     assert all(any(p.fullmatch(line) for p in NUMBERS_ONLY) for line in ours), ours
+
+
+# The reply grammar (decision 9): `standin-gguf-grammar` is the stand-in's
+# files decoded under reference/rewrite-reply.gbnf.
+GRAMMAR = "standin-gguf-grammar"
+DAEMON = ROOT / "reference/src/zkapi/zkapi-clientd"
+EVAL06 = json.loads((ROOT / "reference/eval06-messages.json").read_text())["messages"]
+
+
+@pytest.fixture(scope="module")
+def daemon_reply(tmp_path_factory) -> Path:
+    """The daemon's own reply checks (tests/daemon_reply/main.go), built
+    inside the pinned daemon module as guest/build.sh builds its check."""
+    out = tmp_path_factory.mktemp("daemon-reply")
+    (out / "overlay.json").write_text(json.dumps(
+        {"Replace": {str(DAEMON / "cmd/cloak-daemon-reply/main.go"): str(ROOT / "tests/daemon_reply/main.go")}}))
+    subprocess.run(["go", "build", "-p", "2", "-trimpath", "-overlay", out / "overlay.json",
+                    "-o", out / "cloak-daemon-reply", "./cmd/cloak-daemon-reply"],
+                   cwd=DAEMON, env=os.environ | {"CGO_ENABLED": "0"}, check=True)
+    return out / "cloak-daemon-reply"
+
+
+def daemon_accepts(tool: Path, cases: list[tuple[list[str], bytes]]) -> list[bool]:
+    """Whether the daemon accepts each reply to a request for these texts."""
+    lines = "".join(json.dumps({"texts": texts, "reply": base64.b64encode(reply).decode()}) + "\n"
+                    for texts, reply in cases)
+    verdicts = subprocess.run([tool], input=lines, capture_output=True, text=True, check=True).stdout.split()
+    assert len(verdicts) == len(cases)
+    return [verdict == "accepted" for verdict in verdicts]
+
+
+def rewrites(name: str, bodies: list[bytes]) -> list[tuple[int, bytes]]:
+    """One worker's answers, as status and raw reply body, with the
+    stand-in's files under the model `name`."""
+    worker = spawn(WORKERS["llama"], name, DEST / NAME)
+    try:
+        assert read_frame(worker.stdout) == (b"Y", b""), worker.stderr.read().decode()
+        out = []
+        for body in bodies:
+            worker.stdin.write(frame(b"R", body))
+            worker.stdin.flush()
+            kind, payload = read_frame(worker.stdout)
+            assert kind == b"A"
+            out.append((int.from_bytes(payload[:2], "big"), payload[2:]))
+        worker.stdin.close()
+        assert worker.wait(timeout=30) == 0
+    finally:
+        worker.kill()
+    return out
+
+
+def generated(reply: bytes) -> tuple[bytes, str, int]:
+    """What the model generated: the text, byte for byte, how it ended and
+    its token count."""
+    body = json.loads(reply)
+    [choice] = body["choices"]
+    return choice["message"]["content"].encode(), choice["finish_reason"], body["usage"]["completion_tokens"]
+
+
+def test_a_reply_the_daemon_refused_is_accepted_under_the_grammar(daemon_reply):
+    """The last user turn of EVAL05's four-turn conversation, which the
+    daemon rewrites as one text: in the stand-in's first stage 3 run
+    (evidence/stage3/standin-gguf/) its reply split it into two texts, and
+    the daemon refused it. Under the grammar the reply holds one."""
+    history = json.loads((ROOT / "reference/eval05-inputs.json").read_text())["history"]["messages"]
+    texts = [[m["content"] for m in history if m["role"] == "user"][-1]]
+    [(free_status, free)] = rewrites(NAME, [request_body(NAME, texts)])
+    [(status, constrained)] = rewrites(GRAMMAR, [request_body(GRAMMAR, texts)])
+    assert (free_status, status) == (200, 200)
+    assert daemon_accepts(daemon_reply, [(texts, free), (texts, constrained)]) == [False, True]
+
+
+def test_the_grammar_changes_no_reply_the_daemon_already_accepted(daemon_reply):
+    """Every EVAL06 message, at the daemon's max_tokens. Where the daemon
+    accepts the reply decoded without the grammar, the reply under it is the
+    same, byte for byte; under it, the daemon accepts every reply the model
+    ended, and only those."""
+    texts = [[m["text"]] for m in EVAL06]
+    free = rewrites(NAME, [request_body(NAME, t) for t in texts])
+    constrained = rewrites(GRAMMAR, [request_body(GRAMMAR, t) for t in texts])
+    assert {status for status, _ in free + constrained} == {200}
+    free_accepted = daemon_accepts(daemon_reply, [(t, reply) for t, (_, reply) in zip(texts, free)])
+    accepted = daemon_accepts(daemon_reply, [(t, reply) for t, (_, reply) in zip(texts, constrained)])
+    same = [generated(c) == generated(f) for (_, f), (_, c) in zip(free, constrained)]
+    assert all(s for s, ok in zip(same, free_accepted) if ok)
+    assert accepted == [generated(reply)[1] == "stop" for _, reply in constrained]
+    print(f"EVAL06, {len(texts)} messages: the daemon accepts {sum(free_accepted)} replies without the grammar "
+          f"and {sum(accepted)} under it; of the {sum(free_accepted)}, {sum(s for s, ok in zip(same, free_accepted) if ok)} "
+          f"are the same byte for byte under the grammar")
+
+
+def test_under_the_grammar_a_reply_holds_as_many_texts_as_the_request(daemon_reply):
+    texts = ["first: what is a river delta", "second, please list three tall mountains", "third, thanks so much!!"]
+    [(status, reply)] = rewrites(GRAMMAR, [request_body(GRAMMAR, texts)])
+    assert (status, generated(reply)[1]) == (200, "stop")
+    assert len(json.loads(generated(reply)[0])["texts"]) == 3
+    assert daemon_accepts(daemon_reply, [(texts, reply)]) == [True]
+
+
+def test_under_the_grammar_a_user_message_without_texts_is_refused():
+    """The grammar's count of texts comes from the user message; one that is
+    not the daemon's {"texts":[...]} with a text gives none. Without a
+    grammar the worker rewrites it as before."""
+    users = ['{"texts":[]}', '{"texts":["a"],"more":["b"]}', '{"Texts":["a"]}', '{"texts":"a"}', '{"texts":[1]}',
+             '"a"', "hello"]
+
+    def body(name: str, user: str) -> bytes:
+        request = json.loads(request_body(name, ["x"], max_tokens=2))
+        request["messages"][1]["content"] = user
+        return go_json(request).encode()
+
+    refused = rewrites(GRAMMAR, [body(GRAMMAR, user) for user in users])
+    assert [(status, json.loads(reply)) for status, reply in refused] == \
+        [(400, {"error": {"message": "invalid request"}})] * len(users)
+    assert [status for status, _ in rewrites(NAME, [body(NAME, user) for user in users])] == [200] * len(users)

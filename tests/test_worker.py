@@ -1,7 +1,8 @@
 """Functional checks of the native workers over their supervisor channel, each
 with its engine's stand-in model (decision 8): the MLX worker with `standin`,
-the llama worker with `standin-gguf`. Each check starts the installed,
-sandboxed worker.
+the llama worker with `standin-gguf`, and with `standin-gguf-grammar`, the
+same files decoded under the reply grammar (decision 9). Each check starts
+the installed, sandboxed worker.
 
     worker/install.sh
     llama-worker/install.sh
@@ -40,15 +41,19 @@ class Engine:
     name: str
     # A small file of the stand-in that the tamper checks alter.
     small_file: str
+    # The model folder under the models folder; a grammar entry shares its
+    # twin's files.
+    folder: str
 
     @property
     def model(self) -> Path:
-        return DEST / self.name
+        return DEST / self.folder
 
 
 ENGINES = {
-    "mlx": Engine(WORKERS["mlx"], "standin", "config.json"),
-    "llama": Engine(WORKERS["llama"], "standin-gguf", "chat_template.jinja"),
+    "mlx": Engine(WORKERS["mlx"], "standin", "config.json", "standin"),
+    "llama": Engine(WORKERS["llama"], "standin-gguf", "chat_template.jinja", "standin-gguf"),
+    "llama-grammar": Engine(WORKERS["llama"], "standin-gguf-grammar", "chat_template.jinja", "standin-gguf"),
 }
 
 
@@ -59,7 +64,7 @@ def engine(request) -> Engine:
 
 @pytest.fixture
 def worker(engine):
-    process = spawn(engine.worker, engine.name)
+    process = spawn(engine.worker, engine.name, engine.model)
     assert read_frame(process.stdout) == (b"Y", b""), process.stderr.read().decode()
     yield process
     process.kill()

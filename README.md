@@ -114,8 +114,11 @@ uv run scripts/drive_worker.py --name standin "a text to rewrite"
 ```
 
 Run both workers' functional checks, each against its stand-in (`standin`
-and `standin-gguf`), then the llama worker's own: the same prompt tokens as
-the MLX worker, no network code linked, and numbers-only logs:
+and `standin-gguf`, the latter also under the reply grammar as
+`standin-gguf-grammar`, decision 9), then the llama worker's own: the same
+prompt tokens as the MLX worker, no network code linked, numbers-only logs,
+and its replies under the grammar judged by the daemon's own check (built
+with Go inside the pinned daemon source):
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_worker.py
@@ -196,10 +199,12 @@ uv run scripts/stage3.py eval01 lead
 ```
 
 The candidates are `lead`, `challenger`, `small-lead` and `small-challenger`
-(decision 7 in `docs/plan.md` added the last two), and `small-lead-gguf` and
-`small-challenger-gguf` on llama.cpp (decision 8). Any other model, such as
-`standin` or `standin-gguf`, gets a record marked development only, which counts toward no
-gate.
+(decision 7 in `docs/plan.md` added the last two), `small-lead-gguf` and
+`small-challenger-gguf` on llama.cpp (decision 8), and the same two under
+the reply grammar, `small-lead-gguf-grammar` and
+`small-challenger-gguf-grammar` (decision 9). Any other model, such as
+`standin`, `standin-gguf` or `standin-gguf-grammar`, gets a record marked
+development only, which counts toward no gate.
 
 Run the kit's own checks:
 

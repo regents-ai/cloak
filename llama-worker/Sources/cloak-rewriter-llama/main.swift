@@ -9,11 +9,12 @@ import os
 // (docs/plan.md), a drop-in for it: the same command line, frames, request
 // and reply, file checks and sandbox. It checks that the directory holds
 // exactly the pinned files, loads the pinned GGUF file with llama.cpp and
-// the pinned chat template, signals ready, then answers one rewrite request
-// at a time until the supervisor closes standard input or breaks the
-// protocol. It then stops the rewrite in progress, as a cancel does, and
-// exits once that rewrite's answer is written: with status 0 at the end of
-// the channel, 2 after a protocol fault.
+// the pinned chat template, checks a pinned grammar against the one built
+// in, signals ready, then answers one rewrite request at a time until the
+// supervisor closes standard input or breaks the protocol. It then stops the
+// rewrite in progress, as a cancel does, and exits once that rewrite's
+// answer is written: with status 0 at the end of the channel, 2 after a
+// protocol fault.
 // Signed with worker/cloak-rewriter.entitlements, it runs in the App Sandbox
 // with no network and reads files only under
 // ~/Library/Application Support/Regents Cloak/models/.

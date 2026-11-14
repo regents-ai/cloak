@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Decision 9: the reply grammar, as candidates of their own. The llama
+  worker can decode under a grammar, `reference/rewrite-reply.gbnf`,
+  through llama.cpp's own grammar sampler: `{"texts":[...]}` with as many
+  texts as the request holds, which the worker sets from each request, and
+  any white space and text the daemon's check takes. It differs from the
+  daemon only in taking the key spelled `"texts"`, once. Decoding stays
+  greedy, the daemon's check is unchanged and nothing repairs a reply. A
+  model entry pins the grammar by sha256 (`grammar` in
+  `reference/models.json`); the worker is built with it and refuses any
+  other; an MLX model's entry cannot carry one. New entries:
+  `small-lead-gguf-grammar` and `small-challenger-gguf-grammar`, the
+  GGUF pair's files under the grammar, which join the candidates (eight
+  now), and `standin-gguf-grammar` for development. Records carry the
+  grammar's pin in their configuration. Entries without a grammar decode
+  as before, byte for byte. On the stand-in
+  (`evidence/stage3/standin-gguf-grammar/`): the four-turn conversation
+  the daemon refused is now accepted, and EVAL06 is again 38 of 40, each
+  reply as before, with e06-10 now running on to the time limit instead of
+  malformed. New checks: `tests/test_llama_worker.py` judges replies with
+  the daemon's own check, built with Go from the pinned daemon source
+  (`tests/daemon_reply/`), and `tests/test_worker.py` runs its checks on
+  the llama worker under the grammar too.
+
 - Both workers: the hash check before the model loads now lets go of each
   8 MiB block of a file once it is hashed. Before, the llama worker kept
   every block until its load had ended, so it held the model file beside

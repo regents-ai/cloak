@@ -11,19 +11,29 @@ public struct ModelPin: Sendable {
         let sha256: String
     }
 
+    /// The reply grammar a model decodes under (decision 9 in docs/plan.md):
+    /// a file in reference/, pinned by its sha256.
+    public struct Grammar: Decodable, Sendable {
+        public let file: String
+        public let sha256: String
+    }
+
     public let name: String
     public let files: [File]
     public let chatTemplateContext: [String: Bool]
+    public let grammar: Grammar?
 
     /// Only models a worker runs carry an `engine` (decision 8 in
     /// docs/plan.md) and frozen chat template settings
     /// (`chat_template_context`); a worker loads only its own engine's models.
+    /// Only the llama worker applies a grammar.
     public static func load(name: String, engine: String) throws -> ModelPin {
         struct Entry: Decodable {
             let name: String
             let engine: String?
             let files: [File]
             let chat_template_context: [String: Bool]?
+            let grammar: Grammar?
         }
         struct Manifest: Decodable { let models: [Entry] }
         let models = try JSONDecoder().decode(Manifest.self, from: Data(PackageResources.models_json)).models
@@ -36,7 +46,10 @@ public struct ModelPin: Sendable {
         guard let context = entry.chat_template_context else {
             throw WorkerError("\(name) has no frozen chat template settings")
         }
-        return ModelPin(name: entry.name, files: entry.files, chatTemplateContext: context)
+        guard entry.grammar == nil || engine == "llama" else {
+            throw WorkerError("\(name) pins a grammar, which only the llama worker applies")
+        }
+        return ModelPin(name: entry.name, files: entry.files, chatTemplateContext: context, grammar: entry.grammar)
     }
 
     /// The directory must hold exactly the pinned files, as regular files with

@@ -18,7 +18,8 @@ conversion's file of the same name. Everything else stays the conversion's.
 A model with `only` takes just those files from its repository, each of which
 must be there: a GGUF repository holds several quantizations, and the model is
 one of them. Each model a worker runs names that worker's `engine` (`mlx` or
-`llama`, decision 8); the script carries it unchanged.
+`llama`, decision 8); the script carries it unchanged, as it does a model's
+`grammar` (decision 9): a file in reference/ and its sha256, pinned by hand.
 """
 
 import hashlib
@@ -82,7 +83,7 @@ def compose(model: dict, recorded: dict[str, dict]) -> dict:
 
 def main() -> None:
     manifest = json.loads(MODELS.read_text())
-    keep = ("name", "role", "engine", "repo", "revision", "only", "vendor_files", "chat_template_context")
+    keep = ("name", "role", "engine", "repo", "revision", "only", "vendor_files", "chat_template_context", "grammar")
     recorded = {m["name"]: record({k: m[k] for k in keep if k in m}) for m in manifest["models"]}
     manifest["models"] = [compose(m, recorded) if "vendor_files" in m else m for m in recorded.values()]
     MODELS.write_text(json.dumps(manifest, indent=2) + "\n")

@@ -1,0 +1,41 @@
+# The daemon's reply contract as a llama.cpp grammar (GBNF), for the llama
+# worker's grammar candidates (decision 9 in docs/plan.md). The daemon
+# (zkapi-clientd, internal/rewriter, Rewrite) accepts a reply whose content is
+# one JSON object {"texts": [...]} with exactly as many strings as it sent,
+# each holding a character that is not white space (Go's unicode.IsSpace) and
+# no control character other than newline and tab. White space between JSON
+# tokens is JSON's own: space, tab, newline and carriage return.
+#
+# The worker adds the rule `texts`: n items separated by commas, where n is
+# the number of texts in the request's user message.
+
+root ::= ws "{" ws "\"texts\"" ws ":" ws "[" texts "]" ws "}" ws
+
+item ::= ws text ws
+
+# A string with at least one character that is not white space.
+text ::= "\"" blank* solid ( blank | solid )* "\""
+
+# A white space character the daemon allows, written out or escaped.
+blank ::= [ \u0085   -     　] | "\\" ( [nt] | "u" blank-code )
+
+# Any other character the daemon allows: not a quote or backslash written
+# out, not a control character, not white space.
+solid ::= [^"\\\x00-\x20\x7F\u0085   -     　] | "\\" ( ["\\/] | "u" solid-code )
+
+# \u escapes: 0009, 000A, 0020, 0085, 00A0, 1680, 2000-200A, 2028, 2029,
+# 202F, 205F and 3000 are white space; 0000-0008, 000B-001F and 007F are
+# control characters the daemon refuses; every other code, surrogates
+# included, is a character that is not white space.
+blank-code ::= "000" [9aA] | "0020" | "0085" | "00" [aA] "0" | "1680" | "200" [0-9aA] | "202" [89fF] | "205" [fF] | "3000"
+
+solid-code ::= (
+    [4-9a-fA-F] hex hex hex
+  | "1" ( [0-57-9a-fA-F] hex hex | "6" ( [0-79a-fA-F] hex | "8" [1-9a-fA-F] ) )
+  | "2" ( [1-9a-fA-F] hex hex | "0" ( [13-46-9a-fA-F] hex | "0" [b-fB-F] | "2" [0-7a-eA-E] | "5" [0-9a-eA-E] ) )
+  | "3" ( [1-9a-fA-F] hex hex | "0" ( [1-9a-fA-F] hex | "0" [1-9a-fA-F] ) )
+  | "0" ( [1-9a-fA-F] hex hex | "0" ( "2" [1-9a-fA-F] | [3-69b-fB-F] hex | "7" [0-9a-eA-E] | "8" [0-46-9a-fA-F] | [aA] [1-9a-fA-F] ) ) )
+
+hex ::= [0-9a-fA-F]
+
+ws ::= [ \t\n\r]*
