@@ -4,7 +4,8 @@
 # Tor port (the one way out, to tor on the host) as another, the daemon's
 # local API as a third, run the daemon's rewrite checks as a fourth, then the
 # agent cases (Pi in the reference sandbox as the agent user), print the
-# results on the console, power off. No network device exists in this guest.
+# results on the console, then serve sends as a fifth when asked to, and
+# power off. No network device exists in this guest.
 /bin/busybox --install -s /bin
 mount -t proc proc /proc
 mount -t sysfs sys /sys
@@ -41,4 +42,17 @@ chown -R agent:agent /home/agent
 chmod 0700 /home/agent
 /usr/bin/cloak-agent-check /etc/cloak/cases.jsonl
 echo "cloak-guest: agent check exited $?"
+
+# A guest that serves (the app's, and cloak-host --serve) then runs the
+# sender as its own user until the host stops it: Development mode's one way
+# to a remote model, out through the Tor port only.
+if [ -e /etc/cloak/serve ]; then
+	mkfifo /run/cloak/sender-ready
+	su -s /bin/sh sender -c 'exec /usr/bin/cloak-sender' > /run/cloak/sender-ready &
+	read -r ready < /run/cloak/sender-ready
+	[ "$ready" = ready ] || { echo "cloak-guest: sender did not start"; poweroff -f; }
+	echo "cloak-guest: sender ready"
+	wait $!
+	echo "cloak-guest: sender exited $?"
+fi
 poweroff -f

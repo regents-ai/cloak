@@ -1,0 +1,1033 @@
+//! The guest's sender, Development mode's one way to a remote model
+//! (decision 10 in docs/plan.md). The host connects to it on the guest's
+//! vsock port and, once it has its turn, sends one request; the sender pays
+//! for it through the official MPP toolkit and answers. Every connection it
+//! makes, to the provider and to the Tempo network alike, goes through the
+//! guest's Tor port with a SOCKS user name of its own, and names are resolved
+//! by Tor: the guest has no other way out.
+//!
+//! One connection, in frames of a kind byte, a four-byte big-endian length
+//! and the payload:
+//!
+//! ```text
+//! sender: Y            your turn; connections are served one at a time
+//! host:   R <request>  JSON, below
+//! sender: S <deposit>  the deposit's new state (JSON, or null when gone),
+//! host:   K            once it is sealed on the Mac; zero or more of these
+//! sender: A <reply>    {"ok": ...} or {"stop": {"code", "detail"}}
+//! ```
+//!
+//! The host builds each request when its turn comes, from what it has kept,
+//! so a request never carries a deposit older than the last one kept. The
+//! wallet's key comes in the requests that sign and stays in this process's
+//! memory only while one runs.
+
+use std::io::{self, Read, Write};
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use alloy::primitives::{Address, Bytes, TxKind, B256, U256};
+use alloy::providers::{Provider, ProviderBuilder, RootProvider};
+use alloy::rpc::client::ClientBuilder;
+use alloy::signers::local::PrivateKeySigner;
+use mpp::client::channel_ops::{
+    encode_precompile_request_close_call, encode_precompile_withdraw_call,
+};
+use mpp::client::tempo::charge::tx_builder::{build_tempo_tx, estimate_gas, TempoTxOptions};
+use mpp::client::tempo::session::recovery::read_on_chain_channel_state;
+use mpp::client::tempo::session::store::{
+    ChannelStore, ChannelStoreError, ChannelStoreResult, StoredChannelEntry,
+};
+use mpp::client::tempo::signing::{sign_and_encode, TempoSigningMode};
+use mpp::client::tempo::TempoClientError;
+use mpp::client::{Fetch, HttpError, TempoSessionProvider};
+use mpp::protocol::core::{format_authorization, parse_www_authenticate_all_bytes};
+use mpp::protocol::methods::tempo::session::{ChannelDescriptor, SettlementRoute};
+use mpp::protocol::methods::tempo::{CHAIN_ID, DEFAULT_RPC_URL, USDC};
+use mpp::MppError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{json, Value};
+use tempo_alloy::contracts::precompiles::{ITIP20, TIP20_CHANNEL_RESERVE_ADDRESS};
+use tempo_alloy::primitives::transaction::Call;
+use tempo_alloy::rpc::TempoTransactionRequest;
+use tempo_alloy::TempoNetwork;
+
+/// The guest's vsock port the host connects to.
+pub const PORT: u32 = 8020;
+
+const TURN: u8 = b'Y';
+const REQUEST: u8 = b'R';
+const KEEP: u8 = b'S';
+const KEPT: u8 = b'K';
+const ANSWER: u8 = b'A';
+/// The largest frame either side takes.
+const MAX_FRAME: usize = 16 << 20;
+
+/// How long a deposit's owner waits, after asking the network to close it,
+/// before taking it back.
+const CLOSE_GRACE: u64 = 900;
+/// Each request through Tor, from connecting to the last byte.
+const REQUEST_LIMIT: Duration = Duration::from_secs(180);
+/// The least balance a first deposit needs, checked before anything reaches
+/// the provider: its suggested deposit, 1 USDC.e on 14 November 2026. The
+/// toolkit opens and tops up each deposit at the size the provider's
+/// challenge suggests, and at this size only when one suggests none.
+const DEPOSIT: u128 = 1_000_000;
+
+/// Where the sender's requests go: the provider's MPP root, the Tempo
+/// network's RPC and the guest's Tor port. Only tests name others.
+#[derive(Clone)]
+pub struct Network {
+    pub provider: String,
+    pub rpc: String,
+    pub tor: SocketAddr,
+}
+
+impl Network {
+    pub fn live() -> Self {
+        Self {
+            provider: "https://api.inference.boundless.network/mpp".into(),
+            rpc: DEFAULT_RPC_URL.into(),
+            tor: SocketAddr::from(([127, 0, 0, 1], 9050)),
+        }
+    }
+
+    fn chat(&self) -> String {
+        format!("{}/v1/chat/completions", self.provider)
+    }
+
+    /// A client whose every connection goes through Tor as `identity`,
+    /// with names resolved by Tor, no proxy from the environment, no
+    /// redirect followed and no header of its own beyond what HTTP needs.
+    fn client(&self, identity: &str) -> Result<reqwest::Client, Stop> {
+        let proxy = reqwest::Proxy::all(format!("socks5h://{identity}:cloak@{}", self.tor))?;
+        Ok(reqwest::Client::builder()
+            .no_proxy()
+            .proxy(proxy)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(REQUEST_LIMIT)
+            .build()?)
+    }
+
+    fn rpc(&self, client: &reqwest::Client) -> Result<RootProvider<TempoNetwork>, Stop> {
+        let url = self
+            .rpc
+            .parse()
+            .map_err(|e| Stop::failed(format!("RPC address: {e}")))?;
+        Ok(ProviderBuilder::<_, _, TempoNetwork>::default()
+            .connect_client(ClientBuilder::default().http_with_client(client.clone(), url)))
+    }
+
+    /// The toolkit's session payer for `signer`, paying in USDC.e only, its
+    /// RPC through `rpc` and its requests to the provider through `client`.
+    /// No most per deposit: the toolkit's only one caps what a deposit pays
+    /// in all, and the balance is the limit.
+    fn session(
+        &self,
+        signer: PrivateKeySigner,
+        client: &reqwest::Client,
+        rpc: &reqwest::Client,
+        keep: Arc<dyn ChannelStore>,
+    ) -> Result<TempoSessionProvider, Stop> {
+        let origin = self
+            .provider
+            .parse()
+            .map_err(|e| Stop::failed(format!("provider address: {e}")))?;
+        Ok(TempoSessionProvider::new(signer, &self.rpc)?
+            .with_http_client(rpc.clone())
+            .with_hint_client(client.clone())
+            .with_currencies([USDC])
+            .with_fee_token(usdc())
+            .with_default_deposit(DEPOSIT)
+            .with_channel_store(keep)
+            .with_origin(&origin)?)
+    }
+}
+
+fn usdc() -> Address {
+    USDC.parse().expect("the toolkit's USDC.e address")
+}
+
+/// A fresh SOCKS user name for traffic that belongs to no conversation, so
+/// Tor gives it a circuit of its own.
+fn fresh() -> String {
+    hex(B256::random().as_slice())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// What the host asks.
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+pub enum Request {
+    /// A new wallet key, made by the toolkit's own key code.
+    Create,
+    /// The wallet's balance and the least a first deposit needs, whether the
+    /// provider's setup still names the network and token, the models and
+    /// their prices, and the deposit's state on the network.
+    Wallet {
+        address: Address,
+        deposit: Option<Deposit>,
+    },
+    Send(Send),
+    /// Closes the deposit with the provider, which refunds what is unspent.
+    Close {
+        key: B256,
+        deposit: Deposit,
+        model: String,
+    },
+    /// The network's own close, without the provider: the first press asks
+    /// to close, one after the grace period takes the deposit back.
+    Withdraw {
+        key: B256,
+        deposit: Deposit,
+    },
+}
+
+impl Request {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Wallet { .. } => "wallet",
+            Self::Send(_) => "send",
+            Self::Close { .. } => "close",
+            Self::Withdraw { .. } => "withdraw",
+        }
+    }
+}
+
+/// One message to the model, with the conversation's earlier turns as they
+/// were sent and answered.
+#[derive(Deserialize)]
+pub struct Send {
+    key: B256,
+    deposit: Option<Deposit>,
+    model: String,
+    messages: Vec<Message>,
+    /// The conversation's SOCKS user name.
+    identity: String,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct Message {
+    role: Role,
+    content: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    User,
+    Assistant,
+}
+
+/// A token amount in its smallest units, as a decimal string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Amount(pub u128);
+
+impl Serialize for Amount {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Amount {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map(Amount)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// The toolkit's stored channel, as the host keeps it: the one deposit.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Deposit {
+    key: String,
+    channel_id: B256,
+    cumulative_amount: Amount,
+    deposit: Amount,
+    descriptor: ChannelDescriptor,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settlement_route: Option<SettlementRoute>,
+    escrow: Address,
+    chain_id: u64,
+    opened: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pending_open: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    origin: Option<String>,
+}
+
+impl Deposit {
+    fn new(key: &str, entry: &StoredChannelEntry) -> Self {
+        Self {
+            key: key.to_owned(),
+            channel_id: entry.channel_id,
+            cumulative_amount: Amount(entry.cumulative_amount),
+            deposit: Amount(entry.deposit),
+            descriptor: entry.descriptor.clone(),
+            settlement_route: entry.settlement_route.clone(),
+            escrow: entry.escrow,
+            chain_id: entry.chain_id,
+            opened: entry.opened,
+            pending_open: entry.pending_open.clone(),
+            origin: entry.origin.clone(),
+        }
+    }
+
+    fn entry(&self) -> StoredChannelEntry {
+        StoredChannelEntry {
+            channel_id: self.channel_id,
+            cumulative_amount: self.cumulative_amount.0,
+            deposit: self.deposit.0,
+            descriptor: self.descriptor.clone(),
+            settlement_route: self.settlement_route.clone(),
+            escrow: self.escrow,
+            chain_id: self.chain_id,
+            opened: self.opened,
+            pending_open: self.pending_open.clone(),
+            origin: self.origin.clone(),
+        }
+    }
+
+    /// Open, with something left to spend.
+    fn usable(&self) -> bool {
+        self.opened && self.deposit > self.cumulative_amount
+    }
+}
+
+/// Why a request stopped, in one of the few ways the app words for people.
+#[derive(Debug, Serialize)]
+pub struct Stop {
+    code: Code,
+    detail: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Code {
+    NoFunds,
+    WalletRefused,
+    ModelUnavailable,
+    TorDown,
+    AnswerRefused,
+    Failed,
+}
+
+impl Stop {
+    fn new(code: Code, detail: impl Into<String>) -> Self {
+        Self {
+            code,
+            detail: detail.into(),
+        }
+    }
+
+    fn failed(detail: impl Into<String>) -> Self {
+        Self::new(Code::Failed, detail)
+    }
+
+    pub fn code(&self) -> Code {
+        self.code
+    }
+}
+
+/// Whether a connection could not be made, through the error's sources: a
+/// Tor port that refuses or a circuit that cannot be built.
+fn unreachable(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut next = Some(error);
+    while let Some(error) = next {
+        if error
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_connect)
+        {
+            return true;
+        }
+        next = error.source();
+    }
+    false
+}
+
+impl From<reqwest::Error> for Stop {
+    fn from(error: reqwest::Error) -> Self {
+        let code = if unreachable(&error) {
+            Code::TorDown
+        } else {
+            Code::Failed
+        };
+        Self::new(code, error.to_string())
+    }
+}
+
+impl From<MppError> for Stop {
+    fn from(error: MppError) -> Self {
+        let code = match &error {
+            MppError::InsufficientBalance(_)
+            | MppError::Tempo(TempoClientError::InsufficientBalance { .. }) => Code::NoFunds,
+            MppError::PaymentRequired { .. }
+            | MppError::VerificationFailed(_)
+            | MppError::PaymentActionRequired(_) => Code::WalletRefused,
+            _ if unreachable(&error) => Code::TorDown,
+            _ => Code::Failed,
+        };
+        Self::new(code, error.to_string())
+    }
+}
+
+impl From<HttpError> for Stop {
+    fn from(error: HttpError) -> Self {
+        match error {
+            HttpError::Payment(error) => error.into(),
+            HttpError::Request(error) => error.into(),
+            error => Self::failed(error.to_string()),
+        }
+    }
+}
+
+impl From<alloy::transports::TransportError> for Stop {
+    fn from(error: alloy::transports::TransportError) -> Self {
+        let code = if unreachable(&error) {
+            Code::TorDown
+        } else {
+            Code::Failed
+        };
+        Self::new(code, error.to_string())
+    }
+}
+
+impl From<alloy::contract::Error> for Stop {
+    fn from(error: alloy::contract::Error) -> Self {
+        let code = if unreachable(&error) {
+            Code::TorDown
+        } else {
+            Code::Failed
+        };
+        Self::new(code, error.to_string())
+    }
+}
+
+/// One connection's frames.
+pub struct Frames<S> {
+    stream: S,
+}
+
+impl<S: Read + Write> Frames<S> {
+    pub fn new(stream: S) -> Self {
+        Self { stream }
+    }
+
+    /// The next frame, or None once the other side has closed.
+    pub fn read(&mut self) -> io::Result<Option<(u8, Vec<u8>)>> {
+        let mut head = [0; 5];
+        match self.stream.read_exact(&mut head) {
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            result => result?,
+        }
+        let length = u32::from_be_bytes([head[1], head[2], head[3], head[4]]) as usize;
+        if length > MAX_FRAME {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "frame too large",
+            ));
+        }
+        let mut payload = vec![0; length];
+        self.stream.read_exact(&mut payload)?;
+        Ok(Some((head[0], payload)))
+    }
+
+    pub fn write(&mut self, kind: u8, payload: &[u8]) -> io::Result<()> {
+        let length = u32::try_from(payload.len())
+            .ok()
+            .filter(|&length| length as usize <= MAX_FRAME)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "frame too large"))?;
+        let mut frame = Vec::with_capacity(5 + payload.len());
+        frame.push(kind);
+        frame.extend(length.to_be_bytes());
+        frame.extend(payload);
+        self.stream.write_all(&frame)?;
+        self.stream.flush()
+    }
+}
+
+/// Serves one connection: gives it its turn, runs its request and answers.
+/// Returns the request's name and how it ended, for the log.
+pub fn serve<S: Read + Write + std::marker::Send + 'static>(
+    runtime: &tokio::runtime::Runtime,
+    network: &Network,
+    stream: S,
+) -> io::Result<(&'static str, &'static str)> {
+    let frames = Arc::new(Mutex::new(Frames::new(stream)));
+    frames.lock().unwrap().write(TURN, &[])?;
+    let request = match frames.lock().unwrap().read()? {
+        Some((REQUEST, payload)) => payload,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "expected a request",
+            ))
+        }
+    };
+    let (name, result) = match serde_json::from_slice::<Request>(&request) {
+        Ok(request) => (
+            request.name(),
+            runtime.block_on(run(network, request, frames.clone())),
+        ),
+        Err(error) => (
+            "unreadable",
+            Err(Stop::failed(format!("unreadable request: {error}"))),
+        ),
+    };
+    let (outcome, reply) = match result {
+        Ok(value) => ("ok", json!({ "ok": value })),
+        Err(stop) => (code_name(stop.code), json!({ "stop": stop })),
+    };
+    frames
+        .lock()
+        .unwrap()
+        .write(ANSWER, &serde_json::to_vec(&reply)?)?;
+    Ok((name, outcome))
+}
+
+fn code_name(code: Code) -> &'static str {
+    match code {
+        Code::NoFunds => "no_funds",
+        Code::WalletRefused => "wallet_refused",
+        Code::ModelUnavailable => "model_unavailable",
+        Code::TorDown => "tor_down",
+        Code::AnswerRefused => "answer_refused",
+        Code::Failed => "failed",
+    }
+}
+
+async fn run<S: Read + Write + std::marker::Send + 'static>(
+    network: &Network,
+    request: Request,
+    frames: Arc<Mutex<Frames<S>>>,
+) -> Result<Value, Stop> {
+    match request {
+        Request::Create => {
+            let signer = PrivateKeySigner::random();
+            Ok(json!({ "key": signer.to_bytes(), "address": signer.address() }))
+        }
+        Request::Wallet { address, deposit } => wallet(network, address, deposit).await,
+        Request::Send(send) => {
+            let keep = Keep::new(send.deposit.clone(), frames);
+            send.run(network, keep).await
+        }
+        Request::Close {
+            key,
+            deposit,
+            model,
+        } => close(network, key, deposit, &model, frames).await,
+        Request::Withdraw { key, deposit } => withdraw(network, key, deposit).await,
+    }
+}
+
+async fn balance(rpc: &RootProvider<TempoNetwork>, owner: Address) -> Result<u128, Stop> {
+    let balance = ITIP20::new(usdc(), rpc).balanceOf(owner).call().await?;
+    Ok(balance.to::<u128>())
+}
+
+#[derive(Deserialize)]
+struct Models {
+    data: Vec<Listed>,
+}
+
+#[derive(Deserialize)]
+struct Listed {
+    id: String,
+    pricing: Option<Pricing>,
+}
+
+/// US dollars per million tokens.
+#[derive(Deserialize, Serialize)]
+struct Pricing {
+    input: f64,
+    output: f64,
+}
+
+async fn wallet(
+    network: &Network,
+    address: Address,
+    deposit: Option<Deposit>,
+) -> Result<Value, Stop> {
+    let client = network.client(&fresh())?;
+    let rpc = network.rpc(&network.client(&fresh())?)?;
+    let setup = async {
+        let text = client
+            .get(format!("{}/setup", network.provider))
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        Ok::<_, Stop>(
+            text.contains(&CHAIN_ID.to_string())
+                && text.to_lowercase().contains(&USDC.to_lowercase()),
+        )
+    };
+    let models = async {
+        let models: Models = client
+            .get(format!("{}/v1/models", network.provider))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok::<_, Stop>(
+            models
+                .data
+                .into_iter()
+                .filter_map(|model| Some(json!({ "id": model.id, "pricing": model.pricing? })))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let (balance, setup, models) = tokio::try_join!(balance(&rpc, address), setup, models)?;
+    let deposit = match deposit {
+        Some(deposit) if deposit.opened => {
+            let state = read_on_chain_channel_state(&rpc, deposit.channel_id).await?;
+            json!({
+                "deposit": Amount(state.deposit),
+                "spent": deposit.cumulative_amount,
+                "closeRequestedAt": state.close_requested_at,
+                "withdrawAt": (state.close_requested_at > 0).then(|| state.close_requested_at + CLOSE_GRACE),
+                // Closed on the network: the host forgets it.
+                "gone": state.deposit == 0,
+            })
+        }
+        Some(deposit) => {
+            json!({ "deposit": deposit.deposit, "spent": deposit.cumulative_amount, "pending": true })
+        }
+        None => Value::Null,
+    };
+    Ok(
+        json!({ "balance": Amount(balance), "least": Amount(DEPOSIT), "setup": setup, "models": models, "deposit": deposit }),
+    )
+}
+
+impl Send {
+    async fn run<S: Read + Write + std::marker::Send + 'static>(
+        self,
+        network: &Network,
+        keep: Keep<S>,
+    ) -> Result<Value, Stop> {
+        if self.identity.len() != 64 || !self.identity.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(Stop::failed(
+                "the conversation's identity is not 32 bytes of hex",
+            ));
+        }
+        let signer =
+            PrivateKeySigner::from_bytes(&self.key).map_err(|e| Stop::failed(e.to_string()))?;
+        let rpc = network.client(&fresh())?;
+        // Without a deposit to spend, a new one needs the balance: checked
+        // before anything reaches the provider.
+        if !self.deposit.as_ref().is_some_and(Deposit::usable)
+            && balance(&network.rpc(&rpc)?, signer.address()).await? < DEPOSIT
+        {
+            return Err(Stop::new(Code::NoFunds, "the balance is below one deposit"));
+        }
+        let client = network.client(&self.identity)?;
+        let payer = network.session(signer, &client, &rpc, Arc::new(keep))?;
+        let response = client
+            .post(network.chat())
+            .header("Accept-Payment", "tempo/session")
+            .json(&json!({ "model": self.model, "messages": self.messages, "stream": false }))
+            .send_with_payment(&payer)
+            .await?;
+        answer(response).await
+    }
+}
+
+#[derive(Deserialize)]
+struct Completion {
+    choices: Vec<Choice>,
+}
+
+#[derive(Deserialize)]
+struct Choice {
+    message: Said,
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Said {
+    content: Option<String>,
+    refusal: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Problem {
+    error: Option<ProblemDetail>,
+}
+
+#[derive(Deserialize)]
+struct ProblemDetail {
+    code: Option<Value>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+}
+
+/// The model's answer, or why there is none.
+async fn answer(response: reqwest::Response) -> Result<Value, Stop> {
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.bytes().await.unwrap_or_default();
+        let problem = serde_json::from_slice::<Problem>(&body)
+            .ok()
+            .and_then(|p| p.error);
+        let code = problem
+            .as_ref()
+            .and_then(|p| p.code.as_ref())
+            .map(Value::to_string)
+            .unwrap_or_default();
+        let kind = problem.and_then(|p| p.kind).unwrap_or_default();
+        let detail = format!("the provider answered {status} {code} {kind}");
+        return Err(match status.as_u16() {
+            403 if code.contains("model_access_required") => {
+                Stop::new(Code::ModelUnavailable, detail)
+            }
+            404 => Stop::new(Code::ModelUnavailable, detail),
+            401 | 402 | 403 => Stop::new(Code::WalletRefused, detail),
+            _ => Stop::failed(detail),
+        });
+    }
+    let completion: Completion = response.json().await?;
+    let choice = completion
+        .choices
+        .into_iter()
+        .next()
+        .ok_or_else(|| Stop::failed("the provider gave no choice"))?;
+    match (
+        choice.message.content,
+        choice.message.refusal,
+        choice.finish_reason.as_deref(),
+    ) {
+        (Some(content), None, Some("stop" | "length") | None) if !content.trim().is_empty() => {
+            Ok(json!({ "answer": content }))
+        }
+        (_, _, reason) => Err(Stop::new(
+            Code::AnswerRefused,
+            format!("finish reason {reason:?}"),
+        )),
+    }
+}
+
+/// Closes the deposit with the provider. A cooperative close needs one of
+/// the provider's session challenges, which an unpaid request with made-up
+/// text brings; the close then carries the toolkit's final voucher, for
+/// what this wallet has authorized, and the provider refunds the rest. The
+/// host forgets the deposit once the network shows it closed.
+async fn close<S: Read + Write + std::marker::Send + 'static>(
+    network: &Network,
+    key: B256,
+    deposit: Deposit,
+    model: &str,
+    frames: Arc<Mutex<Frames<S>>>,
+) -> Result<Value, Stop> {
+    let signer = PrivateKeySigner::from_bytes(&key).map_err(|e| Stop::failed(e.to_string()))?;
+    let client = network.client(&fresh())?;
+    let rpc = network.client(&fresh())?;
+    let (channel, spent) = (deposit.channel_id.to_string(), deposit.cumulative_amount.0);
+    let payer = network.session(
+        signer,
+        &client,
+        &rpc,
+        Arc::new(Keep::new(Some(deposit), frames)),
+    )?;
+    let probe = client
+        .post(network.chat())
+        .header("Accept-Payment", "tempo/session")
+        .json(&json!({ "model": model, "messages": [{ "role": "user", "content": "Hello" }], "stream": false }))
+        .send()
+        .await?;
+    let challenge = parse_www_authenticate_all_bytes(
+        probe
+            .headers()
+            .get_all(reqwest::header::WWW_AUTHENTICATE)
+            .iter()
+            .map(|value| value.as_bytes()),
+    )
+    .into_iter()
+    .filter_map(Result::ok)
+    .find(|challenge| {
+        challenge.method.as_str() == "tempo" && challenge.intent.as_str() == "session"
+    })
+    .ok_or_else(|| {
+        Stop::failed(format!(
+            "the provider answered {} with no session challenge",
+            probe.status()
+        ))
+    })?;
+    if !payer.restore(&challenge).await? {
+        return Err(Stop::failed("the deposit is not open on the network"));
+    }
+    let credential = payer
+        .close_credential_at_for_challenge(&challenge, &channel, spent)
+        .await?;
+    let closed = client
+        .post(network.chat())
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format_authorization(&credential)?,
+        )
+        .send()
+        .await?;
+    if !closed.status().is_success() {
+        return Err(Stop::failed(format!(
+            "the provider answered the close with {}",
+            closed.status()
+        )));
+    }
+    Ok(json!({}))
+}
+
+/// The network's own close: asks to close the deposit, or once that has
+/// been asked, takes it back. Nothing here waits for the grace period; the
+/// network refuses a withdrawal before it ends.
+async fn withdraw(network: &Network, key: B256, deposit: Deposit) -> Result<Value, Stop> {
+    let signer = PrivateKeySigner::from_bytes(&key).map_err(|e| Stop::failed(e.to_string()))?;
+    let rpc = network.rpc(&network.client(&fresh())?)?;
+    let state = read_on_chain_channel_state(&rpc, deposit.channel_id).await?;
+    let (step, input) = if state.close_requested_at == 0 {
+        (
+            "requested",
+            encode_precompile_request_close_call(&deposit.descriptor)?,
+        )
+    } else {
+        (
+            "withdrawn",
+            encode_precompile_withdraw_call(&deposit.descriptor)?,
+        )
+    };
+    let transaction = submit(&rpc, &signer, input).await?;
+    Ok(json!({ "step": step, "transaction": transaction }))
+}
+
+/// Signs one call to the channel precompile with the toolkit and sends it to
+/// the network; the fee is paid in USDC.e.
+async fn submit(
+    rpc: &RootProvider<TempoNetwork>,
+    signer: &PrivateKeySigner,
+    input: Bytes,
+) -> Result<B256, Stop> {
+    let from = signer.address();
+    let calls = vec![Call {
+        to: TxKind::Call(TIP20_CHANNEL_RESERVE_ADDRESS),
+        value: U256::ZERO,
+        input,
+    }];
+    let nonce = rpc.get_transaction_count(from).await?;
+    let price = rpc.get_gas_price().await?;
+    let mut options = TempoTxOptions {
+        calls,
+        chain_id: CHAIN_ID,
+        fee_token: usdc(),
+        nonce,
+        nonce_key: U256::ZERO,
+        gas_limit: 0,
+        max_fee_per_gas: price,
+        max_priority_fee_per_gas: price,
+        fee_payer: false,
+        valid_before: None,
+        key_authorization: None,
+    };
+    let mut estimate = TempoTransactionRequest {
+        calls: options.calls.clone(),
+        ..Default::default()
+    }
+    .with_fee_token(usdc());
+    estimate.inner.from = Some(from);
+    estimate.inner.chain_id = Some(CHAIN_ID);
+    estimate.inner.nonce = Some(nonce);
+    estimate.inner.max_fee_per_gas = Some(price);
+    estimate.inner.max_priority_fee_per_gas = Some(price);
+    options.gas_limit = estimate_gas(rpc, estimate).await?;
+    let signed = sign_and_encode(build_tempo_tx(options), signer, &TempoSigningMode::Direct)?;
+    Ok(*rpc.send_raw_transaction(&signed).await?.tx_hash())
+}
+
+/// The toolkit's channel store for one request: the one deposit, seeded
+/// from what the host kept, and every change sent to the host and sealed on
+/// the Mac before the toolkit goes on, so a deposit about to open is on the
+/// Mac's disk before its transaction leaves.
+struct Keep<S> {
+    deposit: Mutex<Option<Deposit>>,
+    frames: Arc<Mutex<Frames<S>>>,
+}
+
+impl<S: Read + Write> Keep<S> {
+    fn new(deposit: Option<Deposit>, frames: Arc<Mutex<Frames<S>>>) -> Self {
+        Self {
+            deposit: Mutex::new(deposit),
+            frames,
+        }
+    }
+
+    fn tell(&self, deposit: Option<&Deposit>) -> ChannelStoreResult<()> {
+        let payload =
+            serde_json::to_vec(&deposit).map_err(|e| ChannelStoreError::Io(e.to_string()))?;
+        tokio::task::block_in_place(|| {
+            let mut frames = self.frames.lock().unwrap();
+            frames.write(KEEP, &payload)?;
+            match frames.read()? {
+                Some((KEPT, _)) => Ok(()),
+                _ => Err(io::Error::other("the host did not keep the deposit")),
+            }
+        })
+        .map_err(|e| ChannelStoreError::Io(e.to_string()))
+    }
+}
+
+fn mismatch(what: &str) -> ChannelStoreError {
+    ChannelStoreError::InvalidEntry(what.into())
+}
+
+#[async_trait::async_trait]
+impl<S: Read + Write + std::marker::Send + 'static> ChannelStore for Keep<S> {
+    async fn get(&self, key: &str) -> ChannelStoreResult<Option<StoredChannelEntry>> {
+        Ok(self
+            .deposit
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|kept| kept.key == key)
+            .map(Deposit::entry))
+    }
+
+    async fn set(&self, entry: &StoredChannelEntry) -> ChannelStoreResult<()> {
+        self.set_at(&entry.key(), entry).await
+    }
+
+    /// As the toolkit's memory store: the same channel merges, keeping the
+    /// highest amounts and its first origin; a channel replaces another under
+    /// the same key. There is one deposit, so another key is refused.
+    async fn set_at(&self, key: &str, entry: &StoredChannelEntry) -> ChannelStoreResult<()> {
+        let mut kept = self.deposit.lock().unwrap();
+        let mut next = Deposit::new(key, entry);
+        match kept.as_ref() {
+            Some(current) if current.key != key => return Err(mismatch("one deposit at a time")),
+            Some(current) if current.channel_id == entry.channel_id => {
+                next.cumulative_amount = next.cumulative_amount.max(current.cumulative_amount);
+                next.deposit = next.deposit.max(current.deposit);
+                next.origin = match (&current.origin, &entry.origin) {
+                    (Some(current), Some(origin)) if current != origin => {
+                        return Err(mismatch("stored channel origin mismatch"))
+                    }
+                    (Some(current), _) => Some(current.clone()),
+                    (None, origin) => origin.clone(),
+                };
+            }
+            _ => {}
+        }
+        self.tell(Some(&next))?;
+        *kept = Some(next);
+        Ok(())
+    }
+
+    async fn find_channel(&self, channel_id: B256) -> ChannelStoreResult<Option<String>> {
+        Ok(self
+            .deposit
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|kept| kept.channel_id == channel_id)
+            .map(|kept| kept.key.clone()))
+    }
+
+    async fn delete(&self, key: &str) -> ChannelStoreResult<()> {
+        let mut kept = self.deposit.lock().unwrap();
+        if kept.as_ref().is_some_and(|current| current.key == key) {
+            self.tell(None)?;
+            *kept = None;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixStream;
+
+    fn entry(channel: u8, cumulative: u128) -> StoredChannelEntry {
+        let address = "0x0000000000000000000000000000000000000001".to_owned();
+        StoredChannelEntry {
+            channel_id: B256::with_last_byte(channel),
+            cumulative_amount: cumulative,
+            deposit: 1_000_000,
+            descriptor: ChannelDescriptor {
+                payer: address.clone(),
+                payee: address.clone(),
+                operator: address.clone(),
+                token: USDC.into(),
+                salt: B256::ZERO.to_string(),
+                authorized_signer: address,
+                expiring_nonce_hash: B256::ZERO.to_string(),
+            },
+            settlement_route: None,
+            escrow: TIP20_CHANNEL_RESERVE_ADDRESS,
+            chain_id: CHAIN_ID,
+            opened: true,
+            pending_open: None,
+            origin: None,
+        }
+    }
+
+    /// The host's end: keeps each deposit reported, answering K, until the
+    /// store is dropped.
+    fn host(stream: UnixStream) -> std::thread::JoinHandle<Vec<Value>> {
+        std::thread::spawn(move || {
+            let mut frames = Frames::new(stream);
+            let mut kept = vec![];
+            while let Ok(Some((KEEP, payload))) = frames.read() {
+                kept.push(serde_json::from_slice(&payload).unwrap());
+                frames.write(KEPT, &[]).unwrap();
+            }
+            kept
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn each_change_to_the_deposit_is_kept_by_the_host() {
+        let (sender, other) = UnixStream::pair().unwrap();
+        let kept = host(other);
+        let keep = Keep::new(None, Arc::new(Mutex::new(Frames::new(sender))));
+        keep.set_at("scope", &entry(1, 10)).await.unwrap();
+        // The same channel merges, keeping the highest amount.
+        keep.set_at("scope", &entry(1, 5)).await.unwrap();
+        assert_eq!(
+            keep.get("scope").await.unwrap().unwrap().cumulative_amount,
+            10
+        );
+        assert_eq!(
+            keep.find_channel(B256::with_last_byte(1))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("scope")
+        );
+        // One deposit at a time.
+        assert!(keep.set_at("other", &entry(2, 1)).await.is_err());
+        keep.delete("scope").await.unwrap();
+        assert!(keep.get("scope").await.unwrap().is_none());
+        drop(keep);
+        let kept = kept.join().unwrap();
+        assert_eq!(kept.len(), 3);
+        assert_eq!(kept[0]["cumulativeAmount"], "10");
+        assert_eq!(kept[1]["cumulativeAmount"], "10");
+        assert!(kept[2].is_null());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_change_the_host_did_not_keep_is_not_taken() {
+        let (sender, other) = UnixStream::pair().unwrap();
+        drop(other);
+        let keep = Keep::new(None, Arc::new(Mutex::new(Frames::new(sender))));
+        assert!(keep.set_at("scope", &entry(1, 10)).await.is_err());
+        assert!(keep.get("scope").await.unwrap().is_none());
+    }
+}

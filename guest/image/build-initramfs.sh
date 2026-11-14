@@ -1,5 +1,6 @@
 #!/bin/sh
-# Runs inside the pinned build image. Reads the guest binaries from /out, the
+# Runs inside the pinned build image. Reads the guest binaries from /out (the
+# sender among them, the one dynamic Cloak program), the
 # pinned Pi package from /pi, the pinned Node.js runtime from /node and the
 # reference wrapper from /wrapper, and writes /out/Image (the uncompressed
 # kernel), /out/initrd.gz (the guest root) and /out/guest-manifest.txt (what
@@ -33,7 +34,7 @@ for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport
 	xz -dc $(find /lib/modules/$kernel -name "$module.ko.xz") > $root/usr/lib/modules/$module.ko
 done
 install -m 0755 /out/cloak-adapter /out/cloak-tor-port /out/cloak-rewrite-check /out/cloak-daemon /out/cloak-agent-check \
-	/out/cloak-routing-probe /out/cloak-vsock-probe $root/usr/bin/
+	/out/cloak-routing-probe /out/cloak-vsock-probe /out/cloak-sender $root/usr/bin/
 install -m 0755 /src/init $root/init
 install -m 0755 /src/boot $root/usr/lib/cloak/boot
 
@@ -63,7 +64,7 @@ tar -xzf /pi/earendil-works-pi-coding-agent-1.3.0.tgz -C $pi --strip-components 
 ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js $root/usr/local/bin/pi
 
 # Shared libraries the dynamic programs need, from this image's glibc.
-for elf in /bin/bash /usr/bin/bwrap $root/usr/local/bin/node /usr/lib/$arch/torsocks/libtorsocks.so; do
+for elf in /bin/bash /usr/bin/bwrap $root/usr/local/bin/node /usr/lib/$arch/torsocks/libtorsocks.so $root/usr/bin/cloak-sender; do
 	ldd $elf | awk '/=>/ { print $3 } /ld-linux/ { print $1 }'
 done | sort -u | while read -r library; do
 	case $library in
@@ -82,6 +83,7 @@ checker:x:1002:1002:checker:/:/bin/sh
 zkapi:x:1004:1004:zkapi:/:/bin/sh
 agent:x:1005:1005:agent:/home/agent:/bin/sh
 torport:x:1006:1006:torport:/:/bin/sh
+sender:x:1007:1007:sender:/:/bin/sh
 PASSWD
 cat > $root/etc/group <<GROUP
 root:x:0:
@@ -91,6 +93,7 @@ rewriter:x:1003:adapter,checker,zkapi
 zkapi:x:1004:
 agent:x:1005:
 torport:x:1006:
+sender:x:1007:
 GROUP
 chmod 0755 $root/run/cloak
 chmod 1777 $root/tmp
@@ -102,6 +105,6 @@ chmod 1777 $root/tmp
 	(cd /node && sha256sum node-v24.22.2-linux-arm64.tar.xz)
 	(cd /pi && sha256sum earendil-works-pi-coding-agent-1.3.0.tgz)
 	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-tor-port cloak-rewrite-check cloak-daemon cloak-agent-check \
-		cloak-routing-probe cloak-vsock-probe
+		cloak-routing-probe cloak-vsock-probe cloak-sender
 } > /out/guest-manifest.txt
 cat /out/guest-manifest.txt

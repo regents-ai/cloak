@@ -5,8 +5,8 @@
 # compiled inside the pinned daemon module with an overlay, so the daemon's
 # own files stay untouched, and both with Cloak's input limit and deadline,
 # decision 6 in docs/plan.md, patched into copies of two of its files), then
-# the kernel and root from pinned Debian packages, the pinned Pi package and
-# Node.js runtime, and the reference wrapper. Every pinned source is checked
+# the sender, then the kernel and root from pinned Debian packages, the pinned
+# Pi package and Node.js runtime, and the reference wrapper. Every pinned source is checked
 # against its pin first. Two cores, low priority.
 set -eu
 cd "$(dirname "$0")/.."
@@ -33,6 +33,15 @@ printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_guest.go":"%s/guest/daemon/zz
 	"$module" "$repo" "$rewriter" "$module" "$out" > "$out/daemon-overlay.json"
 (cd "$module" && nice -n 10 go build -p 2 -trimpath -overlay "$out/daemon-overlay.json" \
 	-ldflags="-X main.version=privacy-$(git rev-parse --short HEAD)-dev" -o "$out/cloak-daemon" ./cmd/zkapi-clientd)
+
+# The sender (Development mode, decision 10 in docs/plan.md): Rust, built
+# --locked in the pinned Rust image, whose toolchain is the one
+# guest/sender/rust-toolchain.toml names, with its crates and build in a Docker
+# volume of its own between builds.
+docker run --rm --cpus 2 --memory 4g -v "$repo/guest/sender:/src:ro" -v cloak-sender-build:/cache -v "$out:/out" \
+	-e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target \
+	rust:1.97.1-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c \
+	sh -c 'nice -n 10 cargo build --quiet --release --locked -j 2 --manifest-path /src/Cargo.toml && cp /cache/target/release/cloak-sender /out/'
 
 docker build --quiet --memory 1g -t cloak-guest-build guest/image > /dev/null
 docker run --rm --cpus 2 --memory 1g -v "$out:/out" -v "$repo/guest/image:/src:ro" \

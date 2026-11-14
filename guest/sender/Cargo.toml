@@ -1,0 +1,28 @@
+[package]
+name = "cloak-sender"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The guest's sender: Development mode's one way to a remote model, paid through MPP on Tempo, through Tor"
+
+# mpp is the official MPP toolkit, pinned exactly (reference/sources.json says
+# why this version). Every other crate is pinned by Cargo.lock, built --locked.
+[dependencies]
+mpp = { version = "=0.20.0", default-features = false, features = ["tempo", "client"] }
+alloy = { version = "2.1.0", default-features = false, features = ["contract", "provider-http", "reqwest", "rpc-types", "signer-local", "sol-types", "std"] }
+tempo-alloy = { version = "=1.11.0", default-features = false }
+async-trait = "0.1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "socks"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+vsock = "0.5"
+
+[dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+tokio = { version = "1", features = ["net", "io-util"] }
+
+[profile.release]
+strip = true

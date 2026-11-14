@@ -52,6 +52,14 @@
       "commit": "b1b770d90d94cad9e9ea5b993bdbc383a522fb28",
       "full_history": false,
       "role": "The rewriter engine (decision 8), built from this source by llama-worker/build-llama.sh with Metal for macOS arm64. Release v1.0.0, published 13 Nov 2026 10:20Z; the tag is annotated (tag object a6d1a74dbebce3a16f4f2ceddbf38c21a08d8674, made by github-actions[bot]) and names this commit."
+    },
+    {
+      "name": "mpp",
+      "kind": "file",
+      "url": "https://static.crates.io/crates/mpp/mpp-0.20.0.crate",
+      "sha256": "7791aaaba5763e49e0df7143f2af5fddf8f2f2b784b3207aa44791ea07600e82",
+      "size": 795676,
+      "role": "The official Machine Payments Protocol toolkit (Rust) the guest's sender pays with (decision 10): Tempo sessions, vouchers, the deposit's close. Pinned exactly in guest/sender/Cargo.toml; guest/sender/Cargo.lock carries the same checksum and the build is --locked. 0.20.0, published 9 Nov 2026, was the newest release on 14 Nov 2026 and is past both advisories on the crate: GHSA-fxc9-7j2w-vx54 (critical, fixed in 0.8.0) and GHSA-8xhq-x7vw-8rcw (medium, fixed in 0.12.0). Hash as crates.io lists it on 14 Nov 2026."
     }
   ]
 }

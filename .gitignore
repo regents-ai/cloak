@@ -14,5 +14,6 @@ llama-worker/.xcode/
 
 # Guest and host build output
 guest/build/
+guest/sender/target/
 host/.build/
 __pycache__/

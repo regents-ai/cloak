@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- The guest's sender, Development mode's one way to a remote model
+  (decision 10): `guest/sender/`, in Rust, paying through the official MPP
+  toolkit (`mpp` 0.20.0, pinned in its lock file and in
+  `reference/sources.json`, past both advisories on the crate). A guest
+  asked to serve starts it after its checks, as a user of its own. Every
+  connection it makes goes through the guest's Tor port, with a SOCKS user
+  name for each conversation and names resolved by Tor. It sends only the
+  reworded turns, with five headers and no user agent; it has every change
+  to the deposit kept on the Mac before it goes on; and it stops in one of
+  six named ways. `guest/build.sh` builds it in the pinned Rust image. Ten
+  checks against stand-ins: `cargo test --manifest-path
+  guest/sender/Cargo.toml`.
+
 - Stage 5: the Chat window's second checks (14 November), written up in
   docs/plan.md: the build, the app's 43 tests, the worker's 35 and the
   guest path's 23 on this round's code; no sockets for the app while its
