@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- A Chat window, from "Chat…" above Details… in the menu: conversations
+  newest first on the left, titled by their first message, with New and
+  Delete (which asks first); the conversation on the right, oldest first,
+  and the box for the next message at the bottom. Return rewords the
+  message, Shift-Return starts a new line. While it rewords, a spinner and
+  the time so far, with Cancel (Escape). Then Original and Reworded side by
+  side: words taken out tinted red and struck through, words put in tinted
+  green and underlined, with a count of each. The newest Reworded can be
+  edited, and the marks follow; Reword asks again from the original. Send
+  is there but off, with "Sending isn't set up yet." Each turn is saved as
+  a draft as soon as it is reworded or edited. Rewording works only while
+  Cloak is running; otherwise the box says why, with a Start button. A
+  rewording that stops says what happened and what to do, and a new
+  message goes back into the box. Nothing in the window goes to the
+  network. Details and Chat share one window helper (`AppWindow`).
+
 - Sealed conversations (`app/Sources/CloakChat`): one file per
   conversation in `conversations/` beside the app's other folders, sealed
   with ChaCha20-Poly1305 (CryptoKit's combined form, a fresh nonce on every

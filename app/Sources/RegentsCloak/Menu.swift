@@ -3,10 +3,11 @@ import CloakControl
 import CloakSupervisor
 import SwiftUI
 
-/// The menu: the state, why it needs attention, Start or Pause, Details and
-/// Quit. Each item is reachable from the keyboard.
+/// The menu: the state, why it needs attention, Start or Pause, Chat, Details
+/// and Quit. Each item is reachable from the keyboard.
 struct MenuContent: View {
     let supervisor: Supervisor
+    let showChat: () -> Void
     let showDetails: () -> Void
 
     var body: some View {
@@ -27,6 +28,7 @@ struct MenuContent: View {
             Button("Start") { supervisor.send(.start) }
                 .keyboardShortcut("s")
         }
+        Button("Chat…", action: showChat)
         Button("Details…", action: showDetails)
             .keyboardShortcut("d")
         Divider()

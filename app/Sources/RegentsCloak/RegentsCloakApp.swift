@@ -4,15 +4,15 @@ import CloakSupervisor
 import os
 import SwiftUI
 
-/// The menu-bar app: one supervisor, its menu, its Details window, and the
-/// control channel `cloak` uses to drive the same supervisor.
+/// The menu-bar app: one supervisor, its menu, its Chat and Details windows,
+/// and the control channel `cloak` uses to drive the same supervisor.
 @main
 struct RegentsCloakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var app
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(supervisor: app.supervisor, showDetails: app.showDetails)
+            MenuContent(supervisor: app.supervisor, showChat: app.showChat, showDetails: app.showDetails)
         } label: {
             MenuLabel(phase: app.supervisor.phase)
         }
@@ -22,7 +22,8 @@ struct RegentsCloakApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let supervisor = Launch.supervisor
-    private let details = DetailsWindow()
+    private lazy var chat = AppWindow { [supervisor] in ChatView.window(Chat(supervisor: supervisor, folder: Launch.layout.conversations)) }
+    private lazy var details = AppWindow { [supervisor] in DetailsView.window(supervisor) }
     private var server: ControlServer?
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "app")
 
@@ -43,8 +44,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func showChat() {
+        chat.show()
+    }
+
     func showDetails() {
-        details.show(supervisor)
+        details.show()
     }
 
     /// Quit, from the menu or the system, goes through the one shutdown.
@@ -73,9 +78,11 @@ enum Launch {
         }
     }()
 
+    static let layout = Layout(bundle: Bundle.main.resourceURL!, support: Places.support)
+
     static let supervisor: Supervisor = {
         do {
-            return try Supervisor(manifest: manifest, layout: Layout(bundle: Bundle.main.resourceURL!, support: Places.support))
+            return try Supervisor(manifest: manifest, layout: layout)
         } catch {
             Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot clear the boot files: \(String(describing: error), privacy: .public)")
             stop("Regents Cloak can't open.", "Quit Regents Cloak, then open it again.")

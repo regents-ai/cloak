@@ -5,65 +5,22 @@ import os
 import ServiceManagement
 import SwiftUI
 
-/// The one small window: the state, why it needs attention and what to do,
-/// the release, the model, the last check, whether the app opens at login,
-/// and technical detail on demand, the build among it. Closing it leaves the
+/// The small window: the state, why it needs attention and what to do, the
+/// release, the model, the last check, whether the app opens at login, and
+/// technical detail on demand, the build among it. Closing it leaves the
 /// supervisor as it is.
-///
-/// A menu-bar app is never the app in front, so its window would open behind
-/// the one in front. While the window is open the app is an ordinary one,
-/// with a Dock icon, so it comes to the front with the window, which takes
-/// the keyboard; closing the window makes it a menu-bar app again, still
-/// running. It comes to the front whatever app is there, since the person
-/// asked for it: chosen with the menu's Command-D, the polite `activate()`
-/// left it behind.
-@MainActor
-final class DetailsWindow: NSObject, NSWindowDelegate {
-    private var window: NSWindow?
+struct DetailsView: View {
+    let supervisor: Supervisor
 
-    func show(_ supervisor: Supervisor) {
-        let window = self.window ?? make(supervisor)
-        self.window = window
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
-    }
-
-    private func make(_ supervisor: Supervisor) -> NSWindow {
+    static func window(_ supervisor: Supervisor) -> NSWindow {
         let window = ClosingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
             styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Details"
-        window.isReleasedWhenClosed = false
-        window.delegate = self
         window.contentViewController = NSHostingController(rootView: DetailsView(supervisor: supervisor))
-        window.center()
         return window
     }
-}
 
-/// A menu-bar app has no menus of its own, so the window closes itself on
-/// Command-W and Escape.
-private final class ClosingWindow: NSWindow {
-    override func cancelOperation(_ sender: Any?) {
-        close()
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, event.charactersIgnoringModifiers == "w" {
-            close()
-            return true
-        }
-        return super.performKeyEquivalent(with: event)
-    }
-}
-
-struct DetailsView: View {
-    let supervisor: Supervisor
     @State private var technical = false
     @State private var login = SMAppService.mainApp.status == .enabled
 
