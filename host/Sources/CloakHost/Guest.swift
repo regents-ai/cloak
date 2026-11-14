@@ -6,7 +6,8 @@ import Virtualization
 /// random bytes into the guest; without it the guest kernel's random source
 /// never becomes ready, and the daemon, which makes its keys and Tor
 /// identities from it, waits forever. It reaches the host on two ports only:
-/// the rewrite relay's and the Tor port's.
+/// the rewrite relay's and the Tor port's. A guest that serves also runs the
+/// sender, which the host connects to (`connect`).
 ///
 ///     made --prepare--> prepared --start--> running --power off or error--> ended
 ///                                              |
@@ -50,15 +51,20 @@ public final class Guest: NSObject {
 
     /// Writes the guest's boot files: its base root `base`, then the relay's
     /// channel token, a fresh rewriter key, the check cases and the model's
-    /// name. The token and key exist only in this process and the guest's
+    /// name, and when it `serve`s, the mark that starts the sender after the
+    /// checks. The token and key exist only in this process and the guest's
     /// memory; the file that carries them exists only until `start` ends.
-    public func prepare(base: URL, cases: Data, model: String, relay: Relay, tor: Tor) throws {
-        let initrd = BootFiles.initrd(base: try Data(contentsOf: base), entries: [
+    public func prepare(base: URL, cases: Data, model: String, relay: Relay, tor: Tor, serve: Bool) throws {
+        var entries: [BootFiles.Entry] = [
             .init(path: "run/cloak/adapter-token", mode: 0o400, uid: 1001, gid: 1001, data: hex(relay.token)),
             .init(path: "run/cloak/rewriter-key", mode: 0o440, uid: 0, gid: 1003, data: hex(randomBytes(32))),
             .init(path: "etc/cloak/cases.jsonl", mode: 0o444, uid: 0, gid: 0, data: cases),
             .init(path: "etc/cloak/model", mode: 0o444, uid: 0, gid: 0, data: Data(model.utf8)),
-        ])
+        ]
+        if serve {
+            entries.append(.init(path: "etc/cloak/serve", mode: 0o444, uid: 0, gid: 0, data: Data()))
+        }
+        let initrd = BootFiles.initrd(base: try Data(contentsOf: base), entries: entries)
         try FileManager.default.createDirectory(at: bootDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         guard FileManager.default.createFile(atPath: bootDirectory.appending(path: "initrd").path, contents: initrd, attributes: [.posixPermissions: 0o600]) else {
             removeBootFiles()
@@ -80,6 +86,23 @@ public final class Guest: NSObject {
         let socketDevice = machine.socketDevices[0] as! VZVirtioSocketDevice
         socketDevice.setSocketListener(listener, forPort: Relay.port)
         socketDevice.setSocketListener(listener, forPort: TorRelay.port)
+    }
+
+    /// A new connection to the running guest's `port`, as a socket the
+    /// caller owns.
+    public func connect(to port: UInt32) async throws -> Int32 {
+        guard let device = machine?.socketDevices.first as? VZVirtioSocketDevice else {
+            throw GuestError(description: "the guest is not running")
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            device.connect(toPort: port) { result in
+                continuation.resume(with: result.flatMap { connection in
+                    let socket = dup(connection.fileDescriptor)
+                    connection.close()
+                    return socket >= 0 ? .success(socket) : .failure(GuestError(description: "cannot take the connection"))
+                })
+            }
+        }
     }
 
     /// Stops a running guest at once, as cutting its power does; `ended` is

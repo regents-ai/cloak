@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The host can start a guest that serves, connect to its sender and
+  exchange one request with it, keeping each deposit change before the
+  sender goes on (`Guest.prepare(serve:)`, `Guest.connect`,
+  `Sender.exchange`). `cloak-host --serve` keeps such a guest up and passes
+  one request per line of its input, for the live checks; the guest's
+  console then goes to standard error.
+
 - The guest's sender, Development mode's one way to a remote model
   (decision 10): `guest/sender/`, in Rust, paying through the official MPP
   toolkit (`mpp` 0.20.0, pinned in its lock file and in

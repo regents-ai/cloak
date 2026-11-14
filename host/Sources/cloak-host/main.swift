@@ -3,7 +3,7 @@ import Foundation
 
 // cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl>
 //            --worker <cloak-rewriter-llama> --name <model> --dir <model directory>
-//            --tor <tor> --tor-data <tor's folder>
+//            --tor <tor> --tor-data <tor's folder> [--serve]
 //
 // Starts the native worker and tor, waits for tor to open its SOCKS port and
 // bootstrap (at most 90 seconds from its start; this process fails if the
@@ -12,18 +12,30 @@ import Foundation
 // a time and its Tor port to tor, starts a new worker after a lost one, and
 // exits when the guest powers off, after stopping both. The guest's console
 // is this process's standard output.
+//
+// With --serve the guest runs the sender after its checks (Development mode,
+// decision 10 in docs/plan.md) and its console goes to standard error: each
+// line read from standard input is one request to the sender, and its answer
+// is one line on standard output, after a line {"keep": <deposit>} for each
+// deposit change the sender reports, which this kit does not keep. The guest
+// is stopped once standard input ends.
 
-let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter-llama> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder>"
+let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter-llama> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder> [--serve]"
 let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir", "--tor", "--tor-data"]
-let arguments = {
+let (arguments, serving) = {
     var parsed = [String: String]()
+    var serve = false
     var rest = CommandLine.arguments.dropFirst()
     while let flag = rest.popFirst() {
+        if flag == "--serve", !serve {
+            serve = true
+            continue
+        }
         guard flags.contains(flag), parsed[flag] == nil, let value = rest.popFirst() else { fail(usage) }
         parsed[flag] = value
     }
     guard parsed.count == flags.count else { fail(usage) }
-    return parsed
+    return (parsed, serve)
 }()
 func path(_ flag: String) -> URL { URL(filePath: arguments[flag]!) }
 
@@ -55,7 +67,8 @@ let relay = Relay(worker: channel) { [worker, workerArguments] in
 
 let guest: Guest
 do {
-    guest = try Guest(kernel: path("--kernel"), console: .standardOutput, bootFolder: FileManager.default.temporaryDirectory)
+    guest = try Guest(kernel: path("--kernel"), console: serving ? .standardError : .standardOutput,
+                      bootFolder: FileManager.default.temporaryDirectory)
 } catch {
     fail("invalid guest: \(error)")
 }
@@ -72,7 +85,7 @@ do { tor = try await Tor.start(executable: path("--tor"), data: path("--tor-data
 
 do {
     try guest.prepare(base: path("--initrd"), cases: try Data(contentsOf: path("--cases")), model: arguments["--name"]!,
-                      relay: relay, tor: tor)
+                      relay: relay, tor: tor, serve: serving)
 } catch {
     await tor.stop()
     fail("\(error)")
@@ -84,6 +97,28 @@ let (ends, ended) = AsyncStream.makeStream(of: Guest.End.self)
 var status: Int32 = 1
 do {
     try await guest.start { ended.yield($0) }
+    if serving {
+        Task {
+            do {
+                for try await line in FileHandle.standardInput.bytes.lines {
+                    let answer: Data
+                    do {
+                        let socket = try await guest.connect(to: Sender.port)
+                        answer = try await Sender.exchange(socket, request: { Data(line.utf8) }) { deposit in
+                            FileHandle.standardOutput.write(Data(#"{"keep":"#.utf8) + deposit + Data("}\n".utf8))
+                        }
+                    } catch {
+                        answer = (try? JSONEncoder().encode(["host": "\(error)"])) ?? Data()
+                    }
+                    FileHandle.standardOutput.write(answer + Data("\n".utf8))
+                }
+            } catch {
+                log("cannot read the requests: \(error)")
+            }
+            try? await guest.stop()
+            ended.yield(.poweredOff)
+        }
+    }
     for await end in ends {
         if case .failed(let error) = end { log("guest stopped: \(error)") } else { status = 0 }
         break
