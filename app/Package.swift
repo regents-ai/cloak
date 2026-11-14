@@ -17,6 +17,8 @@ let package = Package(
         .executableTarget(
             name: "cloak",
             dependencies: ["CloakControl", .product(name: "ArgumentParser", package: "swift-argument-parser")]),
-        .testTarget(name: "CloakTests", dependencies: ["CloakControl", "CloakSupervisor"]),
+        .testTarget(
+            name: "CloakTests",
+            dependencies: ["CloakControl", "CloakSupervisor", .product(name: "CloakHost", package: "host")]),
     ]
 )

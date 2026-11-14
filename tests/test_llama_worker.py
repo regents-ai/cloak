@@ -364,9 +364,9 @@ def daemon_accepts(tool: Path, cases: list[tuple[list[str], bytes]]) -> list[boo
     """Whether the daemon accepts each reply to a request for these texts."""
     lines = "".join(json.dumps({"texts": texts, "reply": base64.b64encode(reply).decode()}) + "\n"
                     for texts, reply in cases)
-    verdicts = subprocess.run([tool], input=lines, capture_output=True, text=True, check=True).stdout.split()
+    verdicts = subprocess.run([tool], input=lines, capture_output=True, text=True, check=True).stdout.splitlines()
     assert len(verdicts) == len(cases)
-    return [verdict == "accepted" for verdict in verdicts]
+    return [json.loads(verdict)["accepted"] for verdict in verdicts]
 
 
 def rewrites(bodies: list[bytes]) -> list[tuple[int, bytes]]:

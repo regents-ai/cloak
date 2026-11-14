@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- The app can reword a message itself (`Supervisor.rewrite`, `Rewrite`),
+  only while Running, through the relay to the same worker the guest uses.
+  The request is the pinned daemon's byte for byte: its system message
+  (sha256 c95de591…724b), the texts as `{"texts":[...]}` in Go's JSON form,
+  temperature 0, 16384 tokens and no thinking field. A reply counts only
+  under the daemon's own rules, plus decision 6: at most 10,000 characters,
+  refused before anything is sent, and 90 s + 20 ms per character to
+  answer. Every other ending (timed out, refused, cancelled, the model
+  stopped) gives no text, never the original. The app is stricter than the
+  daemon in three places the worker never reaches: a reply that is not
+  UTF-8, nested deeper than 128, or naming a field twice. The log has how
+  each ended and how long it took, never the text.
+  `app/Tests/CloakTests/RewriteTests.swift` checks the request and about 70
+  replies against the daemon's own code (`tests/daemon_reply`, which now
+  also prints the request it sent and the texts it took);
+  `StoppedRewriteTests.swift` drives each stopped ending through a real
+  relay to `tests/fake_worker.py`.
+
 - The relay answers requests from the app itself (`Relay.answer(to:)`), in
   turn with the guest's connections on the same worker, one at a time, so
   the app's rewrite never overlaps a guest call. Cancelling one that is
