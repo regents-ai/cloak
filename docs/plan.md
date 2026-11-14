@@ -1,16 +1,18 @@
 # Plan and release gates
 
-The contract is [spec-v0.4.md](spec-v0.4.md) (sha256
-`8c6b4d5d66fca24383bd3282503e17289784f14df14345a5e15b7bffdac74aea`, received
-30 October 2026). Work follows its section 12 in order. A gate passes only
-with recorded evidence linked in its row; a failed or inconclusive check is
-not a pass. Progress lives here.
+The contract is [spec-v0.4.md](spec-v0.4.md), received 30 October 2026
+(sha256 `8c6b4d5d66fca24383bd3282503e17289784f14df14345a5e15b7bffdac74aea`
+as received). It is a working draft, edited as the work changes: since
+14 November its decision summary and stage 2 name the llama.cpp worker
+where they named the MLX one (decision 8). Work follows its section 12 in
+order. A gate passes only with recorded evidence linked in its row; a failed
+or inconclusive check is not a pass. Progress lives here.
 
 ## Stages
 
 | Stage | Deliverable | Exit condition | State |
 | --- | --- | --- | --- |
-| 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress |
+| 1. Freeze the experiment | Captured reference, the 16 cases, unchanged contract, candidate manifests, evaluation protocol | Exact assets, licences and primary settings known; unknowns recorded | In progress: the evaluation protocol is a draft, frozen by Sean before any holdout opens |
 | 2. Build the local path | Minimal guest adapter and native worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
 | 3. Check feasibility early | Runs of each of the two candidates (decision 7's small pair, as GGUF files on llama.cpp under the reply grammar: decisions 8 and 9) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the small lead has two feasibility runs and two EVAL01 screens, the small challenger none |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner of the two candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split is to be settled before any holdout opens (decisions 7 to 9) |
@@ -43,7 +45,10 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   29 October). A static program inside it bypasses Tor.
 - Unknown and recorded as such: the reference's inference server,
   quantization and thinking setting; which payment deployment the post used.
-- The evaluation protocol (EVAL01 to EVAL07) is frozen (Sean, 30 October).
+- The evaluation protocol (EVAL01 to EVAL07) is a draft (Sean, 14 November:
+  "don't freeze anything yet? this is still super active development"). It
+  was marked frozen on 30 October; no holdout was opened under it. Sean
+  freezes it before any holdout opens.
 
 ## Stage 2 so far
 
@@ -1160,7 +1165,7 @@ them matches that commit.
 
 ### How the kit reads the protocol
 
-The frozen protocol leaves these open; the kit fixes them in code before any
+The protocol leaves these open; the kit fixes them in code before any
 holdout exists. Sean confirmed them on 12 November (decision 3 below):
 
 1. A stopped item counts as harm in both comparisons: a fidelity failure
@@ -1423,20 +1428,20 @@ candidates, so the split has to be re-declared before any holdout opens.
    own tokenizer and chat template files
    ([models.md](../reference/models.md)). This departs from spec section 1,
    which names exactly two candidates, by Sean's ruling, as decision 2
-   departs from HW01; the spec file stays byte for byte as received (its
-   sha256 is at the top of this file). The memory pass line is 10 GiB for
-   the whole running product: the worker, the guest's virtual machine and
-   the host together, as the stage 3 record's whole-product peak (since
-   13 November that peak also counts tor and every worker alive at a
-   sample). 9.3 GiB is the working aim. The lead's two runs peaked at 21.04
+   departs from HW01; the spec's section 1 stays as received. The memory
+   pass line is 10 GiB for the whole running product: the worker, the
+   guest's virtual machine and the host together, as the stage 3 record's
+   whole-product peak (since 13 November that peak also counts tor and
+   every worker alive at a sample). 9.3 GiB is the working aim. The lead's two runs peaked at 21.04
    and 18.74 GiB, before tor was sampled.
    Exactly one model still ships (A25 unchanged): the selection rule picks
    one of the four or none. Each small candidate faces stage 4 from scratch;
    nothing measured on the lead or the challenger counts for it. To settle
-   before any holdout opens: the frozen protocol's confidence split assumes
+   before any holdout opens: the protocol's confidence split assumes
    two candidates ("Two candidates are compared with the reference, so each
    bound is at 97.5 % (Bonferroni)"); with four it has to be re-declared.
-   Until then the protocol and the stage 4 kit's statistics stay as frozen.
+   Until then the protocol and the stage 4 kit's statistics stay as written,
+   and the protocol stays a draft until Sean freezes it.
 8. A second engine, for a measured choice. Decided 13 November (Sean: "use
    this: https://github.com/ggml-org/llama.cpp"). llama.cpp with Metal and a
    GGUF model is built as a second rewriter engine, the llama worker
@@ -1449,10 +1454,9 @@ candidates, so the split has to be re-declared before any holdout opens.
    engine is deleted from the repository. This departs from spec section 1
    and MAC02, which name one MLX path, and from the one-implementation rule
    in [AGENTS.md](../AGENTS.md), by Sean's ruling and for the experiment
-   only, as decision 2 departs from HW01; the spec file stays byte for byte
-   as received. A GGUF quantization and an MLX 4-bit conversion are
-   different artifacts, so each is its own candidate and faces stage 4 on
-   its own: `small-lead-gguf` (Unsloth's Q4_K_M of `Qwen/Qwen3.5-9B`) and
+   only, as decision 2 departs from HW01. A GGUF quantization and an MLX
+   4-bit conversion are different artifacts, so each is its own candidate
+   and faces stage 4 on its own: `small-lead-gguf` (Unsloth's Q4_K_M of `Qwen/Qwen3.5-9B`) and
    `small-challenger-gguf` (Google's own Q4_0 GGUF of Gemma 4 12B, from its
    quantization-aware-trained checkpoint, not the instruct weights its MLX
    twin came from; [models.md](../reference/models.md)). Nothing measured
@@ -1464,7 +1468,8 @@ candidates, so the split has to be re-declared before any holdout opens.
    decision 7 leaves to re-declare now covers six candidates, not four.
    The engine is chosen (14 November, the chief): llama.cpp with the reply
    grammar. The MLX worker and the other candidates were deleted on
-   14 November 2026; their records stay as history.
+   14 November 2026; their records stay as history. The spec's decision
+   summary and stage 2 have named the llama.cpp worker since then.
 9. The reply grammar, as candidates of their own. Decided 14 November (the
    chief). Grammar-constrained decoding is tested as explicit pinned
    candidates on llama.cpp, as spec DATA04 allows, because both engines'

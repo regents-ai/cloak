@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The evaluation protocol is a draft, not frozen, in `docs/plan.md` and
+  `README.md` too, as in `docs/evaluation-protocol.md` (Sean, 14 November:
+  "don't freeze anything yet? this is still super active development"); Sean
+  freezes it before any holdout opens. `docs/spec-v0.4.md` names the
+  llama.cpp worker where it named the MLX one, in its decision summary and
+  stage 2, since the engine is chosen; the plan keeps the spec's sha256 as
+  received and says it is a working draft.
+
 - `RewriteTests` builds the daemon's reply check for each use in a folder
   it then removes, where it left one folder in the temporary folder per
   run.

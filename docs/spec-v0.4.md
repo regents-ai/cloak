@@ -27,7 +27,7 @@ Keep Pi, the daemon’s instruction/API/parser/history behavior, zkAPI payment i
 | Decision | v0.4 choice |
 | --- | --- |
 | Product | Automated installation and operation of the complete protected reference workflow |
-| Rewriter placement | Native macOS MLX worker; restricted local channel from the Linux guest |
+| Rewriter placement | Native macOS llama.cpp worker; restricted local channel from the Linux guest |
 | Lead experiment | Qwen/Qwen3.8-27B using the pinned mlx-community/Qwen3.8-27B-4bit conversion |
 | Challenger | google/gemma-4-26B-A4B-it using one verified and pinned MLX 4-bit conversion |
 | Shipping configuration | One model and one inference implementation; no model picker, automatic switching or fallback chain |
@@ -422,7 +422,7 @@ Publish or retain the reference/release manifests, comparison data, adjudication
 | Stage | Concrete output | Exit condition |
 | --- | --- | --- |
 | 1. Freeze the experiment | Captured reference, inspected 16 cases, unchanged contract, candidate manifests and evaluation protocol | Exact assets/licenses and primary settings are known; unknowns are recorded |
-| 2. Build the local path | Minimal guest adapter plus native MLX worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss preserve the contract and fail safely |
+| 2. Build the local path | Minimal guest adapter plus native llama.cpp worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss preserve the contract and fail safely |
 | 3. Check feasibility early | Qwen and Gemma runs on specified 48 GB and 32 GB machines with full stack load | Input/deadline/memory risks are measured before a large privacy evaluation |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner or explicit no-pass | Protection, fidelity, statistical and usability gates pass |
 | 5. Package the product | Signed full bundle, shared CLI/menu supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass |

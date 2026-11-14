@@ -206,7 +206,8 @@ uv run --with pytest==8.4.2 pytest tests/test_stage3.py
 ## Stage 4 commands
 
 Stage 4 qualifies the substitution against the fidelity holdout (EVAL02)
-and the privacy holdout (EVAL03) under the frozen protocol. The holdouts are
+and the privacy holdout (EVAL03) under the evaluation protocol, a draft that
+Sean freezes before any holdout opens. The holdouts are
 written by people, kept outside this repository, and pinned once before any
 model runs on them:
 
