@@ -275,7 +275,7 @@ final class Chat {
     private func reword(_ original: String, in id: UUID, turn: UUID?) async {
         let result: Result<String, RewriteStop>
         do {
-            result = .success(try await supervisor.rewrite(original))
+            result = .success(try await supervisor.rewrite([original])[0])
         } catch {
             result = .failure(error)
         }

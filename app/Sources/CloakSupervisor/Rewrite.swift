@@ -15,13 +15,13 @@ public enum RewriteStop: Error, Sendable, Equatable {
     case stopped
 }
 
-/// The app's own rewrite of one message: the request the pinned daemon sends
-/// for it (`Draft.Rewrite` in
+/// The app's own rewrite of one message's texts: the request the pinned
+/// daemon sends for them (`Draft.Rewrite` in
 /// reference/src/zkapi/zkapi-clientd/internal/rewriter/rewriter.go, with
 /// guest/daemon/rewriter.patch for decision 6), byte for byte, and the
-/// reworded text only from a reply the daemon accepts.
+/// reworded texts only from a reply the daemon accepts.
 public enum Rewrite {
-    /// Decision 6: the most Unicode scalars one message may hold.
+    /// Decision 6: the most Unicode scalars one message's texts may hold.
     public static let maxCharacters = 10_000
     /// The daemon's limits on the reply body and on the texts in it.
     static let maxReply = 1 << 20
@@ -38,13 +38,19 @@ public enum Rewrite {
     /// The worker's status when a request was cancelled.
     static let cancelledStatus: UInt16 = 499
 
-    /// Rewords `text` through the relay's worker. The deadline covers the
-    /// whole call; past it, or once the task is cancelled, the worker is told
-    /// to stop, and this returns once it has answered.
-    static func run(_ text: String, model: String, relay: Relay, deadline: Duration) async throws(RewriteStop) -> String {
-        let characters = text.unicodeScalars.count
+    /// The Unicode scalars in `texts`, as decision 6 counts them.
+    package static func characters(_ texts: [String]) -> Int {
+        texts.reduce(0) { $0 + $1.unicodeScalars.count }
+    }
+
+    /// Rewords `texts`, one message's, through the relay's worker in one
+    /// call. The deadline covers the whole call; past it, or once the task
+    /// is cancelled, the worker is told to stop, and this returns once it has
+    /// answered.
+    static func run(_ texts: [String], model: String, relay: Relay, deadline: Duration) async throws(RewriteStop) -> [String] {
+        let characters = characters(texts)
         guard characters <= maxCharacters else { throw .tooLong(characters: characters) }
-        let request = request(model: model, text: text)
+        let request = request(model: model, texts: texts)
 
         enum Outcome: Sendable {
             case answer(Data?)
@@ -66,8 +72,8 @@ public enum Rewrite {
         let status = UInt16(answer[answer.startIndex]) << 8 | UInt16(answer[answer.startIndex + 1])
         // Cancelled by no one here: the worker is being stopped.
         guard status != cancelledStatus else { throw .stopped }
-        guard let texts = texts(status: status, body: [UInt8](answer.dropFirst(2)), count: 1) else { throw .refused }
-        return texts[0]
+        guard let reworded = Self.texts(status: status, body: [UInt8](answer.dropFirst(2)), count: texts.count) else { throw .refused }
+        return reworded
     }
 
     // MARK: The request
@@ -87,9 +93,9 @@ public enum Rewrite {
         """
 
     /// What `json.Marshal` makes of the daemon's request map: keys sorted,
-    /// no spaces, and the user message the marshalled `{"texts": [text]}`.
-    static func request(model: String, text: String) -> Data {
-        let user = #"{"texts":["# + quote(text) + "]}"
+    /// no spaces, and the user message the marshalled `{"texts": [...]}`.
+    static func request(model: String, texts: [String]) -> Data {
+        let user = #"{"texts":["# + texts.map(quote).joined(separator: ",") + "]}"
         let body = #"{"max_tokens":16384,"messages":[{"content":"# + quote(system) + #","role":"system"},{"content":"#
             + quote(user) + #","role":"user"}],"model":"# + quote(model) + #","stream":false,"temperature":0}"#
         return Data(body.utf8)
@@ -99,7 +105,7 @@ public enum Rewrite {
     /// characters and the two line separators escaped, lowercase hex, and
     /// everything else, DEL and `/` among it, as it is. A Swift string is
     /// always valid UTF-8, so Go's U+FFFD for invalid bytes never applies.
-    static func quote(_ text: String) -> String {
+    package static func quote(_ text: String) -> String {
         var out = "\""
         for scalar in text.unicodeScalars {
             switch scalar {
@@ -184,8 +190,8 @@ public enum Rewrite {
 
 /// One JSON value read as Go's encoding/json reads it, with where it is in
 /// the bytes read.
-struct GoJSON {
-    indirect enum Value {
+package struct GoJSON: Sendable {
+    package indirect enum Value: Sendable {
         case object([(key: String, value: GoJSON)])
         case array([GoJSON])
         case string(String)
@@ -194,15 +200,15 @@ struct GoJSON {
         case scalar
     }
 
-    let value: Value
-    let span: Range<Int>
+    package let value: Value
+    package let span: Range<Int>
 
     /// The bytes do not hold one JSON value, alone but for whitespace.
-    struct Malformed: Error {}
+    package struct Malformed: Error {}
     /// The value does not fit where it is read into.
-    struct Mismatch: Error {}
+    package struct Mismatch: Error {}
 
-    static func read(_ bytes: [UInt8]) throws(Malformed) -> GoJSON {
+    package static func read(_ bytes: [UInt8]) throws(Malformed) -> GoJSON {
         var reader = Reader(bytes: bytes)
         let value = try reader.value(depth: 0)
         reader.skipSpace()
@@ -247,11 +253,39 @@ struct GoJSON {
     }
 
     /// A string; nil for null, which leaves a string as it was.
-    func string() throws(Mismatch) -> String? {
+    package func string() throws(Mismatch) -> String? {
         switch value {
         case .string(let text): return text
         case .null: return nil
         default: throw Mismatch()
+        }
+    }
+
+    /// An object's members as Go reads them into a map: by exact key, the
+    /// last of a key named twice. Nil for anything but an object.
+    package var members: [String: GoJSON]? {
+        guard case .object(let members) = value else { return nil }
+        return Dictionary(members.map { ($0.key, $0.value) }, uniquingKeysWith: { $1 })
+    }
+
+    /// The value as Go writes what it read into `map[string]any` with
+    /// `UseNumber`: members by exact key, the last of a key named twice,
+    /// sorted by their bytes; strings as `json.Marshal` writes them; numbers
+    /// as they were written; no whitespace. `bytes` are those it was read
+    /// from.
+    package func canonical(in bytes: [UInt8]) -> [UInt8] {
+        switch value {
+        case .object:
+            let members = self.members!.sorted { $0.key.utf8.lexicographicallyPrecedes($1.key.utf8) }
+            return Array("{".utf8)
+                + members.map { Array(Rewrite.quote($0.key).utf8) + [UInt8(ascii: ":")] + $0.value.canonical(in: bytes) }
+                .joined(separator: [UInt8(ascii: ",")]) + Array("}".utf8)
+        case .array(let items):
+            return Array("[".utf8) + items.map { $0.canonical(in: bytes) }.joined(separator: [UInt8(ascii: ",")]) + Array("]".utf8)
+        case .string(let text):
+            return Array(Rewrite.quote(text).utf8)
+        case .null, .scalar:
+            return Array(bytes[span])
         }
     }
 

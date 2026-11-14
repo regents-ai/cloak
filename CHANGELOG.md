@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The app rewords a message of several text parts in one call, as the
+  daemon does, under one 10,000-character cap and one deadline for them
+  together (`Supervisor.rewrite`); Chat's messages are one text, as
+  before. Its JSON reader can now write a message back as Go does for the
+  daemon's digests. Two new checks: several texts are the daemon's request
+  byte for byte, and they share the cap.
+
 - The guest's sender posts the chat request the Mac built, as it is, and
   brings the provider's completion back as it came; the Mac reads the
   answer from it. It also gives the provider's list of models as it comes

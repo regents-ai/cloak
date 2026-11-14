@@ -121,16 +121,16 @@ public final class Supervisor {
         return Response(refusal: nil, status: status)
     }
 
-    /// Rewords one message through the worker, exactly as the guest's daemon
-    /// would (`Rewrite`), while Running. The log has how it ended and how
-    /// long it took, never the text.
-    public func rewrite(_ text: String) async throws(RewriteStop) -> String {
+    /// Rewords one message's texts through the worker in one call, exactly
+    /// as the guest's daemon would (`Rewrite`), while Running. The log has
+    /// how it ended and how long it took, never the text.
+    public func rewrite(_ texts: [String]) async throws(RewriteStop) -> [String] {
         guard case .running = phase, let relay = stack.relay else { throw .stopped }
         let started = ContinuousClock.now
         do {
             let reworded = try await Rewrite.run(
-                text, model: manifest.model.name, relay: relay,
-                deadline: Rewrite.deadline(characters: text.unicodeScalars.count))
+                texts, model: manifest.model.name, relay: relay,
+                deadline: Rewrite.deadline(characters: Rewrite.characters(texts)))
             logger.info("rewrite reworded in \(started.duration(to: .now), privacy: .public)")
             return reworded
         } catch {

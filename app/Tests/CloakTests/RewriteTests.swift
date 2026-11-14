@@ -29,7 +29,18 @@ struct DaemonEqualityTests {
         ]
         let verdicts = try DaemonReply.judge(texts.map { ([$0], Array(Reply.ok(["Fine."]).utf8)) })
         for (text, verdict) in zip(texts, verdicts) {
-            #expect(verdict.request == Rewrite.request(model: "worker", text: text), "\(text.prefix(40))")
+            #expect(verdict.request == Rewrite.request(model: "worker", texts: [text]), "\(text.prefix(40))")
+        }
+    }
+
+    /// A message of several text parts is one request with each text in turn.
+    @Test func severalTextsAreTheDaemonsRequestByteForByte() throws {
+        let cases = [["First part.", "Second <part> & \"more\"."], ["uno", "dos", "tres\nlíneas"]]
+        let verdicts = try DaemonReply.judge(cases.map { ($0, Array(Reply.ok($0.map { $0.uppercased() }).utf8)) })
+        for (texts, verdict) in zip(cases, verdicts) {
+            #expect(verdict.request == Rewrite.request(model: "worker", texts: texts))
+            #expect(verdict.accepted)
+            #expect(Rewrite.texts(status: 200, body: Array(Reply.ok(texts.map { $0.uppercased() }).utf8), count: texts.count) == verdict.texts)
         }
     }
 
@@ -174,9 +185,7 @@ enum DaemonReply {
     static let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
 
-    /// The daemon's verdict on each reply to a request for its texts, from
-    /// the tool built for this call (Go's cache makes that quick) in a
-    /// folder removed afterwards.
+    /// The daemon's verdict on each reply to a request for its texts.
     static func judge(_ cases: [([String], [UInt8])]) throws -> [Verdict] {
         struct Line: Encodable {
             let texts: [String]
@@ -186,21 +195,28 @@ enum DaemonReply {
         for (texts, reply) in cases {
             input += try JSONEncoder().encode(Line(texts: texts, reply: Data(reply))) + Data("\n".utf8)
         }
-        let daemon = root.appending(path: "reference/src/zkapi/zkapi-clientd")
-        let out = URL(filePath: NSTemporaryDirectory()).appending(path: "cloak-daemon-reply-\(UUID().uuidString.prefix(8))")
-        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: out) }
-        let overlay = ["Replace": [daemon.appending(path: "cmd/cloak-daemon-reply/main.go").path: root.appending(path: "tests/daemon_reply/main.go").path]]
-        try JSONEncoder().encode(overlay).write(to: out.appending(path: "overlay.json"))
-        let tool = out.appending(path: "cloak-daemon-reply")
-        try run(
-            ["go", "build", "-p", "2", "-trimpath", "-overlay", out.appending(path: "overlay.json").path, "-o", tool.path,
-             "./cmd/cloak-daemon-reply"],
-            in: daemon, environment: ["CGO_ENABLED": "0"])
-        let output = try run([tool.path], in: root, input: input)
+        let output = try tool("daemon_reply", input: input)
         let verdicts = try output.split(separator: UInt8(ascii: "\n")).map { try JSONDecoder().decode(Verdict.self, from: Data($0)) }
         #expect(verdicts.count == cases.count)
         return verdicts
+    }
+
+    /// Runs tests/`name`/main.go on `input`, built inside the pinned daemon
+    /// module (Go's cache makes that quick) in a folder removed afterwards.
+    static func tool(_ name: String, input: Data) throws -> Data {
+        let daemon = root.appending(path: "reference/src/zkapi/zkapi-clientd")
+        let command = "cloak-" + name.replacing("_", with: "-")
+        let out = URL(filePath: NSTemporaryDirectory()).appending(path: "\(command)-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: out) }
+        let overlay = ["Replace": [daemon.appending(path: "cmd/\(command)/main.go").path: root.appending(path: "tests/\(name)/main.go").path]]
+        try JSONEncoder().encode(overlay).write(to: out.appending(path: "overlay.json"))
+        let tool = out.appending(path: command)
+        try run(
+            ["go", "build", "-p", "2", "-trimpath", "-overlay", out.appending(path: "overlay.json").path, "-o", tool.path,
+             "./cmd/\(command)"],
+            in: daemon, environment: ["CGO_ENABLED": "0"])
+        return try run([tool.path], in: root, input: input)
     }
 
     /// Runs a command to its end; its output, or a failure with what it said.

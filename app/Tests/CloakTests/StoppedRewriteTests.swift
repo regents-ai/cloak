@@ -14,6 +14,20 @@ struct StoppedRewriteTests {
         }
     }
 
+    /// One message's texts go in one call, and the cap counts them together.
+    @Test func severalTextsAreOneCallUnderOneCap() async throws {
+        try await FakeWorker.with { worker async throws in
+            #expect(try await worker.rewrite(["case:ok first", "second é"]) == ["CASE:OK FIRST", "SECOND É"])
+            #expect(worker.requests == 1)
+            let half = String(repeating: "é", count: 5_000)
+            // 5,008 and 4,993 characters.
+            await #expect(throws: RewriteStop.tooLong(characters: 10_001)) {
+                try await worker.rewrite(["case:ok " + half, String(half.dropFirst(7))])
+            }
+            #expect(worker.requests == 1)
+        }
+    }
+
     @Test func overTenThousandCharactersIsRefusedBeforeAnythingIsSent() async throws {
         try await FakeWorker.with { worker async throws in
             // "é" is two bytes, so a limit that counted bytes would show.
@@ -80,7 +94,7 @@ struct StoppedRewriteTests {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let supervisor = try fixture.supervisor()
-        await #expect(throws: RewriteStop.stopped) { try await supervisor.rewrite("Say hello.") }
+        await #expect(throws: RewriteStop.stopped) { try await supervisor.rewrite(["Say hello."]) }
     }
 }
 
@@ -105,7 +119,11 @@ struct FakeWorker {
     }
 
     func rewrite(_ text: String, deadline: Duration = .seconds(30)) async throws(RewriteStop) -> String {
-        try await Rewrite.run(text, model: "worker", relay: relay, deadline: deadline)
+        try await rewrite([text], deadline: deadline)[0]
+    }
+
+    func rewrite(_ texts: [String], deadline: Duration = .seconds(30)) async throws(RewriteStop) -> [String] {
+        try await Rewrite.run(texts, model: "worker", relay: relay, deadline: deadline)
     }
 
     /// Requests that reached the worker.
