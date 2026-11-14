@@ -337,6 +337,42 @@ conversations' key. The key never reaches the log, the control socket,
 `cloak status` or `cloak doctor`, and no message text does either; the log
 has only why a request stopped.
 
+"Agents…" in the menu lets your other apps on this Mac send through Cloak,
+in Development mode too, as to any server that speaks OpenAI's chat
+format. While Cloak is running it answers at `http://127.0.0.1:8742/v1`,
+on 127.0.0.1 only; if another app holds that port, Agents says so and
+nothing opens. Add gives an app a name and a pass, shown once with Copy;
+Remove ends the pass at once. Point the app at the address with the pass as
+its key, for example with OpenAI's Python library:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8742/v1", api_key="<the pass>")
+client.chat.completions.create(
+    model="deepseek/deepseek-v4-flash-0731",
+    messages=[{"role": "user", "content": "Say hello to the team."}],
+)
+```
+
+Only `POST /v1/chat/completions` and `GET /v1/models` (the provider's own
+list) answer, each with `Authorization: Bearer` and the pass; a request
+from a web page (with an `Origin` header) is refused. Each user message's
+text is reworded on this Mac first, as Chat and the pinned daemon do it:
+earlier user messages go as reworded before, and a history that is not the
+last one continued is reworded again, with a Tor identity of its own.
+System and developer messages, tool definitions, tool calls and results,
+the model's earlier answers, and images, audio and files go as the app
+sends them. Refused before anything leaves: `n` other than 1, `store`,
+images by link, stored files, roles and parts the provider does not take,
+and a message over 10,000 characters. `stream: true` gets the whole answer
+as one server-sent chunk, then `data: [DONE]`. Every stop comes back as
+OpenAI's error shape with a plain message; pausing Cloak answers a request
+under way with 503. Only each app's name, when it was added, its count of
+requests and when it was last used are kept, sealed in
+`~/Library/Application Support/Regents Cloak/agents` under the
+conversations' key; no request's text is kept, shown or logged.
+
 Run the supervisor's checks (state changes, stand-in tor and worker
 processes, the control socket and its JSON, the boot files a killed app
 left, the app's rewrite against the pinned daemon's code, which needs Go

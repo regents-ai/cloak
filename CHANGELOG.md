@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Agents, from the menu: your other apps on this Mac send chat requests in
+  OpenAI's shape to `http://127.0.0.1:8742/v1` while Cloak is running,
+  each with a pass of its own, shown once when the app is added; Remove
+  ends it at once. Each user message is reworded on this Mac as the pinned
+  daemon does it, earlier ones replayed as reworded, before anything is
+  sent from the one wallet; system messages, tools and tool results go as
+  the app sends them. Only `POST /v1/chat/completions` and `GET
+  /v1/models` answer; a web page, a missing or wrong pass, and requests
+  the provider would refuse anyway are turned away first, each with
+  OpenAI's error shape. Pausing answers a request under way with 503. Only
+  each app's name, pass fingerprint, count and last use are kept, sealed;
+  no request's text is kept, shown or logged. Nine new app checks, one
+  against the daemon's own transcript.
+
 - The app rewords a message of several text parts in one call, as the
   daemon does, under one 10,000-character cap and one deadline for them
   together (`Supervisor.rewrite`); Chat's messages are one text, as

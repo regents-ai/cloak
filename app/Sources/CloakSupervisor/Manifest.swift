@@ -116,6 +116,11 @@ public struct Layout: Sendable {
     /// Development mode's wallet folder, which holds its deposit, sealed
     /// under the conversations' key; the key is in the keychain.
     public var wallet: URL { support.appending(path: "wallet") }
+
+    /// The apps given a pass to the door (`Door`), sealed under the
+    /// conversations' key: names, fingerprints of their passes, counts and
+    /// times.
+    public var agents: URL { support.appending(path: "agents") }
 }
 
 extension JSONDecoder {

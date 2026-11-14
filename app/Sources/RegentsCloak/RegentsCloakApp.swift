@@ -1,18 +1,21 @@
 import AppKit
+import CloakChat
 import CloakControl
+import CloakDoor
 import CloakSupervisor
 import os
 import SwiftUI
 
-/// The menu-bar app: one supervisor, its menu, its Chat and Details windows,
-/// and the control channel `cloak` uses to drive the same supervisor.
+/// The menu-bar app: one supervisor, its menu, its Chat, Agents and Details
+/// windows, the door other apps send through while Cloak is Running, and the
+/// control channel `cloak` uses to drive the same supervisor.
 @main
 struct RegentsCloakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var app
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(supervisor: app.supervisor, showChat: app.showChat, showDetails: app.showDetails)
+            MenuContent(supervisor: app.supervisor, showChat: app.showChat, showAgents: app.showAgents, showDetails: app.showDetails)
         } label: {
             MenuLabel(phase: app.supervisor.phase)
         }
@@ -26,6 +29,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ChatView.window(Chat(supervisor: supervisor, folder: Launch.layout.conversations, wallet: Launch.layout.wallet))
     }
     private lazy var details = AppWindow { [supervisor] in DetailsView.window(supervisor) }
+    private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
+    let door: Door = {
+        let supervisor = Launch.supervisor, conversations = Launch.layout.conversations
+        return Door(
+            file: Launch.layout.agents, wallet: Launch.layout.wallet,
+            parts: Door.Parts(
+                reword: { texts throws(RewriteStop) in try await supervisor.rewrite(texts) },
+                exchange: { request, keep in try await supervisor.exchange(request: request, keep: keep) },
+                wallet: { try await WalletKeychain.address() },
+                key: { try WalletKeychain.key() },
+                sealing: { try await ConversationStore.key(for: conversations, find: Keychain.find, make: Keychain.make) }))
+    }()
     private var server: ControlServer?
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "app")
 
@@ -37,6 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             logger.error("cannot serve the control channel: \(String(describing: error), privacy: .public)")
             Launch.stop("Regents Cloak can't open.", "Quit Regents Cloak, then open it again.")
+        }
+        // The door is open only while Cloak is Running.
+        Task { [supervisor, door] in
+            for await running in Observations({ supervisor.phase == .running }) {
+                if running { await door.open() } else { await door.close() }
+            }
         }
         // Sleep pauses, so a wake finds nothing running and starts nothing.
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -50,15 +71,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         chat.show()
     }
 
+    func showAgents() {
+        agents.show()
+    }
+
     func showDetails() {
         details.show()
     }
 
-    /// Quit, from the menu or the system, goes through the one shutdown.
+    /// Quit, from the menu or the system, goes through the one shutdown,
+    /// and ends once every app with a request under way has been answered.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        supervisor.quit { [server] in
+        supervisor.quit { [server, door] in
             server?.close()
-            NSApp.reply(toApplicationShouldTerminate: true)
+            Task {
+                await door.close()
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
         }
         return .terminateLater
     }

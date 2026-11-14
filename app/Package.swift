@@ -14,12 +14,15 @@ let package = Package(
             name: "CloakSupervisor",
             dependencies: ["CloakControl", .product(name: "CloakHost", package: "host")]),
         .target(name: "CloakChat", dependencies: ["CloakControl"]),
-        .executableTarget(name: "RegentsCloak", dependencies: ["CloakControl", "CloakSupervisor", "CloakChat"]),
+        .target(name: "CloakDoor", dependencies: ["CloakControl", "CloakSupervisor", "CloakChat"]),
+        .executableTarget(name: "RegentsCloak", dependencies: ["CloakControl", "CloakSupervisor", "CloakChat", "CloakDoor"]),
         .executableTarget(
             name: "cloak",
             dependencies: ["CloakControl", .product(name: "ArgumentParser", package: "swift-argument-parser")]),
         .testTarget(
             name: "CloakTests",
-            dependencies: ["CloakControl", "CloakSupervisor", "CloakChat", .product(name: "CloakHost", package: "host")]),
+            dependencies: [
+                "CloakControl", "CloakSupervisor", "CloakChat", "CloakDoor", .product(name: "CloakHost", package: "host"),
+            ]),
     ]
 )

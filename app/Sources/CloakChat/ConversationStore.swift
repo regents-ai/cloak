@@ -59,7 +59,7 @@ public struct ConversationStore: Sendable {
 
     /// Puts `data` in place of `file`, whole: written to a new owner-only
     /// file in the same folder first, then moved over the old one.
-    static func replace(_ file: URL, with data: Data) throws {
+    package static func replace(_ file: URL, with data: Data) throws {
         let partial = file.deletingLastPathComponent().appending(path: ".\(UUID().uuidString).partial")
         let descriptor = open(partial.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
