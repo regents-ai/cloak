@@ -139,8 +139,9 @@ private struct Detail: View {
     }
 }
 
-/// The conversation's messages, oldest first. Only the newest can be edited,
-/// reworded again or sent, until it is sent.
+/// The conversation's messages, in the order they were sent, each not yet
+/// sent where it was added. One unsent message is open at a time, to be
+/// edited, reworded again and sent; pressing another opens it instead.
 private struct Turns: View {
     let chat: Chat
     let conversation: Conversation
@@ -162,7 +163,7 @@ private struct Turns: View {
                     ForEach(conversation.turns) { turn in
                         TurnCard(
                             chat: chat, conversation: conversation.id, turn: turn,
-                            newest: turn.id == conversation.turns.last?.id,
+                            open: chat.isOpen(turn, in: conversation),
                             rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil })
                     }
                     if let rewording, rewording.turn == nil {
@@ -194,20 +195,20 @@ private struct Turns: View {
 
 /// One message: Original and Reworded side by side, the words taken out
 /// marked in one, the words put in marked in the other, then its answer; a
-/// message going as written shows its Original alone. The newest unanswered
-/// one has the lights and Send: nothing is sent unless Cloak routes it
-/// through Tor and, unless its owner chose Send Original, it is reworded.
-/// Unlinked is never good in Development mode.
+/// message going as written shows its Original alone. The open one has the
+/// lights and Send: nothing is sent unless Cloak routes it through Tor and,
+/// unless its owner chose Send Original, it is reworded. Unlinked is never
+/// good in Development mode. Another unsent one is shrunk, says so, and
+/// opens when pressed anywhere.
 private struct TurnCard: View {
     let chat: Chat
     let conversation: UUID
     let turn: Turn
-    let newest: Bool
+    let open: Bool
     let rewording: Chat.Rewording?
 
     var body: some View {
         let sending = chat.sending[turn.id]
-        let open = newest && turn.answer == nil
         Card {
             if let reworded = turn.reworded {
                 let diff = WordDiff(original: turn.original, reworded: reworded)
@@ -263,6 +264,25 @@ private struct TurnCard: View {
                 }
             } else if let sending {
                 SendingProgress(started: sending.started)
+            } else if turn.answer == nil {
+                Text("Not sent")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .overlay {
+            // Over the whole card, text boxes included, so a press anywhere
+            // opens it. Off while a rewording is under way, which keeps its
+            // own card open.
+            if !open, turn.answer == nil {
+                Button { chat.opened = turn.id } label: {
+                    Color.clear
+                        .contentShape(.rect(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open")
+                .help("Open")
+                .disabled(chat.rewording != nil)
             }
         }
     }

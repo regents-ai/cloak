@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Chat: a message reworded but not sent can still be finished after
+  another is written. Its card shrinks and says "Not sent"; pressed
+  anywhere, it opens again to be edited, reworded and sent, and the card
+  open before it shrinks. One card is open in each chat at a time, a new
+  message's first, and a card being reworded stays open until it is done.
+  A message sent after later ones moves to the end of its chat, so the
+  chat reads in the order things were sent and each request to the
+  provider is the one before it plus more.
+
 - Windows, from an accessibility read: Wallet opens tall enough to show
   everything for a made wallet with an open deposit, still inside a
   13-inch screen; in Agents each app's words read as text, with Remove a

@@ -1,7 +1,8 @@
 import Foundation
 
 /// One chat: its messages, each as written and, unless it goes as written,
-/// as reworded, oldest first.
+/// as reworded, in the order they were sent, those not yet sent where they
+/// were added.
 public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let created: Date

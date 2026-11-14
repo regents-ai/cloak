@@ -73,6 +73,9 @@ final class Chat {
     var sendOriginal = false
     private(set) var rewording: Rewording?
     var stop: Stop?
+    /// The unsent message last opened or added; see `isOpen(_:in:)`. In
+    /// memory only.
+    var opened: UUID?
     /// By turn.
     private(set) var sending: [UUID: Sending] = [:]
     var sendStop: SendStop?
@@ -112,6 +115,16 @@ final class Chat {
     /// then says why Send is off.
     var canSubmit: Bool {
         (sendOriginal ? canCompose : canReword) && !Self.isBlank(draft)
+    }
+
+    /// Whether `turn` is its conversation's open message, the one card that
+    /// can be edited, reworded again and sent: the one last opened or added
+    /// while it is not answered, otherwise the last message while it is not
+    /// answered. Every other card is shrunk.
+    func isOpen(_ turn: Turn, in conversation: Conversation) -> Bool {
+        guard turn.answer == nil else { return false }
+        if conversation.turns.contains(where: { $0.id == opened && $0.answer == nil }) { return turn.id == opened }
+        return turn.id == conversation.turns.last?.id
     }
 
     /// Why Send is off for `turn` now, or nil when it is on. Off only where
@@ -206,6 +219,7 @@ final class Chat {
         if sendOriginal {
             let turn = Turn(original: original, reworded: nil)
             conversation.turns.append(turn)
+            opened = turn.id
             update(conversation)
             send(turn.id, in: conversation.id)
         } else {
@@ -236,17 +250,24 @@ final class Chat {
 
     /// Sends the turn, reworded or as written, after the conversation's
     /// earlier turns as sent and answered, and keeps the answer with it.
-    /// Each press is sent; one under way never stops another.
+    /// A turn sent after later ones moves to the end first, so the
+    /// conversation is in the order its turns were sent and each request is
+    /// the one before it plus more. Each press is sent; one under way never
+    /// stops another.
     func send(_ turn: UUID, in id: UUID) {
-        guard let deposits = wallet.deposits, let conversation = conversations.first(where: { $0.id == id }),
-            let current = conversation.turns.first(where: { $0.id == turn }), sendBlock(current) == nil
+        guard let deposits = wallet.deposits, var conversation = conversations.first(where: { $0.id == id }),
+            let index = conversation.turns.firstIndex(where: { $0.id == turn }), sendBlock(conversation.turns[index]) == nil
         else { return }
+        if index != conversation.turns.count - 1 {
+            conversation.turns.append(conversation.turns.remove(at: index))
+            update(conversation)
+        }
         sendStop = nil
         let identity = identities[id] ?? Self.newIdentity()
         identities[id] = identity
         if sending[turn] == nil { sending[turn] = Sending(started: .now) } else { sending[turn]?.presses += 1 }
         let (model, exchange) = (wallet.model, wallet.exchange)
-        Task {
+        Task { [conversation] in
             let result: Result<String, RemoteStop>
             do throws(RemoteStop) {
                 result = .success(try await Remote.send(
@@ -303,7 +324,9 @@ final class Chat {
             if let turn, let index = conversation.turns.firstIndex(where: { $0.id == turn }) {
                 conversation.turns[index].reworded = reworded
             } else {
-                conversation.turns.append(Turn(original: original, reworded: reworded))
+                let new = Turn(original: original, reworded: reworded)
+                conversation.turns.append(new)
+                opened = new.id
             }
             update(conversation)
         case .failure(let reason):
