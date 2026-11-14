@@ -22,7 +22,9 @@ struct RegentsCloakApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let supervisor = Launch.supervisor
-    private lazy var chat = AppWindow { [supervisor] in ChatView.window(Chat(supervisor: supervisor, folder: Launch.layout.conversations)) }
+    private lazy var chat = AppWindow { [supervisor] in
+        ChatView.window(Chat(supervisor: supervisor, folder: Launch.layout.conversations, wallet: Launch.layout.wallet))
+    }
     private lazy var details = AppWindow { [supervisor] in DetailsView.window(supervisor) }
     private var server: ControlServer?
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "app")

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Chat sends, in a Development mode marked at the top of the window with
+  what it means: the provider can link your chats, because one wallet pays
+  for all of them. The newest message has three lights (Reworded, Routed,
+  and Unlinked, never good here) and Send, which is off, with words beside
+  it, only where sending is certain to stop; every press is sent. The
+  answer comes back into the conversation and is kept sealed with it, and
+  a sent message can no longer be edited. Wallet, in Chat's toolbar:
+  Create (the key made in the guest and kept only in the login keychain),
+  the address to copy, the balance, the deposit with Close and Withdraw,
+  and the model with its price, the cheapest by default. Running now also
+  waits for the sender, and the guest stays up while Running. Ten new app
+  checks.
+
 - The host can start a guest that serves, connect to its sender and
   exchange one request with it, keeping each deposit change before the
   sender goes on (`Guest.prepare(serve:)`, `Guest.connect`,

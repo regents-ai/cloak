@@ -10,10 +10,12 @@ import os
 /// starts tor, the worker and a guest, watches them, and stops them all
 /// through one shutdown. Its states and transitions are `Phase`'s.
 ///
-/// Running means tor and the worker are up and the startup check sent a
-/// rewrite through the guest, the daemon and the worker. Sessions, payment,
-/// wallets and cover are not built yet. The guest is a check guest: it runs
-/// its cases and powers off.
+/// Running means tor and the worker are up, the startup check sent a
+/// rewrite through the guest, the daemon and the worker, and the guest's
+/// sender is ready: the guest stays up while Running, and its end is a
+/// failure. The sender is Development mode's way to a remote model
+/// (decision 10 in docs/plan.md); sessions, the daemon's payment and cover
+/// are not built yet.
 @MainActor
 @Observable
 public final class Supervisor {
@@ -137,6 +139,20 @@ public final class Supervisor {
         }
     }
 
+    /// One exchange with the guest's sender while Running (`Sender.exchange`):
+    /// the request is built when the sender gives it its turn, and each
+    /// deposit change is kept before the sender goes on. The log has how long
+    /// it took, never what it carried.
+    public func exchange(
+        request: @escaping @Sendable () throws -> Data, keep: @escaping @Sendable (Data) throws -> Void
+    ) async throws -> Data {
+        guard case .running = phase, let guest = stack.guest else { throw Sender.Failure(description: "Cloak is not running") }
+        let started = ContinuousClock.now
+        defer { logger.info("sender exchange ended after \(started.duration(to: .now), privacy: .public)") }
+        let socket = try await guest.connect(to: Sender.port)
+        return try await Sender.exchange(socket, request: request, keep: keep)
+    }
+
     public var status: StatusDocument {
         manifest.status(of: phase, check: check, detail: detail)
     }
@@ -147,13 +163,13 @@ public final class Supervisor {
         var lines = [String]()
         switch phase {
         case .running:
-            lines.append("Running: tor and the worker are up, and the startup check sent a rewrite through the guest, the daemon and the worker. Sessions, payment and cover are not built yet.")
+            lines.append("Running: tor and the worker are up, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready (Development mode). Sessions, the daemon's payment and cover are not built yet.")
         case .ready:
             lines.append("Ready: the startup check passed and everything has stopped again.")
         case .paused:
             lines.append("Paused: nothing is running, and nothing starts by itself.")
         case .preparing:
-            lines.append("Preparing: checking the parts, then starting tor, the worker and a guest for the startup check.")
+            lines.append("Preparing: checking the parts, then starting tor, the worker and the guest, which runs the startup check and then the sender.")
         case .stopping:
             lines.append("Stopping: the guest, the worker and tor, in that order.")
         case .needsAttention(let reason):
@@ -215,7 +231,7 @@ public final class Supervisor {
                 guest = try Guest(kernel: layout.url(.kernel, in: manifest), console: verification.console.fileHandleForWriting,
                                   bootFolder: layout.bootFiles)
                 try guest.prepare(base: layout.url(.initrd, in: manifest), cases: Verification.cases,
-                                  model: manifest.model.name, relay: relay, tor: tor)
+                                  model: manifest.model.name, relay: relay, tor: tor, serve: true)
                 stack.guest = guest
                 try await guest.start { verification.ended($0) }
             } catch {
@@ -229,6 +245,11 @@ public final class Supervisor {
                 throw failure
             }
             check = .init(passed: true, at: .now, detail: detail)
+            stack.watches.append(Task {
+                let end = await verification.end()
+                guard !Task.isCancelled else { return }
+                fail(Failure(.guestFailed, "the guest ended (\(end.map { "\($0)" } ?? "its console closed"))"))
+            })
             send(.prepared)
         } catch let failure as Failure {
             fail(failure)

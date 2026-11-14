@@ -1,0 +1,347 @@
+import CloakControl
+import CryptoKit
+import Foundation
+import Security
+
+// Development mode (decision 10 in docs/plan.md): a turn's reworded text goes
+// through the guest's sender (guest/sender), through Tor, to a remote model,
+// paid from one wallet. Never part of a release.
+
+/// The wallet's key, made by the guest's sender with the payment toolkit's
+/// own key code and kept only here: a generic password in the login
+/// keychain, this device only, like the conversations' key (`Keychain`).
+/// Its account is the wallet's address, so the address shows without the
+/// key being read. The key is read only when a request that signs is built,
+/// and goes to the sender in memory.
+public enum WalletKeychain {
+    static let service = "sh.regents.cloak.wallet"
+
+    /// The wallet's address, or nil when there is none.
+    @concurrent
+    public static func address() async throws(Keychain.Failure) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status != errSecItemNotFound else { return nil }
+        guard status == errSecSuccess, let attributes = result as? [String: Any],
+            let address = attributes[kSecAttrAccount as String] as? String
+        else { throw Keychain.Failure(status: status) }
+        return address
+    }
+
+    /// The wallet's key. Blocking: called while a request is built, off the
+    /// main thread.
+    public static func key() throws(Keychain.Failure) -> Data {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let key = result as? Data, key.count == 32 else { throw Keychain.Failure(status: status) }
+        return key
+    }
+
+    /// Stores a new wallet; never one beside a wallet already there.
+    @concurrent
+    public static func store(key: Data, address: String) async throws(Keychain.Failure) {
+        guard try await self.address() == nil else { throw Keychain.Failure(status: errSecDuplicateItem) }
+        let item: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: address,
+            kSecAttrLabel as String: "Regents Cloak wallet",
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecValueData as String: key,
+        ]
+        let status = SecItemAdd(item as CFDictionary, nil)
+        guard status == errSecSuccess else { throw Keychain.Failure(status: status) }
+    }
+}
+
+/// The wallet's one deposit, as the sender reports it: kept as it comes,
+/// never taken apart here, and given back with each request that needs it.
+/// Sealed with ChaChaPoly under the conversations' key in one owner-only
+/// file, which is gone while there is no deposit. The sender waits until
+/// each change is on disk before it goes on, so a deposit about to open is
+/// here before its payment leaves.
+public struct DepositStore: Sendable {
+    public let file: URL
+    private let key: SymmetricKey
+    private static let tag = Data("deposit".utf8)
+
+    public init(folder: URL, key: SymmetricKey) {
+        file = folder.appending(path: "deposit")
+        self.key = key
+    }
+
+    /// The deposit, or nil when there is none.
+    public func load() throws -> Data? {
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        let box = try ChaChaPoly.SealedBox(combined: Data(contentsOf: file))
+        return try ChaChaPoly.open(box, using: key, authenticating: Self.tag)
+    }
+
+    /// Keeps the deposit as the sender reported it; its `null` means it is gone.
+    public func keep(_ deposit: Data) throws {
+        if try JSONSerialization.jsonObject(with: deposit, options: .fragmentsAllowed) is NSNull {
+            if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+            return
+        }
+        try Places.makeOwnerOnly(file.deletingLastPathComponent())
+        try ConversationStore.replace(file, with: try ChaChaPoly.seal(deposit, using: key, authenticating: Self.tag).combined)
+    }
+}
+
+/// One exchange with the guest's sender: the request, built when its turn
+/// comes, and each change to the deposit to keep before it goes on.
+/// `Supervisor.exchange` in the app.
+public typealias Exchange = @Sendable (
+    _ request: @escaping @Sendable () throws -> Data, _ keep: @escaping @Sendable (Data) throws -> Void
+) async throws -> Data
+
+/// Why a request to the sender stopped.
+public struct RemoteStop: Error, Equatable, Sendable {
+    public enum Code: String, Sendable, Decodable {
+        case noFunds = "no_funds"
+        case walletRefused = "wallet_refused"
+        case modelUnavailable = "model_unavailable"
+        case torDown = "tor_down"
+        case answerRefused = "answer_refused"
+        case failed
+        /// The sender was not reached, or went away: Cloak is not running.
+        case unreachable
+    }
+
+    public let code: Code
+    /// Technical detail for the log; never a key or a message's text.
+    public let detail: String
+}
+
+/// A token amount in its smallest units; USDC.e has six decimals.
+public struct Amount: Sendable, Equatable, Comparable, Decodable {
+    public let units: UInt64
+
+    public init(units: UInt64) {
+        self.units = units
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let text = try decoder.singleValueContainer().decode(String.self)
+        guard let units = UInt64(text) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "not an amount"))
+        }
+        self.units = units
+    }
+
+    public var dollars: Decimal { Decimal(units) / 1_000_000 }
+
+    public static func < (a: Amount, b: Amount) -> Bool { a.units < b.units }
+}
+
+/// The wallet as the network and the provider show it now.
+public struct Look: Sendable, Equatable, Decodable {
+    public let balance: Amount
+    /// The least balance a first deposit needs.
+    public let least: Amount
+    /// The provider's setup still names Tempo and USDC.e.
+    public let setup: Bool
+    public let models: [Model]
+    public let deposit: Deposit?
+
+    public struct Model: Sendable, Equatable, Decodable, Identifiable {
+        public let id: String
+        public let pricing: Pricing
+    }
+
+    /// US dollars per million tokens.
+    public struct Pricing: Sendable, Equatable, Decodable {
+        public let input: Double
+        public let output: Double
+    }
+
+    public struct Deposit: Sendable, Equatable, Decodable {
+        public let deposit: Amount
+        /// What this wallet has paid from it so far.
+        public let spent: Amount
+        /// Its opening is not confirmed yet.
+        public let pending: Bool?
+        /// When the network was asked to close it (seconds since 1970), or 0.
+        public let closeRequestedAt: UInt64?
+        /// When it can be taken back on the network.
+        public let withdrawAt: UInt64?
+        /// Closed on the network: forgotten here.
+        public let gone: Bool?
+
+        public var left: Amount { Amount(units: deposit.units > spent.units ? deposit.units - spent.units : 0) }
+    }
+}
+
+/// The requests to the sender. Each builds its request only when its turn
+/// comes, reading the deposit kept by then and, for those that sign, the
+/// wallet's key; a key never leaves memory here.
+public enum Remote {
+    /// The wallet's key, read when a request that signs is built:
+    /// `WalletKeychain.key` in the app.
+    public typealias Key = @Sendable () throws -> Data
+
+    /// Makes the wallet: the sender makes the key, `store` keeps it (the
+    /// keychain). Returns the address.
+    public static func create(
+        exchange: Exchange, store: @Sendable (_ key: Data, _ address: String) async throws -> Void
+    ) async throws(RemoteStop) -> String {
+        struct Made: Decodable {
+            let key: String
+            let address: String
+        }
+        let made: Made = try await run(exchange, keep: { _ in }) { ["op": "create"] }
+        guard let key = Data(hex: made.key), key.count == 32 else { throw RemoteStop(code: .failed, detail: "the new key is not 32 bytes") }
+        do {
+            try await store(key, made.address)
+        } catch {
+            throw RemoteStop(code: .failed, detail: "cannot keep the new wallet: \(error)")
+        }
+        return made.address
+    }
+
+    /// The balance, the provider's setup and models, and the deposit; a
+    /// deposit the network shows closed is forgotten.
+    public static func look(address: String, deposits: DepositStore, exchange: Exchange) async throws(RemoteStop) -> Look {
+        let look: Look = try await run(exchange, keep: deposits.keep) {
+            ["op": "wallet", "address": address, "deposit": try deposit(deposits)]
+        }
+        if look.deposit?.gone == true {
+            do { try deposits.keep(Data("null".utf8)) } catch {
+                throw RemoteStop(code: .failed, detail: "cannot forget the closed deposit: \(error)")
+            }
+        }
+        return look
+    }
+
+    /// Sends `turn`'s reworded text, after the conversation's earlier turns
+    /// as they were sent and answered, to `model`, through Tor as
+    /// `identity`, opening or topping up the deposit as needed, at the size
+    /// the provider suggests. Returns the model's answer.
+    public static func send(
+        _ turn: UUID, in conversation: Conversation, model: String, identity: String,
+        key: @escaping Key, deposits: DepositStore, exchange: Exchange
+    ) async throws(RemoteStop) -> String {
+        guard let messages = messages(for: turn, in: conversation) else {
+            throw RemoteStop(code: .failed, detail: "the turn is not in the conversation")
+        }
+        struct Answered: Decodable { let answer: String }
+        let answered: Answered = try await run(exchange, keep: deposits.keep) {
+            [
+                "op": "send", "key": try hexKey(key), "deposit": try deposit(deposits), "model": model,
+                "messages": messages, "identity": identity,
+            ]
+        }
+        return answered.answer
+    }
+
+    /// Closes the deposit with the provider, which refunds what is unspent.
+    public static func close(model: String, key: @escaping Key, deposits: DepositStore, exchange: Exchange) async throws(RemoteStop) {
+        struct Closed: Decodable {}
+        let _: Closed = try await run(exchange, keep: deposits.keep) {
+            ["op": "close", "key": try hexKey(key), "deposit": try kept(deposits), "model": model]
+        }
+    }
+
+    /// The network's own close: the first asks to close the deposit, the
+    /// next, after the grace period, takes it back.
+    public static func withdraw(key: @escaping Key, deposits: DepositStore, exchange: Exchange) async throws(RemoteStop) {
+        struct Submitted: Decodable { let step: String }
+        let _: Submitted = try await run(exchange, keep: deposits.keep) {
+            ["op": "withdraw", "key": try hexKey(key), "deposit": try kept(deposits)]
+        }
+    }
+
+    /// The messages for `turn`: each earlier turn that was answered, as sent
+    /// and as answered, then `turn`'s reworded text. Nothing else: no
+    /// instruction, no original.
+    static func messages(for turn: UUID, in conversation: Conversation) -> [[String: String]]? {
+        guard let index = conversation.turns.firstIndex(where: { $0.id == turn }) else { return nil }
+        let earlier = conversation.turns[..<index].flatMap { turn in
+            turn.answer.map { [["role": "user", "content": turn.reworded], ["role": "assistant", "content": $0]] } ?? []
+        }
+        return earlier + [["role": "user", "content": conversation.turns[index].reworded]]
+    }
+
+    private static func deposit(_ deposits: DepositStore) throws -> Any {
+        try deposits.load().map { try JSONSerialization.jsonObject(with: $0) } ?? NSNull()
+    }
+
+    private static func kept(_ deposits: DepositStore) throws -> Any {
+        guard let deposit = try deposits.load() else { throw RemoteStop(code: .failed, detail: "there is no deposit") }
+        return try JSONSerialization.jsonObject(with: deposit)
+    }
+
+    private static func hexKey(_ key: Key) throws -> String {
+        "0x" + (try key()).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// One exchange: the request `build` makes when its turn comes, and the
+    /// sender's answer, `{"ok": T}` or `{"stop": {"code", "detail"}}`.
+    private static func run<T: Decodable>(
+        _ exchange: Exchange, keep: @escaping @Sendable (Data) throws -> Void,
+        build: @escaping @Sendable () throws -> [String: Any]
+    ) async throws(RemoteStop) -> T {
+        let answer: Data
+        do {
+            answer = try await exchange(
+                {
+                    do { return try JSONSerialization.data(withJSONObject: try build()) } catch {
+                        throw RemoteStop(code: .failed, detail: "cannot build the request: \(error)")
+                    }
+                },
+                { deposit in
+                    // Not kept, so the sender is never told to go on.
+                    do { try keep(deposit) } catch {
+                        throw RemoteStop(code: .failed, detail: "cannot keep the deposit: \(error)")
+                    }
+                })
+        } catch let stop as RemoteStop {
+            throw stop
+        } catch {
+            throw RemoteStop(code: .unreachable, detail: "\(error)")
+        }
+        guard let reply = try? JSONDecoder().decode(Reply<T>.self, from: answer) else {
+            throw RemoteStop(code: .failed, detail: "the sender's answer did not read")
+        }
+        if let ok = reply.ok { return ok }
+        if let stop = reply.stop { throw RemoteStop(code: stop.code, detail: stop.detail) }
+        throw RemoteStop(code: .failed, detail: "the sender's answer is empty")
+    }
+
+    private struct Reply<T: Decodable>: Decodable {
+        let ok: T?
+        let stop: Stop?
+
+        struct Stop: Decodable {
+            let code: RemoteStop.Code
+            let detail: String
+        }
+    }
+}
+
+extension Data {
+    /// Bytes from hex, with or without 0x; nil for anything else.
+    init?(hex: String) {
+        let digits = Array((hex.hasPrefix("0x") ? hex.dropFirst(2) : Substring(hex)).utf8)
+        guard digits.count.isMultiple(of: 2) else { return nil }
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(digits.count / 2)
+        for index in stride(from: 0, to: digits.count, by: 2) {
+            guard let byte = UInt8(String(decoding: digits[index...index + 1], as: UTF8.self), radix: 16) else { return nil }
+            bytes.append(byte)
+        }
+        self.init(bytes)
+    }
+}

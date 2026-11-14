@@ -5,8 +5,9 @@ import CloakSupervisor
 import SwiftUI
 
 /// The Chat window: conversations on the left, newest first; the one shown
-/// on the right, each message as written and as reworded, side by side, with
-/// the box to write the next one at the bottom.
+/// on the right, each message as written and as reworded, side by side, and
+/// its answer once sent, with the box to write the next one at the bottom.
+/// Development mode's mark is always at the top.
 struct ChatView: View {
     @Bindable var chat: Chat
 
@@ -84,8 +85,26 @@ private struct Sidebar: View {
 
 private struct Detail: View {
     @Bindable var chat: Chat
+    @State private var showingWallet = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            DevelopmentBar()
+            Divider()
+            content
+        }
+        .toolbar {
+            ToolbarItem {
+                Button("Wallet", systemImage: "creditcard") { showingWallet = true }
+                    .help("Wallet")
+                    .disabled(!chat.isOpen)
+            }
+        }
+        .sheet(isPresented: $showingWallet) { WalletView(wallet: chat.wallet) }
+        .task(id: chat.supervisor.phase == .running) { await chat.wallet.refresh() }
+    }
+
+    @ViewBuilder private var content: some View {
         switch chat.access {
         case .opening:
             ProgressView()
@@ -120,7 +139,7 @@ private struct Detail: View {
 }
 
 /// The conversation's messages, oldest first. Only the newest can be edited,
-/// reworded again or sent.
+/// reworded again or sent, until it is sent.
 private struct Turns: View {
     let chat: Chat
     let conversation: Conversation
@@ -134,7 +153,7 @@ private struct Turns: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("New chat")
                                 .font(.title3.weight(.semibold))
-                            Text("Each message is reworded on this Mac first. You see both, and can edit the reworded one.")
+                            Text("Each message is reworded on this Mac first. You see both, can edit the reworded one, and send it.")
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.top, 8)
@@ -173,7 +192,10 @@ private struct Turns: View {
 }
 
 /// One message: Original and Reworded side by side, the words taken out
-/// marked in one, the words put in marked in the other.
+/// marked in one, the words put in marked in the other, then its answer.
+/// The newest unanswered one has the lights and Send: nothing is sent unless
+/// it is reworded and Cloak routes it through Tor, and Unlinked is never
+/// good in Development mode.
 private struct TurnCard: View {
     let chat: Chat
     let conversation: UUID
@@ -183,6 +205,8 @@ private struct TurnCard: View {
 
     var body: some View {
         let diff = WordDiff(original: turn.original, reworded: turn.reworded)
+        let sending = chat.sending[turn.id]
+        let open = newest && turn.answer == nil
         Card {
             HStack(alignment: .top, spacing: 12) {
                 Pane(title: "Original", count: diff.removed.count, mark: .removed) {
@@ -190,29 +214,97 @@ private struct TurnCard: View {
                 }
                 Pane(title: "Reworded", count: diff.added.count, mark: .added) {
                     TextBox(
-                        text: newest
+                        text: open
                             ? Binding(get: { turn.reworded }, set: { chat.edit(turn.id, in: conversation, to: $0) })
                             : .constant(turn.reworded),
-                        label: "Reworded", editable: newest && chat.rewording == nil, marks: diff.added, mark: .added)
+                        label: "Reworded", editable: open && sending == nil && chat.rewording == nil, marks: diff.added,
+                        mark: .added)
                 }
+            }
+            if let answer = turn.answer {
+                Pane(title: "Answer", count: nil, mark: .added) {
+                    TextBox(text: .constant(answer), label: "Answer", editable: false)
+                }
+            }
+            if let stop = chat.sendStop, stop.turn == turn.id {
+                StopRow(stop: stop.stop) { chat.sendStop = nil }
+                    .padding(12)
+                    .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             }
             if let rewording {
                 Progress(chat: chat, started: rewording.started)
-            } else if newest {
+            } else if open {
+                Lights(reworded: !Chat.isBlank(turn.reworded), routed: chat.supervisor.phase == .running)
                 HStack(spacing: 12) {
                     Button("Reword", systemImage: "arrow.clockwise") { chat.reword(turn, in: conversation) }
-                        .disabled(!chat.canReword)
+                        .disabled(!chat.canReword || sending != nil)
+                    if let sending {
+                        SendingProgress(started: sending.started)
+                    }
                     Spacer()
-                    Text("Sending isn't set up yet.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    // Sending connects here: this turn, as reworded and
-                    // edited.
-                    Button("Send") {}
-                        .disabled(true)
+                    let block = chat.sendBlock(turn)
+                    if let block {
+                        Text(block)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    // Each press sends, one under way or not.
+                    Button("Send") { chat.send(turn.id, in: conversation) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(block != nil)
                 }
+            } else if let sending {
+                SendingProgress(started: sending.started)
             }
         }
+    }
+}
+
+/// Whether the message is reworded, routed through Tor and unlinked from
+/// the person's other chats.
+private struct Lights: View {
+    let reworded: Bool
+    let routed: Bool
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Light(title: "Reworded", good: reworded)
+            Light(title: "Routed", good: routed)
+            Light(title: "Unlinked", good: false)
+                .help("The provider can link your chats, because one wallet pays for all of them.")
+        }
+        .font(.callout)
+    }
+}
+
+private struct Light: View {
+    let title: String
+    let good: Bool
+
+    var body: some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: good ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(good ? .green : .orange)
+        }
+        .accessibilityValue(good ? "Good" : "Not good")
+    }
+}
+
+private struct SendingProgress: View {
+    let started: Date
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Sending")
+            Text(timerInterval: started...Date.distantFuture, countsDown: false)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

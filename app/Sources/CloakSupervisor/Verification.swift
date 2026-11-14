@@ -6,7 +6,8 @@ import Foundation
 /// code in the guest (guest/check) through the guest adapter and the relay
 /// to the worker, read from the guest's console. The guest prints one JSON
 /// result per case, then "cloak-guest: check exited <status>", runs its
-/// agent cases (there are none here) and powers off.
+/// agent cases (there are none here), then starts the sender and prints
+/// "cloak-guest: sender ready", and runs until it is stopped.
 final class Verification: Sendable {
     /// The one case, as tests/test_guest_path.py writes cases: a plain
     /// request the model rewrites cleanly.
@@ -50,9 +51,9 @@ final class Verification: Sendable {
         feed.yield(.ended(end))
     }
 
-    /// The check's technical detail once it has passed. Throws the failure
-    /// once it has failed, the guest has ended first, or `limit` has passed,
-    /// and CancellationError when cancelled.
+    /// The check's technical detail once it has passed and the sender is
+    /// ready. Throws the failure once it has failed, the guest has ended
+    /// first, or `limit` has passed, and CancellationError when cancelled.
     func passed() async throws -> String {
         let limit = Task { [feed] in
             guard (try? await Task.sleep(for: Self.limit)) != nil else { return }
@@ -61,6 +62,7 @@ final class Verification: Sendable {
         defer { limit.cancel() }
         var pending = Data()
         var result: CaseResult?
+        var detail: String?
         var lastNote = "nothing"
         for await event in events {
             switch event {
@@ -75,13 +77,15 @@ final class Verification: Sendable {
                         guard status == "0", let result, result.outcome == "rewritten", !(result.texts ?? []).isEmpty else {
                             throw Failure(.checkFailed, "the check exited \(status) with \(result.map { "\($0.outcome) \($0.error ?? "")" } ?? "no result")")
                         }
-                        return "the startup check's rewrite went through the guest, the daemon and the worker in \(String(format: "%.2f", result.seconds)) s"
+                        detail = "the startup check's rewrite went through the guest, the daemon and the worker in \(String(format: "%.2f", result.seconds)) s"
+                    } else if line == "cloak-guest: sender ready", let detail {
+                        return detail
                     } else if line.hasPrefix("cloak-guest: ") {
                         lastNote = line
                     }
                 }
             case .ended(.poweredOff):
-                throw Failure(.checkFailed, "the guest powered off before its check finished; its last note: \(lastNote)")
+                throw Failure(.checkFailed, "the guest powered off before its check passed and its sender was ready; its last note: \(lastNote)")
             case .ended(.failed(let error)):
                 throw Failure(.guestFailed, "the guest stopped: \(error)")
             case .timedOut:
@@ -89,6 +93,15 @@ final class Verification: Sendable {
             }
         }
         throw CancellationError()
+    }
+
+    /// How the guest ended, once it has, after `passed`; nil once the
+    /// console is closed first.
+    func end() async -> Guest.End? {
+        for await event in events {
+            if case .ended(let end) = event { return end }
+        }
+        return nil
     }
 
     /// Stops reading the console, once the guest no longer writes to it.

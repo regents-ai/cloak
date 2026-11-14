@@ -112,6 +112,10 @@ public struct Layout: Sendable {
 
     /// The Chat window's sealed conversations, one file each.
     public var conversations: URL { support.appending(path: "conversations") }
+
+    /// Development mode's wallet folder, which holds its deposit, sealed
+    /// under the conversations' key; the key is in the keychain.
+    public var wallet: URL { support.appending(path: "wallet") }
 }
 
 extension JSONDecoder {

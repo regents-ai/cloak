@@ -19,16 +19,18 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
-/// One message: as written, and as reworded then edited. Nothing is sent yet,
-/// so every turn is a draft.
+/// One message: as written, as reworded then edited, and once the reworded
+/// text was sent, the model's answer. A turn without an answer is a draft.
 public struct Turn: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let original: String
     public var reworded: String
+    public var answer: String?
 
-    public init(id: UUID = UUID(), original: String, reworded: String) {
+    public init(id: UUID = UUID(), original: String, reworded: String, answer: String? = nil) {
         self.id = id
         self.original = original
         self.reworded = reworded
+        self.answer = answer
     }
 }

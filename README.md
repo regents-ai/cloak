@@ -21,8 +21,10 @@ Stage 3 of 6: the feasibility kit is ready and waits for the candidates'
 weights, which Sean decides when to fetch. The stage 4 qualification kit is
 built and proven on development data only; its holdouts need people to
 write them. Stage 5 has started with a development build of the app's
-core, running the small lead, and a Chat window that rewords messages but
-does not send them. Stages 1 and 2 stay open in
+core, running the small lead, and a Chat window that rewords messages and,
+in a labelled Development mode (decision 10), sends the reworded text
+through Tor to a remote model, paid from one wallet on the Mac. Stages 1
+and 2 stay open in
 [docs/plan.md](docs/plan.md). Nothing here is a release, and no protection is
 claimed as proven. A gate counts only when its evidence
 is recorded in [docs/plan.md](docs/plan.md).
@@ -48,7 +50,7 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `rewriter-kit/` | The worker's protocol and pins: the frames to and from the host, the daemon's request, the replies and the model pins |
 | `host/` | The host library (tor, the worker's channel, the relay, the guest) and the `cloak-host` command the kits run |
 | `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build |
-| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), kernel and root build |
+| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
 | `evidence/stage4/` | Stage 4 development records and every score, one folder per model |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
@@ -259,9 +261,10 @@ uv run --with pytest==8.4.2 --with scikit-learn==1.9.1 --with numpy==2.5.4 \
 Stage 5 has started with a development build of the app's core: one
 supervisor, run by a menu-bar app and by the `cloak` command. It runs the
 small lead, Qwen 3.5 9B (`small-lead-gguf-grammar`), needs a Mac with Apple
-silicon and 16 GB of memory, and has no sessions, payment, wallet or cover
-traffic. Running means tor and the worker are up and a startup check sent
-one rewrite through a guest, the daemon and the worker.
+silicon and 16 GB of memory, and has no sessions or cover traffic; the
+daemon's own payment is not built. Running means tor and the worker are up,
+a startup check sent one rewrite through the guest, the daemon and the
+worker, and the guest's sender is ready.
 
 With the guest, the host's tor and the worker built and installed (stage 2
 commands) and the small lead fetched (5.4 GiB):
@@ -310,12 +313,29 @@ fetch it again with the command above, and start again.
 
 "Chat…" in the menu opens a Chat window. While Cloak is running, each
 message is reworded on the Mac and shown beside the original, with the
-words taken out and put in marked; the reworded text can be edited before
-it is kept. Sending isn't set up yet, so nothing leaves the Mac. Each
-conversation is kept as one sealed file in
-`~/Library/Application Support/Regents Cloak/conversations/`, with its key
-in the login keychain. After a rebuild, the Mac asks once whether the new
-build may use that key.
+words taken out and put in marked; the reworded text can be edited until
+it is sent. Each conversation, answers included, is kept as one sealed file
+in `~/Library/Application Support/Regents Cloak/conversations/`, with its
+key in the login keychain. After a rebuild, the Mac asks once whether the
+new build may use that key.
+
+Send is Development mode (decision 10 in [docs/plan.md](docs/plan.md)),
+marked as such at the top of Chat, and never part of a release: the
+reworded text, after the conversation's earlier sent and answered turns,
+goes from the guest's sender through Tor to a remote model at Boundless,
+paid through MPP on Tempo from one wallet, so the provider can link every
+chat. Wallet, in Chat's toolbar, makes the wallet when Create is pressed:
+its key is made in the guest and kept only in the login keychain, this Mac
+only; the address to fund takes USDC.e on Tempo. A small deposit, at the
+size the provider suggests (1 USDC.e), pays for chats and is topped up by
+that much when it cannot pay for the next one; Close ends it with the
+provider, which
+refunds what is unspent, and Withdraw asks the network to close it and,
+pressed again 15 minutes later, takes it back. The deposit's state is sealed in
+`~/Library/Application Support/Regents Cloak/wallet/` under the
+conversations' key. The key never reaches the log, the control socket,
+`cloak status` or `cloak doctor`, and no message text does either; the log
+has only why a request stopped.
 
 Run the supervisor's checks (state changes, stand-in tor and worker
 processes, the control socket and its JSON, the boot files a killed app
@@ -325,6 +345,14 @@ conversations):
 
 ```bash
 swift test --package-path app
+```
+
+Run the sender's checks against stand-ins for Tor, the provider and the
+network (Rust 1.97.1, which `guest/sender/rust-toolchain.toml` names; the
+guest build uses the pinned Rust image instead):
+
+```bash
+cargo test --manifest-path guest/sender/Cargo.toml
 ```
 
 Check that a lost worker that ignores being stopped is killed 10 seconds
