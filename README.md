@@ -21,7 +21,8 @@ Stage 3 of 6: the feasibility kit is ready and waits for the candidates'
 weights, which Sean decides when to fetch. The stage 4 qualification kit is
 built and proven on development data only; its holdouts need people to
 write them. Stage 5 has started with a development build of the app's
-core, running the small lead. Stages 1 and 2 stay open in
+core, running the small lead, and a Chat window that rewords messages but
+does not send them. Stages 1 and 2 stay open in
 [docs/plan.md](docs/plan.md). Nothing here is a release, and no protection is
 claimed as proven. A gate counts only when its evidence
 is recorded in [docs/plan.md](docs/plan.md).
@@ -306,9 +307,20 @@ file's hash as it loads), with "The model has changed". Either way, remove
 `~/Library/Application Support/Regents Cloak/models/small-lead-gguf-grammar/`,
 fetch it again with the command above, and start again.
 
+"Chat…" in the menu opens a Chat window. While Cloak is running, each
+message is reworded on the Mac and shown beside the original, with the
+words taken out and put in marked; the reworded text can be edited before
+it is kept. Sending isn't set up yet, so nothing leaves the Mac. Each
+conversation is kept as one sealed file in
+`~/Library/Application Support/Regents Cloak/conversations/`, with its key
+in the login keychain. After a rebuild, the Mac asks once whether the new
+build may use that key.
+
 Run the supervisor's checks (state changes, stand-in tor and worker
 processes, the control socket and its JSON, the boot files a killed app
-left):
+left, the app's rewrite against the pinned daemon's code, which needs Go
+and the daemon's source from the stage 1 commands, and the sealed
+conversations):
 
 ```bash
 swift test --package-path app

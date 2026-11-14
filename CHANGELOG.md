@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Stage 5: the Chat window's first checks (14 November), written up in
+  docs/plan.md, with three dark shots in `docs/shots/`: two real rewordings
+  with the small lead (1.3 s and about 2 s), text wrapping at the default
+  and smallest window sizes, a conversation back after a relaunch, Delete
+  asking first and removing the file, no readable words in the sealed file,
+  no sockets for the app while it was open but not started, and the
+  keychain's prompt after a rebuild. The light appearance, the stopped and
+  cancelled rewordings, the 10,000-character refusal on screen, an edit,
+  and the worker's full checks wait for a cooler Mac. README.md says how
+  to open Chat.
+
 - A Chat window, from "Chat…" above Details… in the menu: conversations
   newest first on the left, titled by their first message, with New and
   Delete (which asks first); the conversation on the right, oldest first,

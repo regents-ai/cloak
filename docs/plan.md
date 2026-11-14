@@ -1308,6 +1308,40 @@ candidates, so the split has to be re-declared before any holdout opens.
   command only. Not shown here: a file changed in place at its pinned size
   (the worker's checks show it, `tests/test_llama_worker.py`), and a 16 GB
   Mac.
+- A Chat window, up to but not including sending (14 November): "Chat…" in
+  the menu opens it. Each message is reworded on the Mac by the app itself
+  (`Supervisor.rewrite`), only while Running, through the relay to the
+  guest's worker and in turn with the guest's calls; the request is the
+  pinned daemon's byte for byte, and a reply counts only under the daemon's
+  rules, the 10,000-character cap and the deadline of decision 6.
+  `app/Tests/CloakTests/RewriteTests.swift` proves both against the
+  daemon's own code. Original and Reworded show side by side with the words
+  taken out and put in marked; the newest reworded text can be edited; Send
+  is shown but off. Turns are kept as drafts, one sealed file per
+  conversation in `conversations/`, with one key in the login keychain,
+  usable on this Mac only while it is unlocked (the data protection
+  keychain refuses an app signed ad hoc, -34018). No conversation text goes
+  to the log, the socket, `cloak status` or `cloak doctor`. Nothing is sent.
+- Checks so far, 14 November, on a build of the code just before its
+  commit, which differs only in the arrow button sitting 4 points lower:
+  two real rewordings with the small lead, a 105-word English message in
+  1.3 s by the app's log and a Spanish one in about 2 s by the clock (the
+  lead answered it in English). The text wrapped at each pane's width at
+  the window's default size, 980 by 660 points, and at its smallest, 760 by
+  512, in dark; a long chat followed its newest message as it grew. After
+  Quit and a relaunch the conversation was back; Delete asked first and
+  removed its file; `strings` on the sealed file found none of its words;
+  and four samples of the app's sockets (`lsof -i`) during that launch,
+  with Cloak not started, showed none. The first Chat opened made the key
+  without a prompt; after a rebuild, which changes an ad hoc signature,
+  opening Chat brought up the Mac's keychain prompt, which closed when the
+  app quit. The dark shots are in [shots/](shots/). Not yet run, held while
+  the development Mac was too hot: the light appearance (launching with
+  `-AppleInterfaceStyle Light` left the app dark here), a stopped rewording
+  on screen, a message over 10,000 characters, a cancel part way, a path
+  with a number, an edit of a reworded text, a relaunch after a delete, a
+  watch of the app's sockets while it rewords, `tests/test_llama_worker.py`
+  and `app/build.sh` on the committed tree.
 
 ## Decisions
 
