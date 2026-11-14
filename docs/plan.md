@@ -773,6 +773,38 @@ Found and left as they are:
   rewrites. A smaller limit or a quantized cache would cut it, but the
   first is the daemon's contract and the second changes the outputs.
 
+### Small lead on llama.cpp with the reply grammar, first run (14 November 2026)
+
+[feasibility-20261114T022608Z.json](../evidence/stage3/small-lead-gguf-grammar/feasibility-20261114T022608Z.json),
+kit commit `d7f5b70`, under decisions 8 and 9: the same GGUF file as the run
+above, decoded under `reference/rewrite-reply.gbnf`, with the hash-check
+memory fix. A candidate record; it closes no gate (hand-run steps open, no
+cover traffic or payment vault, the Mac on AC power but busy: one-minute
+load about 30 at the start and 67 at the end).
+
+- EVAL06: 39 of 40 ordinary messages rewritten, none malformed; 1 timed
+  out (e06-37, 115 s: a runaway that ran to its deadline; the grammar
+  lets white space between JSON tokens repeat without end). Median 1.09 s
+  and 95th percentile 4.43 s against the proposed 5 s and 15 s: the
+  proposed targets are met. Without the grammar: 27 of 40; MLX: 36 of 40.
+- Memory: the whole product peaked at 6.74 GiB, in every boot under
+  6.75 GiB (9.11 to 10.63 GiB before the fix; MLX 7.22 GiB). Under the
+  10 GiB line and the 9.3 GiB aim.
+- Long inputs: 4,096 characters in 3.74 s, 10,000 in 6.36 s. The four-turn
+  conversation was rebuilt in 5.51 s over four calls. Cancellation: the
+  worker answered 1.15 s after the cancel; the next call was rewritten.
+  Worker loss and restart as before.
+- All cases: 49 of 59 rewritten; stopped: 7 over the input limit, 1 timed
+  out, 1 cancelled, 1 worker lost. Installed: 5.43 GiB.
+
+To settle: the runaway. The grammar's white space between tokens is to be
+removed (the daemon accepts the reply without it), which makes a new
+grammar hash and so a new candidate configuration, to be run again.
+Whether the rewrites keep what they must is still unjudged (EVAL01,
+stage 4).
+
+The weights were deleted after the run.
+
 ### Stand-in proof (development only)
 
 These runs prove the kit works end to end on the development stand-in. The

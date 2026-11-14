@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stage 3: the small lead on llama.cpp with the reply grammar (14 November)
+  is recorded in evidence/stage3/small-lead-gguf-grammar/ and written up in
+  docs/plan.md: 39 of 40 ordinary messages rewritten, none malformed, one
+  runaway timed out; median 1.09 s; whole product 6.74 GiB. No gate closes
+  on it. The weights were deleted afterwards.
+
 - The app's guests now write their boot files, which hold the relay's
   channel token and the rewriter key while a guest starts, in a folder of
   the app's own, `control/boot/` in its Application Support folder, and
