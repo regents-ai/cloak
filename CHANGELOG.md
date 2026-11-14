@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Stage 5: a live run of the app with the small lead (14 November),
+  written up in docs/plan.md: Start reached Running in about 8 s from Paused
+  (10 s with the app closed), three `cloak verify` runs each sent a real
+  rewrite through the guest, the daemon and the worker, and the whole
+  product peaked at 6.72 GiB. An extra file in the model's folder gave "The
+  model has changed"; Quit from Running stopped everything within 4 s. The
+  Details window shots in `docs/shots/` show the small lead, light and dark.
+
 - Stage 3: the EVAL01 development screen on the small lead again, on the
   one-engine tree (14 November), recorded in
   evidence/stage3/small-lead-gguf-grammar/ and written up in docs/plan.md:

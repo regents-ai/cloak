@@ -47,18 +47,22 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
 
 ## Stage 2 so far
 
-- The native worker (`worker/`) loads a model only when every file matches
-  the pins built into it, rewrites one request at a time, stops on a cancel
-  (also while it reads a long prompt), and stops on any protocol fault. When
-  the host shuts down mid-rewrite, the worker stops that rewrite, which
-  fails, and exits cleanly; a protocol fault mid-rewrite stops the rewrite
-  the same way before the worker exits. It runs in Apple's App Sandbox with no
-  network entitlement and reads files only in
-  `~/Library/Application Support/Regents Cloak/models/`. 28 checks in
-  `tests/test_worker.py` pass, including: a program signed with the worker's
-  entitlements is refused a connection the same program makes unsandboxed,
-  the installed worker carries exactly those entitlements, and the worker
-  cannot read a folder outside the models folder.
+- The native worker (`llama-worker/`, on llama.cpp, decision 8; the first
+  worker, on MLX, was deleted on 14 November) loads a model only when every
+  file matches the pins built into it, rewrites one request at a time under
+  the reply grammar, stops on a cancel (also while it reads a long prompt),
+  and stops on any protocol fault. When the host shuts down mid-rewrite, the
+  worker stops that rewrite, which fails, and exits cleanly; a protocol
+  fault mid-rewrite stops the rewrite the same way before the worker exits.
+  It runs in Apple's App Sandbox with no network entitlement and reads files
+  only in
+  `~/Library/Application Support/Regents Cloak/models/`. 35 checks in
+  `tests/test_llama_worker.py` pass on the stand-in (14 November),
+  including: a program signed with the worker's entitlements is refused a
+  connection the same program makes unsandboxed, the installed worker
+  carries exactly those entitlements, the worker cannot read a folder
+  outside the models folder, and the daemon accepts every reply the model
+  ended.
 - The guest (`guest/`) is a Debian trixie kernel and a small initramfs from a
   pinned snapshot, with no network device. Inside it, the daemon's own
   rewrite code (`internal/rewriter`, built from the pinned module, with
@@ -95,9 +99,7 @@ worker uses `macos-patterns`, `macos-build` and `write-swift`; stage 5 adds
   code directly, as its client does before target inference (A11 stays open).
   The sandbox confines reads within the person's home folder; system-wide
   readable places such as `/private/tmp` stay readable, as App Sandbox allows.
-  The stand-in model is never evaluated: it sometimes fences
-  its reply, which the daemon refuses, and sometimes answers instead of
-  rewriting.
+  The stand-in model is never evaluated; it is there to drive the path.
 
 ### Pi in the guest (12 November 2026)
 
@@ -1285,6 +1287,27 @@ candidates, so the split has to be re-declared before any holdout opens.
   where Technical details cannot take the keyboard focus though the Login
   switch can, so Tab would likely pass it; a spoken VoiceOver run; and a
   live sleep and wake.
+- Live run with the small lead on the development Mac, 14 November (load
+  averages of 34 to 44 from other apps, on mains power): with the app
+  closed, `cloak start` opened it and reached Running in 10.1 s; from
+  Paused, Start reached Running in 8.5 s and 8.3 s, and from Needs
+  attention in 7.9 s. Each startup check's rewrite took 0.67 to 0.92 s
+  through the guest, the daemon and the worker. Three `cloak verify` runs
+  passed, each one real rewrite (0.70 to 0.74 s), in 7.6 to 8.0 s each.
+  The whole product peaked at 6.72 GiB (7,211,720,312 bytes: the worker
+  6.12 GiB, the check guest's virtual machine 0.56 GiB, the app 0.03 GiB,
+  tor 0.01 GiB) while starting, and held up to 5.58 GiB while Running once
+  the check guest had powered off. With one extra file in the model's
+  folder, Start ended in Needs attention in 2.3 to 2.7 s, "The model has
+  changed. Reinstall the model, then start again." (`model_changed`), with
+  tor stopped; with the file removed, Start reached Running. Quit from
+  Running, chosen in the menu through accessibility, ended the app, tor
+  and the worker within 4 s. The Details window in each state, light and
+  dark, is in [shots/](shots/) again, now with the small lead, taken
+  through accessibility actions on the app's own elements and the `cloak`
+  command only. Not shown here: a file changed in place at its pinned size
+  (the worker's checks show it, `tests/test_llama_worker.py`), and a 16 GB
+  Mac.
 
 ## Decisions
 
