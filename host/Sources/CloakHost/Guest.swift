@@ -27,9 +27,10 @@ public final class Guest: NSObject {
     private var ended: ((End) -> Void)?
 
     /// Checks the guest's settings; nothing is written or started. The
-    /// guest's console is written to `console`.
-    public init(kernel: URL, console: FileHandle) throws {
-        bootDirectory = FileManager.default.temporaryDirectory.appending(path: "cloak-\(UUID().uuidString)")
+    /// guest's console is written to `console`, and its boot files go in a
+    /// folder of its own in `bootFolder`, which must exist.
+    public init(kernel: URL, console: FileHandle, bootFolder: URL) throws {
+        bootDirectory = bootFolder.appending(path: Self.bootPrefix + UUID().uuidString)
         let boot = VZLinuxBootLoader(kernelURL: kernel)
         boot.initialRamdiskURL = bootDirectory.appending(path: "initrd")
         boot.commandLine = "console=hvc0 quiet"
@@ -91,6 +92,18 @@ public final class Guest: NSObject {
 
     private func removeBootFiles() {
         try? FileManager.default.removeItem(at: bootDirectory)
+    }
+
+    private static let bootPrefix = "cloak-"
+
+    /// Removes what guests left in `bootFolder` when the process that
+    /// started them was killed before `start` ended: each guest's own folder,
+    /// `cloak-<UUID>`, and nothing else.
+    public static func removeBootFiles(in bootFolder: URL) throws {
+        for name in try FileManager.default.contentsOfDirectory(atPath: bootFolder.path)
+        where name.hasPrefix(bootPrefix) && UUID(uuidString: String(name.dropFirst(bootPrefix.count))) != nil {
+            try FileManager.default.removeItem(at: bootFolder.appending(path: name))
+        }
     }
 
     private func end(_ end: End) {

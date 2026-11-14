@@ -54,7 +54,11 @@ let relay = Relay(worker: channel) { [worker, workerArguments] in
 }
 
 let guest: Guest
-do { guest = try Guest(kernel: path("--kernel"), console: .standardOutput) } catch { fail("invalid guest: \(error)") }
+do {
+    guest = try Guest(kernel: path("--kernel"), console: .standardOutput, bootFolder: FileManager.default.temporaryDirectory)
+} catch {
+    fail("invalid guest: \(error)")
+}
 
 // tor, the guest's one way out. Started, and waited for until it has
 // bootstrapped or is unavailable, before the boot files exist, so no task

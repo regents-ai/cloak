@@ -79,8 +79,8 @@ struct Fixture {
 
     /// A supervisor on this installation, on a Mac that meets the manifest.
     @MainActor
-    func supervisor(hardware: Checks.Hardware = .init(appleSilicon: true, memory: 64 << 30)) -> Supervisor {
-        Supervisor(manifest: manifest, layout: layout, hardware: hardware)
+    func supervisor(hardware: Checks.Hardware = .init(appleSilicon: true, memory: 64 << 30)) throws -> Supervisor {
+        try Supervisor(manifest: manifest, layout: layout, hardware: hardware)
     }
 
     func url(_ part: Manifest.Part) -> URL {

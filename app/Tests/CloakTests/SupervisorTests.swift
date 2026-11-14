@@ -13,7 +13,7 @@ struct SupervisorTests {
     @Test func aGuestThatCannotStartNeedsAttentionWithTorAndTheWorkerStopped() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
-        let supervisor = fixture.supervisor()
+        let supervisor = try fixture.supervisor()
         #expect(supervisor.phase == .paused)
         #expect(supervisor.send(.start) == nil)
         #expect(await supervisor.settled() == .needsAttention(.guestFailed))
@@ -30,7 +30,7 @@ struct SupervisorTests {
         #expect(fixture.starts(.tor) + fixture.starts(.worker) == started)
 
         // A relaunch comes back Paused, having started nothing.
-        let relaunched = fixture.supervisor()
+        let relaunched = try fixture.supervisor()
         #expect(relaunched.phase == .paused)
         #expect(relaunched.status.status == .paused)
         #expect(fixture.starts(.tor) + fixture.starts(.worker) == started)
@@ -39,7 +39,7 @@ struct SupervisorTests {
     @Test func aTorThatExitsBeforeItsPortOpensNeedsAttentionAndNoWorkerStarts() async throws {
         let fixture = try Fixture(tor: Fixture.failingTor)
         defer { fixture.remove() }
-        let supervisor = fixture.supervisor()
+        let supervisor = try fixture.supervisor()
         supervisor.send(.start)
         #expect(await supervisor.settled() == .needsAttention(.torUnavailable))
         #expect(fixture.starts(.tor).count == 1)
@@ -49,7 +49,7 @@ struct SupervisorTests {
     @Test func aWorkerThatNeverBecomesReadyNeedsAttentionWithTorStopped() async throws {
         let fixture = try Fixture(worker: Fixture.failingWorker)
         defer { fixture.remove() }
-        let supervisor = fixture.supervisor()
+        let supervisor = try fixture.supervisor()
         supervisor.send(.start)
         #expect(await supervisor.settled() == .needsAttention(.workerUnavailable))
         #expect(fixture.starts(.tor).count == 1 && fixture.starts(.worker).count == 1)
@@ -69,7 +69,7 @@ struct SupervisorTests {
             """
         let fixture = try Fixture(worker: worker)
         defer { fixture.remove() }
-        let supervisor = fixture.supervisor()
+        let supervisor = try fixture.supervisor()
         supervisor.send(.start)
         #expect(await supervisor.settled() == .needsAttention(.torStopped))
         #expect(fixture.starts(.tor).count == 1 && fixture.starts(.worker).count == 1)
@@ -83,7 +83,7 @@ struct SupervisorTests {
     func aMacOutsideTheManifestIsUnsupportedAndNothingStarts(hardware: Checks.Hardware) async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
-        let supervisor = fixture.supervisor(hardware: hardware)
+        let supervisor = try fixture.supervisor(hardware: hardware)
         supervisor.send(.start)
         #expect(await supervisor.settled() == .needsAttention(.unsupportedHardware))
         #expect(supervisor.status.status == .unsupportedHardware)
@@ -101,7 +101,7 @@ struct SupervisorTests {
             let fixture = try Fixture()
             defer { fixture.remove() }
             try damage(fixture)
-            let supervisor = fixture.supervisor()
+            let supervisor = try fixture.supervisor()
             supervisor.send(.start)
             #expect(await supervisor.settled() == .needsAttention(reason))
             #expect(fixture.starts(.tor).isEmpty && fixture.starts(.worker).isEmpty)
@@ -111,7 +111,7 @@ struct SupervisorTests {
     @Test func pausingWhileTorBootstrapsStopsItAndEndsPaused() async throws {
         let fixture = try Fixture(tor: Fixture.slowTor)
         defer { fixture.remove() }
-        let supervisor = fixture.supervisor()
+        let supervisor = try fixture.supervisor()
         supervisor.send(.start)
         try await eventually { !fixture.starts(.tor).isEmpty }
         #expect(supervisor.send(.pause) == nil)
@@ -124,7 +124,7 @@ struct SupervisorTests {
     @Test func quittingStopsEverythingThroughTheShutdown() async throws {
         let fixture = try Fixture(tor: Fixture.slowTor)
         defer { fixture.remove() }
-        let supervisor = fixture.supervisor()
+        let supervisor = try fixture.supervisor()
         supervisor.send(.start)
         try await eventually { !fixture.starts(.tor).isEmpty }
         await withCheckedContinuation { quit in
@@ -132,6 +132,29 @@ struct SupervisorTests {
         }
         #expect(supervisor.phase == .stopping(.quit))
         #expect(!fixture.starts(.tor).contains(where: isRunning))
+    }
+
+    @Test func aLaunchRemovesTheBootFilesAKilledAppLeftAndNothingElse() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let boot = fixture.layout.support.appending(path: "control/boot")
+        let files = FileManager.default
+        _ = try fixture.supervisor()
+        #expect(try files.contentsOfDirectory(atPath: boot.path).isEmpty)
+        #expect(try files.attributesOfItem(atPath: boot.path)[.posixPermissions] as? Int == 0o700)
+
+        // What a guest's start leaves when the app is killed during it, and
+        // what no guest makes.
+        let left = boot.appending(path: "cloak-\(UUID().uuidString)")
+        try files.createDirectory(at: left, withIntermediateDirectories: false)
+        try Data("token and key".utf8).write(to: left.appending(path: "initrd"))
+        let others = ["cloak-notes", "cloak-\(UUID().uuidString).txt", "notes-\(UUID().uuidString)"]
+        for name in others { try Data().write(to: boot.appending(path: name)) }
+        try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: boot.path)
+
+        _ = try fixture.supervisor()
+        #expect(try files.contentsOfDirectory(atPath: boot.path).sorted() == others.sorted())
+        #expect(try files.attributesOfItem(atPath: boot.path)[.posixPermissions] as? Int == 0o700)
     }
 }
 

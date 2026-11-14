@@ -104,6 +104,10 @@ public struct Layout: Sendable {
 
     /// tor's lasting folder, as the stage 2 and 3 kits use it.
     var torData: URL { support.appending(path: "tor") }
+
+    /// Where each guest's boot files are while it starts: in the owner-only
+    /// control folder.
+    var bootFiles: URL { support.appending(path: "control/boot") }
 }
 
 extension JSONDecoder {

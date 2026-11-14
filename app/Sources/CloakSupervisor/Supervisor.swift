@@ -43,14 +43,20 @@ public final class Supervisor {
         var watches: [Task<Void, Never>] = []
     }
 
-    public convenience init(manifest: Manifest, layout: Layout) {
-        self.init(manifest: manifest, layout: layout, hardware: .current)
+    public convenience init(manifest: Manifest, layout: Layout) throws {
+        try self.init(manifest: manifest, layout: layout, hardware: .current)
     }
 
-    init(manifest: Manifest, layout: Layout, hardware: Checks.Hardware) {
+    /// A guest's boot files carry the relay's channel token and the rewriter
+    /// key, and last only while it starts, so an app killed then leaves
+    /// them. The supervisor starts by removing those and making the boot
+    /// folder, owner-only, for its own guests.
+    init(manifest: Manifest, layout: Layout, hardware: Checks.Hardware) throws {
         self.manifest = manifest
         self.layout = layout
         self.hardware = hardware
+        try Places.makeOwnerOnly(layout.bootFiles)
+        try Guest.removeBootFiles(in: layout.bootFiles)
     }
 
     /// Applies `event`. A command that does not apply in this phase changes
@@ -184,7 +190,8 @@ public final class Supervisor {
             stack.verification = verification
             let guest: Guest
             do {
-                guest = try Guest(kernel: layout.url(.kernel, in: manifest), console: verification.console.fileHandleForWriting)
+                guest = try Guest(kernel: layout.url(.kernel, in: manifest), console: verification.console.fileHandleForWriting,
+                                  bootFolder: layout.bootFiles)
                 try guest.prepare(base: layout.url(.initrd, in: manifest), cases: Verification.cases,
                                   model: manifest.model.name, relay: relay, tor: tor)
                 stack.guest = guest

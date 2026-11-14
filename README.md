@@ -75,7 +75,8 @@ Download one pinned model into
 `~/Library/Application Support/Regents Cloak/models/<name>/`, the only folder
 the sandboxed worker may read, checking every file's size and hash (a
 model's size is its `total_bytes` in `reference/models.json`, so check free
-disk first):
+disk first). A download cut short stops the run; running it again carries
+on from where it stopped:
 
 ```bash
 uv run scripts/fetch_model.py standin
@@ -298,10 +299,13 @@ prints the versioned status with its reason and next action, and the exit
 status is 1 when a command is refused, the app isn't open, or it needs
 attention. `cloak` takes no task text and prints no prompt text or keys.
 It talks to the app over a socket only the same user can reach, in
-`~/Library/Application Support/Regents Cloak/control/`.
+`~/Library/Application Support/Regents Cloak/control/`. A guest's boot
+files, which hold its keys while it starts, are in `control/boot/`; each
+launch first removes any that a killed app left there.
 
 Run the supervisor's checks (state changes, stand-in tor and worker
-processes, the control socket and its JSON):
+processes, the control socket and its JSON, the boot files a killed app
+left):
 
 ```bash
 swift test --package-path app

@@ -21,7 +21,7 @@ struct RegentsCloakApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let supervisor = Supervisor(manifest: Launch.manifest, layout: Layout(bundle: Bundle.main.resourceURL!, support: Places.support))
+    let supervisor = Launch.supervisor
     private let details = DetailsWindow()
     private var server: ControlServer?
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "app")
@@ -57,8 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// What the app needs before it can show anything: its manifest, and being
-/// the only Regents Cloak running for this user.
+/// What the app needs before it can show anything: its manifest, being the
+/// only Regents Cloak running for this user, and its supervisor, which first
+/// clears what a killed app left behind.
 @MainActor
 enum Launch {
     static let manifest: Manifest = {
@@ -69,6 +70,15 @@ enum Launch {
         } catch {
             Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot open: \(String(describing: error), privacy: .public)")
             stop("Regents Cloak is damaged.", "Reinstall Regents Cloak.")
+        }
+    }()
+
+    static let supervisor: Supervisor = {
+        do {
+            return try Supervisor(manifest: manifest, layout: Layout(bundle: Bundle.main.resourceURL!, support: Places.support))
+        } catch {
+            Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot clear the boot files: \(String(describing: error), privacy: .public)")
+            stop("Regents Cloak can't open.", "Quit Regents Cloak, then open it again.")
         }
     }()
 

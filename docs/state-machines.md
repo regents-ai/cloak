@@ -63,6 +63,49 @@ with the same crash. Check:
 one case per fault (exit status -11 and no answer in all four before the
 fix).
 
+## 1a. The llama worker's one rewrite (`llama-worker/Sources/cloak-rewriter-llama/Worker.swift`, `llama-worker/Sources/CLlama/cloak_llama.cpp`)
+
+The llama.cpp worker (decision 8) holds the same two states as section 1's
+worker, `idle` and `rewriting`, in one enum under one lock; the rewrite's
+steps are the order of `cloak_engine_rewrite`, which returns how it ended.
+
+```
+idle --request--> rewriting --answer written--> idle
+
+rewriting: request checked --> prompt rendered --> context made --> [grammar made] --> reading the prompt --> generating --> stop | length
+           any step --> failed (template, context, grammar, prompt, generation): 500
+           reading the prompt, generating --cancel--> cancelled: 499
+```
+
+- **request checked**: only the daemon's rewrite request for this model goes
+  on; anything else is answered 400 and never reaches llama.cpp. For a model
+  with a grammar (decision 9), the user message must also be the daemon's
+  `{"texts":[...]}` with at least one text: their count fixes the grammar's
+  `texts` rule.
+- **context made**: a context of the rewrite's own, sized for the prompt and
+  `max_tokens`; nothing carries over from the rewrite before.
+- **grammar made** (models with a grammar only): llama.cpp's grammar sampler
+  over the pinned grammar plus the `texts` rule. It fails as `grammar` if it
+  does not parse (code 0).
+- **reading the prompt**, in chunks of 512 tokens, then **generating**, one
+  token at a time: a cancel sets a flag that llama.cpp's loop reads before
+  each chunk and each token, so the rewrite stops within one chunk or one
+  token and is answered 499.
+- **generating**: greedy's token each step; under a grammar, greedy's token
+  when the grammar allows it, otherwise greedy's among the tokens it allows
+  (llama.cpp's own rejection sampling). The grammar allows the end of the
+  turn only once the reply is complete, and fails the rewrite as `grammar`
+  (code 1) if it ever allows no token. It ends with `stop` at the end of the
+  turn, or `length` at `max_tokens` tokens.
+- **idle** before the answer is written, as in section 1, and the end of the
+  channel and a protocol fault cancel a rewrite in progress the same way
+  before the worker exits (0 and 2).
+
+Checks: `tests/test_worker.py` runs section 1's checks on this worker, with
+and without the grammar (a cancel while generating and while reading the
+prompt, each protocol fault and the end of the channel mid-rewrite, the
+token limit); `tests/test_llama_worker.py` checks the grammar's replies.
+
 ## 2. The host's channel to the worker (`host/Sources/CloakHost/WorkerChannel.swift`, `host/Sources/CloakHost/Child.swift`)
 
 ```
@@ -233,10 +276,12 @@ or not, or straight away if writing them fails.
 
 Limit: a host killed during the start (under a second) leaves them in its
 private temporary folder, readable only by the person. The stage 5 app
-starts its guest the same way and has the same limit; it does not clear
-leftovers at launch yet. A host killed at any time leaves
-tor running for up to about 15 seconds, until tor sees its owner gone and
-exits. The stage 3 kit stops a boot over its time limit this way.
+writes its guests' boot files in a folder of its own instead, each guest's
+in `~/Library/Application Support/Regents Cloak/control/boot/cloak-<UUID>/`,
+and its supervisor removes every such `cloak-<UUID>` folder there at launch,
+before anything starts, and nothing else (section 9). A host killed at any
+time leaves tor running for up to about 15 seconds, until tor sees its owner
+gone and exits. The stage 3 kit stops a boot over its time limit this way.
 
 ## 6. The guest's boot (`guest/image/init`, then `guest/image/boot`)
 
@@ -387,7 +432,12 @@ and `test_a_prompt_over_the_input_limit_stops_its_task_with_the_length_and_the_l
 - **Model downloads** (`scripts/fetch_model.py`): each file goes to
   `<file>.part`, is checked, then renamed; a mismatch is kept as `<file>.bad`.
   Any leftover makes the worker refuse the folder as holding extra files, so
-  a broken download stops work instead of loading. No change.
+  a broken download stops work instead of loading. A download cut short
+  stops the run and keeps its `.part`; the next run asks for the rest with
+  an HTTP Range request, and starts the file again when the server sends it
+  whole (`tests/test_fetch_model.py`). Before (13 November): the next run
+  fetched every byte again, and a connection the server closed early left a
+  short file that was set aside as `.bad`.
 
 ## 9. The app's supervisor (`app/Sources/CloakSupervisor/Phase.swift`, `app/Sources/CloakSupervisor/Supervisor.swift`)
 
@@ -436,6 +486,11 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   Paused (`not_paused`). A refused command changes nothing.
 - **Sleep** pauses, so a wake finds nothing running; a relaunch starts
   Paused, having started nothing.
+- **Launch**: before anything starts, the supervisor makes its boot folder,
+  `control/boot` in the app's Application Support folder, owner-only, and
+  removes from it every guest's `cloak-<UUID>` folder a killed app left,
+  with the channel token and rewriter key inside (section 5), and nothing
+  else. If it cannot, the app says it can't open, and ends.
 
 What `cloak --json` prints for each phase (INS02):
 
@@ -460,7 +515,8 @@ asked; sleep pauses; quit from every phase goes through the shutdown;
 commands during a shutdown are refused), `SupervisorTests.swift` (stand-in
 tor and worker processes: a guest, tor or worker failure ends in Needs
 attention with everything stopped and nothing started again; a relaunch
-comes back Paused; pausing while tor bootstraps stops it) and
+comes back Paused; pausing while tor bootstraps stops it; a launch removes
+the boot files a killed app left, and nothing else) and
 `ControlTests.swift` (the JSON for each status; the socket answers only its
 owner's well-formed requests).
 

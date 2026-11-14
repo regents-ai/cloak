@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- The app's guests now write their boot files, which hold the relay's
+  channel token and the rewriter key while a guest starts, in a folder of
+  the app's own, `control/boot/` in its Application Support folder, and
+  each launch first removes every guest's folder a killed app left there,
+  and nothing else; if it cannot, the app says it can't open. Before, they
+  stayed in the temporary folder until the system cleared it.
+  `cloak-host` still writes them in its temporary folder. New check in
+  `swift test --package-path app`.
+
+- `scripts/fetch_model.py`: a download cut short stops the run and keeps
+  its `.part`; the next run asks the server for the rest only (an HTTP
+  Range request), and starts the file again if the server sends it whole.
+  Before, every run fetched each file from its first byte, and a
+  connection the server closed early left a short file set aside as
+  `.bad`. New `tests/test_fetch_model.py`, against a local server.
+
+- `docs/state-machines.md`: the llama worker's one rewrite (section 1a),
+  with its grammar step.
+
 - Decision 9: the reply grammar, as candidates of their own. The llama
   worker can decode under a grammar, `reference/rewrite-reply.gbnf`,
   through llama.cpp's own grammar sampler: `{"texts":[...]}` with as many

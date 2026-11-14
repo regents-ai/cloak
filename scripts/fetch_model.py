@@ -9,7 +9,10 @@ Every file is fetched at its pinned repository and revision (a candidate's
 vendor tokenizer and template files from the vendor checkpoint) and must match
 its recorded size and sha256; a file already present and matching is kept. Any mismatch stops
 the run with a non-zero exit and leaves the bad file in place as `<file>.bad`.
-Check free disk space before fetching: a model needs its `total_bytes` in
+A download goes to `<file>.part`. One cut short stops the run and keeps it,
+and the next run asks the server for the rest only (an HTTP Range request),
+or fetches the whole file again when the server sends it whole. Check free
+disk space before fetching: a model needs its `total_bytes` in
 reference/models.json.
 """
 
@@ -39,10 +42,18 @@ def fetch(repo: str, revision: str, entry: dict, target: Path) -> None:
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".part")
-    with urllib.request.urlopen(f"{HUB}/{repo}/resolve/{revision}/{entry['path']}", timeout=60) as r, partial.open("wb") as f:
-        while block := r.read(CHUNK):
-            f.write(block)
-    if partial.stat().st_size != entry["size"] or digest(partial) != entry["sha256"]:
+    have = partial.stat().st_size if partial.exists() else 0
+    if have < entry["size"]:
+        request = urllib.request.Request(f"{HUB}/{repo}/resolve/{revision}/{entry['path']}",
+                                         headers={"Range": f"bytes={have}-"} if have else {})
+        # 206 is the rest of the file; 200 is all of it, from the start.
+        with urllib.request.urlopen(request, timeout=60) as r, partial.open("ab" if r.status == 206 else "wb") as f:
+            while block := r.read(CHUNK):
+                f.write(block)
+    have = partial.stat().st_size
+    if have < entry["size"]:
+        raise SystemExit(f"{entry['path']}: download cut short at {have} of {entry['size']} bytes; run again to resume")
+    if have != entry["size"] or digest(partial) != entry["sha256"]:
         partial.rename(target.with_name(target.name + ".bad"))
         raise SystemExit(f"{entry['path']}: bytes do not match the pin")
     partial.rename(target)
