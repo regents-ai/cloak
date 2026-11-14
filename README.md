@@ -388,7 +388,7 @@ network (Rust 1.97.1, which `guest/sender/rust-toolchain.toml` names; the
 guest build uses the pinned Rust image instead):
 
 ```bash
-cargo test --manifest-path guest/sender/Cargo.toml
+(cd guest/sender && cargo test)
 ```
 
 Check that a lost worker that ignores being stopped is killed 10 seconds
