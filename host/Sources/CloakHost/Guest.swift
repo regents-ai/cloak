@@ -6,8 +6,9 @@ import Virtualization
 /// random bytes into the guest; without it the guest kernel's random source
 /// never becomes ready, and the daemon, which makes its keys and Tor
 /// identities from it, waits forever. It reaches the host on two ports only:
-/// the rewrite relay's and the Tor port's. A guest that serves also runs the
-/// sender, which the host connects to (`connect`).
+/// the rewrite relay's and the Tor port's, and on a third, the door port's,
+/// when it is given a door. A guest that serves also runs the sender and the
+/// runner, which the host connects to (`connect`).
 ///
 ///     made --prepare--> prepared --start--> running --power off or error--> ended
 ///                                              |
@@ -20,11 +21,15 @@ public final class Guest: NSObject {
         case failed(String)
     }
 
+    /// The door port's: the guest's door port carries the agent's model
+    /// requests here.
+    public static let doorPort: UInt32 = 8742
+
     private let configuration: VZVirtualMachineConfiguration
     private let bootDirectory: URL
     private let listener = VZVirtioSocketListener()
     private var machine: VZVirtualMachine?
-    private var relays: (rewrite: Relay, tor: TorRelay)?
+    private var relays: (rewrite: Relay, tor: TorRelay, door: ((Int32) -> Void)?)?
     private var ended: ((End) -> Void)?
 
     /// Checks the guest's settings; nothing is written or started. The
@@ -51,10 +56,15 @@ public final class Guest: NSObject {
 
     /// Writes the guest's boot files: its base root `base`, then the relay's
     /// channel token, a fresh rewriter key, the check cases and the model's
-    /// name, and when it `serve`s, the mark that starts the sender after the
-    /// checks. The token and key exist only in this process and the guest's
-    /// memory; the file that carries them exists only until `start` ends.
-    public func prepare(base: URL, cases: Data, model: String, relay: Relay, tor: Tor, serve: Bool) throws {
+    /// name, and when it `serve`s, the mark that starts the door port, the
+    /// runner and the sender after the checks. The token and key exist only
+    /// in this process and the guest's memory; the file that carries them
+    /// exists only until `start` ends. With a `door`, the guest's connections
+    /// to the door port are handed to it, each as a socket it owns; without
+    /// one, that port is not open.
+    public func prepare(
+        base: URL, cases: Data, model: String, relay: Relay, tor: Tor, serve: Bool, door: ((Int32) -> Void)?
+    ) throws {
         var entries: [BootFiles.Entry] = [
             .init(path: "run/cloak/adapter-token", mode: 0o400, uid: 1001, gid: 1001, data: hex(relay.token)),
             .init(path: "run/cloak/rewriter-key", mode: 0o440, uid: 0, gid: 1003, data: hex(randomBytes(32))),
@@ -70,7 +80,7 @@ public final class Guest: NSObject {
             removeBootFiles()
             throw GuestError(description: "cannot write the boot files")
         }
-        relays = (relay, TorRelay(tor: tor))
+        relays = (relay, TorRelay(tor: tor), door)
     }
 
     /// Starts the prepared guest, and removes its boot files once the start
@@ -86,6 +96,9 @@ public final class Guest: NSObject {
         let socketDevice = machine.socketDevices[0] as! VZVirtioSocketDevice
         socketDevice.setSocketListener(listener, forPort: Relay.port)
         socketDevice.setSocketListener(listener, forPort: TorRelay.port)
+        if relays?.door != nil {
+            socketDevice.setSocketListener(listener, forPort: Self.doorPort)
+        }
     }
 
     /// A new connection to the running guest's `port`, as a socket the
@@ -147,22 +160,22 @@ extension Guest: @preconcurrency VZVirtualMachineDelegate {
 }
 
 extension Guest: @preconcurrency VZVirtioSocketListenerDelegate {
-    /// The guest's two ports on the host: the rewrite relay's and the Tor
-    /// port's. The guest can open no other.
+    /// The guest's ports on the host: the rewrite relay's, the Tor port's
+    /// and, with a door, the door port's. The guest can open no other.
     public func listener(
         _ listener: VZVirtioSocketListener, shouldAcceptNewConnection connection: VZVirtioSocketConnection,
         from socketDevice: VZVirtioSocketDevice
     ) -> Bool {
         // Set by prepare, before start opens these ports.
-        let (rewrite, tor) = relays!
+        let (rewrite, tor, door) = relays!
         let socket = dup(connection.fileDescriptor)
         let port = connection.destinationPort
         connection.close()
         guard socket >= 0 else { return false }
-        if port == TorRelay.port {
-            tor.accept(socket)
-        } else {
-            rewrite.accept(socket)
+        switch port {
+        case TorRelay.port: tor.accept(socket)
+        case Self.doorPort: door!(socket)
+        default: rewrite.accept(socket)
         }
         return true
     }

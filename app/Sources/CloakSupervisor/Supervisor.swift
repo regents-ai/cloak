@@ -14,8 +14,9 @@ import os
 /// rewrite through the guest, the daemon and the worker, and the guest's
 /// sender is ready: the guest stays up while Running, and its end is a
 /// failure. The sender is Development mode's way to a remote model
-/// (decision 10 in docs/plan.md); sessions, the daemon's payment and cover
-/// are not built yet.
+/// (decision 10 in docs/plan.md), and the guest's runner runs the owner's
+/// agent tasks (decision 12); sessions, the daemon's payment and cover are
+/// not built yet.
 @MainActor
 @Observable
 public final class Supervisor {
@@ -25,6 +26,10 @@ public final class Supervisor {
     /// The technical detail of the last failure, until the next start.
     public private(set) var problem: String?
     public let manifest: Manifest
+    /// Takes each connection the guest's agent opens to the door port, as a
+    /// socket it owns: in the app, the door's. Set before the first start;
+    /// with none, the guest's door port leads nowhere.
+    @ObservationIgnored public var door: ((Int32) -> Void)?
 
     @ObservationIgnored private let layout: Layout
     @ObservationIgnored private let hardware: Checks.Hardware
@@ -43,6 +48,7 @@ public final class Supervisor {
         var guest: Guest?
         /// One per part, raising its failure if it ends.
         var watches: [Task<Void, Never>] = []
+        var tasks = AgentTasks()
     }
 
     public convenience init(manifest: Manifest, layout: Layout) throws {
@@ -153,6 +159,19 @@ public final class Supervisor {
         return try await Sender.exchange(socket, request: request, keep: keep)
     }
 
+    /// Runs one of the owner's agent tasks in the guest while Running
+    /// (`Runner.run`): Pi's events as they come, undecoded, ending with how
+    /// it exited. Ending the stream first, as a consumer that stops does,
+    /// closes the task's connection, which ends the task and every process
+    /// it started. A task under way when Cloak pauses, stops or quits fails
+    /// with `Runner.Stop.stopped`, and one asked for while not Running with
+    /// `.notRunning`. The log has how each task ended and how long it took,
+    /// never what it carried.
+    public func run(_ request: Runner.Request) -> AsyncThrowingStream<Runner.Event, any Error> {
+        guard case .running = phase, let guest = stack.guest else { return AgentTasks.refused(.notRunning) }
+        return stack.tasks.run(request) { try await guest.connect(to: Runner.port) }
+    }
+
     public var status: StatusDocument {
         manifest.status(of: phase, check: check, detail: detail)
     }
@@ -231,7 +250,7 @@ public final class Supervisor {
                 guest = try Guest(kernel: layout.url(.kernel, in: manifest), console: verification.console.fileHandleForWriting,
                                   bootFolder: layout.bootFiles)
                 try guest.prepare(base: layout.url(.initrd, in: manifest), cases: Verification.cases,
-                                  model: manifest.model.name, relay: relay, tor: tor, serve: true)
+                                  model: manifest.model.name, relay: relay, tor: tor, serve: true, door: door)
                 stack.guest = guest
                 try await guest.start { verification.ended($0) }
             } catch {
@@ -281,12 +300,14 @@ public final class Supervisor {
         send(.failed(failure.reason))
     }
 
-    /// The one shutdown: ends the preparation under way, then stops the
-    /// guest, the worker and tor, in that order, each within its limit.
+    /// The one shutdown: ends the preparation and the agent's tasks under
+    /// way, then stops the guest, the worker and tor, in that order, each
+    /// within its limit.
     private func shutDown() {
         let preparation = self.preparation
         preparation?.cancel()
         for watch in stack.watches { watch.cancel() }
+        stack.tasks.stop()
         Task {
             await preparation?.value
             let stack = self.stack

@@ -3,7 +3,8 @@ import Foundation
 
 // cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl>
 //            --worker <cloak-rewriter-llama> --name <model> --dir <model directory>
-//            --tor <tor> --tor-data <tor's folder> [--serve]
+//            --tor <tor> --tor-data <tor's folder>
+//            [--serve [--door <socket file>] [--runner <socket file>]]
 //
 // Starts the native worker and tor, waits for tor to open its SOCKS port and
 // bootstrap (at most 90 seconds from its start; this process fails if the
@@ -19,9 +20,20 @@ import Foundation
 // is one line on standard output, after a line {"keep": <deposit>} for each
 // deposit change the sender reports, which this kit does not keep. The guest
 // is stopped once standard input ends.
+//
+// With --door, each guest connection to the door port is carried, byte for
+// byte, to the socket file given, where a check's stand-in for the app's
+// door listens. With --runner, this process listens on the socket file given
+// for agent tasks for the guest's runner, one per connection: the client
+// writes one line, the request as JSON ({"task", "session", "model",
+// "pass"}), and reads one JSON line per event, {"output": <line>},
+// {"error": <line>} or, last, {"exited": {"status", "signalled"}}, or else
+// one last {"failed": <why>}. The client's end of the connection ends the
+// task.
 
-let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter-llama> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder> [--serve]"
+let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter-llama> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder> [--serve [--door <socket file>] [--runner <socket file>]]"
 let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir", "--tor", "--tor-data"]
+let servingFlags = ["--door", "--runner"]
 let (arguments, serving) = {
     var parsed = [String: String]()
     var serve = false
@@ -31,10 +43,10 @@ let (arguments, serving) = {
             serve = true
             continue
         }
-        guard flags.contains(flag), parsed[flag] == nil, let value = rest.popFirst() else { fail(usage) }
+        guard (flags + servingFlags).contains(flag), parsed[flag] == nil, let value = rest.popFirst() else { fail(usage) }
         parsed[flag] = value
     }
-    guard parsed.count == flags.count else { fail(usage) }
+    guard flags.allSatisfy({ parsed[$0] != nil }), serve || servingFlags.allSatisfy({ parsed[$0] == nil }) else { fail(usage) }
     return (parsed, serve)
 }()
 func path(_ flag: String) -> URL { URL(filePath: arguments[flag]!) }
@@ -85,7 +97,11 @@ do { tor = try await Tor.start(executable: path("--tor"), data: path("--tor-data
 
 do {
     try guest.prepare(base: path("--initrd"), cases: try Data(contentsOf: path("--cases")), model: arguments["--name"]!,
-                      relay: relay, tor: tor, serve: serving)
+                      relay: relay, tor: tor, serve: serving,
+                      door: arguments["--door"].map { door in { guest in carry(guest, to: door) } })
+    if let tasks = arguments["--runner"] {
+        try serveTasks(at: tasks, on: guest)
+    }
 } catch {
     await tor.stop()
     fail("\(error)")
@@ -129,3 +145,132 @@ do {
 await relay.finish()
 await tor.stop()
 exit(status)
+
+
+/// A socket file's address, for the calls that take a sockaddr.
+func withSocketAddress<T>(_ path: String, _ body: (UnsafePointer<sockaddr>, socklen_t) -> T) throws -> T {
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let bytes = Array(path.utf8)
+    guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { throw POSIXError(.ENAMETOOLONG) }
+    withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
+    return withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { body($0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+    }
+}
+
+/// Carries one guest connection to the door port, byte for byte, to the
+/// socket file at `path`, until either end closes; takes the guest's socket.
+func carry(_ guest: Int32, to path: String) {
+    Thread {
+        defer { Darwin.close(guest) }
+        let door = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard door >= 0 else { return }
+        defer { Darwin.close(door) }
+        guard (try? withSocketAddress(path, { Darwin.connect(door, $0, $1) })) == 0 else {
+            log("cannot reach the door at \(path)")
+            return
+        }
+        let answered = DispatchSemaphore(value: 0)
+        Thread {
+            pump(from: door, to: guest)
+            answered.signal()
+        }.start()
+        pump(from: guest, to: door)
+        answered.wait()
+    }.start()
+}
+
+/// Copies until `source` ends or `destination` fails, then shuts both,
+/// which ends the other direction too.
+func pump(from source: Int32, to destination: Int32) {
+    var buffer = [UInt8](repeating: 0, count: 1 << 16)
+    while true {
+        let n = buffer.withUnsafeMutableBytes { Darwin.read(source, $0.baseAddress!, $0.count) }
+        if n < 0, errno == EINTR { continue }
+        guard n > 0, send(Data(buffer.prefix(n)), to: destination) else { break }
+    }
+    Darwin.shutdown(source, SHUT_RDWR)
+    Darwin.shutdown(destination, SHUT_RDWR)
+}
+
+/// Writes all of `data`; false when the socket failed first.
+func send(_ data: Data, to socket: Int32) -> Bool {
+    var done = 0
+    while done < data.count {
+        let n = data.withUnsafeBytes { Darwin.write(socket, $0.baseAddress! + done, data.count - done) }
+        if n < 0, errno == EINTR { continue }
+        guard n > 0 else { return false }
+        done += n
+    }
+    return true
+}
+
+/// One JSON line to a task's client.
+func line(_ object: [String: Any]) -> Data {
+    ((try? JSONSerialization.data(withJSONObject: object)) ?? Data()) + Data("\n".utf8)
+}
+
+/// Listens on the socket file at `path` for tasks for the guest's runner,
+/// each served on a thread of its own.
+func serveTasks(at path: String, on guest: Guest) throws {
+    let server = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+    guard server >= 0, try withSocketAddress(path, { Darwin.bind(server, $0, $1) }) == 0, Darwin.listen(server, 16) == 0 else {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    Thread {
+        while true {
+            let client = Darwin.accept(server, nil, nil)
+            if client < 0 {
+                if errno == EINTR { continue }
+                log("cannot take a task: \(String(cString: strerror(errno)))")
+                return
+            }
+            Thread { runTask(client, on: guest) }.start()
+        }
+    }.start()
+}
+
+/// One task: its request line, then its events as lines, until it ends or
+/// the client's end of the connection ends it. Takes the client's socket.
+func runTask(_ client: Int32, on guest: Guest) {
+    var request = Data()
+    var byte: UInt8 = 0
+    while Darwin.read(client, &byte, 1) == 1, byte != UInt8(ascii: "\n") {
+        request.append(byte)
+    }
+    guard let request = try? JSONDecoder().decode(Runner.Request.self, from: request) else {
+        _ = send(line(["failed": "the request did not read"]), to: client)
+        Darwin.close(client)
+        return
+    }
+    let done = DispatchSemaphore(value: 0)
+    let work = Task {
+        defer { done.signal() }
+        do {
+            let socket = try await guest.connect(to: Runner.port)
+            for try await event in Runner.run(socket, request) {
+                let object: [String: Any] = switch event {
+                case .output(let data): ["output": String(decoding: data, as: UTF8.self)]
+                case .error(let data): ["error": String(decoding: data, as: UTF8.self)]
+                case .exited(let end): ["exited": ["status": end.status, "signalled": end.signalled]]
+                }
+                _ = send(line(object), to: client)
+            }
+        } catch {
+            _ = send(line(["failed": "\(error)"]), to: client)
+        }
+    }
+    // Nothing more comes from the client: its end ends the task.
+    let watched = DispatchSemaphore(value: 0)
+    Thread {
+        var byte: UInt8 = 0
+        while Darwin.read(client, &byte, 1) > 0 {}
+        work.cancel()
+        watched.signal()
+    }.start()
+    done.wait()
+    Darwin.shutdown(client, SHUT_RDWR)
+    watched.wait()
+    Darwin.close(client)
+}

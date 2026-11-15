@@ -4,8 +4,9 @@
 # Tor port (the one way out, to tor on the host) as another, the daemon's
 # local API as a third, run the daemon's rewrite checks as a fourth, then the
 # agent cases (Pi in the reference sandbox as the agent user), print the
-# results on the console, then serve sends as a fifth when asked to, and
-# power off. No network device exists in this guest.
+# results on the console, then serve when asked to (the door port, the
+# agent's tasks and sends), and power off. No network device exists in this
+# guest.
 /bin/busybox --install -s /bin
 mount -t proc proc /proc
 mount -t sysfs sys /sys
@@ -24,7 +25,7 @@ read -r ready < /run/cloak/adapter-ready
 [ "$ready" = ready ] || { echo "cloak-guest: adapter did not start"; poweroff -f; }
 
 mkfifo /run/cloak/tor-port-ready
-su -s /bin/sh torport -c 'exec /usr/bin/cloak-tor-port' > /run/cloak/tor-port-ready &
+su -s /bin/sh torport -c 'exec /usr/bin/cloak-port 9050' > /run/cloak/tor-port-ready &
 read -r ready < /run/cloak/tor-port-ready
 [ "$ready" = ready ] || { echo "cloak-guest: Tor port did not start"; poweroff -f; }
 
@@ -43,16 +44,35 @@ chmod 0700 /home/agent
 /usr/bin/cloak-agent-check /etc/cloak/cases.jsonl
 echo "cloak-guest: agent check exited $?"
 
-# A guest that serves (the app's, and cloak-host --serve) then runs the
-# sender as its own user until the host stops it: Development mode's one way
-# to a remote model, out through the Tor port only.
+# A guest that serves (the app's, and cloak-host --serve) then runs, until
+# the host stops it: the door port as its own user, where the agent's model
+# requests go, to the app's door on the Mac; the runner, which runs each of
+# the owner's agent tasks in the reference sandbox as the agent user; and
+# the sender as its own user, Development mode's one way to a remote model,
+# out through the Tor port only. The runner or the sender ending ends the
+# guest: each notes its end as one line on the pipe the boot then reads.
 if [ -e /etc/cloak/serve ]; then
-	mkfifo /run/cloak/sender-ready
-	su -s /bin/sh sender -c 'exec /usr/bin/cloak-sender' > /run/cloak/sender-ready &
+	mkfifo /run/cloak/door-port-ready /run/cloak/runner-ready /run/cloak/sender-ready /run/cloak/served
+	su -s /bin/sh door -c 'exec /usr/bin/cloak-port 8742' > /run/cloak/door-port-ready &
+	read -r ready < /run/cloak/door-port-ready
+	[ "$ready" = ready ] || { echo "cloak-guest: door port did not start"; poweroff -f; }
+
+	{ /usr/bin/cloak-runner > /run/cloak/runner-ready; echo "runner exited $?" > /run/cloak/served; } &
+	read -r ready < /run/cloak/runner-ready
+	[ "$ready" = ready ] || { echo "cloak-guest: runner did not start"; poweroff -f; }
+	echo "cloak-guest: runner ready"
+
+	{ su -s /bin/sh sender -c 'exec /usr/bin/cloak-sender' > /run/cloak/sender-ready; echo "sender exited $?" > /run/cloak/served; } &
 	read -r ready < /run/cloak/sender-ready
 	[ "$ready" = ready ] || { echo "cloak-guest: sender did not start"; poweroff -f; }
 	echo "cloak-guest: sender ready"
-	wait $!
-	echo "cloak-guest: sender exited $?"
+	# This process is the guest's first, so a process orphaned in the guest
+	# ends here: a stopped task's sandbox leaves one, its inner bubblewrap,
+	# and its end would interrupt opening the pipe, which blocks. Opened for
+	# reading and writing, the pipe opens at once; a read that is interrupted
+	# loses no line, and is read again.
+	exec 3<> /run/cloak/served
+	until read -r ended <&3; do :; done
+	echo "cloak-guest: $ended"
 fi
 poweroff -f

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- The agent in the guest, plumbing (decision 12): Cloak can run Pi on a
+  task inside the sealed guest, in the reference sandbox. Its model
+  requests come to the door on the Mac through a new door port, reworded
+  on this Mac and sent through Tor like any app's, each conversation with
+  a pass of its own that works only from the guest; everything its tools
+  open goes through the Tor port, and curl is in the guest for them.
+  Stopping a task ends everything it started. No window uses it yet. A
+  sender that hangs up before its turn now fails that send, where the
+  app's next write could have ended the app.
+
 - Wallet says less so a made wallet fits its sheet: Network and Token are
   one row, "USDC.e on Tempo"; the line that the provider takes it shows
   only when it no longer does; the Model box has no second "Model" above it.

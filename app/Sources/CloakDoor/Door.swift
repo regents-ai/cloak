@@ -56,9 +56,11 @@ enum Pass {
 /// OpenAI's shape to one address, 127.0.0.1 only, each with a pass of its
 /// own, and each request goes on as Chat's do: every user message reworded
 /// on this Mac (`Memory`), then sent through the guest's sender, Tor and
-/// the one wallet (decision 10 in docs/plan.md). Open only while Cloak is
-/// Running. No message's text is kept, shown or logged: an app's requests
-/// are counted, and its last one timed.
+/// the one wallet (decision 10 in docs/plan.md). The owner's agent in the
+/// guest sends its requests the same way, from the guest's door port, each
+/// conversation with a box pass of its own (`pass(for:)`, decision 12).
+/// Open only while Cloak is Running. No message's text is kept, shown or
+/// logged: an app's requests are counted, and its last one timed.
 @MainActor
 @Observable
 public final class Door {
@@ -116,9 +118,19 @@ public final class Door {
     @ObservationIgnored private let parts: Parts
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var serving: [UUID: Task<Void, Never>] = [:]
-    /// By app.
+    /// By app, and by the agent's conversation.
     @ObservationIgnored private var memories: [UUID: Memory] = [:]
+    /// The box passes, by the agent's conversation, until the door closes.
+    @ObservationIgnored private var boxes: [UUID: (pass: String, fingerprint: Data)] = [:]
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "door")
+
+    /// Where a request comes from: an app on this Mac, on 127.0.0.1, or the
+    /// agent in the guest, from its door port. Each side's passes work on
+    /// that side only.
+    private enum Side {
+        case mac
+        case guest
+    }
 
     public init(file: URL, wallet: URL, parts: Parts, port: UInt16 = Door.port) {
         self.file = file
@@ -234,7 +246,8 @@ public final class Door {
         listener.newConnectionHandler = { [weak self] connection in
             MainActor.assumeIsolated {
                 guard let self else { return connection.cancel() }
-                self.accept(connection)
+                connection.start(queue: .main)
+                self.accept(connection, from: .mac)
             }
         }
         self.listener = listener
@@ -259,24 +272,53 @@ public final class Door {
         }
     }
 
-    /// Stops listening and ends every request under way, each with a plain
+    /// Stops listening, drops the box passes and what was remembered of their
+    /// conversations, and ends every request under way, each with a plain
     /// error to its app; returns once each has been answered.
     public func close() async {
         listener?.cancel()
         listener = nil
         if state == .open { logger.info("door closed") }
         state = .closed
+        for conversation in boxes.keys { memories[conversation] = nil }
+        boxes = [:]
         let serving = Array(self.serving.values)
         for task in serving { task.cancel() }
         for task in serving { await task.value }
     }
 
+    // MARK: The agent in the guest
+
+    /// The box pass of one of the owner's agent conversations, made the
+    /// first time it is asked for: the agent sends that conversation's
+    /// requests with it, from the guest, and the door takes it there only.
+    /// It is kept in memory only, never with the apps, and dropped when the
+    /// door closes; nil while the door is not open.
+    public func pass(for conversation: UUID) -> String? {
+        guard state == .open else { return nil }
+        if let box = boxes[conversation] { return box.pass }
+        let pass = Pass.make()
+        boxes[conversation] = (pass, Pass.fingerprint(pass))
+        return pass
+    }
+
+    /// Serves one connection from the guest's door port, the socket it
+    /// takes, as any app's, while the door is open; closes it otherwise, or
+    /// when the guest has closed it already.
+    public func accept(guest socket: Int32) {
+        guard state == .open else {
+            Darwin.close(socket)
+            return
+        }
+        if let link = GuestLink.take(socket) { accept(link, from: .guest) }
+    }
+
     // MARK: Requests
 
-    private func accept(_ connection: NWConnection) {
+    private func accept(_ connection: some Link, from side: Side) {
         let id = UUID()
         serving[id] = Task {
-            await serve(connection)
+            await serve(connection, from: side)
             serving[id] = nil
         }
     }
@@ -284,9 +326,8 @@ public final class Door {
     /// One request, then the connection closes. Its head and body must
     /// arrive within `HTTPRequest.readLimit`; a pass is checked before the
     /// body is read.
-    private func serve(_ connection: NWConnection) async {
+    private func serve(_ connection: some Link, from side: Side) async {
         let started = ContinuousClock.now
-        connection.start(queue: .main)
         let limit = Task {
             try? await Task.sleep(for: HTTPRequest.readLimit)
             if !Task.isCancelled { connection.cancel() }
@@ -294,7 +335,7 @@ public final class Door {
         let response: HTTPResponse
         do {
             let (request, after) = try await HTTPRequest.head(connection)
-            let app = try admit(request)
+            let app = try admit(request, from: side)
             let body = try await request.body(after: after, from: connection)
             limit.cancel()
             response = await route(request, body: body, for: app)
@@ -312,13 +353,22 @@ public final class Door {
         logger.info("door answered \(response.status, privacy: .public) after \(started.duration(to: .now), privacy: .public)")
     }
 
-    /// Refuses a request from a web page, then one without a pass of an app
-    /// here, as the daemon does (`ServeHTTP`, internal/server/server.go:70-97);
-    /// counts the app's request. Returns the app.
-    private func admit(_ request: HTTPRequest) throws(Failure) -> UUID {
+    /// Refuses a request from a web page, then one without a pass of this
+    /// side's, as the daemon does (`ServeHTTP`, internal/server/server.go:70-97):
+    /// from the Mac, an app's pass, and the app's request is counted; from the
+    /// guest, a box pass. Returns the app, or the agent's conversation.
+    private func admit(_ request: HTTPRequest, from side: Side) throws(Failure) -> UUID {
         guard request.headers["origin"] == nil, request.headers["sec-fetch-site"] != "cross-site" else { throw .origin }
         guard let header = request.headers["authorization"], header.hasPrefix("Bearer ") else { throw .pass }
         let presented = Pass.fingerprint(header.dropFirst("Bearer ".count))
+        if case .guest = side {
+            var found: UUID?
+            for (conversation, box) in boxes where Pass.same(box.fingerprint, presented) {
+                found = conversation
+            }
+            guard let found else { throw .pass }
+            return found
+        }
         var found: Int?
         for (index, app) in apps.enumerated() where Pass.same(app.fingerprint, presented) {
             found = index
@@ -376,7 +426,7 @@ public final class Door {
         memories[app] = memory
         let (messages, transcript) = try await memory.rewrite(asked, reword: parts.reword)
         memories[app]?.transcript = transcript
-        guard case .read(let key?) = access else { throw .stopped }
+        let key = try await sealing()
         do {
             guard try await parts.wallet() != nil else {
                 throw Failure(402, "no_wallet", "Cloak has no wallet yet. Create one in Chat, under Wallet.")
@@ -398,6 +448,27 @@ public final class Door {
             throw Failure(error)
         }
         return try Asked.answer(completion, streaming: asked.streaming)
+    }
+
+    /// The conversations' key, which seals the deposit as it seals the apps:
+    /// as read with the apps, or, when there are none (as for the agent's
+    /// requests before any app is added), found or made now.
+    private func sealing() async throws(Failure) -> SymmetricKey {
+        switch access {
+        case .read(let key?):
+            return key
+        case .read(nil):
+            do {
+                guard let key = try await parts.sealing() else { throw CocoaError(.fileReadNoPermission) }
+                access = .read(key)
+                return key
+            } catch {
+                logger.error("cannot get the key for the deposit: \(String(describing: error), privacy: .public)")
+                throw Failure(502, "failed", "Cloak couldn't read its key.")
+            }
+        case .unread, .failed:
+            throw .stopped
+        }
     }
 
     /// The model names in the provider's list (`data[].id`).

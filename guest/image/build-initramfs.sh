@@ -33,18 +33,19 @@ cp /bin/busybox $root/usr/bin/busybox
 for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport virtio-rng; do
 	xz -dc $(find /lib/modules/$kernel -name "$module.ko.xz") > $root/usr/lib/modules/$module.ko
 done
-install -m 0755 /out/cloak-adapter /out/cloak-tor-port /out/cloak-rewrite-check /out/cloak-daemon /out/cloak-agent-check \
-	/out/cloak-routing-probe /out/cloak-vsock-probe /out/cloak-sender $root/usr/bin/
+install -m 0755 /out/cloak-adapter /out/cloak-port /out/cloak-rewrite-check /out/cloak-daemon /out/cloak-agent-check \
+	/out/cloak-runner /out/cloak-routing-probe /out/cloak-vsock-probe /out/cloak-sender $root/usr/bin/
 install -m 0755 /src/init $root/init
 install -m 0755 /src/boot $root/usr/lib/cloak/boot
 
 # The reference wrapper and what it runs: bash, bubblewrap, torsocks, the CA
-# certificates it binds, Node.js and Pi, installed where `npm install -g` puts it.
+# certificates it binds, Node.js and Pi, installed where `npm install -g` puts it,
+# and curl for the agent's tools.
 # The torsocks script's Debian-only block warns when libtorsocks is missing
 # for another enabled architecture, using dpkg tools the guest does not carry;
 # the guest has one architecture, so the block is left out. The package's own
 # loader file puts libtorsocks on the library path, as LD_PRELOAD names it bare.
-install -m 0755 /bin/bash /usr/bin/bwrap $root/usr/bin/
+install -m 0755 /bin/bash /usr/bin/bwrap /usr/bin/curl $root/usr/bin/
 sed '/^# -- Debian specific part$/,/^# -- Debian specific part ended$/d' /usr/bin/torsocks > $root/usr/bin/torsocks
 chmod 0755 $root/usr/bin/torsocks
 if grep -q dpkg $root/usr/bin/torsocks; then echo 'torsocks: Debian block still present' >&2; exit 1; fi
@@ -64,7 +65,7 @@ tar -xzf /pi/earendil-works-pi-coding-agent-1.3.0.tgz -C $pi --strip-components 
 ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js $root/usr/local/bin/pi
 
 # Shared libraries the dynamic programs need, from this image's glibc.
-for elf in /bin/bash /usr/bin/bwrap $root/usr/local/bin/node /usr/lib/$arch/torsocks/libtorsocks.so $root/usr/bin/cloak-sender; do
+for elf in /bin/bash /usr/bin/bwrap /usr/bin/curl $root/usr/local/bin/node /usr/lib/$arch/torsocks/libtorsocks.so $root/usr/bin/cloak-sender; do
 	ldd $elf | awk '/=>/ { print $3 } /ld-linux/ { print $1 }'
 done | sort -u | while read -r library; do
 	case $library in
@@ -84,6 +85,7 @@ zkapi:x:1004:1004:zkapi:/:/bin/sh
 agent:x:1005:1005:agent:/home/agent:/bin/sh
 torport:x:1006:1006:torport:/:/bin/sh
 sender:x:1007:1007:sender:/:/bin/sh
+door:x:1008:1008:door:/:/bin/sh
 PASSWD
 cat > $root/etc/group <<GROUP
 root:x:0:
@@ -94,6 +96,7 @@ zkapi:x:1004:
 agent:x:1005:
 torport:x:1006:
 sender:x:1007:
+door:x:1008:
 GROUP
 chmod 0755 $root/run/cloak
 chmod 1777 $root/tmp
@@ -102,9 +105,13 @@ chmod 1777 $root/tmp
 
 {
 	dpkg-query -W linux-image-$kernel busybox-static bash bubblewrap torsocks ca-certificates libc6 libstdc++6 libgcc-s1 libcap2 libselinux1 libpcre2-8-0 libtinfo6
+	# curl and the libraries only it loads: 21.2 MB of the root, 8.4 MB of initrd.gz (14 November 2026).
+	dpkg-query -W curl libcurl4t64 libssl3t64 libgnutls30t64 libunistring5 libp11-kit0 libkrb5-3 libzstd1 libgmp10 \
+		libgssapi-krb5-2 libldap2 libssh2-1t64 libhogweed6t64 libnettle8t64 libnghttp3-9 libnghttp2-14 libk5crypto3 \
+		libidn2-0 libbrotli1 librtmp1 libsasl2-2 libtasn1-6 libpsl5t64 zlib1g libffi8 libkrb5support0 libcom-err2 libkeyutils1
 	(cd /node && sha256sum node-v24.22.2-linux-arm64.tar.xz)
 	(cd /pi && sha256sum earendil-works-pi-coding-agent-1.3.0.tgz)
-	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-tor-port cloak-rewrite-check cloak-daemon cloak-agent-check \
-		cloak-routing-probe cloak-vsock-probe cloak-sender
+	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-port cloak-rewrite-check cloak-daemon cloak-agent-check \
+		cloak-runner cloak-routing-probe cloak-vsock-probe cloak-sender
 } > /out/guest-manifest.txt
 cat /out/guest-manifest.txt

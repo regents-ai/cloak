@@ -64,7 +64,7 @@ struct HTTPRequest: Sendable {
     /// Reads a request's head from `connection`. Returns it with the bytes
     /// read after it. Throws `Ended` when the connection ends or the task is
     /// cancelled first.
-    static func head(_ connection: NWConnection) async throws -> (HTTPRequest, after: [UInt8]) {
+    static func head(_ connection: some Link) async throws -> (HTTPRequest, after: [UInt8]) {
         var buffer = [UInt8]()
         var end: Int?
         while end == nil {
@@ -79,7 +79,7 @@ struct HTTPRequest: Sendable {
 
     /// Reads the rest of the body from `connection`, after the bytes `after`
     /// read with the head; bytes past it are not taken.
-    func body(after: [UInt8], from connection: NWConnection) async throws -> [UInt8] {
+    func body(after: [UInt8], from connection: some Link) async throws -> [UInt8] {
         let length = try self.length
         var body = after
         if body.count < length, headers["expect"]?.lowercased() == "100-continue" {
@@ -119,7 +119,19 @@ struct HTTPResponse: Sendable {
     ]
 }
 
-extension NWConnection {
+/// What the door reads one request from and writes its answer to: an app's
+/// connection to 127.0.0.1, or the agent's from the guest's door port.
+protocol Link: Sendable {
+    /// The next bytes, at most `limit`. Throws at the end of the stream, on
+    /// an error, and when the task is cancelled, which cancels the link.
+    func next(upTo limit: Int) async throws -> [UInt8]
+    /// Writes `data`; `final` ends this side of the stream after it.
+    func write(_ data: Data, final: Bool) async
+    /// Ends the link: a read under way ends, and nothing more is written.
+    func cancel()
+}
+
+extension NWConnection: Link {
     /// The next bytes, at most `limit`. Throws at the end of the stream, on
     /// an error, and when the task is cancelled, which cancels the
     /// connection.
@@ -146,6 +158,83 @@ extension NWConnection {
         await withCheckedContinuation { continuation in
             send(content: data, contentContext: final ? .finalMessage : .defaultMessage, isComplete: true,
                  completion: .contentProcessed { _ in continuation.resume() })
+        }
+    }
+}
+
+/// A connection from the guest's door port: the socket the guest's
+/// connection came on, which it owns. It never blocks a thread: the socket
+/// does not block, and a read or write that must wait waits for the socket
+/// to be ready. Cancelling it, or cancelling the task under way, shuts the
+/// socket, which ends a read or write under way. The socket is closed once
+/// nothing holds the link.
+final class GuestLink: Link {
+    private let socket: Int32
+    private let queue = DispatchQueue(label: "sh.regents.cloak.door.guest")
+
+    /// Takes `socket`. Nil, having closed it, when the guest has closed its
+    /// end already: a socket shut both ways takes no option, so a write to
+    /// it would raise SIGPIPE.
+    static func take(_ socket: Int32) -> GuestLink? {
+        var on: Int32 = 1
+        guard setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+            close(socket)
+            return nil
+        }
+        return GuestLink(socket)
+    }
+
+    private init(_ socket: Int32) {
+        self.socket = socket
+        _ = fcntl(socket, F_SETFL, fcntl(socket, F_GETFL) | O_NONBLOCK)
+    }
+
+    deinit {
+        close(socket)
+    }
+
+    func next(upTo limit: Int) async throws -> [UInt8] {
+        try await withTaskCancellationHandler {
+            var buffer = [UInt8](repeating: 0, count: limit)
+            while true {
+                let n = buffer.withUnsafeMutableBytes { read(socket, $0.baseAddress!, $0.count) }
+                if n > 0 { return Array(buffer.prefix(n)) }
+                guard n < 0, errno == EAGAIN || errno == EINTR else { throw HTTPRequest.Ended() }
+                await ready(DispatchSource.makeReadSource(fileDescriptor: socket, queue: queue))
+            }
+        } onCancel: {
+            cancel()
+        }
+    }
+
+    func write(_ data: Data, final: Bool) async {
+        await withTaskCancellationHandler {
+            var done = 0
+            while done < data.count {
+                let n = data.withUnsafeBytes { Darwin.write(socket, $0.baseAddress! + done, data.count - done) }
+                if n > 0 {
+                    done += n
+                    continue
+                }
+                guard n < 0, errno == EAGAIN || errno == EINTR else { return }
+                await ready(DispatchSource.makeWriteSource(fileDescriptor: socket, queue: queue))
+            }
+            if final { shutdown(socket, SHUT_WR) }
+        } onCancel: {
+            cancel()
+        }
+    }
+
+    func cancel() {
+        shutdown(socket, SHUT_RDWR)
+    }
+
+    /// Returns once `source`'s socket can be read or written, or has ended.
+    private func ready(_ source: some DispatchSourceProtocol) async {
+        await withCheckedContinuation { continuation in
+            source.setEventHandler { source.cancel() }
+            source.setCancelHandler { continuation.resume() }
+            source.resume()
         }
     }
 }

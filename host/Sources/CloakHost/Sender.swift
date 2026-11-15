@@ -36,7 +36,11 @@ public enum Sender {
         try await onThread {
             defer { close(socket) }
             var on: Int32 = 1
-            setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+            // A sender that has hung up already refuses the setting, and a
+            // write to it would then end the app with a signal.
+            guard setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+                throw Failure(description: "the sender closed before its turn")
+            }
             guard let (kind, _) = frame(socket), kind == turn else { throw Failure(description: "the sender gave no turn") }
             guard Relay.write(socket, WorkerChannel.frame(Self.request, try request())) else {
                 throw Failure(description: "the sender closed before the request")

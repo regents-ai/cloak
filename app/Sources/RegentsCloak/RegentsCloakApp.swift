@@ -7,8 +7,9 @@ import os
 import SwiftUI
 
 /// The menu-bar app: one supervisor, its menu, its Chat, Agents and Details
-/// windows, the door other apps send through while Cloak is Running, and the
-/// control channel `cloak` uses to drive the same supervisor.
+/// windows, the door other apps and the agent in the guest send through
+/// while Cloak is Running, and the control channel `cloak` uses to drive the
+/// same supervisor.
 @main
 struct RegentsCloakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var app
@@ -45,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "app")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The agent's model requests from the guest come in at the door.
+        supervisor.door = { [door] socket in door.accept(guest: socket) }
         do {
             server = try ControlServer(path: Places.socket) { [supervisor] request in
                 await supervisor.handle(request)

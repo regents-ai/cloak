@@ -1615,6 +1615,57 @@ candidates, so the split has to be re-declared before any holdout opens.
     keychain has no wallet, and none was made: the stand-in proves it);
     Quit and Stop during a request live (the tests close the door the same
     way); Agents in light; a spoken VoiceOver run of Agents.
+- The owner's agent in the guest (14 November, decision 12), plumbing
+  first. A serving guest starts the door port (`cloak-port 8742`, the Tor
+  port's program, as user `door`) and the runner (`guest/runner/`, vsock
+  port 8030) before the sender; the runner or the sender ending ends the
+  guest.
+  - A task: the host sends the task text, the conversation's session id,
+    the model and the conversation's pass in one frame. The runner makes
+    the conversation's home and workspace under
+    `/home/agent/conversations/`, a copy of the wrapper for this task whose
+    `models.json` names the door (`http://127.0.0.1:8742/v1`) and carries
+    the pass, and starts the reference sandbox as the agent user running
+    `pi --provider cloak --model … --mode json --session-id …`, with the
+    task on Pi's standard input, never a command line (INS03). Pi's lines
+    come back as they are written, then how it exited. The host closing
+    the connection kills the sandbox and everything in it. One task at a
+    time in a conversation; conversations side by side.
+  - The door: the host opens vsock port 8742 only when given a door, and
+    the app's door serves each guest connection with the one HTTP reader,
+    limits, deadline and rules it has for an app's. A box pass
+    (`Door.pass(for:)`) works only from the guest, an app's pass only on
+    the Mac's loopback.
+  - What Pi 1.3.0 sends: the OpenAI library's headers, the user text as a
+    list of text parts, `stream: true`, `stream_options`, `store: false`,
+    `max_completion_tokens: 16384` and four tools (read, bash, edit,
+    write). The door takes it as it is, and Pi carries out the tool calls
+    in the door's one-chunk answer. Pi exits 0 when a model request fails;
+    its last message's stop reason says so.
+  - curl 8.14.1 is in the guest for the agent's tools (21.2 MB of the
+    root; the root is now 240,227,840 bytes and `initrd.gz` 97,043,807).
+    The guest stays at 1 GiB: with one task running a tool about 550 MiB
+    was still available.
+  - Checks, with no provider and no money: `swift test --package-path app`,
+    79 (the task stream against a stand-in runner; passes on each side
+    through the real door; the door's answers byte for byte those the kit's
+    stand-in door replays, `tests/door_answers.json`);
+    `tests/test_task_path.py`, 2 in about 4 s, through `cloak-host --serve
+    --door --runner`: Pi in the sandbox runs the tool call the door hands
+    back, curl under torsocks reaches the stand-in tor once and without
+    torsocks reaches nothing, the result goes back and Pi ends on the final
+    answer; a second task in a busy conversation is refused, another
+    conversation runs meanwhile, closing a task closes what its tools held
+    within 10 ms, and the next task continues the Pi session. The guest,
+    agent and Tor path suites pass (23, 7, 10).
+  - Not proven: a real provider's answers to Pi, the app driving a task,
+    several tasks against the memory line. Known: Pi's OpenAI library
+    retries a 5xx, so a request the provider was paid for and that then
+    failed on the way back could be paid for twice; tools reach the guest's
+    loopback services (the daemon's port, the Tor port, the door with their
+    own conversation's pass); a conversation's files are held in guest
+    memory with no limit; tool traffic shares one Tor circuit, as in the
+    reference.
 
 ## Decisions
 
@@ -1791,6 +1842,21 @@ candidates, so the split has to be re-declared before any holdout opens.
     owner's other apps (Agents) is unchanged and rewords every user message.
     This is the one exception to decision 10's "nothing is sent unless
     Reworded and Routed are good".
+12. The agent runs in the guest. Decided 14 November 2026 (Sean, "1. a and
+    then b", choosing it first of the three parts of the post Cloak lacked;
+    the design is the chief's). The post: "My agent harness is wrapped with
+    a bwrap sandbox (also experimenting with MicroVM) and wrapped again
+    with torsocks, so everything it does goes through Tor." The owner's
+    task runs as Pi in the guest, inside the reference sandbox, so its
+    tools go out only through the Tor port; its model requests come to the
+    door on the Mac like any app's, reworded there and sent from the one
+    wallet (Development mode, decision 10). Each agent conversation has a
+    pass of its own, in memory only, accepted only from the guest and
+    dropped when the door closes, and a folder and Pi session of its own in
+    the guest, which last until the guest ends. Tool results go to the
+    provider as written, as the pinned daemon sends them; only the owner's
+    own messages are reworded. Not the spec's session (the daemon's payment
+    is not built): it departs as decision 10 does, for development only.
 
 ## Gates
 

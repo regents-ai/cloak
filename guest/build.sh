@@ -1,7 +1,8 @@
 #!/bin/sh
-# Builds the guest into guest/build/: the adapter, the Tor port, the agent
-# check, the two routing instruments (the stage 1 reference's static probe
-# and a vsock probe), the daemon's rewrite check and the guest daemon (both
+# Builds the guest into guest/build/: the adapter, the port program (the Tor
+# port and the door port), the agent check, the agent's task runner, the two
+# routing instruments (the stage 1 reference's static probe and a vsock
+# probe), the daemon's rewrite check and the guest daemon (both
 # compiled inside the pinned daemon module with an overlay, so the daemon's
 # own files stay untouched, and both with Cloak's input limit and deadline,
 # decision 6 in docs/plan.md, patched into copies of two of its files), then
@@ -19,8 +20,9 @@ PYTHONDONTWRITEBYTECODE=1 uv run scripts/fetch_sources.py --check
 
 export GOOS=linux GOARCH=arm64 CGO_ENABLED=0 GOMAXPROCS=2
 (cd guest/adapter && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-adapter" .)
-(cd guest/torport && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-tor-port" .)
+(cd guest/torport && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-port" .)
 (cd guest/agent && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-agent-check" .)
+(cd guest/runner && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-runner" .)
 (cd guest/vsockprobe && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-vsock-probe" .)
 (cd reference/host/probe && nice -n 10 go build -p 2 -trimpath -o "$out/cloak-routing-probe" .)
 patch -s -o "$out/rewriter.go" "$module/internal/rewriter/rewriter.go" guest/daemon/rewriter.patch

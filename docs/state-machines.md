@@ -288,6 +288,32 @@ boot waits for that line; an adapter that exits first ends the wait at once.
 The Tor port and the daemon are waited for the same way. Any of them
 failing to start powers the guest off with a line saying which.
 
+A guest that serves goes on after the agent cases (decision 12):
+
+```
+door port ready --> runner ready --> sender ready --> the runner or the sender ends --> power off
+```
+
+Each of the two notes its end as one line on a pipe the boot reads. The
+boot is the guest's first process, so a stopped task's orphaned bubblewrap
+ends there and would interrupt a blocking open of that pipe; it is opened
+for reading and writing, which never blocks, and an interrupted read is
+read again.
+
+## 6b. One agent task (`guest/runner/main.go`, `host/Sources/CloakHost/Runner.swift`, `app/Sources/CloakSupervisor/AgentTasks.swift`)
+
+```
+connected --> request read within 10 s --> conversation claimed --> folders and wrapper copy made
+  --> sandbox started --> lines passed on as they come --> exited --> wrapper copy removed
+  --> conversation freed --> exit sent
+```
+
+A request that does not read or check is refused as invalid, and one for a
+conversation with a task under way as busy; nothing runs for either. The
+host closing the connection at any point kills the sandbox and everything
+in it. In the app, a pause, stop or quit ends each task under way as
+stopped before the guest is stopped.
+
 ## 6a. One agent case (`guest/agent/main.go`)
 
 ```
