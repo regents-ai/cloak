@@ -57,6 +57,41 @@ struct StoreTests {
         #expect(try store.load() == [.conversation(conversation)])
     }
 
+    /// The agent's conversation opens again with each task's steps, the
+    /// first task's even when it took none, so it is still the agent's.
+    @Test func tasksOpenAgainWithTheirSteps() throws {
+        defer { remove() }
+        let store = store()
+        let conversation = Conversation(turns: [
+            Turn(original: "Count the files here", reworded: nil, steps: []),
+            Turn(
+                original: "Count the files here", reworded: "Count the files in this folder.", answer: "There are 3.",
+                steps: [Step(tool: "bash", detail: "ls -1 | wc -l"), Step(tool: "grep", detail: nil)]),
+        ])
+        #expect(conversation.isAgent)
+        try store.save(conversation)
+        let loaded = try store.load()
+        #expect(loaded == [.conversation(conversation)])
+        guard case .conversation(let opened)? = loaded.first else { return }
+        #expect(opened.isAgent && opened.turns[0].steps == [])
+    }
+
+    /// A chat's turns are written as every turn was before there were tasks,
+    /// without steps, so a chat saved then opens as it was saved.
+    @Test func aChatSavedBeforeTasksOpensAsItWas() throws {
+        defer { remove() }
+        let written = try JSONEncoder().encode(Self.conversation)
+        let object = try #require(try JSONSerialization.jsonObject(with: written) as? [String: Any])
+        let turns = try #require(object["turns"] as? [[String: Any]])
+        #expect(turns.map { Set($0.keys) } == [["id", "original", "reworded"], ["id", "original", "reworded"]])
+        let opened = try JSONDecoder().decode(Conversation.self, from: written)
+        #expect(opened == Self.conversation && !opened.isAgent)
+
+        let store = store()
+        try store.save(Self.conversation)
+        #expect(try store.load() == [.conversation(Self.conversation)])
+    }
+
     @Test func eachSaveHasAFreshNonce() throws {
         defer { remove() }
         let store = store()

@@ -1658,8 +1658,25 @@ candidates, so the split has to be re-declared before any holdout opens.
     conversation runs meanwhile, closing a task closes what its tools held
     within 10 ms, and the next task continues the Pi session. The guest,
     agent and Tor path suites pass (23, 7, 10).
-  - Not proven: a real provider's answers to Pi, the app driving a task,
-    several tasks against the memory line. Known: Pi's OpenAI library
+  - In Chat (14 November): a conversation is a chat or the agent's, fixed
+    by its first message, chosen with a Chat and Agent control under the
+    message box while the conversation is empty. A task is a turn with a
+    list of steps (`Turn.steps`, absent in a chat, so saved chats open as
+    they were); `CloakChat/Agent.swift` runs it and
+    `CloakChat/PiEvent.swift` reads Pi's lines: a tool started is a step,
+    the model's last message the answer, a refused request the door's own
+    sentence. The card shows the task as written and, once a request of
+    it has gone through, as the door reworded it (`Door.reworded(for:)`),
+    the steps, the answer, Stop while it runs and Run Again on the newest
+    one that did not finish. Run is held back only where a request is
+    certain to stop (not running, no wallet, no funds as last seen), by
+    the rule Send uses. How a task ended is in memory only; after a
+    relaunch one without an answer reads "Not finished". `swift test
+    --package-path app`, 91, twelve of them the agent's against a
+    stand-in runner. Not built: tasks from the `cloak` command.
+  - Not proven: a real provider's answers to Pi, the app driving a task
+    with a live guest, the end-of-task save on Quit, several tasks against
+    the memory line. Known: Pi's OpenAI library
     retries a 5xx, so a request the provider was paid for and that then
     failed on the way back could be paid for twice; tools reach the guest's
     loopback services (the daemon's port, the Tor port, the door with their

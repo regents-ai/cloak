@@ -302,6 +302,29 @@ public final class Door {
         return pass
     }
 
+    /// The last user message of one of the owner's agent conversations as
+    /// the door last reworded it: its text, or its texts on lines of their
+    /// own. Nil before the door has reworded one, and once the door closes.
+    public func reworded(for conversation: UUID) -> String? {
+        guard boxes[conversation] != nil, let user = memories[conversation]?.transcript.last(where: { $0.user != nil })?.user,
+            let content = (try? GoJSON.read(user))?.members?["content"]
+        else { return nil }
+        switch content.value {
+        case .string(let text):
+            return text
+        case .array(let parts):
+            let texts = parts.compactMap { part -> String? in
+                guard let part = part.members, (try? part["type"]?.string()) == "text", case .string(let text)? = part["text"]?.value,
+                    !Asked.isBlank(text)
+                else { return nil }
+                return text
+            }
+            return texts.isEmpty ? nil : texts.joined(separator: "\n")
+        default:
+            return nil
+        }
+    }
+
     /// Serves one connection from the guest's door port, the socket it
     /// takes, as any app's, while the door is open; closes it otherwise, or
     /// when the guest has closed it already.
@@ -419,7 +442,7 @@ public final class Door {
         let asked = try await Asked.read(body)
         guard let ids = Self.ids(try await models()) else { throw Self.unreadable }
         guard ids.contains(asked.model) else {
-            throw Failure(404, "model_not_found", "The provider has no model \(asked.model). /v1/models lists those it has.")
+            throw Failure(404, "model_not_found", "The provider has no model \(asked.model).")
         }
         var memory = memories[app] ?? Memory()
         let identity = memory.identity(for: asked.messages)

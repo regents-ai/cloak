@@ -26,8 +26,8 @@ struct RegentsCloakApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let supervisor = Launch.supervisor
-    private lazy var chat = AppWindow { [supervisor] in
-        ChatView.window(Chat(supervisor: supervisor, folder: Launch.layout.conversations, wallet: Launch.layout.wallet))
+    private lazy var chat = AppWindow { [supervisor, door] in
+        ChatView.window(Chat(supervisor: supervisor, folder: Launch.layout.conversations, wallet: Launch.layout.wallet, door: door))
     }
     private lazy var details = AppWindow { [supervisor] in DetailsView.window(supervisor) }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }

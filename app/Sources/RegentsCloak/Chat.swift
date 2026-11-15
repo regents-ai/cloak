@@ -1,4 +1,5 @@
 import CloakChat
+import CloakDoor
 import CloakSupervisor
 import Foundation
 import Observation
@@ -10,7 +11,9 @@ import os
 /// ticks Send Original for that message (decision 11 in docs/plan.md), and
 /// only when its owner presses Send: in Development mode (decision 10)
 /// through the guest's sender and Tor to a remote model, paid from the one
-/// wallet.
+/// wallet. A conversation whose first message is a task is the agent's
+/// (decision 12): each task runs when its owner presses Run, its model
+/// requests reworded at the door.
 @MainActor
 @Observable
 final class Chat {
@@ -57,7 +60,14 @@ final class Chat {
         let newMessage: Bool
     }
 
+    /// What a conversation is, fixed by its first message.
+    enum Kind: Hashable {
+        case chat
+        case agent
+    }
+
     let supervisor: Supervisor
+    let agent: Agent
     let folder: URL
     let wallet: Wallet
     private(set) var access = Access.opening
@@ -71,6 +81,9 @@ final class Chat {
     /// The next message goes as written, without rewording. In memory only:
     /// off at each launch.
     var sendOriginal = false
+    /// What the empty conversation's first message makes it. In memory only:
+    /// a chat at each launch.
+    var kind = Kind.chat
     private(set) var rewording: Rewording?
     var stop: Stop?
     /// The unsent message last opened or added; see `isOpen(_:in:)`. In
@@ -86,10 +99,19 @@ final class Chat {
     @ObservationIgnored private var identities: [UUID: String] = [:]
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "chat")
 
-    init(supervisor: Supervisor, folder: URL, wallet: URL) {
+    init(supervisor: Supervisor, folder: URL, wallet: URL, door: Door) {
         self.supervisor = supervisor
         self.folder = folder
         self.wallet = Wallet(supervisor: supervisor, folder: wallet)
+        let agent = Agent(parts: Agent.Parts(
+            run: { supervisor.run($0) }, pass: { door.pass(for: $0) }, reworded: { door.reworded(for: $0) }))
+        self.agent = agent
+        // Each start of Cloak is a new guest, without the agent's earlier work.
+        Task {
+            for await running in Observations({ supervisor.phase == .running }) where running {
+                agent.restarted()
+            }
+        }
     }
 
     var selected: Conversation? {
@@ -112,9 +134,24 @@ final class Chat {
     }
 
     /// A message going as written is added without Cloak running; its card
-    /// then says why Send is off.
+    /// then says why Send is off. A task runs unless running it is certain
+    /// to stop, or one runs in its conversation already.
     var canSubmit: Bool {
-        (sendOriginal ? canCompose : canReword) && !Self.isBlank(draft)
+        guard let selected, !Self.isBlank(draft) else { return false }
+        if isAgent(selected) { return isOpen && runBlock == nil && agent.runs[selected.id] == nil }
+        return sendOriginal ? canCompose : canReword
+    }
+
+    /// Whether `conversation` is the agent's: as its first turn is, or, while
+    /// it has none, as chosen.
+    func isAgent(_ conversation: Conversation) -> Bool {
+        conversation.turns.isEmpty ? kind == .agent : conversation.isAgent
+    }
+
+    /// Whether the agent of `conversation`, which has earlier tasks, starts
+    /// without them: Cloak has started again since it last ran one.
+    func startsFresh(_ conversation: Conversation) -> Bool {
+        conversation.isAgent && agent.runs[conversation.id] == nil && !agent.ran.contains(conversation.id)
     }
 
     /// Whether `turn` is its conversation's open message, the one card that
@@ -134,10 +171,27 @@ final class Chat {
     /// turns it off.
     func sendBlock(_ turn: Turn) -> String? {
         if let reworded = turn.reworded, Self.isBlank(reworded) { return "Reword it to send." }
-        if supervisor.phase != .running { return "Start Cloak to send." }
-        if wallet.address == nil { return "Create a wallet to send." }
-        if wallet.lacksFunds { return "Add funds to send." }
-        return nil
+        return switch block {
+        case .notRunning?: "Start Cloak to send."
+        case .noWallet?: "Create a wallet to send."
+        case .noFunds?: "Add funds to send."
+        case nil: nil
+        }
+    }
+
+    /// Why Run is off now, or nil when it is on: off only where running is
+    /// certain to stop, as for Send.
+    var runBlock: String? {
+        switch block {
+        case .notRunning?: "Start Cloak to run."
+        case .noWallet?: "Create a wallet to run."
+        case .noFunds?: "Add funds to run."
+        case nil: nil
+        }
+    }
+
+    private var block: Block? {
+        Block(running: supervisor.phase == .running, hasWallet: wallet.address != nil, lacksFunds: wallet.lacksFunds)
     }
 
     /// Finds the key, or makes the first one, then opens every conversation
@@ -193,6 +247,7 @@ final class Chat {
     func delete(_ id: UUID) {
         guard case .open(let store) = access, let conversation = conversations.first(where: { $0.id == id }) else { return }
         if rewording?.conversation == id { rewording?.task.cancel() }
+        agent.stop(id)
         identities[id] = nil
         if !conversation.turns.isEmpty {
             do {
@@ -211,12 +266,15 @@ final class Chat {
     }
 
     /// Rewords the message written, as a new turn of the conversation shown;
-    /// or, with Send Original ticked, adds it as written and sends it.
+    /// or, with Send Original ticked, adds it as written and sends it; or, in
+    /// the agent's conversation, runs it as its next task.
     func submit() {
         let original = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSubmit, var conversation = selected else { return }
         draft = ""
-        if sendOriginal {
+        if isAgent(conversation) {
+            run(original, in: conversation.id)
+        } else if sendOriginal {
             let turn = Turn(original: original, reworded: nil)
             conversation.turns.append(turn)
             opened = turn.id
@@ -236,6 +294,34 @@ final class Chat {
 
     func cancel() {
         rewording?.task.cancel()
+    }
+
+    /// Runs a task that ended without an answer again, as a new turn.
+    func runAgain(_ turn: Turn, in id: UUID) {
+        guard runBlock == nil else { return }
+        run(turn.original, in: id)
+    }
+
+    private func run(_ task: String, in id: UUID) {
+        agent.run(task, in: id, model: wallet.model) { [weak self] turn in
+            guard let self else { return }
+            keep(turn, in: id)
+            // A task that ended may have paid for its model requests.
+            if agent.runs[id] == nil { Task { await wallet.refresh() } }
+        }
+    }
+
+    /// Puts a task's turn in its conversation, in place of its old self or at
+    /// the end, and saves it. A conversation deleted meanwhile takes it with
+    /// it.
+    private func keep(_ turn: Turn, in id: UUID) {
+        guard var conversation = conversations.first(where: { $0.id == id }) else { return }
+        if let index = conversation.turns.firstIndex(where: { $0.id == turn.id }) {
+            conversation.turns[index] = turn
+        } else {
+            conversation.turns.append(turn)
+        }
+        update(conversation)
     }
 
     /// The reworded text as edited, until it is sent; saved as it changes.

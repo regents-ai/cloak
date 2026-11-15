@@ -84,6 +84,41 @@ struct DoorGuestTests {
         #expect(Array(stand.reworder.asked[before...]) == [["first question"], ["second question"]])
     }
 
+    /// What the agent's card shows as the task reworded: nothing before a
+    /// request has gone through; the task once one has, and still once its
+    /// tool's result has; the next task once its request has, its texts on
+    /// lines of their own; another conversation's nothing; and nothing once
+    /// the door closes.
+    @Test func eachConversationsTaskIsTheOneLastReworded() async throws {
+        let stand = try await Stand()
+        defer { stand.remove() }
+        func chat(_ messages: String...) -> String { #"{"model":"cheap","messages":["# + messages.joined(separator: ",") + "]}" }
+        let system = #"{"role":"system","content":"Be brief."}"#
+        let first = #"{"role":"user","content":[{"type":"text","text":"Count the files."}]}"#
+        let call = #"{"role":"assistant","content":null,"tool_calls":[{"id":"call_tool","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]}"#
+        let result = #"{"role":"tool","tool_call_id":"call_tool","content":"3"}"#
+        let answered = #"{"role":"assistant","content":"There are 3."}"#
+        let next = #"{"role":"user","content":[{"type":"text","text":"Now the folders."},{"type":"text","text":" "},{"type":"text","text":"Then stop."}]}"#
+        let a = UUID(), b = UUID()
+        let pass = try #require(stand.door.pass(for: a))
+        _ = try #require(stand.door.pass(for: b))
+        #expect(stand.door.reworded(for: a) == nil)
+
+        let steps: [(body: String, reworded: String)] = [
+            (chat(system, first), "COUNT THE FILES."),
+            (chat(system, first, call, result), "COUNT THE FILES."),
+            (chat(system, first, call, result, answered, next), "NOW THE FOLDERS.\nTHEN STOP."),
+        ]
+        for (index, step) in steps.enumerated() {
+            #expect(try await stand.askFromTheGuest(pass: pass, body: step.body)?.status == 200, "step \(index)")
+            #expect(stand.door.reworded(for: a) == step.reworded, "step \(index)")
+            #expect(stand.door.reworded(for: b) == nil, "step \(index)")
+        }
+
+        await stand.door.close()
+        #expect(stand.door.reworded(for: a) == nil)
+    }
+
     @Test func aGuestConnectionThatEndsBeforeAWholeRequestIsNotAnswered() async throws {
         let stand = try await Stand()
         defer { stand.remove() }

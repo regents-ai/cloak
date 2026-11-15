@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Chat: a new conversation can be the agent's (decision 12). Pick Agent
+  under the message box before the first message; each message is then a
+  task the agent works on inside Cloak's sealed guest. Its card shows the
+  task as written and as reworded, each step the agent takes (Ran, Read,
+  Edited, Wrote) and its answer. Stop ends it; one that ended without an
+  answer can run again; tasks in different conversations run at once.
+  After Cloak starts again the agent does not remember earlier tasks, and
+  the conversation says so. The door's refusals now say "Try again" and
+  name no address, since a task's card shows them too.
+
 - The agent in the guest, plumbing (decision 12): Cloak can run Pi on a
   task inside the sealed guest, in the reference sandbox. Its model
   requests come to the door on the Mac through a new door port, reworded

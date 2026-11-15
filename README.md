@@ -50,7 +50,7 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `rewriter-kit/` | The worker's protocol and pins: the frames to and from the host, the daemon's request, the replies and the model pins |
 | `host/` | The host library (tor, the worker's channel, the relay, the guest) and the `cloak-host` command the kits run |
 | `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build |
-| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), kernel and root build |
+| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), the door port and the runner (the owner's agent tasks, decision 12), kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
 | `evidence/stage4/` | Stage 4 development records and every score, one folder per model |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
@@ -339,6 +339,20 @@ pressed again 15 minutes later, takes it back. The deposit's state is sealed in
 conversations' key. The key never reaches the log, the control socket,
 `cloak status` or `cloak doctor`, and no message text does either; the log
 has only why a request stopped.
+
+A new conversation can be the agent's (decision 12, Development mode too):
+before its first message, pick Agent under the message box. Each message
+is then a task. The agent, Pi, works on it inside Cloak's sealed guest, in
+the reference sandbox: it reaches the model only through Cloak, which
+rewords the task on this Mac and sends it through Tor from the one wallet,
+and its tools reach the web only through Tor. What its tools read goes to
+the model as it is; only your own words are reworded. A task's card shows
+it as written and as reworded, each step the agent takes, and its answer.
+Stop ends a task and everything it started, as do Pause, Stop and Quit in
+the menu; one that ended without an answer can be run again. Tasks in
+different conversations run at the same time. The agent's work lives in
+the guest's memory, so after Cloak starts again it does not remember a
+conversation's earlier tasks, and the conversation says so.
 
 "Agents" in the menu lets your other apps on this Mac send through Cloak,
 in Development mode too, as to any server that speaks OpenAI's chat

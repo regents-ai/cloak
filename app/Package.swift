@@ -13,7 +13,7 @@ let package = Package(
         .target(
             name: "CloakSupervisor",
             dependencies: ["CloakControl", .product(name: "CloakHost", package: "host")]),
-        .target(name: "CloakChat", dependencies: ["CloakControl"]),
+        .target(name: "CloakChat", dependencies: ["CloakControl", .product(name: "CloakHost", package: "host")]),
         .target(name: "CloakDoor", dependencies: ["CloakControl", "CloakSupervisor", "CloakChat"]),
         .executableTarget(name: "RegentsCloak", dependencies: ["CloakControl", "CloakSupervisor", "CloakChat", "CloakDoor"]),
         .executableTarget(

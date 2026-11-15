@@ -7,7 +7,8 @@ import SwiftUI
 /// The Chat window: conversations on the left, newest first; the one shown
 /// on the right, each message as written and as reworded, side by side (or
 /// as written alone when it goes so), and its answer once sent, with the box
-/// to write the next one at the bottom.
+/// to write the next one at the bottom. In the agent's conversations, each
+/// task in place of a message, with the steps the agent took.
 /// Development mode's mark is always at the top.
 struct ChatView: View {
     @Bindable var chat: Chat
@@ -46,12 +47,23 @@ private struct Sidebar: View {
     var body: some View {
         List(selection: $chat.selection) {
             ForEach(chat.conversations) { conversation in
-                Text(conversation.title)
-                    .lineLimit(1)
-                    .tag(conversation.id)
-                    .contextMenu {
-                        Button("Delete", role: .destructive) { deleting = conversation }
+                let agent = chat.isAgent(conversation)
+                HStack(spacing: 6) {
+                    Text(agent && conversation.turns.isEmpty ? "New task" : conversation.title)
+                        .lineLimit(1)
+                    if agent {
+                        Spacer(minLength: 0)
+                        Image(systemName: "hammer")
+                            .imageScale(.small)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Agent")
                     }
+                }
+                .accessibilityElement(children: .combine)
+                .tag(conversation.id)
+                .contextMenu {
+                    Button("Delete", role: .destructive) { deleting = conversation }
+                }
             }
             ForEach(chat.unreadable, id: \.self) { id in
                 Label("Can't open", systemImage: "lock")
@@ -148,23 +160,39 @@ private struct Turns: View {
 
     var body: some View {
         let rewording = chat.rewording?.conversation == conversation.id ? chat.rewording : nil
+        let agent = chat.isAgent(conversation)
+        let run = chat.agent.runs[conversation.id]
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if conversation.turns.isEmpty, rewording == nil {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("New chat")
-                                .font(.title3.weight(.semibold))
-                            Text("Each message is reworded on this Mac first. You see both, can edit the reworded one, and send it.")
-                                .foregroundStyle(.secondary)
+                            if agent {
+                                Text("New task")
+                                    .font(.title3.weight(.semibold))
+                                Text("Each task is reworded on this Mac before the model sees it. You see both, each step the agent takes, and its answer.")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("New chat")
+                                    .font(.title3.weight(.semibold))
+                                Text("Each message is reworded on this Mac first. You see both, can edit the reworded one, and send it.")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .padding(.top, 8)
                     }
                     ForEach(conversation.turns) { turn in
-                        TurnCard(
-                            chat: chat, conversation: conversation.id, turn: turn,
-                            open: chat.isOpen(turn, in: conversation),
-                            rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil })
+                        if agent {
+                            let running = run?.turn.id == turn.id ? run : nil
+                            TaskCard(
+                                chat: chat, conversation: conversation.id, turn: running?.turn ?? turn, run: running,
+                                newest: turn.id == conversation.turns.last?.id)
+                        } else {
+                            TurnCard(
+                                chat: chat, conversation: conversation.id, turn: turn,
+                                open: chat.isOpen(turn, in: conversation),
+                                rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil })
+                        }
                     }
                     if let rewording, rewording.turn == nil {
                         PendingCard(chat: chat, rewording: rewording)
@@ -292,6 +320,184 @@ private struct TurnCard: View {
     }
 }
 
+/// One task: as written and, once the door has reworded it, as reworded,
+/// side by side, the words marked as in a message; the steps the agent took;
+/// its answer. While it runs, its newest steps, how long it has run, and
+/// Stop. One that ended without an answer says why and, as the newest, can
+/// run again. The newest without an answer has the lights.
+private struct TaskCard: View {
+    let chat: Chat
+    let conversation: UUID
+    let turn: Turn
+    let run: Agent.Run?
+    let newest: Bool
+    @State private var showingSteps = false
+
+    var body: some View {
+        let steps = turn.steps ?? []
+        Card {
+            HStack(alignment: .top, spacing: 12) {
+                if let reworded = turn.reworded {
+                    let diff = WordDiff(original: turn.original, reworded: reworded)
+                    Pane(title: "Original", count: diff.removed.count, mark: .removed) {
+                        TextBox(text: .constant(turn.original), label: "Original", editable: false, marks: diff.removed, mark: .removed)
+                    }
+                    Pane(title: "Reworded", count: diff.added.count, mark: .added) {
+                        TextBox(text: .constant(reworded), label: "Reworded", editable: false, marks: diff.added, mark: .added)
+                    }
+                } else {
+                    Pane(title: "Original", count: nil, mark: .removed) {
+                        TextBox(text: .constant(turn.original), label: "Original", editable: false)
+                    }
+                    if run != nil {
+                        Pane(title: "Reworded", count: nil, mark: .added) {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Rewording")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                }
+            }
+            if !steps.isEmpty {
+                if run != nil {
+                    // The newest few, the newest last.
+                    Pane(title: "Steps", count: nil, mark: .added) {
+                        StepList(steps: steps.suffix(5))
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button {
+                            showingSteps.toggle()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .rotationEffect(.degrees(showingSteps ? 90 : 0))
+                                    .accessibilityHidden(true)
+                                Text("^[\(steps.count) step](inflect: true)")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityValue(showingSteps ? "Expanded" : "Collapsed")
+                        if showingSteps {
+                            StepList(steps: steps[...])
+                                .paneBox()
+                        }
+                    }
+                }
+            }
+            if let answer = turn.answer, !Chat.isBlank(answer) {
+                Pane(title: "Answer", count: nil, mark: .added) {
+                    TextBox(text: .constant(answer), label: "Answer", editable: false)
+                }
+            }
+            if run == nil, turn.answer == nil {
+                if let end = chat.agent.ends[turn.id] {
+                    EndRow(end: end)
+                } else {
+                    Text("Not finished")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if newest, turn.answer == nil {
+                // The door sends nothing of a task that it has not reworded.
+                Lights(reworded: true, routed: chat.supervisor.phase == .running)
+            }
+            if let run {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Working")
+                    Text(timerInterval: run.started...Date.distantFuture, countsDown: false)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Stop") { chat.agent.stop(conversation) }
+                }
+                .accessibilityElement(children: .contain)
+            } else if newest, turn.answer == nil {
+                HStack(spacing: 12) {
+                    Spacer()
+                    let block = chat.runBlock
+                    if let block {
+                        Text(block)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("Run Again", systemImage: "arrow.clockwise") { chat.runAgain(turn, in: conversation) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(block != nil)
+                }
+            }
+        }
+    }
+}
+
+/// A task's steps, one a line: the tool, then the command or the file.
+private struct StepList: View {
+    let steps: ArraySlice<Step>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(steps.indices, id: \.self) { index in
+                let step = steps[index]
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(step.label)
+                        .fontWeight(.medium)
+                    if let detail = step.detail {
+                        Text(detail)
+                            .font(.callout.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 2)
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Steps")
+    }
+}
+
+/// Why a task ended without an answer.
+private struct EndRow: View {
+    let end: Agent.End
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(end.title)
+                    .fontWeight(.medium)
+                if let words = end.words {
+                    Text(words)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .padding(12)
+        .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
 /// Whether the message is reworded, routed through Tor and unlinked from
 /// the person's other chats.
 private struct Lights: View {
@@ -415,22 +621,36 @@ private struct Pane<Content: View>: View {
                 }
             }
             content
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator.opacity(0.6)))
+                .paneBox()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
+extension View {
+    /// The box a pane's text sits in.
+    fileprivate func paneBox() -> some View {
+        padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator.opacity(0.6)))
+    }
+}
+
 /// The box for the next message, with Send Original under it, what stopped
 /// the last rewording, and, unless Cloak is running, why rewording waits and
-/// a Start button.
+/// a Start button. In the agent's conversation, the box for the next task,
+/// with Run, or Stop while a task runs there, and a note when the agent
+/// starts without the earlier tasks. While the conversation is empty, what
+/// it is to be: a chat or the agent's.
 private struct Compose: View {
     @Bindable var chat: Chat
 
     var body: some View {
+        let conversation = chat.selected
+        let agent = conversation.map(chat.isAgent) ?? false
+        let running = conversation.flatMap { chat.agent.runs[$0.id] } != nil
+        let label = agent ? "Task" : "Message"
         VStack(alignment: .leading, spacing: 10) {
             if let stop = chat.stop {
                 Notice(symbol: "exclamationmark.circle.fill", tint: .orange, title: stop.title, detail: stop.detail) {
@@ -443,13 +663,13 @@ private struct Compose: View {
                 }
             }
             if chat.supervisor.phase != .running {
-                Waiting(supervisor: chat.supervisor)
+                Waiting(supervisor: chat.supervisor, agent: agent)
             }
             HStack(alignment: .bottom, spacing: 10) {
-                TextBox(text: $chat.draft, label: "Message", maxHeight: 160, autofocus: true, submit: chat.submit)
+                TextBox(text: $chat.draft, label: label, maxHeight: 160, autofocus: true, submit: chat.submit)
                     .overlay(alignment: .topLeading) {
                         if chat.draft.isEmpty {
-                            Text("Message")
+                            Text(label)
                                 .foregroundStyle(.tertiary)
                                 .padding(.leading, 7)
                                 .padding(.top, 6)
@@ -462,28 +682,62 @@ private struct Compose: View {
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
                     .disabled(!chat.canCompose)
-                let title: LocalizedStringKey = chat.sendOriginal ? "Send" : "Reword"
-                Button(title, systemImage: "arrow.up") { chat.submit() }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.circle)
-                    .controlSize(.large)
-                    .help(title)
-                    .disabled(!chat.canSubmit)
-                    // Level with a box of one line.
-                    .padding(.bottom, 4)
+                if running, let conversation {
+                    Button("Stop", systemImage: "stop.fill") { chat.agent.stop(conversation.id) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.circle)
+                        .controlSize(.large)
+                        .help("Stop")
+                        .keyboardShortcut(".", modifiers: .command)
+                        .padding(.bottom, 4)
+                } else {
+                    let title: LocalizedStringKey = agent ? "Run" : chat.sendOriginal ? "Send" : "Reword"
+                    Button(title, systemImage: "arrow.up") { chat.submit() }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.circle)
+                        .controlSize(.large)
+                        .help(title)
+                        .disabled(!chat.canSubmit)
+                        // Level with a box of one line.
+                        .padding(.bottom, 4)
+                }
             }
-            Toggle("Send Original", isOn: $chat.sendOriginal)
-                .toggleStyle(.checkbox)
-                .font(.callout)
+            HStack(spacing: 16) {
+                if let conversation, conversation.turns.isEmpty, chat.rewording?.conversation != conversation.id {
+                    Picker("Type", selection: $chat.kind) {
+                        Text("Chat").tag(Chat.Kind.chat)
+                        Text("Agent").tag(Chat.Kind.agent)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                if !agent {
+                    Toggle("Send Original", isOn: $chat.sendOriginal)
+                        .toggleStyle(.checkbox)
+                } else if let conversation, chat.supervisor.phase == .running, chat.startsFresh(conversation) {
+                    Label("The agent won't remember the earlier tasks here.", systemImage: "info.circle")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                // While Cloak is not running, the notice above says so.
+                if agent, chat.supervisor.phase == .running, let block = chat.runBlock {
+                    Text(block)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.callout)
         }
         .padding(16)
     }
 }
 
-/// Why rewording waits, while Cloak is not running.
+/// Why rewording, or the agent, waits while Cloak is not running.
 private struct Waiting: View {
     let supervisor: Supervisor
+    let agent: Bool
 
     var body: some View {
         let phase = supervisor.phase
@@ -507,13 +761,16 @@ private struct Waiting: View {
     }
 
     private func text(_ phase: Phase) -> String {
-        switch phase {
-        case .paused: "Cloak is paused. Start it to reword."
-        case .ready: "Cloak isn't running. Start it to reword."
-        case .preparing: "Cloak is starting."
-        case .stopping: "Cloak is stopping."
-        case .needsAttention(let reason): "\(reason.title) Start it again to reword."
-        case .running: "Cloak is running."
+        switch (phase, agent) {
+        case (.paused, false): "Cloak is paused. Start it to reword."
+        case (.paused, true): "Cloak is paused. Start it to run."
+        case (.ready, false): "Cloak isn't running. Start it to reword."
+        case (.ready, true): "Cloak isn't running. Start it to run."
+        case (.preparing, _): "Cloak is starting."
+        case (.stopping, _): "Cloak is stopping."
+        case (.needsAttention(let reason), false): "\(reason.title) Start it again to reword."
+        case (.needsAttention(let reason), true): "\(reason.title) Start it again to run."
+        case (.running, _): "Cloak is running."
         }
     }
 }
@@ -569,6 +826,40 @@ extension Chat.Stop {
         }
         let back = newMessage ? "Your message is back in the box." : "The message is as it was."
         return next.isEmpty ? back : back + " " + next
+    }
+}
+
+extension Step {
+    /// What the agent did, in a word: its four own tools by what they do,
+    /// any other by its name.
+    var label: String {
+        switch tool {
+        case "bash": "Ran"
+        case "read": "Read"
+        case "edit": "Edited"
+        case "write": "Wrote"
+        default: tool.prefix(1).uppercased() + tool.dropFirst()
+        }
+    }
+}
+
+extension Agent.End {
+    var title: String {
+        switch self {
+        case .stopped: "Stopped"
+        case .cloakStopped: "Cloak stopped"
+        case .unreachable: "No connection"
+        case .failed: "Not finished"
+        }
+    }
+
+    var words: String? {
+        switch self {
+        case .stopped: nil
+        case .cloakStopped: "Cloak was paused or stopped, so the task ended."
+        case .unreachable: "The agent couldn't reach Cloak. Agents says why."
+        case .failed(let sentence): sentence ?? "The agent stopped before it finished."
+        }
     }
 }
 
