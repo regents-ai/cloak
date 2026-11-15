@@ -314,7 +314,10 @@ fetch it again with the command above, and start again.
 "Chat" in the menu opens a Chat window. While Cloak is running, each
 message is reworded on the Mac and shown beside the original, with the
 words taken out and put in marked; the reworded text can be edited until
-it is sent. Each conversation, answers included, is kept as one sealed file
+it is sent. An answer's formatting is drawn (headings, lists, code,
+quotes, tables); its links show their address and never open, and its
+images are never loaded. Each conversation, answers included, is kept as
+one sealed file
 in `~/Library/Application Support/Regents Cloak/conversations/`, with its
 key in the login keychain. After a rebuild, the Mac asks once whether the
 new build may use that key.

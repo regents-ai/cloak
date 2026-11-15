@@ -263,7 +263,7 @@ private struct TurnCard: View {
             }
             if let answer = turn.answer {
                 Pane(title: "Answer", count: nil, mark: .added) {
-                    TextBox(text: .constant(answer), label: "Answer", editable: false)
+                    AnswerText(text: answer)
                 }
             }
             if let stop = chat.sendStop, stop.turn == turn.id {
@@ -397,7 +397,7 @@ private struct TaskCard: View {
             }
             if let answer = turn.answer, !Chat.isBlank(answer) {
                 Pane(title: "Answer", count: nil, mark: .added) {
-                    TextBox(text: .constant(answer), label: "Answer", editable: false)
+                    AnswerText(text: answer)
                 }
             }
             if run == nil, turn.answer == nil {

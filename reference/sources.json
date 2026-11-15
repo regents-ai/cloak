@@ -19,6 +19,15 @@
       "role": "The later snapshot the spec cites (S06 to S09), 45 commits after the post's commit. Research only; adds the Sepolia staging deployment."
     },
     {
+      "name": "zkapi-mainnet",
+      "kind": "git",
+      "url": "https://github.com/ethereum/zkapi.git",
+      "ref": "release/zkapi-server-time-mainnet-20261106",
+      "commit": "cda02d83c4c6b5880f97fd6b678b94ea48535444",
+      "full_history": false,
+      "role": "The release line behind Open Anonymity's mainnet service (vault 0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe, circuit zkapi-v2-note-bound-v1), head of 6 Nov 2026. Sean chose it on 15 Nov as the deployment Cloak pays through."
+    },
+    {
       "name": "pi",
       "kind": "npm",
       "package": "@earendil-works/pi-coding-agent",

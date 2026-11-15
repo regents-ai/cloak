@@ -1683,8 +1683,8 @@ candidates, so the split has to be re-declared before any holdout opens.
     Stopped, with Run Again, and Cloak stayed Running. Each showed its
     task as written and as reworded, and its step.
   - Not proven: the end-of-task save on Quit, several tasks against
-    the memory line. Known: an answer's Markdown shows as written, marks
-    and all; Pi's OpenAI library
+    the memory line. Known: an answer's Markdown showed as written, marks
+    and all (drawn since: "Answers drawn", below); Pi's OpenAI library
     retries a 5xx, so a request the provider was paid for and that then
     failed on the way back could be paid for twice; tools reach the guest's
     loopback services (the daemon's port, the Tor port, the door with their
@@ -1788,6 +1788,33 @@ candidates, so the split has to be re-declared before any holdout opens.
     label the model wants in three words can come out as two run together,
     and an odd detail slips in (a budget for a cover letter); a bedtime
     story of ten minutes got none.
+- Answers drawn (15 November). An answer's Markdown, a chat's or an agent
+  task's, is drawn rather than shown as written: headings (`####` and
+  deeper drawn as `###`), bold, italic, struck and code words, fenced code
+  (monospaced, scrolling sideways, its language dropped), bullet and
+  numbered lists with one level of nesting (deeper items join that level),
+  quotes, rules and pipe tables as a plain grid. A link shows its words,
+  then its address in the secondary colour, and does not open, since a
+  click would open the browser outside Tor; an image is never loaded, its
+  words and address shown; HTML shows as written. A line the splitter
+  does not understand belongs to a paragraph, so every answer draws. The
+  answer as saved and sent, and Original and Reworded, are unchanged.
+  - `CloakChat/Markdown.swift` splits the text into blocks line by line
+    (not CommonMark); `RegentsCloak/AnswerText.swift` reads each block's
+    spans with Foundation's `AttributedString(markdown:)`, inline only,
+    once per answer text, and draws them. The answer is as tall as its
+    text, where the box it replaces scrolled inside itself past 320
+    points; text is selected a block at a time.
+  - Checks: `swift test --package-path app`, 137 (30 new, on the
+    splitter's blocks). Off-screen renders of every element in the
+    chat's scroll view, light and dark, at two widths. A 21,000-character
+    answer of 270 blocks, with the Mac's load about 30: split 1.4 ms and
+    spans 11 ms, once; first layout 120 to 150 ms, against 20 to 40 ms for
+    the box it replaces; laid out again at another width 16 to 19 ms,
+    against 39 to 41 ms.
+  - Not proven: the running app; VoiceOver (the headings, lists, code,
+    quotes and tables are marked for it); the scroll wheel over a code
+    block passing up and down to the chat.
 
 ## Decisions
 

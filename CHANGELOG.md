@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Reference: the source of Open Anonymity's mainnet zkAPI release line is
+  pinned as `zkapi-mainnet` (research; nothing is built from it yet).
+
+- Chat: an answer's formatting is drawn, where its Markdown showed as
+  written, marks and all. Headings, bold, italic, struck and code words,
+  code blocks (monospaced, scrolling sideways rather than wrapping), lists
+  with one level of nesting, quotes, rules and simple tables, in chat and
+  agent answers alike. A link shows its words and then its address, and
+  never opens, since a click would open the browser outside Tor; an image
+  is never loaded, its words and address shown instead; HTML shows as
+  written. An answer now shows in full, where a long one scrolled inside
+  its own box, and its text is selected a block at a time. The answer as
+  saved is unchanged, and Original and Reworded are as they were.
+
 - Plan: the agent's first real tasks and the details pills, as seen in the
   running app on 15 November.
 
