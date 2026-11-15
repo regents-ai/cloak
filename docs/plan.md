@@ -1683,6 +1683,19 @@ candidates, so the split has to be re-declared before any holdout opens.
     own conversation's pass); a conversation's files are held in guest
     memory with no limit; tool traffic shares one Tor circuit, as in the
     reference.
+- zkAPI payment, the part Sean put second (14 November, "1. a and then
+  b"), as found that day. Nothing can be paid yet: the pinned daemon's
+  deployment files for mainnet and Sepolia both say `not_deployed` with no
+  vault address (`zkapi-clientd/internal/zkapi/deployments/`), and the
+  current README of github.com/ethereum/zkapi (main at `6fb229af`, 57
+  commits past the pin) says "concession network manifests are undeployed
+  and production proving keys are missing" and that its builds refuse both
+  networks. The one live surface it names is the hosted app
+  chat.openanonymity.ai, with an Ethereum wallet option; which vault that
+  app pays into was not looked up. Deposits are native ETH into
+  `ZkApiVault`; the server forwards to OpenRouter under the operator's
+  key. The way forward is Sean's choice (wait and track, or run a
+  deployment of our own, which is protected work).
 
 ## Decisions
 
