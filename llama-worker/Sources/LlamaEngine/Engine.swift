@@ -19,10 +19,22 @@ public final class Engine: @unchecked Sendable {
         public let metalAllocatedBytes: UInt64
     }
 
+    /// What a request asks for, by its user message.
+    public enum Ask: Sendable {
+        /// The daemon's rewrite of `{"texts":[...]}`.
+        case rewrite
+        /// Cloak's own details of a message being written, `{"draft":"..."}`
+        /// (decision 13 in docs/plan.md).
+        case details
+    }
+
     private let engine: OpaquePointer
     /// The pinned reply grammar, reference/rewrite-reply.gbnf, built into
     /// this worker (decision 9 in docs/plan.md).
     private let grammar: String
+    /// Cloak's details grammar, reference/details-reply.gbnf, built into this
+    /// worker and part of no pin (decision 13).
+    private let detailsGrammar = String(decoding: Data(PackageResources.details_reply_gbnf), as: UTF8.self)
     /// Rewrites run here, off Swift's own threads, as llama.cpp blocks while
     /// it computes.
     private let queue = DispatchQueue(label: "sh.regents.cloak.rewriter-llama")
@@ -67,16 +79,25 @@ public final class Engine: @unchecked Sendable {
 
     public func cancel() { cloak_engine_cancel(engine) }
 
-    /// The grammar a rewrite of this request decodes under: the pinned one,
-    /// for exactly as many texts as the user message carries. The worker adds
+    /// What this request asks for and the grammar it decodes under. For the
+    /// daemon's `{"texts":[...]}` with at least one text, the pinned grammar,
+    /// for exactly as many texts as the user message carries: the worker adds
     /// the grammar's `texts` rule, written out item by item, as llama.cpp
-    /// repeats a rule at most 2000 times. Nil when the user message is not
-    /// the daemon's `{"texts":[...]}` with at least one text.
-    public func grammar(for request: ChatRequest) -> String? {
-        guard let message = try? JSONDecoder().decode([String: [String]].self, from: Data(request.user.utf8)),
+    /// repeats a rule at most 2000 times. For Cloak's `{"draft":"..."}`, the
+    /// details grammar as built in. Nil for any other user message.
+    public func grammar(for request: ChatRequest) -> (ask: Ask, grammar: String)? {
+        let user = Data(request.user.utf8)
+        if let message = try? JSONDecoder().decode([String: [String]].self, from: user),
             message.count == 1, let texts = message["texts"], !texts.isEmpty
-        else { return nil }
-        return grammar + "texts ::= item" + String(repeating: " \",\" item", count: texts.count - 1) + "\n"
+        {
+            return (.rewrite, grammar + "texts ::= item" + String(repeating: " \",\" item", count: texts.count - 1) + "\n")
+        }
+        if let message = try? JSONDecoder().decode([String: String].self, from: user), message.count == 1,
+            message["draft"] != nil
+        {
+            return (.details, detailsGrammar)
+        }
+        return nil
     }
 
     public func rewrite(_ request: ChatRequest, grammar: String) async -> Rewrite {

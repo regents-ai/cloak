@@ -145,6 +145,23 @@ public final class Supervisor {
         }
     }
 
+    /// The details `draft` leaves open, from the worker while Running
+    /// (`Details`, decision 13). Any later request to the worker, a rewrite
+    /// above all, has it stop this one first. The log has how it ended and
+    /// how long it took, never the draft or its details.
+    public func details(for draft: String) async throws(RewriteStop) -> [Detail] {
+        guard case .running = phase, let relay = stack.relay else { throw .stopped }
+        let started = ContinuousClock.now
+        do {
+            let details = try await Details.run(draft, model: manifest.model.name, relay: relay, deadline: Details.deadline)
+            logger.info("details answered in \(started.duration(to: .now), privacy: .public)")
+            return details
+        } catch {
+            logger.info("details \(String(describing: error), privacy: .public) after \(started.duration(to: .now), privacy: .public)")
+            throw error
+        }
+    }
+
     /// One exchange with the guest's sender while Running (`Sender.exchange`):
     /// the request is built when the sender gives it its turn, and each
     /// deposit change is kept before the sender goes on. The log has how long

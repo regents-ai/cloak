@@ -7,6 +7,10 @@ import Synchronization
 /// and the app's own requests (`answer(to:)`), are served one at a time, in
 /// order. A guest that closes its end once it has sent its request cancels the
 /// rewrite, including while the request is still being handed to the worker.
+/// An app's request may give way (decision 13 in docs/plan.md): the next
+/// request to arrive, the app's or a connection's, cancels it as its task's
+/// cancel would, so it holds that one up no longer than the worker takes to
+/// stop.
 ///
 /// A lost worker fails the request it had, or the one that found it gone:
 /// that connection closes without an answer, and its request is never sent
@@ -41,6 +45,8 @@ public final class Relay: Sendable {
     let token = randomBytes(32)
     private let afterLoss: AfterLoss
     private let slot: Mutex<Slot>
+    /// The last request that gives way, until a later request cancels it.
+    private let yielding = Mutex<Call?>(nil)
     private let queue = DispatchQueue(label: "sh.regents.cloak.relay")
     private let watch = DispatchQueue(label: "sh.regents.cloak.relay.watch")
 
@@ -51,6 +57,7 @@ public final class Relay: Sendable {
 
     /// Takes ownership of the socket.
     func accept(_ socket: Int32) {
+        giveWay(to: nil)
         queue.async { [self] in
             let lost = serve(socket)
             close(socket)
@@ -63,9 +70,11 @@ public final class Relay: Sendable {
     /// it was lost on this request, as for a guest connection. Cancelling the
     /// task cancels the request: before its turn it never reaches the worker;
     /// at the worker, the worker is told to stop it, and the answer it then
-    /// gives is returned.
-    public func answer(to request: Data) async -> Data? {
+    /// gives is returned. A request before it that gives way is cancelled the
+    /// same way; with `yielding`, this one gives way to the next.
+    public func answer(to request: Data, yielding: Bool = false) async -> Data? {
         let call = Call()
+        giveWay(to: yielding ? call : nil)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 queue.async { [self] in
@@ -123,6 +132,15 @@ public final class Relay: Sendable {
 
         func finish() {
             state.withLock { $0 = .finished }
+        }
+    }
+
+    /// A request has arrived: the one that gives way, if any, is cancelled,
+    /// and `next` gives way from now on when it does.
+    private func giveWay(to next: Call?) {
+        yielding.withLock { yielding in
+            yielding?.cancel()
+            yielding = next
         }
     }
 

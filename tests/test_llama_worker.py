@@ -1,7 +1,8 @@
 """Functional checks of the worker (decision 8 in docs/plan.md) over its
 supervisor channel, with the stand-in `standin-gguf-grammar`, decoded under
 the reply grammar (decision 9). Each check starts the installed, sandboxed
-worker. It answers the daemon's rewrite request and nothing else, cancels,
+worker. It answers the daemon's rewrite request and, besides it, only
+Cloak's details request (decision 13, not checked here), cancels,
 stops on a protocol fault, refuses a model folder that is not exactly the
 pinned files, runs in the sandbox with no network, links no network or
 server code, and logs numbers only, with llama.cpp itself writing nothing.
@@ -303,10 +304,10 @@ def test_the_worker_links_no_network_or_server_code():
 
 NUMBERS_ONLY = [re.compile(p) for p in (
     rf"loaded {NAME}; weights \d+ bytes, Metal allocated \d+ bytes",
-    r"rewrite (stop|length): \d+ prompt tokens in [\d.]+ s, \d+ generated in [\d.]+ s; "
+    r"(rewrite|details) (stop|length): \d+ prompt tokens in [\d.]+ s, \d+ generated in [\d.]+ s; "
     r"context \d+ tokens, Metal allocated \d+ bytes",
-    r"rejected a request that is not the daemon's rewrite request",
-    r"rewrite cancelled",
+    r"rejected a request that is neither the daemon's rewrite request nor Cloak's details request",
+    r"(rewrite|details) cancelled",
 )]
 
 

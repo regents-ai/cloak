@@ -1696,6 +1696,58 @@ candidates, so the split has to be re-declared before any holdout opens.
   `ZkApiVault`; the server forwards to OpenRouter under the operator's
   key. The way forward is Sean's choice (wait and track, or run a
   deployment of our own, which is protected work).
+- Details while writing (15 November, decision 13). While a message or a
+  task is written in Chat, the one worker reads the draft and proposes up
+  to four details it leaves open; what the owner picks is added to the
+  message as lines.
+  - The worker takes one more request: the daemon's keys, with the user
+    message `{"draft":"..."}`, decoded under Cloak's own grammar,
+    [details-reply.gbnf](../reference/details-reply.gbnf), which is part of
+    no pin (`models.json` is unchanged). It allows `{"details":[...]}` with
+    at most four, each `options` (two to six, and whether several can be
+    picked), `range` (low, high, unit), `colors` (three to six, named, in
+    hex) or `pad` (two pairs of opposite words), with every string bounded
+    and no white space. The rewrite path is unchanged: three of the
+    daemon's rewrite requests gave the same replies (text, finish, token
+    counts) from the new worker and from one built from `88a5754`, the
+    commit before.
+  - In the app, `CloakSupervisor/Details.swift` holds Cloak's instruction,
+    the request, a strict reading of the reply and
+    `Supervisor.details(for:)`; `CloakSupervisor/DetailPicks.swift` what is
+    picked and the message it makes; `RegentsCloak/DetailsRow.swift` the
+    pills and pickers. A details request has 30 s and 1,024 tokens, is
+    never sent over the 10,000-character limit, and gives way: the relay
+    stops it when any later request arrives, a rewording, the door's or a
+    guest connection (section 3 of
+    [state-machines.md](state-machines.md)).
+  - Chat asks once the draft has rested 1.2 s, has four words or more,
+    Cloak runs and nothing is being reworded. A changed draft cancels the
+    request and starts over; the first pick fixes the details until the
+    message is submitted or emptied; showing another conversation clears
+    them; a failed or empty answer shows nothing.
+  - Checks: `swift test --package-path app`, 107 (16 new: the reader on all
+    four kinds and 30 replies it refuses, the message from picks, the first
+    pick, the four-word rule, the request's shape, the limit, a cancel, the
+    deadline, and giving way, both ways, through a real relay to
+    `tests/fake_worker.py`). The real small lead
+    (`small-lead-gguf-grammar`), through the freshly built worker, on 12
+    drafts: 2.5 to 3.8 s for a short draft with details, under 0.6 s for
+    none, 6.6 s for a draft of 9,896 characters (2,889 prompt tokens), with
+    the Mac's load average about 5; at about 20, 3.0 to 5.6 s, under 1 s and
+    8.1 s, with the same details. Every reply passed the app's reader.
+    "What is the capital of France?", the Safari login bug, ounces in a cup
+    and a text to a partner got none;
+    English, Spanish and Japanese drafts got details in their own language.
+    A cancel 1 s in was answered 499 within 0.02 s, and the next request
+    answered as usual.
+  - Not proven: the pills and pickers in the running app (drawn off screen
+    in light and dark only; never pressed, and the popovers, keyboard and
+    VoiceOver not run); giving way to a real rewording in the app; the
+    instruction beyond these 12 drafts. Known: greedy decoding still asks
+    some things a draft settles (how many days, of "a week in Japan"), a
+    label the model wants in three words can come out as two run together,
+    and an odd detail slips in (a budget for a cover letter); a bedtime
+    story of ten minutes got none.
 
 ## Decisions
 
@@ -1887,6 +1939,19 @@ candidates, so the split has to be re-declared before any holdout opens.
     provider as written, as the pinned daemon sends them; only the owner's
     own messages are reworded. Not the spec's session (the daemon's payment
     is not built): it departs as decision 10 does, for development only.
+13. Details while writing, like Feedforward. Sean asked for it on 15 November
+    2026 with a video of it; the chief set the shape. While the owner writes in Chat, a chat's message or an
+    agent's task, the one model on the Mac proposes up to four details the
+    draft leaves open, as pills above the message box. What is picked is
+    added to the message after a blank line, one `Label: value` line each;
+    a detail left alone adds nothing. The draft goes only to the model on
+    this Mac: nothing leaves it, nothing is paid, and neither the draft,
+    the details nor the picks are logged. The worker takes this one request
+    besides the daemon's, decoded under Cloak's own grammar
+    ([details-reply.gbnf](../reference/details-reply.gbnf)), which is part
+    of no pin. A details request never holds up a rewrite: any later
+    request to the worker stops it. It is no rewrite stage and leaves the
+    daemon's request, instruction, grammar and checks as they are.
 
 ## Gates
 

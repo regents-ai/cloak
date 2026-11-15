@@ -28,7 +28,9 @@ The contract is [docs/spec-v0.4.md](docs/spec-v0.4.md). Read sections 1, 4, 7,
 - The rewriter is one native llama.cpp worker on macOS (`llama-worker/`,
   decision 8 in `docs/plan.md`), reached from the guest only
   through one authenticated adapter that carries the daemon's chat request and
-  reply. Exactly one model, loader and configuration ships: no model picker,
+  reply. The app asks it one thing besides: a draft's details, Cloak's own
+  request under Cloak's own grammar (decision 13), never in place of a
+  rewrite. Exactly one model, loader and configuration ships: no model picker,
   no switching by hardware, no second rewrite stage.
 - The daemon's instruction bytes, request fields, reply checks and limits stay
   exactly as captured in `reference/rewriter-contract.md`, but for the input

@@ -81,7 +81,9 @@ def main() -> None:
             continue
         count += 1
         (LOG / f"{count}.json").write_bytes(body)
-        texts = json.loads(json.loads(body)["messages"][1]["content"])["texts"]
+        message = json.loads(json.loads(body)["messages"][1]["content"])
+        # A details request (decision 13) picks its case from its draft.
+        texts = [message["draft"]] if "draft" in message else message["texts"]
         case = texts[0].split()[0].removeprefix("case:")
         rewritten = [t.upper() for t in texts]
         match case:

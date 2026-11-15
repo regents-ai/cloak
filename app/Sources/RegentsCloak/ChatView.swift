@@ -642,9 +642,10 @@ extension View {
 /// a Start button. In the agent's conversation, the box for the next task,
 /// with Run, or Stop while a task runs there, and a note when the agent
 /// starts without the earlier tasks. While the conversation is empty, what
-/// it is to be: a chat or the agent's.
+/// it is to be: a chat or the agent's. Above either box, its details.
 private struct Compose: View {
     @Bindable var chat: Chat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let conversation = chat.selected
@@ -665,6 +666,7 @@ private struct Compose: View {
             if chat.supervisor.phase != .running {
                 Waiting(supervisor: chat.supervisor, agent: agent)
             }
+            DetailsRow(chat: chat)
             HStack(alignment: .bottom, spacing: 10) {
                 TextBox(text: $chat.draft, label: label, maxHeight: 160, autofocus: true, submit: chat.submit)
                     .overlay(alignment: .topLeading) {
@@ -731,6 +733,7 @@ private struct Compose: View {
             .font(.callout)
         }
         .padding(16)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: chat.picks.details)
     }
 }
 

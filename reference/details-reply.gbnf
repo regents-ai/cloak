@@ -1,0 +1,45 @@
+# Cloak's details reply, as a llama.cpp grammar (GBNF), for the details of a
+# message being written (decision 13 in docs/plan.md). Cloak's own, not the
+# daemon's: the llama worker decodes under it only when the request's user
+# message is {"draft":"..."}, and it is no part of any model's pin. It is
+# built into the worker beside rewrite-reply.gbnf.
+#
+# One JSON object with no white space: at most four details, each a label of
+# one or two words, a question and one picker, every field in a fixed order
+# and every string and list bounded, so a reply cannot run on. Strings hold
+# no quote, backslash or control character, so they need no escapes.
+
+root ::= "{\"details\":[" ( detail ( "," detail ){0,3} )? "]}"
+
+detail ::= options | range | colors | pad
+
+# Two to six choices, each with one emoji or none; many when more than one
+# can apply.
+options ::= "{\"kind\":\"options\"," head ",\"many\":" ( "true" | "false" ) ",\"options\":[" option ( "," option ){1,5} "]}"
+option ::= "{\"mark\":\"" emoji? "\",\"text\":\"" solid char{0,31} "\"}"
+
+# Whole numbers from low to high, and a unit, which may be empty.
+range ::= "{\"kind\":\"range\"," head ",\"low\":" int ",\"high\":" int ",\"unit\":\"" ( solid char{0,11} )? "\"}"
+
+# Three to six named colours.
+colors ::= "{\"kind\":\"colors\"," head ",\"colors\":[" swatch ( "," swatch ){2,5} "]}"
+swatch ::= "{\"name\":" words ",\"hex\":\"#" hex hex hex hex hex hex "\"}"
+
+# Two pairs of opposite words: left and right, top and bottom.
+pad ::= "{\"kind\":\"pad\"," head ",\"left\":" words ",\"right\":" words ",\"top\":" words ",\"bottom\":" words "}"
+
+head ::= "\"label\":" words ",\"question\":\"" solid char{0,59} "\""
+
+# One or two words, each of 1 to 12 characters.
+words ::= "\"" solid{1,12} ( " " solid{1,12} )? "\""
+
+# Any character but a quote, a backslash or a control character; solid is
+# also not a space.
+char ::= [^"\\\x00-\x1F\x7F]
+solid ::= [^"\\\x00-\x20\x7F]
+
+int ::= "0" | "-"? [1-9] [0-9]{0,5}
+
+hex ::= [0-9a-f]
+
+emoji ::= [\u2600-\u27BF\U0001F300-\U0001FAFF] "\uFE0F"?

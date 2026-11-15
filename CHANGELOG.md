@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Chat: details while you write (decision 13). Once a message or task has
+  four words or more and rests for about a second, the model on this Mac
+  proposes up to four details it leaves open, as pills above the message
+  box. A pill opens a picker: choices, a span, colours, or a square between
+  two pairs of opposite words, each with Something else. Each detail picked
+  is added under the message as a line, "Label: value"; the first pick keeps
+  the details until the message is sent or emptied. The draft goes only to
+  the model on this Mac, nothing is paid, and nothing of it is logged. A
+  rewording never waits for details: one asked for meanwhile stops them.
+
 - Chat: a new conversation can be the agent's (decision 12). Pick Agent
   under the message box before the first message; each message is then a
   task the agent works on inside Cloak's sealed guest. Its card shows the

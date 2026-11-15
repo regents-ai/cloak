@@ -75,9 +75,28 @@ final class Chat {
     private(set) var conversations: [Conversation] = []
     /// Conversation files that did not open; they are left as they are.
     private(set) var unreadable: [UUID] = []
-    var selection: UUID?
+    var selection: UUID? {
+        didSet {
+            guard selection != oldValue else { return }
+            picks = DetailPicks()
+            askDetails()
+        }
+    }
     /// The message being written.
-    var draft = ""
+    var draft = "" {
+        didSet {
+            guard draft != oldValue else { return }
+            if Self.isBlank(draft) { picks = DetailPicks() }
+            askDetails()
+        }
+    }
+    /// The details of the message being written, from the model on this Mac
+    /// (decision 13), and what is picked for them. Cleared when the draft is
+    /// emptied or another conversation is shown.
+    private(set) var picks = DetailPicks()
+    /// The details of the draft are being asked for.
+    private(set) var askingDetails = false
+    @ObservationIgnored private var detailsAsk: Task<Void, Never>?
     /// The next message goes as written, without rewording. In memory only:
     /// off at each launch.
     var sendOriginal = false
@@ -268,8 +287,9 @@ final class Chat {
     /// Rewords the message written, as a new turn of the conversation shown;
     /// or, with Send Original ticked, adds it as written and sends it; or, in
     /// the agent's conversation, runs it as its next task.
+    /// The message goes with a line for each detail picked.
     func submit() {
-        let original = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let original = picks.message(draft.trimmingCharacters(in: .whitespacesAndNewlines))
         guard canSubmit, var conversation = selected else { return }
         draft = ""
         if isAgent(conversation) {
@@ -389,7 +409,45 @@ final class Chat {
         (0..<32).map { _ in String(format: "%02x", UInt8.random(in: .min ... .max)) }.joined()
     }
 
+    /// Picks for a detail of the message being written, or clears its pick.
+    /// The first pick fixes the details shown, so none are asked for until
+    /// they are cleared.
+    func pick(_ pick: DetailPicks.Pick?, at index: Int) {
+        picks.pick(pick, at: index)
+        if picks.fixed { stopAskingDetails() }
+    }
+
+    /// Once the draft has rested a moment, asks the model on this Mac for its
+    /// details, in place of any request before. Not while something is
+    /// picked, nor unless the draft has a few words, Cloak is running and
+    /// nothing is being reworded. An answer that does not come shows
+    /// nothing.
+    private func askDetails() {
+        stopAskingDetails()
+        guard !picks.fixed, Details.enoughToAsk(draft) else { return }
+        let draft = draft
+        detailsAsk = Task {
+            guard (try? await Task.sleep(for: Self.draftRest)) != nil, canReword, !picks.fixed else { return }
+            askingDetails = true
+            let details = try? await supervisor.details(for: draft)
+            guard !Task.isCancelled else { return }
+            askingDetails = false
+            if let details { picks.show(details) }
+        }
+    }
+
+    /// How long the draft rests unchanged before its details are asked for.
+    private static let draftRest = Duration.milliseconds(1200)
+
+    private func stopAskingDetails() {
+        detailsAsk?.cancel()
+        detailsAsk = nil
+        askingDetails = false
+    }
+
     private func start(_ conversation: UUID, _ original: String, turn: UUID?) {
+        // A rewrite never waits on a details request.
+        stopAskingDetails()
         stop = nil
         let task = Task { await reword(original, in: conversation, turn: turn) }
         rewording = Rewording(conversation: conversation, original: original, turn: turn, started: .now, task: task)

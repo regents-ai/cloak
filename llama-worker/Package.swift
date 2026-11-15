@@ -34,11 +34,13 @@ let package = Package(
                 .linkedFramework("Metal"),
             ]),
         // The reply grammar (reference/rewrite-reply.gbnf) is built in, as the
-        // model pins are, so the signed binary decides what it decodes under.
+        // model pins are, so the signed binary decides what it decodes under;
+        // so is Cloak's details grammar (reference/details-reply.gbnf,
+        // decision 13).
         .target(
             name: "LlamaEngine",
             dependencies: ["CLlama", .product(name: "RewriterKit", package: "rewriter-kit")],
-            resources: [.embedInCode("rewrite-reply.gbnf")]),
+            resources: [.embedInCode("rewrite-reply.gbnf"), .embedInCode("details-reply.gbnf")]),
         .executableTarget(
             name: "cloak-rewriter-llama",
             dependencies: ["LlamaEngine", "CLlama", .product(name: "RewriterKit", package: "rewriter-kit")],

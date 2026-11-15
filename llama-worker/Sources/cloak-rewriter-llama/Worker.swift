@@ -67,14 +67,21 @@ final class Worker: Sendable {
     }
 
     /// Applies the model's own chat template with the pinned settings, then
-    /// decodes greedily under the pinned grammar. The reply carries exactly
-    /// the generated text; the daemon decides whether it is acceptable.
+    /// decodes greedily under the grammar for what the request asks: the
+    /// pinned one for the daemon's rewrite, Cloak's details grammar for a
+    /// draft's details (decision 13). The reply carries exactly the generated
+    /// text; the daemon, or for details the app, decides whether it is
+    /// acceptable.
     private func respond(to body: Data) async -> (UInt16, Data) {
         guard let request = try? JSONDecoder().decode(ChatRequest.self, from: body), request.model == pin.name,
-            let grammar = engine.grammar(for: request)
+            let (ask, grammar) = engine.grammar(for: request)
         else {
-            log.info("rejected a request that is not the daemon's rewrite request")
+            log.info("rejected a request that is neither the daemon's rewrite request nor Cloak's details request")
             return (400, Reply.error("invalid request"))
+        }
+        let name = switch ask {
+        case .rewrite: "rewrite"
+        case .details: "details"
         }
         let rewrite = await engine.rewrite(request, grammar: grammar)
         let finishReason: String
@@ -82,14 +89,14 @@ final class Worker: Sendable {
         case .stop: finishReason = "stop"
         case .length: finishReason = "length"
         case .cancelled:
-            log.info("rewrite cancelled")
+            log.info("\(name, privacy: .public) cancelled")
             return (499, Reply.error("cancelled"))
         case .failed(let step, let code):
-            log.error("rewrite failed at its \(step, privacy: .public) step, llama.cpp code \(code)")
+            log.error("\(name, privacy: .public) failed at its \(step, privacy: .public) step, llama.cpp code \(code)")
             return (500, Reply.error("rewrite failed"))
         }
         log.info(
-            "rewrite \(finishReason, privacy: .public): \(rewrite.promptTokens) prompt tokens in \(rewrite.promptSeconds, format: .fixed(precision: 2)) s, \(rewrite.generatedTokens) generated in \(rewrite.generateSeconds, format: .fixed(precision: 2)) s; context \(rewrite.contextTokens) tokens, Metal allocated \(rewrite.metalAllocatedBytes) bytes"
+            "\(name, privacy: .public) \(finishReason, privacy: .public): \(rewrite.promptTokens) prompt tokens in \(rewrite.promptSeconds, format: .fixed(precision: 2)) s, \(rewrite.generatedTokens) generated in \(rewrite.generateSeconds, format: .fixed(precision: 2)) s; context \(rewrite.contextTokens) tokens, Metal allocated \(rewrite.metalAllocatedBytes) bytes"
         )
         return (
             200,

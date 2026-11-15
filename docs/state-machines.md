@@ -20,14 +20,18 @@ rewriting: request checked --> prompt rendered --> context made --> grammar made
            reading the prompt, generating --cancel--> cancelled: 499
 ```
 
-- **request checked**: only the daemon's rewrite request for this model,
-  whose user message is the daemon's `{"texts":[...]}` with at least one
-  text, goes on: the count of texts fixes the grammar's `texts` rule
-  (decision 9). Anything else is answered 400 and never reaches llama.cpp.
+- **request checked**: two requests for this model go on. The daemon's
+  rewrite request, whose user message is the daemon's `{"texts":[...]}` with
+  at least one text: the count of texts fixes the grammar's `texts` rule
+  (decision 9). And Cloak's details request (decision 13), the same keys
+  with the user message `{"draft":"..."}`, which decodes under Cloak's
+  details grammar (`reference/details-reply.gbnf`) instead. Anything else is
+  answered 400 and never reaches llama.cpp.
 - **context made**: a context of the rewrite's own, sized for the prompt and
   `max_tokens`; nothing carries over from the rewrite before.
 - **grammar made**: llama.cpp's grammar sampler over the pinned grammar plus
-  the `texts` rule. It fails as `grammar` if it does not parse (code 0).
+  the `texts` rule, or over the details grammar. It fails as `grammar` if it
+  does not parse (code 0).
 - **reading the prompt**, in chunks of 512 tokens, then **generating**, one
   token at a time: a cancel sets a flag that llama.cpp's loop reads before
   each chunk and each token, so the rewrite stops within one chunk or one
@@ -178,6 +182,21 @@ worker from the same program and pinned files; the app's supervisor
 none, every later connection closes without an answer, with no further
 tries. `finish` (the end of a run) waits out a replacement first, so it ends
 the worker that replacement started.
+
+The app's own requests (`answer(to:)`) take their turn with the
+connections, each as one call:
+
+```
+waiting --its turn--> at the worker --answer--> finished
+waiting, at the worker --its task cancelled--> cancelled
+```
+
+A details request (decision 13) gives way: the next request to arrive, the
+app's or a connection's, cancels it as its task's cancel would, so a
+rewrite waits behind it no longer than the worker takes to stop (one token,
+or one 512-token chunk of the prompt). A rewrite never gives way. Checks:
+`aDetailsRequestGivesWayToARewrite`, `aRewriteNeverGivesWay`
+(`app/Tests/CloakTests/DetailsTests.swift`).
 
 Before: the host never replaced a lost worker, so every later rewrite in
 that boot failed; only a new boot recovered. The spec asks that a worker

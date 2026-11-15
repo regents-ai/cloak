@@ -93,8 +93,8 @@ priority). It is signed into the App Sandbox with no network and reading
 only the models folder, and installed in
 `~/Library/Application Support/Regents Cloak/worker/` (the sandbox cannot
 start a program kept under `~/Documents`). The model pins and the reply
-grammar are built into the worker, so rebuild after `reference/models.json`
-or `reference/rewrite-reply.gbnf` changes:
+grammars are built into the worker, so rebuild after `reference/models.json`,
+`reference/rewrite-reply.gbnf` or `reference/details-reply.gbnf` changes:
 
 ```bash
 llama-worker/install.sh
@@ -353,6 +353,19 @@ the menu; one that ended without an answer can be run again. Tasks in
 different conversations run at the same time. The agent's work lives in
 the guest's memory, so after Cloak starts again it does not remember a
 conversation's earlier tasks, and the conversation says so.
+
+While you write a message or a task, Cloak may suggest details it leaves
+open (decision 13). Once the draft has four words or more and has rested
+for about a second, the model on this Mac reads it and proposes up to four,
+each a pill above the message box. Pressing one opens its picker: choices,
+a span to narrow, colours, or a square between two pairs of opposite words,
+and in each, Something else to type your own. Your first pick keeps the
+details as they are until you send or empty the message. Each detail picked
+is added under the message, after a blank line, as one line such as
+`Budget: 1000–2500 USD`; details left alone add nothing. The draft goes
+only to the model on this Mac, nothing is paid, and neither the draft nor
+its details reach the log. It needs Cloak running, and a rewording never
+waits for it.
 
 "Agents" in the menu lets your other apps on this Mac send through Cloak,
 in Development mode too, as to any server that speaks OpenAI's chat
