@@ -1696,6 +1696,22 @@ candidates, so the split has to be re-declared before any holdout opens.
   `ZkApiVault`; the server forwards to OpenRouter under the operator's
   key. The way forward is Sean's choice (wait and track, or run a
   deployment of our own, which is protected work).
+  - Corrected 15 November: that finding looked only at the pinned daemon
+    and main's README, and missed two live deployments run by Open
+    Anonymity. Mainnet: vault `0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe`,
+    service `https://zkapi-mainnet.openanonymity.ai` (its `config.json`
+    answers), on the earlier circuit `zkapi-v2-note-bound-v1`, served from
+    the branch `release/zkapi-server-time-mainnet-20261106` of
+    ethereum/zkapi (head `cda02d83`, 6 November). Sepolia: vault
+    `0x67eb750d9c0d63a99684ac3f3e65f0c610276993`, service
+    `https://zkapi-sepolia.openanonymity.ai/v0.4`, circuit
+    `zkapi-v2-concession-v2` with development keys, in ethereum/zkapi main
+    and already in `reference/src/zkapi-spec-snapshot`. The pinned daemon
+    (vbuterin/zkapi `0fb263b0`, circuit `zkapi-v2-concession-v1`) matches
+    neither, so using either means building the daemon from another
+    commit. Not yet known: whether their service issues its temporary
+    provider keys (`ephemeral_key_source: oa_org`) to a client that is not
+    their own app.
 - Details while writing (15 November, decision 13). While a message or a
   task is written in Chat, the one worker reads the draft and proposes up
   to four details it leaves open; what the owner picks is added to the

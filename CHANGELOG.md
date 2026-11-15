@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Plan: the zkAPI finding corrected. Open Anonymity runs a mainnet vault on
+  the earlier circuit and a Sepolia vault on the current one; the pinned
+  daemon matches neither.
+
 - Chat: details while you write (decision 13). Once a message or task has
   four words or more and rests for about a second, the model on this Mac
   proposes up to four details it leaves open, as pills above the message
