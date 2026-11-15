@@ -1720,6 +1720,20 @@ candidates, so the split has to be re-declared before any holdout opens.
     commit. Not yet known: whether their service issues its temporary
     provider keys (`ephemeral_key_source: oa_org`) to a client that is not
     their own app.
+  - Looked into the same day (Sean's "2. a": Sepolia first). The Sepolia
+    service is behind one shared password, given out privately to a test
+    group (`docs/testnet-auth.md` in the snapshot; header
+    `X-ZKAPI-Testnet-Password` on every `/v2/*` call): a lease request
+    without it answers 401. Cloak has no password, so nothing can be paid
+    there until Open Anonymity gives one. The mainnet service has no such
+    gate (an empty lease request answers 422, the body refused, not the
+    caller). For Sepolia the daemon builds from the snapshot
+    (`eac5f906`): its `rewriter.go` is the pinned one byte for byte, so
+    `guest/daemon/rewriter.patch` applies; it needs the Rust companion
+    `zkapi-walletd` built beside it, the development proving keys in
+    `protocol/setup/v2-concession-dev` (about 9 MB, in the repository),
+    and at least 0.001 test ETH. Inference goes straight to OpenRouter
+    with the temporary key; their server sees only leases and settlement.
 - Details while writing (15 November, decision 13). While a message or a
   task is written in Chat, the one worker reads the draft and proposes up
   to four details it leaves open; what the owner picks is added to the
