@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Plan: what paying through the mainnet zkAPI service takes, and its risks
+  to a deposit.
+
 - Reference: the source of Open Anonymity's mainnet zkAPI release line is
   pinned as `zkapi-mainnet` (research; nothing is built from it yet).
 

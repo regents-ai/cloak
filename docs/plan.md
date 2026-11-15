@@ -1734,6 +1734,31 @@ candidates, so the split has to be re-declared before any holdout opens.
     `protocol/setup/v2-concession-dev` (about 9 MB, in the repository),
     and at least 0.001 test ETH. Inference goes straight to OpenRouter
     with the temporary key; their server sees only leases and settlement.
+  - Mainnet instead (Sean, 15 November, "1. b"), surveyed from
+    `reference/src/zkapi-mainnet` (`cda02d83`). Nothing is built yet.
+    - That tree's daemon has no rewriter: no `internal/rewriter`, and
+      neither of Cloak's patches applies. It cannot replace the guest's
+      daemon; it would run beside it, for payment only, with the rewrite
+      staying on the pinned daemon.
+    - Payment needs a Rust companion, `zkapi-walletd`, built from another
+      upstream commit (`20aa542`, cloned by the tree's
+      `scripts/prepare-zkapi.sh`), natively for linux/arm64; no figure
+      for its memory while proving was found, against a 1 GiB guest.
+    - Routing: it takes `socks5://127.0.0.1:9050` for every outside
+      connection, the Ethereum RPC and the companion's among them, and
+      never goes direct when that fails. The companion's own Rust
+      connections were not read, its source not being in the tree.
+    - Money, read from `protocol/contracts/src/ZkApiVault.sol` and
+      `deployments/mainnet.json`: a deposit lasts 30 days
+      (`note_ttl_seconds`); after that anyone may call `claimExpired`,
+      which sends the note's whole deposit, spent or not, to the
+      operator's treasury. The owner can pause deposits and the start of
+      withdrawals, and change the treasury. The proving keys are a
+      single-party development setup, and the manifest's own limits say
+      nothing is production-audited and no funded inference or withdrawal
+      is claimed. A request is capped at 50,000 gwei. The daemon's key is
+      made in the guest and kept as hex in a file; an outside wallet
+      funds its address, which pays the deposit and the gas.
 - Details while writing (15 November, decision 13). While a message or a
   task is written in Chat, the one worker reads the draft and proposes up
   to four details it leaves open; what the owner picks is added to the
