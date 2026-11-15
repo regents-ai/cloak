@@ -1674,9 +1674,17 @@ candidates, so the split has to be re-declared before any holdout opens.
     relaunch one without an answer reads "Not finished". `swift test
     --package-path app`, 91, twelve of them the agent's against a
     stand-in runner. Not built: tasks from the `cloak` command.
-  - Not proven: a real provider's answers to Pi, the app driving a task
-    with a live guest, the end-of-task save on Quit, several tasks against
-    the memory line. Known: Pi's OpenAI library
+  - Seen in the running app on 15 November (build `28923f1`, Sean's go
+    "go agent test", his wallet, three tasks in one conversation): a task
+    that ran `uname -sr` in the guest and answered with the guest's
+    kernel; a second that fetched check.torproject.org's address check
+    with curl, which answered `IsTor: true`, and recalled the first task's
+    command; a third, `sleep 300`, ended by Stop within seconds as
+    Stopped, with Run Again, and Cloak stayed Running. Each showed its
+    task as written and as reworded, and its step.
+  - Not proven: the end-of-task save on Quit, several tasks against
+    the memory line. Known: an answer's Markdown shows as written, marks
+    and all; Pi's OpenAI library
     retries a 5xx, so a request the provider was paid for and that then
     failed on the way back could be paid for twice; tools reach the guest's
     loopback services (the daemon's port, the Tor port, the door with their
@@ -1756,9 +1764,11 @@ candidates, so the split has to be re-declared before any holdout opens.
     English, Spanish and Japanese drafts got details in their own language.
     A cancel 1 s in was answered 499 within 0.02 s, and the next request
     answered as usual.
-  - Not proven: the pills and pickers in the running app (drawn off screen
-    in light and dark only; never pressed, and the popovers, keyboard and
-    VoiceOver not run); giving way to a real rewording in the app; the
+  - Seen in the running app on 15 November (build `28923f1`, dark): four
+    pills for "Plan a week in Japan with my kids" a few seconds after the
+    draft rested, and the Pace pill's pad opening above it.
+  - Not proven: a pick made in the running app and its line in the message
+    sent; the other pickers, light, keyboard and VoiceOver; giving way to a real rewording in the app; the
     instruction beyond these 12 drafts. Known: greedy decoding still asks
     some things a draft settles (how many days, of "a week in Japan"), a
     label the model wants in three words can come out as two run together,

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Plan: the agent's first real tasks and the details pills, as seen in the
+  running app on 15 November.
+
 - Plan: the zkAPI finding corrected. Open Anonymity runs a mainnet vault on
   the earlier circuit and a Sepolia vault on the current one; the pinned
   daemon matches neither.
