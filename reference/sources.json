@@ -28,6 +28,24 @@
       "role": "The release line behind Open Anonymity's mainnet service (vault 0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe, circuit zkapi-v2-note-bound-v1), head of 6 Nov 2026. Sean chose it on 15 Nov as the deployment Cloak pays through."
     },
     {
+      "name": "zkapi-walletd",
+      "kind": "git",
+      "url": "https://github.com/ethereum/zkapi.git",
+      "ref": "codex/native-eth-review-integration-20260928",
+      "commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+      "full_history": false,
+      "role": "Source of the Rust companion zkapi-walletd that the zkapi-mainnet daemon proves and pays with: the commit its zkapi-clientd/packaging/zkapi-source.env names (OA_COMPANION_COMMIT), 28 Sep 2026, an ancestor of the mainnet release line. Built by guest/zkapi/build.sh with the tree's companion.patch."
+    },
+    {
+      "name": "zkapi-walletd-protocol",
+      "kind": "git",
+      "url": "https://github.com/mingyech/zkapi.git",
+      "ref": "codex/native-eth-review-integration-20260928",
+      "commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+      "full_history": false,
+      "role": "The companion's protocol submodule (circuits, prover and the proving keys in setup/v2), from the fork its .gitmodules names, at the commit zkapi-walletd records and zkapi-source.env pins (OA_PROTOCOL_COMMIT), 27 Sep 2026. Built with the tree's protocol-transport.patch; its own contract submodules are not needed for the build."
+    },
+    {
       "name": "pi",
       "kind": "npm",
       "package": "@earendil-works/pi-coding-agent",

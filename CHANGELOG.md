@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Guest: `guest/zkapi/build.sh` builds Open Anonymity's mainnet zkAPI
+  daemon and its Rust companion for linux/arm64 from pinned source, each
+  in Docker, into `guest/build/`; nothing goes into the guest image yet.
+  The companion and its protocol are now pinned in
+  `reference/sources.json`. The plan has what was measured: one proof
+  peaks at 129 to 165 MiB and takes about 3 s on two cores, every outside
+  connection goes through Tor once the daemon is set to it, and which
+  files must be kept across a restart. No money was moved.
+
 - Wallet: a Close or Withdraw that stops keeps its reason on screen until
   the next press or until it is dismissed. It showed only for the moment
   the wallet took to be read again. The places where a stage is still

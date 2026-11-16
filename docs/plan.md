@@ -1735,19 +1735,20 @@ candidates, so the split has to be re-declared before any holdout opens.
     and at least 0.001 test ETH. Inference goes straight to OpenRouter
     with the temporary key; their server sees only leases and settlement.
   - Mainnet instead (Sean, 15 November, "1. b"), surveyed from
-    `reference/src/zkapi-mainnet` (`cda02d83`). Nothing is built yet.
+    `reference/src/zkapi-mainnet` (`cda02d83`). Built and measured the
+    same day, in the last point below.
     - That tree's daemon has no rewriter: no `internal/rewriter`, and
       neither of Cloak's patches applies. It cannot replace the guest's
       daemon; it would run beside it, for payment only, with the rewrite
       staying on the pinned daemon.
     - Payment needs a Rust companion, `zkapi-walletd`, built from another
       upstream commit (`20aa542`, cloned by the tree's
-      `scripts/prepare-zkapi.sh`), natively for linux/arm64; no figure
-      for its memory while proving was found, against a 1 GiB guest.
+      `scripts/prepare-zkapi.sh`), natively for linux/arm64. Its memory
+      while proving is measured below.
     - Routing: it takes `socks5://127.0.0.1:9050` for every outside
       connection, the Ethereum RPC and the companion's among them, and
       never goes direct when that fails. The companion's own Rust
-      connections were not read, its source not being in the tree.
+      connections are read below.
     - Money, read from `protocol/contracts/src/ZkApiVault.sol` and
       `deployments/mainnet.json`: a deposit lasts 30 days
       (`note_ttl_seconds`); after that anyone may call `claimExpired`,
@@ -1759,6 +1760,136 @@ candidates, so the split has to be re-declared before any holdout opens.
       is claimed. A request is capped at 50,000 gwei. The daemon's key is
       made in the guest and kept as hex in a file; an outside wallet
       funds its address, which pays the deposit and the gas.
+    - Built and measured 15 November, with no money moved: `sh
+      guest/zkapi/build.sh` checks every pin, then builds each program in
+      Docker on two cores into `guest/build/`. The companion is
+      `zkapi-walletd` (`20aa542`) with its protocol submodule (mingyech/zkapi
+      `8b2d4e3`), both now pinned in `reference/sources.json`, patched with
+      the tree's `companion.patch` and `protocol-transport.patch`. Rust
+      lines below are in that patched source, as built.
+      - The daemon builds without cgo (`CGO_ENABLED=0`, Go 1.27.4):
+        `cloak-zkapi-clientd`, 9,502,880 bytes, static (`ls -l`, `file`).
+        The companion needs OpenSSL. In the pinned Rust image alone,
+        `cargo build --locked -p openssl-sys` stops at "Could not find
+        directory of OpenSSL installation" and "pkg-config could not be
+        found": the protocol's `zkapi-client` takes `reqwest` with its
+        default native TLS. `guest/zkapi/Dockerfile` adds `pkg-config`,
+        `libssl-dev` and `git` to that same image, from the guest image's
+        Debian snapshot. `cloak-zkapi-walletd` is 21,528,400 bytes, not
+        stripped, and needs `libssl.so.3`, `libcrypto.so.3`,
+        `libgcc_s.so.1`, `libz`, `libzstd` and glibc (`ldd`, Debian glibc
+        2.41). The guest would also need CA certificates: native TLS reads
+        them from the system.
+      - The proving keys come with the protocol source, in `setup/v2`:
+        `request.pk` 5,935,783 bytes, `request.vk` 671, `withdrawal.pk`
+        7,783,719, `withdrawal.vk` 735, 13.7 MB in all. Their SHA-256
+        values match the four that `deployments/mainnet.json` pins and the
+        daemon checks before it starts the companion (`shasum -a 256`;
+        `deployments.go:143-173`). The mainnet tree's `protocol/setup/v2`
+        holds the same four files. The service's `config.json` (one GET,
+        3,818 bytes) has SHA-256 `95d784e5…`, the value built into the
+        daemon (`deployments.go:128`), and is its embedded `mainnet.json`
+        byte for byte.
+      - One proof, measured with the protocol's own benchmark
+        (`cloak-zkapi-proof-bench`, built by the same script). It made and
+        verified real proofs for `zkapi-v2-note-bound-v1` with the mainnet
+        proving keys, for a made-up note (chain 31337): a note the service
+        accepts needs a deposit. Each case ran once in a fresh container,
+        `docker run --network none --cpus 2 --memory 1g --memory-swap 1g
+        -e RAYON_NUM_THREADS=2 … /setup CASE 1 0 1`, with peak memory from
+        `/sys/fs/cgroup/memory.peak`. Request on a used note: 135,503,872
+        bytes (129 MiB) at peak, key load 2.02 s, proof 0.82 s, 3.0 s in
+        all. Request on a new note: 135,860,224 bytes (130 MiB), 2.05 s,
+        0.80 s, 3.0 s. Withdrawal: 173,101,056 bytes (165 MiB), 2.59 s,
+        0.98 s, 3.7 s. Proofs are 256 bytes; the circuits have 30,821 and
+        35,969 constraints. No memory event at 1 GiB (`memory.events`), so
+        2 and 4 GiB were not tried. The companion reads the key from disk
+        for every proof (`wallet_v2.rs:224`) and proves on two threads
+        unless `RAYON_NUM_THREADS` says otherwise (`main.rs:671-687`), so
+        each paid request costs about 3 s of two cores before any network
+        time. Its memory at rest was not measured: on start it calls the
+        service's `/health` (`service.rs:1089-1112`), a request this
+        survey did not make.
+      - Outside connections. The daemon sends every one through
+        `relay.NewClient` and its dialer (`internal/relay/relay.go:28-76`).
+        With `relay_url` empty, the default, it dials direct; with
+        `socks5://127.0.0.1:9050` (`zkapi-clientd config --relay-url`) every
+        one goes through SOCKS5 with the host name sent to Tor and no
+        fallback (`socks5.go:13-98`). Its other clients reach only its own
+        loopback listener (`client.go:115`, `withdraw.go:265`,
+        `fund.go:232`, `payment_quote.go:58`, `main.go:425`). The companion
+        has no SOCKS support built in (`reqwest` 0.12.28 without its
+        `socks` feature, no `tokio-socks`; `cargo tree -e features -i
+        reqwest`), and none of its clients sets or clears a proxy, so each
+        takes `HTTPS_PROXY` and `ALL_PROXY` from its environment. The
+        daemon starts it with all of them set to its own loopback CONNECT
+        proxy, password-guarded, with `NO_PROXY` empty
+        (`companion.go:109-127`); that proxy dials through the same SOCKS5
+        path, port 443 only, and refuses loopback and local addresses
+        (`connect.go:51-109`). With the daemon's bridge token set, the
+        companion refuses to start on any other proxy or with a bypass
+        (`crates/zkapi-cli/src/main.rs:886-898`). Under the daemon nothing
+        goes direct. Started without those variables, the companion would
+        connect direct, so Cloak starts it only through the daemon.
+      - The hosts: `zkapi-mainnet.openanonymity.ai`, the service and its
+        indexer (`/health`, leases, tree paths, quotes, attestation;
+        companion `service.rs`, `indexer.rs:35,52,81`);
+        `verifier-production-20260917.openanonymity.ai`, which the
+        companion sends each temporary key and its signatures to
+        (`/submit_key`, `service.rs:2011`); `ethereum-rpc.publicnode.com`,
+        Ethereum RPC from the daemon (`address_funding.go:524-554`) and the
+        companion (`oa_native.rs:111-114`, `oa_withdrawal.rs:300-330`);
+        `org-live.openanonymity.ai`, the pinned models
+        (`model_budget.go:40`); `openrouter.ai`, the model list and the
+        inference itself with the temporary key, from the daemon
+        (`model_budget.go:145`, `client.go:280-288`). The relay
+        `oa-1.refraction.network` is used only when set as `relay_url`. The
+        companion runs Foundry's `cast` only in subcommands the daemon
+        never calls (`main.rs:1578-1846`).
+      - Files, all in one folder (`--config-dir`, else
+        `ZKAPI_CLIENTD_CONFIG_DIR`, else `~/.config/zkapi-clientd`;
+        `config.go:84-97`), to keep across a restart: `config.json`,
+        `management-token`; `funding/mainnet/address-funding.json`, the
+        Ethereum key in hex with the signed transactions and quotes
+        (`address_funding_store.go:16-83`);
+        `funding/mainnet/pending-deposit.json`, a new note's secret before
+        it is active (`funding.go:41-77`); and in
+        `zkapi/mainnet/zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930/`
+        the companion's `deployment-manifest.json`, `note_state.json` (the
+        note's secret and balance, `note_state.rs:20-36`),
+        `pending_journal.json`, `oa-issued-leases/`,
+        `prepared_withdrawal.json`, `oa-withdrawal.json`, `retired/` and
+        `archive/`. The locks `daemon.lock` and `.wallet.lock` need not
+        be. Losing
+        `note_state.json` loses the deposit to the treasury after 30 days.
+        The keys are only read and can sit in the image, in
+        `share/zkapi-clientd/proof-setup` beside the binary
+        (`companion.go:56-62`).
+      - The sequence, none of it run; money moves where marked.
+        `zkapi-clientd config --network mainnet --relay-url
+        socks5://127.0.0.1:9050` writes
+        `config.json` (at a terminal it goes on to guided funding);
+        `serve` starts the daemon and the companion. `GET
+        /admin/funding/address` makes the key and gives its address. An
+        outside wallet sends ETH to it (money). `POST /admin/funding/quote`
+        with an amount; `POST /admin/funding/approve` with the quote's ID
+        signs and sends `deposit()` with the ETH to the vault (money, on
+        chain), waits for the receipt and has the companion make the note
+        active (`/funding/api/deposit/confirm`). A paid request is `POST
+        /v1/chat/completions` to the daemon: the companion proves and
+        reserves against the note (`/oa/v1/lease`, the service's `POST
+        /v2/openrouter/leases`; money, from the note), has the verifier
+        check the temporary key, the daemon sends the inference to
+        OpenRouter with it, and `/wallet/settle` takes the final charge
+        from the note (money). To withdraw, `POST /admin/withdrawal/quote`
+        with a destination and the note's ID, then `POST
+        /admin/withdrawal/approve`: it proves the withdrawal
+        (`/oa/v1/withdraw/prepare`), signs and sends the vault's withdraw
+        with gas from the key's address (money, on chain) and confirms
+        (`/oa/v1/withdraw/confirm`). `POST /admin/return/quote` and
+        `/admin/return/approve` send the ETH left at the address to a
+        destination (money, on chain). Every `/admin/*` call carries the
+        `X-OA-Management-Token` header (`fund.go:239`).
 - Details while writing (15 November, decision 13). While a message or a
   task is written in Chat, the one worker reads the draft and proposes up
   to four details it leaves open; what the owner picks is added to the
