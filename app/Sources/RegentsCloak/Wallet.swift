@@ -27,8 +27,11 @@ final class Wallet {
     private(set) var address: String?
     private(set) var look: Look?
     var model = Wallet.defaultModel
-    /// The last request that stopped.
-    var stop: RemoteStop?
+    /// The last Create, Close or Withdraw that stopped, until the next one
+    /// is pressed or it is dismissed. A read of the wallet never clears it.
+    private(set) var stop: RemoteStop?
+    /// The last read of the wallet that stopped, until one succeeds.
+    private(set) var readStop: RemoteStop?
     private(set) var creating = false
     /// Requests under way, for their progress.
     private(set) var working = 0
@@ -74,13 +77,13 @@ final class Wallet {
         guard found, address == nil, !creating else { return }
         creating = true
         defer { creating = false }
+        stop = nil
         do {
             address = try await Remote.create(exchange: exchange) { key, address in
                 try await WalletKeychain.store(key: key, address: address)
             }
-            stop = nil
         } catch {
-            record(error)
+            stop = recorded(error)
             return
         }
         await refresh()
@@ -89,7 +92,7 @@ final class Wallet {
     /// Reads the balance, the provider's setup and models, and the deposit.
     func refresh() async {
         guard let address, let deposits, supervisor.phase == .running else { return }
-        await run { [exchange] () async throws(RemoteStop) in
+        readStop = await run { [exchange] () async throws(RemoteStop) in
             self.look = try await Remote.look(address: address, deposits: deposits, exchange: exchange)
         }
     }
@@ -97,7 +100,8 @@ final class Wallet {
     /// Closes the deposit with the provider, which refunds what is unspent.
     func close() async {
         guard let deposits else { return }
-        await run { [exchange, model] () async throws(RemoteStop) in
+        stop = nil
+        stop = await run { [exchange, model] () async throws(RemoteStop) in
             try await Remote.close(model: model, key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange)
         }
         await refresh()
@@ -106,25 +110,33 @@ final class Wallet {
     /// The network's own close: asks to close, or takes the deposit back.
     func withdraw() async {
         guard let deposits else { return }
-        await run { [exchange] () async throws(RemoteStop) in
+        stop = nil
+        stop = await run { [exchange] () async throws(RemoteStop) in
             try await Remote.withdraw(key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange)
         }
         await refresh()
     }
 
-    private func run(_ request: () async throws(RemoteStop) -> Void) async {
+    /// Forgets what stopped, as its row's close button asks.
+    func dismiss() {
+        stop = nil
+        readStop = nil
+    }
+
+    /// Runs one request; returns how it stopped, or nil when it did not.
+    private func run(_ request: () async throws(RemoteStop) -> Void) async -> RemoteStop? {
         working += 1
         defer { working -= 1 }
         do {
             try await request()
-            stop = nil
+            return nil
         } catch {
-            record(error)
+            return recorded(error)
         }
     }
 
-    func record(_ stop: RemoteStop) {
+    private func recorded(_ stop: RemoteStop) -> RemoteStop {
         logger.error("wallet request stopped: \(stop.code.rawValue, privacy: .public) \(stop.detail, privacy: .public)")
-        self.stop = stop
+        return stop
     }
 }

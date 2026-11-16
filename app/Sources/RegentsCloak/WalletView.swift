@@ -23,9 +23,9 @@ struct WalletView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if let stop = wallet.stop {
+                if let stop = wallet.stop ?? wallet.readStop {
                     Section {
-                        StopRow(stop: stop) { wallet.stop = nil }
+                        StopRow(stop: stop) { wallet.dismiss() }
                     }
                 }
                 if !wallet.found {

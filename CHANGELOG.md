@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Wallet: a Close or Withdraw that stops keeps its reason on screen until
+  the next press or until it is dismissed. It showed only for the moment
+  the wallet took to be read again. The places where a stage is still
+  implied by several fields are listed in `docs/state-machines.md`,
+  section 10.
+
 - Plan: what paying through the mainnet zkAPI service takes, and its risks
   to a deposit.
 

@@ -591,6 +591,74 @@ the boot files a killed app left, and nothing else) and
 `ControlTests.swift` (the JSON for each status; the socket answers only its
 owner's well-formed requests).
 
+## 10. Stages still implied (found 15 November 2026)
+
+A second read, of everything built since section 9: the chat window, the
+wallet, the door, the agent and the guest's sender. In each place below
+the stage is not one named value; it is read off several fields. One fault
+was found and fixed. The rest are listed so the next change to each names
+its stages first.
+
+- **One message card** (`app/Sources/RegentsCloak/Chat.swift`,
+  `app/Sources/CloakChat/Conversation.swift`). Written, being reworded,
+  reworded and open, sending, answered: read off `Turn.reworded`,
+  `Turn.answer`, `Chat.rewording`, `Chat.sending[turn]` (with a count of
+  presses), `Chat.opened` and `Chat.stop`. Each press of Send is sent
+  (the Chat rule), so two presses pay twice and the second answer takes
+  the first one's place.
+- **One task card** (`app/Sources/CloakChat/Agent.swift`,
+  `app/Sources/RegentsCloak/ChatView.swift`). Running, reworded, stepping,
+  answered, ended: read off `Agent.runs[conversation]`, `Agent.ran`,
+  `Agent.ends[turn]` (in memory only), `Turn.reworded`, `Turn.steps` and
+  `Turn.answer`. `Turn.steps == nil` is also what makes a turn a message
+  and not a task, and `Turn.reworded == nil` means "goes as written" for a
+  message and "not reworded yet" for a task.
+- **The draft's details** (`Chat.picks`, `askingDetails`, `detailsAsk`).
+  Resting, asking, shown, fixed. A message whose rewording stops goes back
+  into the box with its picked lines as text and its pills gone.
+- **The wallet** (`app/Sources/RegentsCloak/Wallet.swift`). Not looked
+  for, none, creating, held, read: off `found`, `address`, `creating`,
+  `look`, `working`, `stop` and `readStop`. A keychain read that fails
+  leaves `found` false with nothing that asks again until the app opens
+  again. Two reads under way are not ordered, so the older may land last.
+- **The deposit** (`guest/sender/src/lib.rs`, `app/Sources/CloakChat/Remote.swift`).
+  None, opening, open, spent, close asked for, gone: off the sealed file's
+  presence, `opened`, `deposit > cumulative_amount`, and the network's
+  `close_requested_at` and `deposit == 0`. An opening deposit is shown
+  without asking the network, so nothing in Cloak moves it on; the
+  toolkit recovers one on the next send, but the sender refuses that send
+  first when the balance is under one deposit. Not yet shown by a check.
+- **The door** (`app/Sources/CloakDoor/Door.swift`). `state` (closed,
+  open, refused) beside `listener`, `access`, `boxes` and `serving`; there
+  is no "opening". The app opens and closes it from one loop, in turn, so
+  the two do not cross. A listener that fails after opening leaves the box
+  passes in place until the next close.
+- **What the door remembers of one app** (`app/Sources/CloakDoor/Asked.swift`).
+  The identity and digests are kept before the rewording and the
+  transcript after it, so a rewording that stops, or two requests from one
+  app at once, leave them describing different requests. Each transcript
+  entry carries its own digest, so no message is replayed wrongly or sent
+  as written; at worst a message is reworded a second time.
+- **The supervisor's parts** (`Supervisor.Stack`, `preparation`,
+  `quitting`). Five optionals filled in order beside the named phase;
+  every reader checks the phase first.
+- **The startup check's console** (`app/Sources/CloakSupervisor/Verification.swift`).
+  "check exited" then "sender ready", by the order of two lines.
+- **A guest** (`host/Sources/CloakHost/Guest.swift`). Made, prepared,
+  started, ended: off `machine`, `relays` and `ended`. The supervisor
+  always prepares before it starts.
+
+Before (15 November): the wallet had one "what stopped" for every request,
+and any request that worked cleared it. Close and Withdraw each read the
+wallet again when they end, so a Close or Withdraw that stopped showed its
+reason only until that read came back. Now what a press stopped on stays
+until the next press or until it is dismissed, and a read keeps its own.
+No check: the wallet's screen is not under test.
+
+Looked at and found sound: a start of tor that is cancelled once its port
+is open returns a tor that has not bootstrapped, which the supervisor
+treats as a failure and drops, since it is already stopping.
+
 ## Looked at, nothing to name
 
 The worker's frame reader and model check, the boot file writer, the guest's
