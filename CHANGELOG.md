@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Docs: `docs/release.md`, a skeleton of what stands between today's
+  Cloak and a public release, in nine items, with what is unknown in each.
+
 - Guest: `guest/zkapi/build.sh` builds Open Anonymity's mainnet zkAPI
   daemon and its Rust companion for linux/arm64 from pinned source, each
   in Docker, into `guest/build/`; nothing goes into the guest image yet.
