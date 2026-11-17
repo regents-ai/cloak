@@ -1,189 +1,168 @@
 # Release plan (skeleton)
 
-Written 17 November 2026 at Sean's request: what stands between today's
-Cloak and a public release with an announcement. A skeleton, not a
-commitment. Sizes are the chief's guesses in days of building, not
-measured. Progress still lives in [plan.md](plan.md).
+First written 17 November 2026 at Sean's request; revised the same day
+after a review he passed on. The rule the review set, which this plan now
+follows: **the post's protections first, public claims after.** Packaging
+and first-run work are needed, and do not stand in for them. Progress
+still lives in [plan.md](plan.md).
+
+Sizes are no longer given for anything that depends on a service outside
+our control.
+
+## The target
+
+Vitalik's protected Pi workflow of 16 October
+([the post](../reference/vitalik-post-2026-10-16.md)), with none of its
+protections weakened, usable by someone who has never used Tor, Linux or
+zkAPI. The proof is one demonstration: on a fresh Mac, the agent does a
+real research task with tool calls and follow-ups, meets a hostile page,
+makes several model calls, and finishes, while Cloak shows that nothing
+left by a route it does not allow.
 
 ## Where Cloak is, said plainly
 
-- It works on one Mac, Sean's, built from source by the chief. Nobody else
-  has installed it or used it.
-- Payment is Development mode: one wallet pays for every chat, so the
-  provider can link them all. That is the opposite of what the 16 October
-  post asks of payment.
-- The claims rule holds for the announcement too: nothing is called
-  protected or private beyond what a passed check shows.
+| The post asks for | Cloak today | Still to show |
+|---|---|---|
+| Agent in a sandbox | Works on one Mac: a guest with no network device | Escape attempts by a hostile agent |
+| Tor for everything | Works for the daemon, the agent and its tools | Every process, DNS and helper, tried on purpose |
+| A circuit per conversation | Built: each conversation has its own Tor identity | A check that two conversations never share one |
+| Local rewording | Works; a failure sends nothing | The comparison with the reference on meaning and on what leaks |
+| Payment that does not link chats | **Missing.** One wallet pays for every chat | All of it |
+| Cover traffic | **Missing.** The pinned daemon already has it, off | Turned on, checked, limits said |
+| Easy install | Built from source by the chief | All of it |
+| Review by someone else | None | All of it |
 
-## Two releases, not one
+The model is the 9B one (`small-lead-gguf-grammar`), not the 27B one
+looked at earlier. The whole app's memory has never been measured
+together.
 
-- **Early release.** Items 1, 2, 5, 6, 7 and 8. Usable by other people,
-  labelled as Development mode, with its payment limit said in the app and
-  in the announcement. Guess: 2 to 3 weeks.
-- **Full release.** Adds items 3, 4 and 9. This is the one that can be
-  measured against the post. Guess: 4 to 8 weeks more, and item 3 may fail
-  for reasons outside our control.
+## Three stages
 
-## 1. An installable app
+1. **Technical preview.** A few invited people. Tests install, the model
+   download, the interface, whether tasks are useful, and recovery. The
+   payment is wallet-linked and says so. No claim about privacy. Not on
+   the public site as Regents Cloak.
+2. **Reference parity.** Private payment and cover traffic work, the
+   gates below pass, and someone outside has reviewed it. This is the
+   announcement.
+3. **Broad launch.** People with no technical background install, fund,
+   use, pause, update and recover it with no help. May come with stage 2;
+   not assumed to.
 
-- **Goal.** Download, drag to Applications, open. No terminal, no
-  developer tools.
-- **Today.** `app/build.sh` builds it on this Mac, signed ad hoc. The
-  worker installs from a second script. Building needs Docker, Go, Rust,
-  Swift and CMake.
-- **Work.** One bundle holding the app, the worker, tor, the kernel and
-  the guest image. Developer ID signing with the virtualization
-  entitlement, and Apple's notarization. A disk image to download. An
-  update path that checks a signature. A reproducible build recipe, so the
-  download can be checked against the source.
-- **Done when.** A Mac that has never seen Cloak installs it from the
-  download and reaches Running, with Gatekeeper raising nothing.
-- **Unknown.** Whether the sandboxed worker still starts from inside a
-  notarized bundle (today it must live outside `~/Documents`). Whether the
-  guest image can be rebuilt bit for bit.
-- **Sean's.** An Apple Developer account and its signing key; every
-  release under it.
-- **Size.** 4 to 6 days, plus Apple's turnaround.
+## Who owns what (to be settled before payment goes into the guest)
 
-## 2. The model, fetched by the app
+Two daemons will run side by side: the post's, which rewords, and the
+mainnet one, which pays. For each of these, one owner, written down and
+checked: rewording; the conversation's Tor identity; leave to spend;
+the provider's temporary key; the request that leaves. The risk is not
+two daemons. It is a path between them that skips rewording or Tor.
 
-- **Goal.** First launch downloads the model with progress, checks every
-  file against its pin, and can be paused and resumed.
-- **Today.** `scripts/fetch_model.py`, in a terminal.
-- **Work.** The same download inside the app: size and free disk shown
-  first, resume after a break, a mismatch refused and said plainly.
-  Decide what the download goes through: direct to Hugging Face shows the
-  Mac's address to the hub; through Tor it is slow for several GiB.
-- **Done when.** A fresh install reaches Running with no terminal, and a
-  download cut at any point carries on.
-- **Unknown.** Which route; how long several GiB takes through Tor.
-- **Size.** 2 to 3 days.
+## Gates for stage 2
 
-## 3. Private payment (zkAPI)
+Each is a check that runs, not a statement.
 
-- **Goal.** Each chat is paid for without the provider being able to link
-  it to the wallet or to the other chats.
-- **Today.** Open Anonymity's mainnet programs build for the guest; one
-  proof peaks at 129 to 165 MiB and takes about 3 s; under the daemon
-  every connection goes through Tor. Not in the guest, never run
-  together, no deposit made.
-- **Work.** Both programs and their keys into the guest image. Their
-  folder kept on the Mac, sealed, and written before a request leaves,
-  since losing one file loses the deposit. Run to the point of deposit.
-  A small real deposit (Sean's decision, with an amount). One paid
-  request, one withdrawal. Then the app's wallet screen and the send path
-  moved onto it, and Development mode removed, not kept beside it.
-- **Done when.** A paid chat and a withdrawal both work from the sealed
-  box, and a restart in the middle of each loses nothing.
-- **Unknown, and serious.** Whether their service serves a client that is
-  not their own app. Their own manifest says nothing is production-audited
-  and the proving keys are a single-party development setup. A deposit
-  expires to the operator after 30 days; the operator can pause deposits
-  and withdrawals. The rewriter in the post's daemon and this payment
-  daemon are different versions that must run side by side. Any of these
-  can stop the item, and none is ours to fix.
-- **Sean's.** Every deposit and every real transaction.
-- **Size.** 8 to 15 days if nothing upstream blocks it. Could be never.
+| Gate | What must be shown |
+|---|---|
+| Network escape | Pi, its tools, child processes, DNS and helpers reach nothing outside the allowed route |
+| Conversation separation | Two conversations share neither a Tor identity nor a payment credential |
+| Rewording | It happens on the Mac; a failure never sends the original |
+| Payment | What the provider sees does not tie a chat to the funding wallet, under a stated threat model |
+| Wallet recovery | A crash, restart, update or interrupted withdrawal loses no funds and spends nothing twice |
+| Cover traffic | Real background requests go out by the required route, with measured timing and volume |
+| Host and guest | A hostile agent cannot read wallet secrets, change the rewording rules, change the supervisor or read the Mac's files |
+| Usefulness | Real tasks finish, not only probes |
 
-## 4. Cover traffic
+## The work, in order
 
-- **Goal.** What the post asks: someone watching the connection cannot
-  tell when a real message is sent.
-- **Today.** Nothing built. No design chosen.
-- **Work.** Read the post and the spec for exactly what is asked. Choose
-  a shape (timing, volume, who pays for cover requests). Build it. A
-  check that compares what an observer sees with and without a real
-  message.
-- **Done when.** That check passes, and the cost per day is known and
-  shown.
-- **Unknown.** Cost, since cover requests are paid. Whether it can be
-  done honestly before item 3.
-- **Size.** Not estimable until the design is chosen; the design itself
-  is 2 to 3 days.
+### P0
 
-## 5. First run
+**1. Known faults** (was item 6). Under way. A deposit stuck opening,
+the wallet sheet that spins, the message that comes back with its picks
+as text. Each with a check that failed before. No acceptable build risks
+money it could keep.
 
-- **Goal.** A new person gets from first launch to a first sent chat by
-  following the screen.
-- **Today.** The menu and the windows assume someone who already knows
-  the parts.
-- **Work.** One window, in steps: this Mac (Apple silicon, memory, disk),
-  the model (item 2), the wallet, funding, a first message. Each step
-  says what it does and what leaves the Mac. Every failure in plain
-  words with one thing to do next.
-- **Done when.** Three people who have never seen Cloak finish it
-  without help.
-- **Unknown.** Funding is the hard step for a newcomer: today it means
-  sending funds to an address on a network they may not know.
-- **Size.** 4 to 5 days, plus the three people.
+**2. zkAPI, whole, outside Cloak** (was item 3, first half). The exact
+mainnet daemon, companion, keys and settings, in a container on this Mac
+with Tor as its only way out: a small deposit, one paid request,
+settlement, a withdrawal, and a restart in the middle of each. This
+answers the open question first: whether Open Anonymity's service serves
+a client that is not its own app. Built and measured already; never run.
+Every deposit and transaction is Sean's own decision. If the service
+refuses us, the item stops here and comes back to Sean; it is not
+replaced by another way to pay.
 
-## 6. Known faults
+**3. Cover traffic, the reference's own** (was item 4). The pinned
+daemon in the guest already has it, off by default
+(`zkapi-clientd/docs/COVER_TRAFFIC.md`): random background HTTPS GETs
+through Tor, each worker on its own Tor identity, no payment used. The
+work is to turn it on in Cloak's guest, check it against the stand-in
+tor, and measure it. It needs destinations: one to sixteen small static
+files someone has leave to poll. Whose they are is Sean's decision.
+The goal, corrected: **Cloak reproduces the reference's cover traffic
+and claims nothing the reference does not.** Its own document says it is
+background noise, not proven protection against traffic analysis, and
+Cloak says the same.
 
-- **Goal.** No known way to lose money or get stuck.
-- **Today.** Listed in [state-machines.md](state-machines.md), section 10.
-- **Work, in order.** A deposit stuck opening after a crash: reproduce
-  it with the stand-in network, then fix. The wallet sheet that spins
-  after a failed keychain read. The details that ask what the draft
-  already settles. The message that returns with its picked lines as
-  text. Name the stages of a message card, a task card and the wallet as
-  single values while doing so.
-- **Done when.** Each has a check that failed before and passes after.
-- **Unknown.** Faults nobody has hit yet; only one person has used it.
-- **Size.** 4 to 6 days.
+**4. Escape and boundary checks.** The gates above for network escape,
+conversation separation, and host and guest, written as checks that try
+to break out. Several exist in pieces (`tests/test_tor_path.py`,
+`tests/test_agent_path.py`); none tries a hostile agent end to end.
 
-## 7. Honest claims
+### P1
 
-- **Goal.** Every sentence in the app, the site and the announcement is
-  backed by a check that passed.
-- **Today.** The rule is in `AGENTS.md`; no list of claims exists.
-- **Work.** One table: each claim, the check behind it, the date it
-  passed, and what is not claimed. The app's own words checked against
-  it. The limits written where a user sees them, Development mode's
-  first.
-- **Done when.** The announcement draft has no sentence missing from the
-  table.
-- **Size.** 2 days, then kept current.
+**5. zkAPI inside the guest** (item 3, second half). After 2 passes and
+the ownership table is settled. The payment files kept on the Mac,
+encrypted, written before a request leaves; the agent gets no way to
+sign. "Kept safely" to be spelled out: encryption at rest, who may read
+the keychain item, who may sign, how a half-written file is recovered,
+backup. Then Development mode is removed, not kept beside it. A second
+decision for Sean before users: whether a service with a 30-day expiry
+and an operator who can pause it is fit for people to leave money in.
 
-## 8. A public home
+**6. Outside review** (was item 9). Scope written now; reviewers sought
+now. Choosing and paying them is Sean's.
 
-- **Goal.** A public repository, a licence, a page with the download and
-  the limits, and the announcement.
-- **Today.** Private repository, no licence, no page.
-- **Work.** Choose a licence, checking it against every pinned source's
-  own. Read the whole history for anything that should not be public
-  before the repository opens (addresses, chat titles, notes). A short
-  page. The announcement text.
-- **Sean's.** All of it: the licence, opening the repository, the page
-  under his name, the announcement's full text and where it is posted.
-- **Size.** 2 to 3 days of preparation; the decisions are his.
+**7. Install, model download, first run** (were items 1, 2 and 5).
+- Signed with a Developer ID and notarized; opens with the Mac's normal
+  first-run questions and no bypass steps. One bundle, an update path
+  that checks a signature, keeps the wallet's files and refuses to start
+  if a new part fails its check.
+- Exact hashes, where each dependency came from, a signed manifest and a
+  build others can repeat. Bit-for-bit sameness is a target, not a gate.
+- Model download in the app, resumable, checked. A direct download shows
+  the Mac's address to the model host: said at install, approved there,
+  and never mixed up with the route prompts take.
+- First run in steps, in plain words.
 
-## 9. Outside review
+**8. Memory and speed, measured.** One table: the model and its
+quantization; peak memory with the guest, tor, Pi, payment and the model
+all active; cold and warm start; typical and worst rewording time; under
+several tasks; after sleep and under memory pressure. 10 GB stays an aim
+and is promised nowhere until this exists. The model is not swapped for
+a smaller one to reach it.
 
-- **Goal.** Someone who did not build it tries to break the sealed box
-  and the money path, and says what they found.
-- **Today.** Only the chief and its helpers have reviewed it. That is not
-  independent.
-- **Work.** A written scope: the guest's isolation, the Tor route and
-  what can skip it, the worker's sandbox, the door, the keychain use, the
-  payment path. Find reviewers. Fix what they find. Publish the result
-  with the release.
-- **Unknown.** Who, how long, and what it costs.
-- **Sean's.** Choosing reviewers and paying them.
-- **Size.** Weeks of calendar time, mostly waiting.
+**9. Many machines, many people.** At least ten installs on different
+supported Macs, including a full disk, a broken download, sleep and
+wake, and recovery. Three people is a smoke test only.
 
-## Order
+### P2
 
-1. Item 6, since it touches money already in use.
-2. Items 1 and 2 together, then 5 on top of them.
-3. Item 3 alongside, since it waits on others and on deposits.
-4. Items 7 and 8 once 1, 2 and 5 work on a second Mac.
-5. Item 9 as early as a reviewer can be found; it needs no release.
-6. Item 4 after 3.
+**10. Claims and the public home** (were items 7 and 8). A table of
+every claim with the check behind it, published before any announcement.
+Licence, history read before the repository opens, the page, the
+announcement text: all Sean's.
+
+## Standing limits
+
+- No deposit and no movement of funds without Sean's own decision.
+- zkAPI is not replaced by Boundless, plain API keys or any other
+  payment in the public protected build to meet a date.
+- No date is given for stage 2 until item 2 has passed.
 
 ## What could make this plan wrong
 
-- Nobody but Sean has used Cloak. The first outside users will find
-  things this list does not have.
-- Item 3 depends on a service that calls itself unaudited.
-- Memory: the aim is 10 GB. It has not been measured on a Mac with less
-  than this one has.
+- Item 2 can fail for reasons that are not ours: the service calls
+  itself unaudited, its keys come from one party, a deposit expires to
+  the operator after 30 days, and the operator can pause it.
+- Nobody but Sean has used Cloak.
+- The whole app's memory is unmeasured.
