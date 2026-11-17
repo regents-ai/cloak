@@ -67,6 +67,42 @@ public enum WalletKeychain {
     }
 }
 
+/// Whether this Mac holds the wallet, as the keychain last answered. A read
+/// that fails is a stage of its own, which can be asked again.
+public enum WalletPresence: Sendable, Equatable {
+    /// The keychain is being asked, or has not been yet.
+    case looking
+    /// The keychain could not be read.
+    case unreadable
+    /// There is no wallet; Create makes one.
+    case absent
+    /// Create is under way.
+    case creating
+    /// The wallet, by its address.
+    case held(address: String)
+
+    /// What the keychain answered (`WalletKeychain.address`): the wallet's
+    /// address, nil when there is none, or a failure.
+    public init(_ read: Result<String?, Keychain.Failure>) {
+        switch read {
+        case .success(let address?): self = .held(address: address)
+        case .success(nil): self = .absent
+        case .failure: self = .unreadable
+        }
+    }
+
+    public var address: String? {
+        if case .held(let address) = self { address } else { nil }
+    }
+
+    /// Create starts only while there is no wallet; returns whether it did.
+    public mutating func create() -> Bool {
+        guard self == .absent else { return false }
+        self = .creating
+        return true
+    }
+}
+
 /// The wallet's one deposit, as the sender reports it: kept as it comes,
 /// never taken apart here, and given back with each request that needs it.
 /// Sealed with ChaChaPoly under the conversations' key in one owner-only
@@ -174,8 +210,6 @@ public struct Look: Sendable, Equatable, Decodable {
         public let deposit: Amount
         /// What this wallet has paid from it so far.
         public let spent: Amount
-        /// Its opening is not confirmed yet.
-        public let pending: Bool?
         /// When the network was asked to close it (seconds since 1970), or 0.
         public let closeRequestedAt: UInt64?
         /// When it can be taken back on the network.

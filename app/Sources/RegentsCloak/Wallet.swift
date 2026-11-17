@@ -22,9 +22,7 @@ final class Wallet {
     let folder: URL
     /// Set once the conversations' key is open; the deposit is sealed with it.
     var deposits: DepositStore?
-    /// Whether the keychain has been asked for the wallet.
-    private(set) var found = false
-    private(set) var address: String?
+    private(set) var presence = WalletPresence.looking
     private(set) var look: Look?
     var model = Wallet.defaultModel
     /// The last Create, Close or Withdraw that stopped, until the next one
@@ -32,7 +30,6 @@ final class Wallet {
     private(set) var stop: RemoteStop?
     /// The last read of the wallet that stopped, until one succeeds.
     private(set) var readStop: RemoteStop?
-    private(set) var creating = false
     /// Requests under way, for their progress.
     private(set) var working = 0
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "wallet")
@@ -46,10 +43,11 @@ final class Wallet {
         { [supervisor] request, keep in try await supervisor.exchange(request: request, keep: keep) }
     }
 
-    /// A deposit that can pay now: open, with something left.
+    /// A deposit that can pay now, as the network last showed it: not gone,
+    /// with something left.
     var depositUsable: Bool {
         guard let deposit = look?.deposit else { return false }
-        return deposit.pending != true && deposit.gone != true && deposit.left.units > 0
+        return deposit.gone != true && deposit.left.units > 0
     }
 
     /// Sending is certain to stop for want of funds, as the network showed
@@ -60,38 +58,42 @@ final class Wallet {
         return !depositUsable && look.balance < look.least
     }
 
-    /// Asks the keychain for the wallet, then reads it if there is one.
+    /// Asks the keychain for the wallet, then reads it if there is one. A
+    /// read that fails can be asked again.
     func find() async {
+        presence = .looking
+        let read: Result<String?, Keychain.Failure>
         do {
-            address = try await WalletKeychain.address()
-            found = true
+            read = .success(try await WalletKeychain.address())
         } catch {
             logger.error("cannot read the wallet: \(error.description, privacy: .public)")
-            return
+            read = .failure(error)
         }
+        presence = WalletPresence(read)
         await refresh()
     }
 
     /// Makes the wallet: the sender makes the key, the keychain keeps it.
     func create() async {
-        guard found, address == nil, !creating else { return }
-        creating = true
-        defer { creating = false }
+        guard presence.create() else { return }
         stop = nil
+        let address: String
         do {
             address = try await Remote.create(exchange: exchange) { key, address in
                 try await WalletKeychain.store(key: key, address: address)
             }
         } catch {
+            presence = .absent
             stop = recorded(error)
             return
         }
+        presence = .held(address: address)
         await refresh()
     }
 
     /// Reads the balance, the provider's setup and models, and the deposit.
     func refresh() async {
-        guard let address, let deposits, supervisor.phase == .running else { return }
+        guard let address = presence.address, let deposits, supervisor.phase == .running else { return }
         readStop = await run { [exchange] () async throws(RemoteStop) in
             self.look = try await Remote.look(address: address, deposits: deposits, exchange: exchange)
         }

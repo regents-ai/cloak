@@ -614,20 +614,23 @@ its stages first.
   and not a task, and `Turn.reworded == nil` means "goes as written" for a
   message and "not reworded yet" for a task.
 - **The draft's details** (`Chat.picks`, `askingDetails`, `detailsAsk`).
-  Resting, asking, shown, fixed. A message whose rewording stops goes back
-  into the box with its picked lines as text and its pills gone.
-- **The wallet** (`app/Sources/RegentsCloak/Wallet.swift`). Not looked
-  for, none, creating, held, read: off `found`, `address`, `creating`,
-  `look`, `working`, `stop` and `readStop`. A keychain read that fails
-  leaves `found` false with nothing that asks again until the app opens
-  again. Two reads under way are not ordered, so the older may land last.
+  Resting, asking, shown, fixed.
+- **The wallet** (`app/Sources/RegentsCloak/Wallet.swift`). Whether this
+  Mac holds it is one value, `WalletPresence` in
+  `app/Sources/CloakChat/Remote.swift`: looking, unreadable, absent,
+  creating, held. Its reads are still off `look`, `working`, `stop` and
+  `readStop`. Two reads under way are not ordered, so the older may land
+  last.
 - **The deposit** (`guest/sender/src/lib.rs`, `app/Sources/CloakChat/Remote.swift`).
-  None, opening, open, spent, close asked for, gone: off the sealed file's
-  presence, `opened`, `deposit > cumulative_amount`, and the network's
-  `close_requested_at` and `deposit == 0`. An opening deposit is shown
-  without asking the network, so nothing in Cloak moves it on; the
-  toolkit recovers one on the next send, but the sender refuses that send
-  first when the balance is under one deposit. Not yet shown by a check.
+  None, held, spent, close asked for, gone: off the sealed file's
+  presence, `deposit > cumulative_amount`, and the network's `deposit` and
+  `close_requested_at`. Whether its opening landed is the network's to
+  say: Cloak does not read `opened`. A deposit is forgotten once the
+  network shows none, unless the toolkit still marks it as opening
+  (`pendingOpen`): an opening can land up to 25 seconds after it is signed
+  (mpp 0.20.0, `src/client/tempo/session/channel_ops.rs`, line 38), and a
+  record forgotten in that time would leave funds in a channel the Mac
+  does not know. That one is the toolkit's to forget, when it next pays.
 - **The door** (`app/Sources/CloakDoor/Door.swift`). `state` (closed,
   open, refused) beside `listener`, `access`, `boxes` and `serving`; there
   is no "opening". The app opens and closes it from one loop, in turn, so
@@ -654,6 +657,44 @@ wallet again when they end, so a Close or Withdraw that stopped showed its
 reason only until that read came back. Now what a press stopped on stays
 until the next press or until it is dismissed, and a read keeps its own.
 No check: the wallet's screen is not under test.
+
+Before (17 November): the sender took a kept deposit with `opened` false
+for one whose opening might not have landed. It showed it from the record
+alone, as pending, without asking the network; the app turned Send off
+for it when the balance was under one deposit; and the sender stopped
+such a send for want of funds before the toolkit could recover it. The
+toolkit never keeps a deposit that way: one about to open is kept with
+`opened` true and the challenge it answers in `pendingOpen` (mpp 0.20.0,
+`src/client/tempo/session/mod.rs`, lines 4306 to 4325 and 1334 to 1349,
+and `channel_ops.rs`, line 1183), and was already shown as the network
+showed it. Now `opened` is not read. Every kept deposit is shown as the
+network shows its channel: held once its opening landed, and gone, so
+forgotten, while the network shows none, except one the toolkit still
+marks as opening, which is kept in case it lands; the toolkit itself
+forgets that one when it recovers it (`mod.rs`, lines 1766 to 1778). The balance is read before a
+send only when the kept deposit has nothing left. What reaches the Mac
+before a payment leaves is unchanged. `an_opening_deposit_is_shown_as_the_network_shows_it`
+and `an_opening_deposit_is_left_to_the_toolkit_whatever_the_balance` in
+`guest/sender/tests/sender.rs`, against stand-ins; the provider stand-in
+asks for no payment, so the toolkit's own recovery is not under test.
+
+Before (17 November): a keychain read of the wallet that failed left it
+not yet looked for, and nothing asked again, so the wallet's sheet showed
+its spinner until Cloak opened again. Now a read that fails is
+unreadable, and the sheet says "Cloak couldn't read the wallet." with Try
+Again, which reads again. `WalletPresenceTests.swift` checks how the
+keychain's answers move the presence and that Create starts only where
+there is no wallet; the sheet is not under test.
+
+Before (17 November): a new message whose rewording stopped, or was
+cancelled, went back into the box as it would have been sent: the draft
+with a line for each detail picked, as text, and its pills gone. Now a
+rewording is for a new message, with the box as it was written, or for a
+turn asked again (`Chat.Asked`), and a new message's box gets back what
+was typed and its picks as they were, still fixed, so no new details are
+asked for. What is reworded and sent is unchanged. No check: `Chat` is in
+the app's executable target, which is not under test, and a rewording
+needs Cloak running, which a test cannot start.
 
 Looked at and found sound: a start of tor that is cancelled once its port
 is open returns a tor that has not bootstrapped, which the supervisor

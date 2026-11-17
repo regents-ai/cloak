@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Wallet and Chat: three faults from `docs/state-machines.md`, section 10.
+  A deposit kept before its opening was known to land is shown as the
+  network shows it, and a send is no longer stopped for want of funds
+  before the payment toolkit can recover it. One the toolkit still marks
+  as opening is no longer forgotten while the network shows none, since
+  it may yet land. Send is not turned off while the wallet is still
+  being looked for. A wallet the keychain could
+  not read says so, with Try Again, where the sheet spun until Cloak opened
+  again. A new message whose rewording stops or is cancelled goes back
+  into the box as typed, with its picks as they were, where they came back
+  as text. What is kept on the Mac before a payment leaves is unchanged.
+  No money was moved.
+
 - Docs: `docs/release.md`, a skeleton of what stands between today's
   Cloak and a public release, in nine items, with what is unknown in each.
 

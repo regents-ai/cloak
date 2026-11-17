@@ -3,9 +3,9 @@
 //! name and destination and passes it to the local server named for that
 //! destination; the provider's MPP root; and the Tempo network's RPC. They
 //! cover what happens after payment (the completion and the ways it stops),
-//! the check of the balance before anything reaches the provider, the body
-//! and headers that go out, the provider's list of models, and the Tor
-//! identities each connection uses.
+//! the check of the balance before anything reaches the provider, a deposit
+//! whose opening may not have landed, the body and headers that go out, the
+//! provider's list of models, and the Tor identities each connection uses.
 //!
 //!     cargo test --manifest-path guest/sender/Cargo.toml
 
@@ -27,6 +27,8 @@ use tokio::net::{TcpListener, TcpStream};
 
 const PROVIDER: &str = "provider.test";
 const RPC: &str = "rpc.test";
+/// The network's channel reserve, which the sender asks for a channel's state.
+const RESERVE: &str = "0x4d50500000000000000000000000000000000000";
 
 /// One connection through the SOCKS stand-in.
 #[derive(Clone, Debug)]
@@ -59,12 +61,24 @@ struct Provider {
     body: Value,
 }
 
+/// What the network stand-in answers with.
+#[derive(Clone)]
+struct Chain {
+    seen: Seen,
+    balance: u128,
+    channel: Arc<Mutex<u128>>,
+}
+
 /// The stand-ins and a sender to ask.
 struct Stage {
     _stand_ins: tokio::runtime::Runtime,
     sender: tokio::runtime::Runtime,
     network: Network,
     seen: Seen,
+    /// The deposit the network shows for any channel, with nothing settled
+    /// and no close asked for: none, as for a channel never opened, until a
+    /// test sets it.
+    channel: Arc<Mutex<u128>>,
 }
 
 impl Stage {
@@ -79,6 +93,7 @@ impl Stage {
             requests: Default::default(),
             rpc: Default::default(),
         };
+        let channel = Arc::new(Mutex::new(0));
         let tor = stand_ins.block_on(async {
             let provider = Router::new()
                 .route(
@@ -100,9 +115,11 @@ impl Stage {
                     status,
                     body,
                 });
-            let rpc = Router::new()
-                .route("/", post(rpc))
-                .with_state((seen.clone(), balance));
+            let rpc = Router::new().route("/", post(rpc)).with_state(Chain {
+                seen: seen.clone(),
+                balance,
+                channel: channel.clone(),
+            });
             let routes = HashMap::from([
                 (PROVIDER.to_owned(), listen(provider).await),
                 (RPC.to_owned(), listen(rpc).await),
@@ -127,6 +144,7 @@ impl Stage {
             sender,
             network,
             seen,
+            channel,
         }
     }
 
@@ -188,11 +206,18 @@ async fn chat(
     )
 }
 
-async fn rpc(State((seen, balance)): State<(Seen, u128)>, Json(call): Json<Value>) -> Json<Value> {
+async fn rpc(State(chain): State<Chain>, Json(call): Json<Value>) -> Json<Value> {
     let method = call["method"].as_str().unwrap_or_default().to_owned();
-    seen.rpc.lock().unwrap().push(method.clone());
+    chain.seen.rpc.lock().unwrap().push(method.clone());
+    let to = call["params"][0]["to"].as_str().unwrap_or_default();
     let result = match method.as_str() {
-        "eth_call" => json!(format!("0x{balance:064x}")),
+        // A channel's state: what is settled, its deposit and when its close
+        // was asked for, a word each.
+        "eth_call" if to.eq_ignore_ascii_case(RESERVE) => {
+            let (settled, deposit, close) = (0, *chain.channel.lock().unwrap(), 0);
+            json!(format!("0x{settled:064x}{deposit:064x}{close:064x}"))
+        }
+        "eth_call" => json!(format!("0x{:064x}", chain.balance)),
         "eth_chainId" => json!("0x1079"),
         _ => {
             return Json(
@@ -269,8 +294,19 @@ fn usable() -> Value {
         "descriptor": { "payer": address, "payee": address, "operator": address, "token": USDC,
                         "salt": format!("0x{}", "00".repeat(32)), "authorizedSigner": address,
                         "expiringNonceHash": format!("0x{}", "00".repeat(32)) },
-        "escrow": "0x4d50500000000000000000000000000000000000", "chainId": 4217, "opened": true,
+        "escrow": RESERVE, "chainId": 4217, "opened": true,
     })
+}
+
+/// That deposit kept before its opening was known to land: as the toolkit
+/// keeps one before its opening leaves, naming the challenge it answers, and
+/// with `opened` false.
+fn openings() -> [Value; 2] {
+    let mut kept = usable();
+    kept["pendingOpen"] = json!("challenge");
+    let mut unconfirmed = usable();
+    unconfirmed["opened"] = json!(false);
+    [kept, unconfirmed]
 }
 
 /// The body as the Mac builds it, with a tool and its settings, which the
@@ -377,6 +413,51 @@ fn a_deposit_that_can_pay_needs_no_balance() {
     let (reply, _) = stage.ask(send(&"ab".repeat(32), usable()));
     assert_eq!(reply, answered(&goldie));
     assert!(stage.seen.rpc.lock().unwrap().is_empty());
+}
+
+/// An opening that landed holds the deposit, so the balance has dropped by
+/// one: the toolkit recovers the deposit from the network, and the sender
+/// does not stop first for want of a balance. The provider stand-in asks for
+/// no payment, so what the toolkit then does is not shown here.
+#[test]
+fn an_opening_deposit_is_left_to_the_toolkit_whatever_the_balance() {
+    let goldie = completion(json!({ "content": "Goldie." }), "stop");
+    for deposit in openings() {
+        let stage = Stage::new(200, goldie.clone(), 999_999);
+        *stage.channel.lock().unwrap() = 1_000_000;
+        let (reply, _) = stage.ask(send(&"ab".repeat(32), deposit.clone()));
+        assert_eq!(reply, answered(&goldie), "{deposit}");
+        assert_eq!(stage.seen.requests.lock().unwrap().len(), 1);
+        assert!(stage.seen.rpc.lock().unwrap().is_empty());
+    }
+}
+
+/// A deposit kept before its opening was known to land is shown as the
+/// network shows its channel, and one the toolkit marked as opening is never
+/// reported gone while the network shows none, so the host keeps its record
+/// in case the opening still lands.
+#[test]
+fn an_opening_deposit_is_shown_as_the_network_shows_it() {
+    let address = "0x0000000000000000000000000000000000000001";
+    for deposit in openings() {
+        let stage = Stage::new(200, json!({}), 999_999);
+        let look = || {
+            let request = json!({ "op": "wallet", "address": address, "deposit": deposit });
+            stage.ask(request).0["ok"]["deposit"].clone()
+        };
+        let gone = deposit.get("pendingOpen").is_none();
+        assert_eq!(
+            look(),
+            json!({ "deposit": "0", "spent": "0", "closeRequestedAt": 0, "withdrawAt": null, "gone": gone }),
+            "{deposit}"
+        );
+        *stage.channel.lock().unwrap() = 1_000_000;
+        assert_eq!(
+            look(),
+            json!({ "deposit": "1000000", "spent": "0", "closeRequestedAt": 0, "withdrawAt": null, "gone": false }),
+            "{deposit}"
+        );
+    }
 }
 
 /// Whatever completion the provider gives comes back as it is: what to make
@@ -489,15 +570,6 @@ fn the_wallet_shows_its_balance_the_setup_and_the_priced_models() {
         .iter()
         .filter(|c| c.host == RPC)
         .all(|c| !provider.contains(&&c.user)));
-
-    // A deposit not yet confirmed open is shown as it was kept.
-    let mut pending = usable();
-    pending["opened"] = json!(false);
-    let (reply, _) = stage.ask(json!({ "op": "wallet", "address": address, "deposit": pending }));
-    assert_eq!(
-        reply["ok"]["deposit"],
-        json!({ "deposit": "1000000", "spent": "0", "pending": true })
-    );
 }
 
 #[test]

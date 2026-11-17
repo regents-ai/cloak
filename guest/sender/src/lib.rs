@@ -285,9 +285,11 @@ impl Deposit {
         }
     }
 
-    /// Open, with something left to spend.
+    /// Something left to spend, as kept. Whether its opening landed, or it
+    /// has closed since, is the network's to say: the toolkit asks it before
+    /// paying from the deposit, as it does for one about to open.
     fn usable(&self) -> bool {
-        self.opened && self.deposit > self.cumulative_amount
+        self.deposit > self.cumulative_amount
     }
 }
 
@@ -585,20 +587,22 @@ async fn wallet(
         )
     };
     let (balance, setup, models) = tokio::try_join!(balance(&rpc, address), setup, models)?;
+    // As the network shows its channel, whether or not its opening was known
+    // to have landed when it was kept.
     let deposit = match deposit {
-        Some(deposit) if deposit.opened => {
+        Some(deposit) => {
             let state = read_on_chain_channel_state(&rpc, deposit.channel_id).await?;
             json!({
                 "deposit": Amount(state.deposit),
                 "spent": deposit.cumulative_amount,
                 "closeRequestedAt": state.close_requested_at,
                 "withdrawAt": (state.close_requested_at > 0).then(|| state.close_requested_at + CLOSE_GRACE),
-                // Closed on the network: the host forgets it.
-                "gone": state.deposit == 0,
+                // Closed on the network: the host forgets it. Never while
+                // its opening may still land, which would leave funds in a
+                // channel the Mac has no record of; that one is the
+                // toolkit's to forget, when it next pays.
+                "gone": state.deposit == 0 && deposit.pending_open.is_none(),
             })
-        }
-        Some(deposit) => {
-            json!({ "deposit": deposit.deposit, "spent": deposit.cumulative_amount, "pending": true })
         }
         None => Value::Null,
     };
@@ -621,8 +625,8 @@ impl Send {
         let signer =
             PrivateKeySigner::from_bytes(&self.key).map_err(|e| Stop::failed(e.to_string()))?;
         let rpc = network.client(&fresh())?;
-        // Without a deposit to spend, a new one needs the balance: checked
-        // before anything reaches the provider.
+        // Without a kept deposit with something left, a new one needs the
+        // balance: checked before anything reaches the provider.
         if !self.deposit.as_ref().is_some_and(Deposit::usable)
             && balance(&network.rpc(&rpc)?, signer.address()).await? < DEPOSIT
         {

@@ -28,14 +28,24 @@ struct WalletView: View {
                         StopRow(stop: stop) { wallet.dismiss() }
                     }
                 }
-                if !wallet.found {
+                switch wallet.presence {
+                case .looking:
                     ProgressView()
                         .frame(maxWidth: .infinity)
-                } else if let address = wallet.address {
+                case .unreadable:
+                    Section {
+                        Text("Cloak couldn't read the wallet.")
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Spacer()
+                            Button("Try Again") { Task { await wallet.find() } }
+                        }
+                    }
+                case .held(let address):
                     Account(wallet: wallet, address: address)
                     Holding(wallet: wallet, running: running)
                     Models(wallet: wallet)
-                } else {
+                case .absent, .creating:
                     Section {
                         Text("Cloak makes one wallet on this Mac. You add funds to it, and it pays for each chat you send.")
                             .foregroundStyle(.secondary)
@@ -43,20 +53,20 @@ struct WalletView: View {
                             Spacer()
                             Button("Create") { Task { await wallet.create() } }
                                 .buttonStyle(.borderedProminent)
-                                .disabled(wallet.creating || !running)
+                                .disabled(wallet.presence == .creating || !running)
                         }
                     }
                 }
             }
             .formStyle(.grouped)
             HStack(spacing: 10) {
-                if wallet.working > 0 || wallet.creating {
+                if wallet.working > 0 || wallet.presence == .creating {
                     ProgressView()
                         .controlSize(.small)
                 }
                 Spacer()
                 Button("Refresh") { Task { await wallet.refresh() } }
-                    .disabled(wallet.address == nil || !running)
+                    .disabled(wallet.presence.address == nil || !running)
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }

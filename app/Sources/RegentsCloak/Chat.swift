@@ -37,6 +37,15 @@ final class Chat {
         let task: Task<Void, Never>
     }
 
+    /// What one rewording is for.
+    enum Asked {
+        /// A new message, with the box as it was written, picks and all, to
+        /// give back if the rewording stops.
+        case new(draft: String, picks: DetailPicks)
+        /// A turn asked again.
+        case again(UUID)
+    }
+
     enum Problem {
         case save
         case delete
@@ -92,7 +101,8 @@ final class Chat {
     }
     /// The details of the message being written, from the model on this Mac
     /// (decision 13), and what is picked for them. Cleared when the draft is
-    /// emptied or another conversation is shown.
+    /// emptied or another conversation is shown; given back with the draft
+    /// when a new message's rewording stops.
     private(set) var picks = DetailPicks()
     /// The details of the draft are being asked for.
     private(set) var askingDetails = false
@@ -210,7 +220,7 @@ final class Chat {
     }
 
     private var block: Block? {
-        Block(running: supervisor.phase == .running, hasWallet: wallet.address != nil, lacksFunds: wallet.lacksFunds)
+        Block(running: supervisor.phase == .running, hasWallet: wallet.presence != .absent && wallet.presence != .creating, lacksFunds: wallet.lacksFunds)
     }
 
     /// Finds the key, or makes the first one, then opens every conversation
@@ -289,7 +299,8 @@ final class Chat {
     /// the agent's conversation, runs it as its next task.
     /// The message goes with a line for each detail picked.
     func submit() {
-        let original = picks.message(draft.trimmingCharacters(in: .whitespacesAndNewlines))
+        let (written, picked) = (draft, picks)
+        let original = picked.message(written.trimmingCharacters(in: .whitespacesAndNewlines))
         guard canSubmit, var conversation = selected else { return }
         draft = ""
         if isAgent(conversation) {
@@ -301,7 +312,7 @@ final class Chat {
             update(conversation)
             send(turn.id, in: conversation.id)
         } else {
-            start(conversation.id, original, turn: nil)
+            start(conversation.id, original, .new(draft: written, picks: picked))
         }
     }
 
@@ -309,7 +320,7 @@ final class Chat {
     /// written, from its original, until it is sent.
     func reword(_ turn: Turn, in conversation: UUID) {
         guard canReword, turn.answer == nil, sending[turn.id] == nil else { return }
-        start(conversation, turn.original, turn: turn.id)
+        start(conversation, turn.original, .again(turn.id))
     }
 
     func cancel() {
@@ -445,15 +456,16 @@ final class Chat {
         askingDetails = false
     }
 
-    private func start(_ conversation: UUID, _ original: String, turn: UUID?) {
+    private func start(_ conversation: UUID, _ original: String, _ asked: Asked) {
         // A rewrite never waits on a details request.
         stopAskingDetails()
         stop = nil
-        let task = Task { await reword(original, in: conversation, turn: turn) }
+        let task = Task { await reword(original, in: conversation, asked) }
+        let turn: UUID? = if case .again(let turn) = asked { turn } else { nil }
         rewording = Rewording(conversation: conversation, original: original, turn: turn, started: .now, task: task)
     }
 
-    private func reword(_ original: String, in id: UUID, turn: UUID?) async {
+    private func reword(_ original: String, in id: UUID, _ asked: Asked) async {
         let result: Result<String, RewriteStop>
         do {
             result = .success(try await supervisor.rewrite([original])[0])
@@ -465,7 +477,7 @@ final class Chat {
         guard var conversation = conversations.first(where: { $0.id == id }) else { return }
         switch result {
         case .success(let reworded):
-            if let turn, let index = conversation.turns.firstIndex(where: { $0.id == turn }) {
+            if case .again(let turn) = asked, let index = conversation.turns.firstIndex(where: { $0.id == turn }) {
                 conversation.turns[index].reworded = reworded
             } else {
                 let new = Turn(original: original, reworded: reworded)
@@ -474,10 +486,19 @@ final class Chat {
             }
             update(conversation)
         case .failure(let reason):
-            stop = Stop(reason: reason, newMessage: turn == nil)
-            // The message goes back to be written again; it is never shown
-            // as reworded.
-            if turn == nil, draft.isEmpty { draft = original }
+            guard case .new(let written, let picked) = asked else {
+                stop = Stop(reason: reason, newMessage: false)
+                return
+            }
+            stop = Stop(reason: reason, newMessage: true)
+            // The message goes back into the box as it was written, its picks
+            // with it, to be written again; it is never shown as reworded. The
+            // picks go first, so the draft finds them fixed and no new
+            // details are asked for.
+            if draft.isEmpty {
+                picks = picked
+                draft = written
+            }
         }
     }
 
