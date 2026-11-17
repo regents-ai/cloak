@@ -1,0 +1,8 @@
+# A Tor client with one SOCKS port, on its address in the closed network and
+# open only to that network. Logs at notice level, with Tor's default
+# SafeLogging, which keeps destination addresses out of the log.
+SocksPort 172.31.250.2:9050 IsolateSOCKSAuth
+SocksPolicy accept 172.31.250.0/24
+SocksPolicy reject *
+DataDirectory /var/lib/tor
+Log notice stdout

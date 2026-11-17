@@ -1890,6 +1890,72 @@ candidates, so the split has to be re-declared before any holdout opens.
         `/admin/return/approve` send the ETH left at the address to a
         destination (money, on chain). Every `/admin/*` call carries the
         `X-OA-Management-Token` header (`fund.go:239`).
+    - Run 17 November, outside Cloak, up to the key and no further, with
+      no money moved (Sean's "2. a" for the key). `guest/zkapi/trial/`
+      builds two images from the guest image's Debian base and snapshot:
+      `tor` (Debian's tor 0.4.9.11) and `zkapi` (the two programs above,
+      the four proving keys in `share/zkapi-clientd/proof-setup`, hashes
+      matching the manifest), with scripts to create, start and stop them.
+      The zkapi container is only on a Docker network made with
+      `--internal`, which has no default route; tor is on it and on Docker's
+      bridge, its SOCKS port at 172.31.250.2:9050 open only to that network,
+      with `IsolateSOCKSAuth`. The daemon takes no SOCKS address but a
+      numeric loopback one (`relay.go:60-65`), so socat in the container
+      forwards 127.0.0.1:9050 to tor. The daemon's folder is
+      `~/Library/Application Support/Regents Cloak zkAPI Trial`, owner-only.
+      - Before any daemon command, from the zkapi container, on both
+        starts: direct HTTPS to 1.1.1.1 failed at once ("Could not connect
+        to server"), a lookup of check.torproject.org got no answer, and
+        check.torproject.org/api/ip through 127.0.0.1:9050 answered
+        `"IsTor":true`.
+      - `config --network mainnet --relay-url socks5://127.0.0.1:9050`,
+        without a terminal, saved `config.json`, started the daemon and
+        the companion, and read the wallet's withdrawal and address state
+        (`GET /admin/withdrawal`, `GET /admin/funding/address`), which made
+        the key: `funding/mainnet/address-funding.json`, 425 bytes, mode
+        0600. It then stopped at its first question, the deposit amount:
+        "setup needs an interactive terminal".
+      - `serve` passed every startup gate, then stopped 1 to 2 s in at its
+        funding check, which ends the daemon when there is no deposit
+        (`configured_runtime.go:97-99`). Its lines: "Starting local API
+        service", "zkAPI client cda02d83 listening at
+        http://127.0.0.1:8787/v1 (zkapi); SOCKS5 proxy required", "zkAPI
+        network: mainnet", then "Stopping local API service". The gates:
+        the deployment manifest and the proving keys' hashes, checked
+        before the companion starts (`companion.go:70-103`); the companion's
+        start; its `/health` call to the service, which it makes before it
+        listens (`zkapi-cli/src/main.rs:790`) and which needs the service to
+        advertise `direct_openrouter`; and the daemon's check of the
+        companion's chain, mode, bridge version, deployment and circuit
+        (`client.go:215-240`). With `serve` gone, the address request found
+        nothing listening.
+      - So the address came from `config` run again at a terminal nothing
+        can type into (`docker exec -t`, no `-i`): it waits at the deposit
+        amount question with the daemon and companion up. `GET
+        /admin/funding/address`, with the management token and local API
+        key passed on standard input, answered address
+        `0x407B8fE5DB23Ceb64894e0dfDf2CF3be86498bDd`, chain 1, balance 0,
+        phase `ready`. SIGTERM ended it ("Stopped. Your saved configuration
+        and wallet state are preserved"). With both containers stopped and
+        started again, `serve` stopped the same way and the same request
+        gave the same answer, byte for byte. No deposit or note file was
+        written.
+      - Memory at rest, 70 s idle at that question: `docker stats` 19.6
+        MiB for the zkapi container (daemon, companion and socat), its
+        cgroup 27.0 MiB (27.9 MiB peak since it started); resident sizes
+        18.1 MiB for the daemon and 17.4 MiB for the companion, which share
+        pages. The tor container: 22.0 MiB.
+      - The service: no error naming a client, no attestation step, no
+        version refusal. Its one reply in these steps is the `/health` the
+        companion required; Ethereum RPC (chain ID and balance) also
+        answered through Tor. Whether it serves this client stays open:
+        leases and the verifier's `/submit_key` come only with a paid
+        request.
+      - tor's log at notice level, with its default SafeLogging, names no
+        hosts, so the hosts reached are not recorded.
+      - Seen in passing: the daemon's default key reuse window is 60 s,
+        and its own line says the provider can link requests sharing a
+        key; `config --key-reuse-window-seconds 0` gives each its own.
 - Details while writing (15 November, decision 13). While a message or a
   task is written in Chat, the one worker reads the draft and proposes up
   to four details it leaves open; what the owner picks is added to the
