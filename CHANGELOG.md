@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- zkAPI trial: the whole trip run on mainnet outside Cloak, through Tor
+  only, on Sean's decision: a $5 deposit, one paid request answered, its
+  settlement, a restart, and a withdrawal of the full balance. Open
+  Anonymity's service serves this client. The trip cost about $3.57,
+  nearly all network fees. `guest/zkapi/trial/drive.py` answers the
+  daemon's questions only when a go file exists. Figures in
+  `docs/plan.md`.
+
 - Wallet and Chat: three faults from `docs/state-machines.md`, section 10.
   A deposit kept before its opening was known to land is shown as the
   network shows it, and a send is no longer stopped for want of funds

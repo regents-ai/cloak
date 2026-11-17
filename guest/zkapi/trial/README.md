@@ -1,8 +1,9 @@
 # zkAPI trial
 
 Open Anonymity's mainnet zkAPI daemon and its companion, run together outside
-Cloak, in Docker on the Mac, with Tor as the only way out. No step here moves
-money; funding, paid requests and withdrawals are not part of it.
+Cloak, in Docker on the Mac, with Tor as the only way out. Steps 1 to 7 move
+no money. A deposit, a paid request and a withdrawal are real ETH on mainnet
+and each needs Sean's own decision; "Money" below says how they were run.
 
 ## Design
 
@@ -47,3 +48,24 @@ From the repository root:
    `docker exec cloak-zkapi-trial-zkapi /opt/zkapi/trial/address.sh`.
 7. `sh guest/zkapi/trial/stop.sh` stops the daemon and both containers.
    The containers and folder are kept, so step 3 starts them again.
+
+## Money
+
+The daemon asks its funding questions at a terminal. `drive.py` gives a
+command one, logs what it prints, and answers a question only when the go
+file named for it exists, so a quote can be read before it is confirmed:
+
+    uv run --no-project python guest/zkapi/trial/drive.py LOG RULES -- docker exec -i -t cloak-zkapi-trial-zkapi zkapi-clientd --config-dir /state config --usd 5
+
+`RULES` is a JSON list of `{"when": text, "go": path, "send": text}`. With
+`"from_go": true` the answer is the go file's contents; with `"max_fee"`
+the question is answered each time it comes back while the last "Maximum
+network fee" shown is under that many ETH.
+
+- Deposit: `config --usd N`, one rule for "Press Enter to continue with this
+  deposit".
+- Request: `serve`, then `/v1/chat/completions` on 127.0.0.1:8787 from inside
+  the container. Settlement follows the key window by itself.
+- Withdrawal: `config --menu`; "Enter to select" takes `jj`, then the
+  destination, then "Press Enter to withdraw", which is asked again whenever
+  the fee ceiling rises.

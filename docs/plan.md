@@ -1956,6 +1956,36 @@ candidates, so the split has to be re-declared before any holdout opens.
       - Seen in passing: the daemon's default key reuse window is 60 s,
         and its own line says the provider can link requests sharing a
         key; `config --key-reuse-window-seconds 0` gives each its own.
+    - The whole trip, 17 November, with real ETH (Sean's "1" for a $5
+      deposit; he sent 0.008200750 ETH to the address). Same two
+      containers, Tor the only way out. The daemon's questions were
+      answered by `guest/zkapi/trial/drive.py`, which gives a command a
+      terminal and answers a question only when a go file exists.
+      - Deposit: `config --usd 5` quoted 0.002770807 ETH and a fee of at
+        most 0.0013 ETH; confirmed once; "Deposit confirmed. Private
+        inference balance activated." about three minutes later.
+      - **The service serves this client.** `serve`, then one
+        `/v1/chat/completions` to `anthropic/claude-haiku-5.5` (its cap $1
+        a request): HTTP 200 in 21.1 s, answered by OpenRouter. The window
+        closed 60 s later and settlement followed by itself: "key session
+        1 ended (settled); cost: 0.000000003 ETH; balance remaining:
+        0.002770804 ETH", 85 s after the answer.
+      - A restart between settlement and withdrawal: `serve` ended with
+        SIGINT; `config --menu`, withdraw, started its own daemon and
+        companion and found the balance.
+      - Withdrawal of the full balance to the address itself: preparing
+        took about 15 s; it asks again whenever the fee ceiling rises, so
+        one answer is not enough. Stopped with SIGINT while it waited at
+        that second question and run again: it had kept the destination
+        and sent nothing. Submitted, then about seven minutes to
+        "Withdrawal complete: 0.002770804 ETH", fee 0.001116308 ETH.
+      - Cost of the trip: 0.001979138 ETH, about $3.57, nearly all of it
+        the two network fees (deposit 0.000862827, withdrawal
+        0.001116308). The address now holds 0.006221612 ETH; where it goes
+        is Sean's to say.
+      - Not tried: a restart while a request is unsettled, while a deposit
+        is unmined, or while a withdrawal waits for finality; key reuse
+        off; more than one request; a second deposit.
 - Details while writing (15 November, decision 13). While a message or a
   task is written in Chat, the one worker reads the draft and proposes up
   to four details it leaves open; what the owner picks is added to the

@@ -86,8 +86,11 @@ mainnet daemon, companion, keys and settings, in a container on this Mac
 with Tor as its only way out: a small deposit, one paid request,
 settlement, a withdrawal, and a restart in the middle of each. This
 answers the open question first: whether Open Anonymity's service serves
-a client that is not its own app. Built and measured already; never run.
-Every deposit and transaction is Sean's own decision. If the service
+a client that is not its own app. **Answered 17 November: it does.** A
+$5 deposit, one paid request, its settlement, a restart and a full
+withdrawal all passed, for about $3.57 in fees. Still to run: a restart
+while a request is unsettled, while a deposit is unmined and while a
+withdrawal waits; key reuse turned off; several requests. Every deposit and transaction is Sean's own decision. If the service
 refuses us, the item stops here and comes back to Sean; it is not
 replaced by another way to pay.
 
