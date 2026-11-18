@@ -2410,6 +2410,8 @@ candidates, so the split has to be re-declared before any holdout opens.
       the table release plan item 8 asks for. Not seen: the Welcome,
       the quick prompt, the QR code, a download, the Shortcut, Door and
       Advanced panes, a failure in the menu.
+    - Sean's ruling, 18 November: signed updates wait until the stage 2
+      protections (private payment, cover traffic) are in.
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.
