@@ -2334,9 +2334,13 @@ candidates, so the split has to be re-declared before any holdout opens.
       4 s on the 9B. Two workers never hold the model at once; a worker
       that ends by itself, or cannot start again, is the failure it was,
       and nothing is tried again
-      ([state-machines.md](state-machines.md), sections 3 and 9). Not
-      yet seen in the running app, and the supervisor's part is not
-      covered by a test, since a test cannot reach Running.
+      ([state-machines.md](state-machines.md), sections 3 and 9). Seen
+      in the running app (build `365a363`, 18 November): five minutes
+      after the startup check the worker's process was gone, Cloak
+      stayed Running and its detail said the worker was resting. The
+      wake is covered by the relay's tests and has not been seen in the
+      running app; the supervisor's part is not covered by a test,
+      since a test cannot reach Running.
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.
