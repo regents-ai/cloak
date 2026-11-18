@@ -596,6 +596,19 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   removes from it every guest's `cloak-<UUID>` folder a killed app left,
   with the channel token and rewriter key inside (section 5), and nothing
   else. If it cannot, the app says it can't open, and ends.
+- **The menu's header** (`app/Sources/RegentsCloak/Menu.swift`) only reads
+  the phase. Its dot is the state now: green Running, yellow Paused or
+  Ready, red Needs attention, grey while Preparing or Stopping, with the
+  state's word as its tooltip and for VoiceOver. Its line keeps the last
+  settled state's word through Preparing and Stopping, so no word shows only
+  for a moment, with "model unloaded" while Running and resting and
+  "downloading model" while the download is under way. Once settled in Needs
+  attention, the reason's title and remedy take the line's place, beside
+  the one fix the menu can take: Start Again for `tor_unavailable`,
+  `tor_stopped`, `worker_unavailable`, `worker_stopped`, `guest_failed` and
+  `check_failed`, Download Model… for `model_missing` (section 9a), none for
+  the rest. The menu is rebuilt each time it opens, and while it is open
+  whenever the phase, the rest or the download changes.
 
 What `cloak --json` prints for each phase (INS02):
 
@@ -631,9 +644,11 @@ last answer; a request after a rest answered by a new worker, which rests
 in its turn; never two workers at once; an exit while idle is an exit and
 never a rest; a worker that cannot start on a wake fails its request and
 is not tried again; a request cancelled during the load never sent;
-pausing while resting or during the load) and
+pausing while resting or during the load),
 `ControlTests.swift` (the JSON for each status; the socket answers only its
-owner's well-formed requests).
+owner's well-formed requests) and `MenuHeaderTests.swift` (the header's dot
+and line for every phase, settled and changing; the rest shown only with
+Running; the download offered in one place).
 
 ## 9a. The model's download (`app/Sources/CloakSupervisor/ModelDownload.swift`)
 
@@ -664,8 +679,11 @@ Stopped, Downloading, Retrying, Waiting for network --cancel--> Stopped, partial
   the start check counts it (`Checks.isInPlace`, section 9); the worker
   still checks every sha256 itself as it loads.
 - **Offered** in the Details window while some file is not in place, by a
-  Download Model item in the menu then, and in the chat window when the
-  reason is `model_missing`. Before the button, the window says the size,
+  Download Model item in the menu then (the menu looks at the files again
+  each time it opens), and in the chat window when the reason is
+  `model_missing`. While Cloak needs attention for `model_missing`, the
+  menu's header offers it as the failure's button, in the item's place
+  (section 9). Before the button, the window says the size,
   the host, and that this download goes straight from this Mac to that
   host, which sees this Mac's address, unlike Cloak's messages.
 - **Blocked**: Download and Continue are disabled, with the reason beside

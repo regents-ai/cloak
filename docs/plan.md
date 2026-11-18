@@ -2371,6 +2371,16 @@ candidates, so the split has to be re-declared before any holdout opens.
       download, a real sleep and wake; not yet seen on screen. Left: a
       file of the right size and wrong hash still has to be removed by
       hand.
+    - Taken, 18 November: the menu and windows. The menu is a standard
+      menu-bar item with a header (the name, one small dot for the
+      state, and a line of plain words under it), a failure shown in
+      that line's place with its remedy and the one button that acts on
+      it, and the release and build at the foot. Every reason has a
+      hedged likely cause and one thing to do. A Welcome window shows
+      once, starts nothing, and says what Cloak does and that
+      Development mode pays from one wallet. The wallet sheet shows a
+      QR code of the address beside Copy; nothing about the wallet
+      itself changed. Not yet seen on screen.
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.

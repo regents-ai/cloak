@@ -7,21 +7,19 @@ import os
 import SwiftUI
 
 /// The menu-bar app: one supervisor, the model's download, its menu, its
-/// Chat, Agents and Details windows, the door other apps and the agent in the
-/// guest send through while Cloak is Running, and the control channel `cloak`
-/// uses to drive the same supervisor.
+/// Chat, Agents and Details windows, a welcome on the first launch, the door
+/// other apps and the agent in the guest send through while Cloak is
+/// Running, and the control channel `cloak` uses to drive the same
+/// supervisor.
 @main
 struct RegentsCloakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var app
 
+    // The menu is AppKit's (`StatusMenu`); this scene shows nothing, and
+    // takes no place in the app's menus.
     var body: some Scene {
-        MenuBarExtra {
-            MenuContent(
-                supervisor: app.supervisor, download: app.download, showChat: app.showChat, showAgents: app.showAgents,
-                showDetails: app.showDetails)
-        } label: {
-            MenuLabel(phase: app.supervisor.phase)
-        }
+        Settings { EmptyView() }
+            .commands { CommandGroup(replacing: .appSettings) {} }
     }
 }
 
@@ -36,6 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private lazy var details = AppWindow { [supervisor, download] in DetailsView.window(supervisor, download) }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
+    private lazy var welcome = AppWindow { WelcomeView.window() }
+    private var menu: StatusMenu?
     let door: Door = {
         let supervisor = Launch.supervisor, conversations = Launch.layout.conversations
         return Door(
@@ -51,6 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "app")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        menu = StatusMenu(
+            supervisor: supervisor, download: download, showChat: showChat, showAgents: showAgents, showDetails: showDetails)
         // The agent's model requests from the guest come in at the door.
         supervisor.door = { [door] socket in door.accept(guest: socket) }
         do {
@@ -72,6 +74,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { [supervisor] _ in
             MainActor.assumeIsolated { _ = supervisor.send(.sleep) }
+        }
+        // Once, on the first launch; it starts nothing.
+        if !UserDefaults.standard.bool(forKey: WelcomeView.key) {
+            UserDefaults.standard.set(true, forKey: WelcomeView.key)
+            welcome.show()
         }
     }
 

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Menu and windows (decision 14, from Llama.app): a header with a state
+  dot and one plain line, a failure and its fix in one place, the build
+  at the foot of the menu, clearer causes and remedies for every
+  failure, a one-time Welcome, and a QR code of the wallet's address.
+
 - The app downloads its model (decision 14, from Llama.app; release plan
   item 7). Offered in Details, the menu and Chat when the files are
   missing, started only by the person, with the size, the host and the

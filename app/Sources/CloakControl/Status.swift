@@ -105,7 +105,7 @@ public enum Reason: String, Codable, Sendable, CaseIterable {
     case guestFailed = "guest_failed"
     case checkFailed = "check_failed"
 
-    /// What went wrong, in a few plain words.
+    /// What went wrong, in a few plain words: one sentence.
     public var title: String {
         switch self {
         case .unsupportedHardware: "This Mac isn't supported."
@@ -117,20 +117,29 @@ public enum Reason: String, Codable, Sendable, CaseIterable {
         case .torStopped: "Tor stopped."
         case .workerUnavailable: "The model couldn't load."
         case .workerStopped: "The model stopped."
-        case .guestFailed: "The workspace couldn't start."
+        case .guestFailed: "The workspace stopped."
         case .checkFailed: "The startup check failed."
         }
     }
 
-    /// What to do about it.
+    /// The likely cause, said as likely, and the one thing to do about it.
+    /// `cloak` prints it too, so it names no button.
     public var remedy: String {
         switch self {
-        case .unsupportedHardware: "Use a Mac with Apple silicon and enough memory."
-        case .partMissing, .partChanged: "Reinstall Regents Cloak."
-        case .modelMissing: "Download the model, then start again."
-        case .modelChanged: "Reinstall the model, then start again."
-        case .torUnavailable: "Check your internet connection, then start again."
-        case .torStopped, .workerUnavailable, .workerStopped, .guestFailed, .checkFailed: "Start again."
+        case .unsupportedHardware:
+            "It likely lacks Apple silicon or enough memory for the model. Use a Mac with Apple silicon and more memory."
+        case .partMissing: "A file Cloak needs may have been moved or deleted. Reinstall Regents Cloak."
+        case .partChanged: "A file Cloak needs may have been edited or replaced. Reinstall Regents Cloak."
+        case .modelMissing: "Its download may not have finished. Download the model, then start again."
+        case .modelChanged:
+            "A file in its folder may have been added or edited. Delete the model's folder, download it again, then start again."
+        case .torUnavailable:
+            "The internet may be down, or this network may block Tor. Check your connection, then start again."
+        case .torStopped: "It may have quit unexpectedly, or been closed by another app. Start again."
+        case .workerUnavailable: "Other apps may be using the memory it needs. Quit some, then start again."
+        case .workerStopped: "It may have run out of memory. Quit some apps, then start again."
+        case .guestFailed: "This Mac may be short of memory. Quit some apps, then start again."
+        case .checkFailed: "The Mac may have been too busy to finish it in time. Start again."
         }
     }
 }

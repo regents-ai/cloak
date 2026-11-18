@@ -1,63 +1,366 @@
 import AppKit
 import CloakControl
 import CloakSupervisor
-import SwiftUI
+import Observation
 
-/// The menu: the state, why it needs attention, the way to the model's
+/// The menu-bar item and its menu: the header (the app's name, the state's
+/// dot and its line, or a failure with its fix), the way to the model's
 /// download while its files are not all in place, Start or Pause, Chat,
-/// Agents, Details and Quit. Each item is reachable from the keyboard.
-struct MenuContent: View {
-    let supervisor: Supervisor
-    let download: ModelDownload
-    let showChat: () -> Void
-    let showAgents: () -> Void
-    let showDetails: () -> Void
+/// Agents, Details, Quit, and the release and build. Every action is
+/// reachable from the keyboard, since the header's fix is also Start or
+/// Details. It is AppKit's menu, since a SwiftUI menu holds only plain items
+/// and the header is a view of its own.
+@MainActor
+final class StatusMenu: NSObject, NSMenuDelegate {
+    private let supervisor: Supervisor
+    private let download: ModelDownload
+    private let showChat: () -> Void
+    private let showAgents: () -> Void
+    private let showDetails: () -> Void
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let menu = NSMenu()
+    private let header = NSMenuItem()
+    private let headerView = MenuHeaderView()
+    /// The last phase with no change under way, which the header's line
+    /// keeps while one is.
+    private var settled = Phase.paused
+    private var open = false
 
-    var body: some View {
+    init(
+        supervisor: Supervisor, download: ModelDownload, showChat: @escaping () -> Void,
+        showAgents: @escaping () -> Void, showDetails: @escaping () -> Void
+    ) {
+        self.supervisor = supervisor
+        self.download = download
+        self.showChat = showChat
+        self.showAgents = showAgents
+        self.showDetails = showDetails
+        super.init()
+        header.view = headerView
+        headerView.act = { [unowned self] fix in
+            menu.cancelTracking()
+            switch fix {
+            case .start: supervisor.send(.start)
+            case .download: showDetails()
+            }
+        }
+        menu.autoenablesItems = false
+        menu.delegate = self
+        item.menu = menu
+        showIcon(supervisor.phase)
+        // The menu lasts as long as the app, and so does this.
+        Task {
+            for await watched in Observations({
+                Watched(phase: supervisor.phase, resting: supervisor.resting, download: download.state)
+            }) {
+                if watched.phase.isSettled { settled = watched.phase }
+                showIcon(watched.phase)
+                if open { rebuild() }
+            }
+        }
+    }
+
+    /// What the menu shows that can change while it is open.
+    private struct Watched: Equatable {
+        var phase: Phase
+        var resting: Bool
+        var download: ModelDownload.State
+    }
+
+    /// The menu bar icon (`Phase.symbol`), named for VoiceOver.
+    private func showIcon(_ phase: Phase) {
+        item.button?.image = NSImage(systemSymbolName: phase.symbol, accessibilityDescription: "Regents Cloak, \(phase.state.title)")
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        // The model's files can change while the menu is closed.
+        download.refresh()
+        rebuild()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        open = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        open = false
+    }
+
+    private func rebuild() {
         let phase = supervisor.phase
-        Text(phase.state.title)
-        if let reason = phase.reason {
-            Text(reason.title)
-        }
+        let shown = MenuHeader(phase: phase, settled: settled, resting: supervisor.resting, downloading: download.isUnderWay)
+        headerView.show(shown)
+        menu.removeAllItems()
+        menu.addItem(header)
         // The download itself, and what is said before it starts, are in
-        // Details.
-        if download.state != .installed {
-            Button(download.isUnderWay ? "Downloading Model…" : "Download Model…", action: showDetails)
+        // Details. A failure that the download fixes offers it in its place.
+        if download.state != .installed, !shown.offersDownload {
+            menu.addItem(Action(download.isUnderWay ? "Downloading Model…" : "Download Model…", run: showDetails))
         }
-        Divider()
+        menu.addItem(.separator())
         switch phase {
         case .preparing, .running:
-            Button("Pause") { supervisor.send(.pause) }
-                .keyboardShortcut("p")
+            menu.addItem(Action("Pause", key: "p") { [supervisor] in supervisor.send(.pause) })
         case .stopping:
-            Button("Start") {}
-                .disabled(true)
+            let start = Action("Start") {}
+            start.isEnabled = false
+            menu.addItem(start)
         case .paused, .ready, .needsAttention:
-            Button("Start") { supervisor.send(.start) }
-                .keyboardShortcut("s")
+            menu.addItem(Action("Start", key: "s") { [supervisor] in supervisor.send(.start) })
         }
-        Button("Chat", action: showChat)
-        Button("Agents", action: showAgents)
-        Button("Details", action: showDetails)
-            .keyboardShortcut("d")
-        Divider()
-        Button("Quit") { NSApp.terminate(nil) }
-            .keyboardShortcut("q")
+        menu.addItem(Action("Chat", run: showChat))
+        menu.addItem(Action("Agents", run: showAgents))
+        menu.addItem(Action("Details", key: "d", run: showDetails))
+        menu.addItem(.separator())
+        menu.addItem(Action("Quit", key: "q") { NSApp.terminate(nil) })
+        menu.addItem(footer)
+    }
+
+    /// The release and build in small secondary text, so a stale build is
+    /// not taken for a fault.
+    private lazy var footer: NSMenuItem = {
+        let text = "\(supervisor.manifest.release) · \(supervisor.manifest.build)"
+        let footer = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+        footer.attributedTitle = NSAttributedString(
+            string: text, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+        footer.isEnabled = false
+        return footer
+    }()
+}
+
+/// A menu item that runs its closure when chosen.
+private final class Action: NSMenuItem {
+    private let run: () -> Void
+
+    init(_ title: String, key: String = "", run: @escaping () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(choose), keyEquivalent: key)
+        target = self
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("not made from a file")
+    }
+
+    @objc private func choose() {
+        run()
     }
 }
 
-/// The menu bar icon: one shape per state, so the state never rests on
-/// colour alone, named for VoiceOver.
-struct MenuLabel: View {
-    let phase: Phase
+/// What the menu's header says. Its dot is the state now, grey while Cloak
+/// changes state; its line keeps the last settled state's words meanwhile,
+/// so no word shows only for a moment. A failure takes the line, with its
+/// remedy and the one fix the menu can offer, once Cloak has stopped for it.
+struct MenuHeader: Equatable {
+    enum Dot: Equatable {
+        case running, stopped, attention, changing
+    }
 
-    var body: some View {
-        Image(systemName: phase.symbol)
-            .accessibilityLabel("Regents Cloak, \(phase.state.title)")
+    enum Fix: Equatable {
+        case start
+        case download(underWay: Bool)
+    }
+
+    enum Line: Equatable {
+        /// A state's word, with what the model is doing beside it.
+        case state(State, unloaded: Bool, downloading: Bool)
+        case failure(Reason, fix: Fix?)
+    }
+
+    var dot: Dot
+    /// The state now, which the dot's tooltip and VoiceOver say.
+    var state: State
+    var line: Line
+
+    /// `settled` is the last phase with no change under way.
+    init(phase: Phase, settled: Phase, resting: Bool, downloading: Bool) {
+        state = phase.state
+        dot = switch phase {
+        case .running: .running
+        case .paused, .ready: .stopped
+        case .needsAttention: .attention
+        case .preparing, .stopping: .changing
+        }
+        if case .needsAttention(let reason) = phase {
+            line = .failure(reason, fix: Self.fix(for: reason, downloading: downloading))
+        } else {
+            let shown = phase.isSettled ? phase : settled
+            line = .state(shown.state, unloaded: shown == .running && resting, downloading: downloading)
+        }
+    }
+
+    /// The fix the menu offers for a reason: the remedy's one step, when
+    /// Cloak can take it.
+    static func fix(for reason: Reason, downloading: Bool) -> Fix? {
+        switch reason {
+        case .modelMissing: .download(underWay: downloading)
+        case .torUnavailable, .torStopped, .workerUnavailable, .workerStopped, .guestFailed, .checkFailed: .start
+        case .unsupportedHardware, .partMissing, .partChanged, .modelChanged: nil
+        }
+    }
+
+    var offersDownload: Bool {
+        if case .failure(_, .download?) = line { return true }
+        return false
+    }
+}
+
+/// The header's view: "Regents Cloak" at 13 points semibold with the
+/// state's 6-point dot, over one line at 11 points, as the Mac's own
+/// Battery and Wi-Fi menus have it, or over a failure, its fix beside it,
+/// and its remedy. Its words start where the menu's items start theirs.
+/// Never highlighted or chosen; its button closes the menu, as an item does.
+final class MenuHeaderView: NSView {
+    static let width: CGFloat = 310
+    /// Where the menu's own items start their titles, measured from the
+    /// menu's edge in docs/shots/menu-paused-dark.png.
+    static let inset: CGFloat = 16.5
+
+    var act: (MenuHeader.Fix) -> Void = { _ in }
+    private let dot = StateDot()
+    private let line = NSTextField(labelWithString: "")
+    private let problem = NSTextField(labelWithString: "")
+    private let fixButton = NSButton(title: "", target: nil, action: nil)
+    private let remedy = NSTextField(wrappingLabelWithString: "")
+    private let failure: NSStackView
+    private var fix: MenuHeader.Fix?
+
+    init() {
+        let title = NSTextField(labelWithString: "Regents Cloak")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        let name = NSStackView(views: [title, dot])
+        // The dot sits on the title's baseline, its middle near half the
+        // x-height (`StateDot`).
+        name.alignment = .firstBaseline
+        name.spacing = 6
+
+        line.font = .systemFont(ofSize: 11)
+        line.textColor = .secondaryLabelColor
+        problem.font = .systemFont(ofSize: 11)
+        problem.lineBreakMode = .byTruncatingTail
+        problem.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        problem.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        fixButton.controlSize = .small
+        fixButton.font = .systemFont(ofSize: NSFont.systemFontSize(for: .small))
+        fixButton.bezelStyle = .push
+        fixButton.setContentHuggingPriority(.required, for: .horizontal)
+        failure = NSStackView(views: [problem, fixButton])
+        failure.alignment = .firstBaseline
+        // The problem takes the room the button leaves.
+        failure.distribution = .fill
+        failure.spacing = 6
+        remedy.font = .systemFont(ofSize: 11)
+        remedy.textColor = .secondaryLabelColor
+        remedy.preferredMaxLayoutWidth = Self.width - 2 * Self.inset
+
+        let stack = NSStackView(views: [name, line, failure, remedy])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 40))
+        fixButton.target = self
+        fixButton.action = #selector(press)
+        addSubview(stack)
+        // Pinned on the leading side only, so a wider menu leaves its room
+        // on the trailing side.
+        // The failure's row is as wide as the header, so its button sits at
+        // the trailing edge; the constraint is its own, so it stays while
+        // the row is hidden.
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.inset),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            stack.widthAnchor.constraint(equalToConstant: Self.width - 2 * Self.inset),
+            failure.widthAnchor.constraint(equalToConstant: Self.width - 2 * Self.inset),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("not made from a file")
+    }
+
+    func show(_ header: MenuHeader) {
+        dot.show(header.dot, word: header.state.title)
+        switch header.line {
+        case .state(let state, let unloaded, let downloading):
+            line.stringValue = ([state.title] + (unloaded ? ["model unloaded"] : []) + (downloading ? ["downloading model"] : []))
+                .joined(separator: ", ")
+            line.isHidden = false
+            failure.isHidden = true
+            remedy.isHidden = true
+        case .failure(let reason, let fix):
+            problem.stringValue = reason.title
+            problem.toolTip = reason.title
+            remedy.stringValue = reason.remedy
+            self.fix = fix
+            switch fix {
+            case .start: fixButton.title = "Start Again"
+            case .download(let underWay): fixButton.title = underWay ? "Downloading Model…" : "Download Model…"
+            case nil: break
+            }
+            fixButton.isHidden = fix == nil
+            line.isHidden = true
+            failure.isHidden = false
+            remedy.isHidden = false
+        }
+        setFrameSize(NSSize(width: Self.width, height: fittingSize.height))
+    }
+
+    @objc private func press() {
+        if let fix { act(fix) }
+    }
+}
+
+/// The 6-point dot after the app's name: its colour is the state, and the
+/// state's word is its tooltip and what VoiceOver reads for it. Its baseline
+/// is half a point under it, so on the title's baseline its middle is near
+/// half the title's x-height (an idea from the Llama app's menu, decision 14
+/// in docs/plan.md).
+private final class StateDot: NSView {
+    private static let size: CGFloat = 6
+    private var colour = NSColor.systemGray
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.size, height: Self.size))
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("not made from a file")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.size, height: Self.size)
+    }
+
+    override var firstBaselineOffsetFromTop: CGFloat {
+        Self.size + 0.5
+    }
+
+    func show(_ dot: MenuHeader.Dot, word: String) {
+        colour = switch dot {
+        case .running: .systemGreen
+        case .stopped: .systemYellow
+        case .attention: .systemRed
+        case .changing: .systemGray
+        }
+        toolTip = word
+        setAccessibilityLabel(word)
+        needsDisplay = true
+    }
+
+    // Drawn, not a layer's colour, so it follows a change to light or dark.
+    override func draw(_ dirtyRect: NSRect) {
+        colour.setFill()
+        NSBezierPath(ovalIn: bounds).fill()
     }
 }
 
 extension Phase {
+    /// The menu bar icon: one shape per state, so the state never rests on
+    /// colour alone.
     var symbol: String {
         switch state {
         case .paused: "pause.circle"

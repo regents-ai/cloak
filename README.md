@@ -290,8 +290,13 @@ them):
 app/build.sh
 ```
 
-The app opens Paused in the menu bar, and never starts by itself. `cloak`
-is inside it; `cloak start` opens the app if it isn't open:
+The app opens Paused in the menu bar, and never starts by itself. On the
+first launch only, a Welcome window says what Cloak does and where it is,
+and starts nothing. The menu's top shows the state, as a coloured dot and
+in words; when Cloak needs attention, it says what went wrong and what to
+do, with a button for the fix when the app can take it. The release and
+build are at the menu's foot. `cloak` is inside the app; `cloak start`
+opens the app if it isn't open:
 
 ```bash
 cloak="app/build/Regents Cloak.app/Contents/MacOS/cloak"
@@ -355,7 +360,8 @@ as written, with no rewording, still through Tor, and its Reworded light is
 off; the tick is off at each launch, and apps sending through Agents
 (below) are always reworded. Wallet, in Chat's toolbar, makes the wallet
 when Create is pressed: its key is made in the guest and kept only in the
-login keychain, this Mac only; the address to fund takes USDC.e on Tempo.
+login keychain, this Mac only; the address to fund takes USDC.e on Tempo,
+and the QR button beside Copy shows it as a code for a phone's wallet.
 A small deposit, at the size the provider suggests (1 USDC.e), pays for chats and is topped up by
 that much when it cannot pay for the next one; Close ends it with the
 provider, which

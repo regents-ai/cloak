@@ -1,5 +1,6 @@
 import AppKit
 import CloakChat
+import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 /// Development mode's wallet: made here on Create, its address to add funds
@@ -108,6 +109,7 @@ private struct Account: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Copy")
+                    CodeButton(address: address)
                 }
             }
             LabeledContent("Token", value: "USDC.e on Tempo")
@@ -125,6 +127,76 @@ private struct Account: View {
                 LabeledContent("Balance", value: "—")
             }
         }
+    }
+}
+
+/// The address as a QR code, for a phone's wallet to scan, in a popover
+/// from the button beside Copy, with the address in full under it to check
+/// against. Shown only.
+private struct CodeButton: View {
+    let address: String
+    @State private var open = false
+
+    var body: some View {
+        Button {
+            open.toggle()
+        } label: {
+            Label("Show QR Code", systemImage: "qrcode")
+                .labelStyle(.iconOnly)
+                .frame(width: 24, height: 24)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .help("Show QR Code")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            if let code = QRCode.image(for: address) {
+                let side = CGFloat(code.width) * QRCode.point
+                VStack(spacing: 10) {
+                    // A whole number of pixels per module at any display
+                    // scale, and no smoothing, so each module's edge is sharp.
+                    Image(code, scale: 1, label: Text("QR code of the address"))
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: side, height: side)
+                        .clipShape(.rect(cornerRadius: 6))
+                    // On one line, so it is never broken with a hyphen.
+                    Text(address)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize()
+                }
+                .padding(16)
+            }
+        }
+    }
+}
+
+/// A QR code of exactly a text, one pixel per module, black on white inside
+/// a white quiet zone at least four modules wide, white in light and dark
+/// alike, since that is what a camera reads.
+enum QRCode {
+    /// The points each module takes on screen.
+    static let point: CGFloat = 5
+
+    static func image(for text: String) -> CGImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(text.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage, let code = CIContext().createCGImage(output, from: output.extent) else { return nil }
+        // CoreImage leaves a margin of one module; four more make the quiet
+        // zone.
+        let quiet = 4
+        let side = code.width + 2 * quiet
+        guard let context = CGContext(
+            data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        else { return nil }
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: side, height: side))
+        context.interpolationQuality = .none
+        context.draw(code, in: CGRect(x: quiet, y: quiet, width: code.width, height: code.height))
+        return context.makeImage()
     }
 }
 
