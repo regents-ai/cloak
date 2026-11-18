@@ -509,6 +509,13 @@ and `test_a_prompt_over_the_input_limit_stops_its_task_with_the_length_and_the_l
   whole (`tests/test_fetch_model.py`). Before (13 November): the next run
   fetched every byte again, and a connection the server closed early left a
   short file that was set aside as `.bad`.
+- **The app's model download** (section 9a): the same `<file>.part` beside
+  each file, so either can continue what the other left. A partial is
+  hashed again before it is continued, and one that does not match its pin
+  is deleted, not kept. A file's partial goes only when it is renamed into
+  place, deleted as a mismatch, or removed by Cancel; while it is there its
+  file is not in place, so the start check says the model is missing, and
+  the worker refuses any folder that is not exactly the pinned files.
 
 ## 9. The app's supervisor (`app/Sources/CloakSupervisor/Phase.swift`, `app/Sources/CloakSupervisor/Supervisor.swift`)
 
@@ -627,6 +634,84 @@ is not tried again; a request cancelled during the load never sent;
 pausing while resting or during the load) and
 `ControlTests.swift` (the JSON for each status; the socket answers only its
 owner's well-formed requests).
+
+## 9a. The model's download (`app/Sources/CloakSupervisor/ModelDownload.swift`)
+
+Release plan item 7. `ModelDownload` is the one owner of the download's
+state; the Details window, the menu and the chat window only read it and
+press its buttons. Nothing downloads until Download is pressed, and the
+download never starts Cloak.
+
+```
+launch, refresh --> Installed when every file is in place, else Stopped
+Stopped --start--> Downloading                  (not while blocked)
+Downloading --every file in place--> Installed
+Downloading --a file does not match its pin--> Stopped (mismatch)
+Downloading, Retrying --network lost--> Waiting for network
+Waiting for network --network back--> Downloading
+Downloading --other failure, tries left--> Retrying --wait over--> Downloading
+Downloading --other failure, no tries left--> Stopped (failed)
+Downloading, Retrying, Waiting for network --pause--> Stopped (paused)
+Stopped, Downloading, Retrying, Waiting for network --cancel--> Stopped, partials removed
+```
+
+- **What it fetches**: exactly the manifest's files, each at its pinned
+  size and sha256, from the one URL the manifest gives it. `app/manifest.py`
+  makes that URL from `reference/models.json`'s repository and revision with
+  `scripts/fetch_model.py`'s own `url`, so the script and the app fetch from
+  the same place. No other model, source or mirror.
+- **Installed** means every file is a regular file of its pinned size, as
+  the start check counts it (`Checks.isInPlace`, section 9); the worker
+  still checks every sha256 itself as it loads.
+- **Offered** in the Details window while some file is not in place, by a
+  Download Model item in the menu then, and in the chat window when the
+  reason is `model_missing`. Before the button, the window says the size,
+  the host, and that this download goes straight from this Mac to that
+  host, which sees this Mac's address, unlike Cloak's messages.
+- **Blocked**: Download and Continue are disabled, with the reason beside
+  them, only when the download is certain to fail: this Mac fails the Mac
+  check (section 9), or the models folder's volume has less free than the
+  bytes still to fetch plus 1 GiB. Free space that cannot be read blocks
+  nothing.
+- **One file at a time**, in the manifest's order. Each streams into
+  `<file>.part` beside its place with a running sha256. At its pinned size
+  its size and sha256 are compared with the pin, and only a match is synced
+  to disk and renamed into place. More bytes than the pin, or another hash,
+  deletes the partial and stops as a mismatch; it is never tried again by
+  itself, and the next Download fetches that file from its first byte.
+- **Resume**: a partial left by a pause, a quit, a crash or a lost
+  connection is hashed again from its first byte, then continued with
+  `Range: bytes=<size>-`. A 206 must start where the partial ends; a 200 is
+  the whole file, and the partial starts over; anything else ends the try.
+- **Network**: the system's path (`NWPathMonitor`) is followed while the
+  download is under way. A path going down stops the transfer and waits; a
+  path coming back continues by itself, so a sleep and a wake are a loss
+  and a return. A try that fails as a lost connection does while no path is
+  up waits too. Neither counts as a failed try.
+- **Tries**: any other failure (an error status, a system error, a
+  connection cut short while a path is up, a partial that cannot be
+  written) waits 2, 4, then 8 seconds before the next try, then stops as
+  failed, with how the last try failed, until Continue. A try that added
+  bytes starts the count again.
+- **Pause** stops the transfer and keeps the partial. **Cancel**, once
+  confirmed, stops it and removes the partials of the files not in place;
+  files in place stay. Each waits for the work before it to end, so only
+  one piece of work touches the files at a time. **Quit** ends the transfer
+  with the app; the partial stays, and the next launch opens Stopped and
+  fetches nothing until asked.
+
+Checks (`app/Tests/CloakTests/ModelDownloadTests.swift`, against a local
+HTTP server, in temporary folders): a clean download puts every file in
+place and leaves no partial; a file that does not match its pin is deleted
+and never tried again; a partial continues with a Range request from where
+it ends; a partial with other bytes is hashed again and refused; a server
+that will not resume sends the whole file and it starts over; Cancel stops
+and removes the partials; Pause keeps the partial and Continue resumes it;
+a lost network waits without a try and continues when it returns; a
+connection cut short is tried again from where it ended; failures are
+tried a few times, then stop until Continue; and a download certain to
+fail, on a Mac that fails its check or a full disk, is blocked and asks the
+host nothing.
 
 ## 10. Stages still implied (found 15 November 2026)
 

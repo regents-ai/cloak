@@ -3,10 +3,12 @@ import CloakControl
 import CloakSupervisor
 import SwiftUI
 
-/// The menu: the state, why it needs attention, Start or Pause, Chat, Agents,
-/// Details and Quit. Each item is reachable from the keyboard.
+/// The menu: the state, why it needs attention, the way to the model's
+/// download while its files are not all in place, Start or Pause, Chat,
+/// Agents, Details and Quit. Each item is reachable from the keyboard.
 struct MenuContent: View {
     let supervisor: Supervisor
+    let download: ModelDownload
     let showChat: () -> Void
     let showAgents: () -> Void
     let showDetails: () -> Void
@@ -16,6 +18,11 @@ struct MenuContent: View {
         Text(phase.state.title)
         if let reason = phase.reason {
             Text(reason.title)
+        }
+        // The download itself, and what is said before it starts, are in
+        // Details.
+        if download.state != .installed {
+            Button(download.isUnderWay ? "Downloading Model…" : "Download Model…", action: showDetails)
         }
         Divider()
         switch phase {

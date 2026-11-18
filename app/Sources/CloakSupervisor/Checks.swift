@@ -100,16 +100,20 @@ enum Checks {
     }
 
     static func modelCheck(_ model: Manifest.Model, in directory: URL) -> (Finding, Failure?) {
-        let wrong = model.files.filter { file in
-            let attributes = try? FileManager.default.attributesOfItem(atPath: directory.appending(path: file.path).path)
-            return attributes?[.type] as? FileAttributeType != .typeRegular || (attributes?[.size] as? Int) != file.size
-        }
+        let wrong = model.files.filter { !isInPlace($0, in: directory) }
         guard wrong.isEmpty else {
             let detail = "\(directory.path): missing or incomplete: \(wrong.map(\.path).joined(separator: ", "))"
             return (Finding(name: "model", passed: false, detail: detail), Failure(.modelMissing, detail))
         }
         let bytes = model.files.reduce(0) { $0 + $1.size }
         return (Finding(name: "model", passed: true, detail: "\(model.name): \(model.files.count) files, \(bytes) bytes in \(directory.path)"), nil)
+    }
+
+    /// The model's file is in its folder as a regular file of its pinned
+    /// size: what this check and the download count as in place.
+    static func isInPlace(_ file: Manifest.Model.File, in directory: URL) -> Bool {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: directory.appending(path: file.path).path)
+        return attributes?[.type] as? FileAttributeType == .typeRegular && (attributes?[.size] as? Int) == file.size
     }
 
     @concurrent

@@ -37,6 +37,12 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
+def url(repo: str, revision: str, path: str) -> str:
+    """Where a pinned file is fetched from; app/manifest.py gives the app's
+    download the same URLs."""
+    return f"{HUB}/{repo}/resolve/{revision}/{path}"
+
+
 def fetch(repo: str, revision: str, entry: dict, target: Path) -> None:
     if target.exists() and target.stat().st_size == entry["size"] and digest(target) == entry["sha256"]:
         return
@@ -44,7 +50,7 @@ def fetch(repo: str, revision: str, entry: dict, target: Path) -> None:
     partial = target.with_name(target.name + ".part")
     have = partial.stat().st_size if partial.exists() else 0
     if have < entry["size"]:
-        request = urllib.request.Request(f"{HUB}/{repo}/resolve/{revision}/{entry['path']}",
+        request = urllib.request.Request(url(repo, revision, entry["path"]),
                                          headers={"Range": f"bytes={have}-"} if have else {})
         # 206 is the rest of the file; 200 is all of it, from the start.
         with urllib.request.urlopen(request, timeout=60) as r, partial.open("ab" if r.status == 206 else "wb") as f:

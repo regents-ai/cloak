@@ -1,9 +1,9 @@
 import Foundation
 
 /// The app's manifest, written into the bundle by app/build.sh: the release
-/// and build, the one model (spec: no picker, no switching), the memory the
-/// model and all of Cloak need, and every part the supervisor runs, each
-/// pinned by its sha256.
+/// and build, the one model (spec: no picker, no switching) with each of its
+/// files pinned and where it downloads from, the memory the model and all of
+/// Cloak need, and every part the supervisor runs, each pinned by its sha256.
 public struct Manifest: Codable, Sendable, Equatable {
     public enum Part: String, Codable, Sendable, CaseIterable {
         /// The guest's kernel and base root, in the bundle.
@@ -36,13 +36,20 @@ public struct Manifest: Codable, Sendable, Equatable {
     }
 
     public struct Model: Codable, Sendable, Equatable {
+        /// One of the model's files: its path in the model's folder, its
+        /// pinned size and sha256, and the one place the app downloads it
+        /// from (`ModelDownload`), at its pinned repository and revision.
         public struct File: Codable, Sendable, Equatable {
             public var path: String
             public var size: Int
+            public var sha256: String
+            public var url: URL
 
-            public init(path: String, size: Int) {
+            public init(path: String, size: Int, sha256: String, url: URL) {
                 self.path = path
                 self.size = size
+                self.sha256 = sha256
+                self.url = url
             }
         }
 

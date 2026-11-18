@@ -85,7 +85,10 @@ struct Fixture {
         try Data("{}".utf8).write(to: model.appending(path: "config.json"))
         manifest = Manifest(
             release: "0.0.0-test", build: "test", modelMemory: 7 << 30, cloakMemory: 10 << 30,
-            model: .init(name: "standin", label: "development stand-in", files: [.init(path: "config.json", size: 2)]),
+            model: .init(name: "standin", label: "development stand-in", files: [
+                .init(path: "config.json", size: 2, sha256: SHA256.hash(data: Data("{}".utf8)).map { String(format: "%02x", $0) }.joined(),
+                      url: URL(string: "http://127.0.0.1:9/config.json")!),
+            ]),
             pins: pins)
     }
 

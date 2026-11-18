@@ -2353,6 +2353,24 @@ candidates, so the split has to be re-declared before any holdout opens.
       process is found through a macOS function that is not public
       (`responsibility_get_pid_responsible_for_pid`), as `scripts/boot.py`
       does. Not yet seen on screen.
+    - Taken, 18 November: the model download, in the app (release plan
+      item 7). When the model's files are missing, the Details window,
+      the menu and Chat offer the download; nothing is fetched until
+      the button is pressed, and the words beside it say the size, the
+      host, and that the host sees this Mac's address, unlike Cloak's
+      messages. Each pinned file streams into a `.part` file with a
+      running sha256 and is renamed into place only when size and hash
+      match its pin; a mismatch is deleted and said. A partial file is
+      hashed again and continued by Range; a lost network waits and
+      goes on by itself; other failures try again after 2, 4 and 8 s
+      and then wait for Continue. Download is off only when the Mac
+      fails its check or the disk lacks what is left plus 1 GiB. The
+      worker still checks every pin at load
+      ([state-machines.md](state-machines.md), section 9a). The request
+      names a generic client, not the app. Not run: a whole real
+      download, a real sleep and wake; not yet seen on screen. Left: a
+      file of the right size and wrong hash still has to be removed by
+      hand.
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.

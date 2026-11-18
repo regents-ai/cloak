@@ -12,15 +12,16 @@ import SwiftUI
 /// Development mode's mark is always at the top.
 struct ChatView: View {
     @Bindable var chat: Chat
+    let showDetails: () -> Void
 
-    static func window(_ chat: Chat) -> NSWindow {
+    static func window(_ chat: Chat, showDetails: @escaping () -> Void) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "Chat"
         // Escape cancels a rewording here.
         window.closesOnEscape = false
-        let content = NSHostingController(rootView: ChatView(chat: chat))
+        let content = NSHostingController(rootView: ChatView(chat: chat, showDetails: showDetails))
         content.sceneBridgingOptions = [.toolbars]
         content.sizingOptions = [.minSize]
         window.contentViewController = content
@@ -33,7 +34,7 @@ struct ChatView: View {
             Sidebar(chat: chat)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
-            Detail(chat: chat)
+            Detail(chat: chat, showDetails: showDetails)
         }
         .frame(minWidth: 760, minHeight: 460)
         .task { await chat.open() }
@@ -98,6 +99,7 @@ private struct Sidebar: View {
 
 private struct Detail: View {
     @Bindable var chat: Chat
+    let showDetails: () -> Void
     @State private var showingWallet = false
 
     var body: some View {
@@ -139,7 +141,7 @@ private struct Detail: View {
                 VStack(spacing: 0) {
                     Turns(chat: chat, conversation: conversation)
                     Divider()
-                    Compose(chat: chat)
+                    Compose(chat: chat, showDetails: showDetails)
                 }
                 .background(Color(nsColor: .windowBackgroundColor))
             } else {
@@ -645,6 +647,7 @@ extension View {
 /// it is to be: a chat or the agent's. Above either box, its details.
 private struct Compose: View {
     @Bindable var chat: Chat
+    let showDetails: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -664,7 +667,7 @@ private struct Compose: View {
                 }
             }
             if chat.supervisor.phase != .running {
-                Waiting(supervisor: chat.supervisor, agent: agent)
+                Waiting(supervisor: chat.supervisor, agent: agent, showDetails: showDetails)
             }
             DetailsRow(chat: chat)
             HStack(alignment: .bottom, spacing: 10) {
@@ -737,10 +740,12 @@ private struct Compose: View {
     }
 }
 
-/// Why rewording, or the agent, waits while Cloak is not running.
+/// Why rewording, or the agent, waits while Cloak is not running. Without
+/// the model, the way to its download in Details takes the place of Start.
 private struct Waiting: View {
     let supervisor: Supervisor
     let agent: Bool
+    let showDetails: () -> Void
 
     var body: some View {
         let phase = supervisor.phase
@@ -751,6 +756,8 @@ private struct Waiting: View {
             Text(text(phase))
             Spacer()
             switch phase {
+            case .needsAttention(.modelMissing):
+                Button("Download Model…", action: showDetails)
             case .paused, .ready, .needsAttention:
                 Button("Start") { supervisor.send(.start) }
             case .preparing, .stopping, .running:
@@ -771,6 +778,8 @@ private struct Waiting: View {
         case (.ready, true): "Cloak isn't running. Start it to run."
         case (.preparing, _): "Cloak is starting."
         case (.stopping, _): "Cloak is stopping."
+        case (.needsAttention(.modelMissing), false): "The model isn't installed. Download it to reword."
+        case (.needsAttention(.modelMissing), true): "The model isn't installed. Download it to run."
         case (.needsAttention(let reason), false): "\(reason.title) Start it again to reword."
         case (.needsAttention(let reason), true): "\(reason.title) Start it again to run."
         case (.running, _): "Cloak is running."

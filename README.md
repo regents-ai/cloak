@@ -281,13 +281,7 @@ and the technical details, like `cloak status --json`, give each part's
 figure.
 
 With the guest, the host's tor and the worker built and installed (stage 2
-commands) and the small lead fetched (5.4 GiB):
-
-```bash
-uv run scripts/fetch_model.py small-lead-gguf-grammar
-```
-
-build `app/build/Regents Cloak.app`,
+commands), build `app/build/Regents Cloak.app`,
 signed ad hoc with the virtualization entitlement, with a manifest that pins
 the guest, tor and the installed worker (rebuild after reinstalling any of
 them):
@@ -318,12 +312,27 @@ It talks to the app over a socket only the same user can reach, in
 files, which hold its keys while it starts, are in `control/boot/`; each
 launch first removes any that a killed app left there.
 
-The app does not download the model. When a file is missing or not its
-pinned size it needs attention with "The model isn't installed"; when the
-model's folder is not exactly the pinned files (the worker checks every
-file's hash as it loads), with "The model has changed". Either way, remove
+The app downloads the model, the small lead (5.4 GiB), while it is not
+installed: the Details window, opened by Download Model in the menu, says
+its size, its host (huggingface.co), and that this download goes straight
+from this Mac to that host, which sees this Mac's address, unlike Cloak's
+messages. Nothing downloads until Download is pressed, and the download
+never starts Cloak. It fetches exactly the pinned files from the URLs
+`scripts/fetch_model.py` uses, puts each in place only once its size and
+sha256 match the pin, and carries on from where it stopped after a pause,
+a quit, a crash or a lost network; Cancel removes what it fetched so far.
+Download is disabled, with the reason beside it, when this Mac fails the
+Mac check or the disk has less free than the rest of the model plus 1 GiB
+(section 9a of [docs/state-machines.md](docs/state-machines.md)).
+`uv run scripts/fetch_model.py small-lead-gguf-grammar` puts the same files
+in the same place.
+
+When a file is missing or not its pinned size, Start needs attention with
+"The model isn't installed"; when the model's folder is not exactly the
+pinned files (the worker checks every file's hash as it loads), with "The
+model has changed": remove
 `~/Library/Application Support/Regents Cloak/models/small-lead-gguf-grammar/`,
-fetch it again with the command above, and start again.
+download it again, and start again.
 
 "Chat" in the menu opens a Chat window. While Cloak is running, each
 message is reworded on the Mac and shown beside the original, with the

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The app downloads its model (decision 14, from Llama.app; release plan
+  item 7). Offered in Details, the menu and Chat when the files are
+  missing, started only by the person, with the size, the host and the
+  plain fact that the host sees this Mac's address. Resumable, checked
+  against each pin before a file is put in place, paused by a lost
+  network and continued when it returns. The manifest now carries each
+  file's sha256 and address, so the app must be rebuilt.
+
 - The Mac check and a Memory figure (decision 14, from Llama.app). The
   check asks Metal what this Mac's graphics will hold and keeps 4 GiB
   for macOS, in place of a flat 16 GB; `app/release.json` states what

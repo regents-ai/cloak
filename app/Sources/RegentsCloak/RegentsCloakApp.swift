@@ -6,17 +6,19 @@ import CloakSupervisor
 import os
 import SwiftUI
 
-/// The menu-bar app: one supervisor, its menu, its Chat, Agents and Details
-/// windows, the door other apps and the agent in the guest send through
-/// while Cloak is Running, and the control channel `cloak` uses to drive the
-/// same supervisor.
+/// The menu-bar app: one supervisor, the model's download, its menu, its
+/// Chat, Agents and Details windows, the door other apps and the agent in the
+/// guest send through while Cloak is Running, and the control channel `cloak`
+/// uses to drive the same supervisor.
 @main
 struct RegentsCloakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var app
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(supervisor: app.supervisor, showChat: app.showChat, showAgents: app.showAgents, showDetails: app.showDetails)
+            MenuContent(
+                supervisor: app.supervisor, download: app.download, showChat: app.showChat, showAgents: app.showAgents,
+                showDetails: app.showDetails)
         } label: {
             MenuLabel(phase: app.supervisor.phase)
         }
@@ -26,10 +28,13 @@ struct RegentsCloakApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let supervisor = Launch.supervisor
-    private lazy var chat = AppWindow { [supervisor, door] in
-        ChatView.window(Chat(supervisor: supervisor, folder: Launch.layout.conversations, wallet: Launch.layout.wallet, door: door))
+    let download = ModelDownload(manifest: Launch.manifest, layout: Launch.layout)
+    private lazy var chat = AppWindow { [supervisor, door, unowned self] in
+        ChatView.window(
+            Chat(supervisor: supervisor, folder: Launch.layout.conversations, wallet: Launch.layout.wallet, door: door),
+            showDetails: { self.showDetails() })
     }
-    private lazy var details = AppWindow { [supervisor] in DetailsView.window(supervisor) }
+    private lazy var details = AppWindow { [supervisor, download] in DetailsView.window(supervisor, download) }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
     let door: Door = {
         let supervisor = Launch.supervisor, conversations = Launch.layout.conversations

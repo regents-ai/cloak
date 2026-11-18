@@ -127,7 +127,7 @@ public enum Reason: String, Codable, Sendable, CaseIterable {
         switch self {
         case .unsupportedHardware: "Use a Mac with Apple silicon and enough memory."
         case .partMissing, .partChanged: "Reinstall Regents Cloak."
-        case .modelMissing: "Install the model, then start again."
+        case .modelMissing: "Download the model, then start again."
         case .modelChanged: "Reinstall the model, then start again."
         case .torUnavailable: "Check your internet connection, then start again."
         case .torStopped, .workerUnavailable, .workerStopped, .guestFailed, .checkFailed: "Start again."

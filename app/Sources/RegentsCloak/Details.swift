@@ -6,22 +6,24 @@ import ServiceManagement
 import SwiftUI
 
 /// The small window: the state, why it needs attention and what to do, the
-/// release, the model and whether it is out of memory, what Cloak holds in
-/// memory now, the last check, how long the model may go unused before it
-/// leaves memory, whether the app opens at login, and technical detail on
-/// demand, the build and each part's memory among it. Closing it leaves the
-/// supervisor as it is.
+/// model's download while its files are not all in place, the release, the
+/// model and whether it is out of memory, what Cloak holds in memory now,
+/// the last check, how long the model may go unused before it leaves
+/// memory, whether the app opens at login, and technical detail on demand,
+/// the build and each part's memory among it. Closing it leaves the
+/// supervisor, and the download, as they are.
 struct DetailsView: View {
     let supervisor: Supervisor
+    let download: ModelDownload
     let memory: MemoryWatch
 
-    static func window(_ supervisor: Supervisor) -> NSWindow {
+    static func window(_ supervisor: Supervisor, _ download: ModelDownload) -> NSWindow {
         let window = ClosingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
             styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Details"
         window.contentViewController = NSHostingController(
-            rootView: DetailsView(supervisor: supervisor, memory: MemoryWatch(supervisor, window: window)))
+            rootView: DetailsView(supervisor: supervisor, download: download, memory: MemoryWatch(supervisor, window: window)))
         return window
     }
 
@@ -45,6 +47,9 @@ struct DetailsView: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
+            }
+            if download.state != .installed {
+                DownloadSection(download: download)
             }
             Section {
                 LabeledContent("Release", value: status.release)
@@ -88,9 +93,11 @@ struct DetailsView: View {
         .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
         // The login item can change in System Settings while the window is
-        // away, so the switch reads it again each time the window comes back.
+        // away, and the model's files and the free space on disk too, so
+        // each is read again each time the window comes back.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             login = SMAppService.mainApp.status == .enabled
+            download.refresh()
         }
     }
 
