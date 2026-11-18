@@ -2026,6 +2026,9 @@ candidates, so the split has to be re-declared before any holdout opens.
         made while an earlier one is still settling after a restart can
         fail rather than wait, so Cloak must hold requests until the
         daemon reports the settlement done.
+      - Sean's rulings, 18 November: a key for every request is the rule
+        the protected mode is built around, at its cost in speed; the
+        0.002622503 ETH stays at the trial address for later fees.
       - Still not tried: a kill in the middle of an answer being streamed;
         a second deposit while one is open; the 30-day expiry; the
         operator's pause.
