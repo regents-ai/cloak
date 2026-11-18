@@ -170,6 +170,21 @@ What Sean supplies and decides first:
    nothing from a chat. Its address goes into `update_feed`, and must be
    HTTPS.
 
+Sean's answers, 18 November:
+
+- Developer ID: yes; asked for when the first release is made.
+- The key: made that day with `generate_keys --account cloak`, on his
+  decision, in the login keychain of this Mac. Its public half is
+  `Dw2edhocMd1y+8c+Q5Lm0kG15miKI4TX+zj7tYuomjk=`. The private half has
+  no backup yet; a lost key means updates can only be signed again
+  through the Developer ID.
+- Hosting: this repository, regents-ai/cloak, once it is public, which
+  is its own decision. The feed will be
+  `https://raw.githubusercontent.com/regents-ai/cloak/main/appcast.xml`
+  and the downloads the repository's releases. Until then `update_feed`
+  and `update_key` stay empty, since a private repository's feed cannot
+  be read and a check would only fail.
+
 Then each release:
 
 1. Raise `release` in `app/release.json`.
