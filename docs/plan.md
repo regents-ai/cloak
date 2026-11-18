@@ -2401,6 +2401,15 @@ candidates, so the split has to be re-declared before any holdout opens.
       sharing over a network (the door stays on this Mac); updates and
       a Homebrew install (they need a signing key and a public release,
       which are Sean's).
+    - Seen in the running app, build `7cdc1d2`, 18 November: the menu
+      (header, dot, footer), the Details window and the Settings
+      window's General pane. Measured there just after the startup
+      check: 7.16 GB in all (the worker 6.23 GB, the guest's virtual
+      machine 606 MB, the app 311 MB, tor 26 MB), against the stated
+      7 GiB for the model and 10 GiB for all of Cloak; one reading, not
+      the table release plan item 8 asks for. Not seen: the Welcome,
+      the quick prompt, the QR code, a download, the Shortcut, Door and
+      Advanced panes, a failure in the menu.
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.
