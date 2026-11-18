@@ -148,6 +148,16 @@ real worker):
 uv run --with pytest==8.4.2 pytest tests/test_agent_path.py
 ```
 
+Check the daemon's own cover traffic in the guest. Its destinations, rate
+and concurrency live in one list, `reference/cover.json`, which the guest
+image carries; it names no destinations yet, so cover is off. Each check
+boots the guest with a list of its own against the stand-in tor, and waits
+past the daemon's first once-a-minute totals:
+
+```bash
+uv run --with pytest==8.4.2 pytest tests/test_cover_path.py
+```
+
 Check the guest's one way out, the Tor port relayed to the host's tor. The
 host starts the guest only once tor has bootstrapped, or after tor exits or
 is stopped at 90 seconds; a tor whose SOCKS port has not opened by then

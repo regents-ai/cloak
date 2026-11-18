@@ -28,7 +28,7 @@ left by a route it does not allow.
 | A circuit per conversation | Built: each conversation has its own Tor identity | A check that two conversations never share one |
 | Local rewording | Works; a failure sends nothing | The comparison with the reference on meaning and on what leaks |
 | Payment that does not link chats | **Missing.** One wallet pays for every chat | All of it |
-| Cover traffic | **Missing.** The pinned daemon already has it, off | Turned on, checked, limits said |
+| Cover traffic | Built, and off: the guest runs the daemon's own cover from one list, which names no destinations yet | Destinations chosen, then checked and measured on the real route |
 | Easy install | Built from source by the chief | All of it |
 | Review by someone else | None | All of it |
 
@@ -99,17 +99,22 @@ waiting. Every deposit and transaction is Sean's own decision. If the service
 refuses us, the item stops here and comes back to Sean; it is not
 replaced by another way to pay.
 
-**3. Cover traffic, the reference's own** (was item 4). The pinned
-daemon in the guest already has it, off by default
+**3. Cover traffic, the reference's own** (was item 4). Built 18
+November, and off. The guest's daemon runs the pinned daemon's own cover
 (`zkapi-clientd/docs/COVER_TRAFFIC.md`): random background HTTPS GETs
-through Tor, each worker on its own Tor identity, no payment used. The
-work is to turn it on in Cloak's guest, check it against the stand-in
-tor, and measure it. It needs destinations: one to sixteen small static
-files someone has leave to poll. Whose they are is Sean's decision.
-The goal, corrected: **Cloak reproduces the reference's cover traffic
-and claims nothing the reference does not.** Its own document says it is
-background noise, not proven protection against traffic analysis, and
-Cloak says the same.
+through Tor, each worker on its own Tor identity, no payment used. Its
+destinations, rate and concurrency live in one list,
+`reference/cover.json`, which ships with no destinations, and an empty
+list is cover off. The rate is 0.05 a second with 2 at once, inside the
+reference's ranges and below its defaults of 5 a second and 4 at once.
+Checks against the stand-in tor are written (`tests/test_cover_path.py`),
+to be run on a guest built with them. Still to do: the destinations (one
+to sixteen small static files someone has leave to poll) and the rate,
+both Sean's decision; then a run on the real route, measured. The goal,
+corrected: **Cloak reproduces the reference's cover
+traffic and claims nothing the reference does not.** Its own document says
+it is background noise, not proven protection against traffic analysis,
+and Cloak says the same.
 
 **4. Escape and boundary checks.** The gates above for network escape,
 conversation separation, and host and guest, written as checks that try

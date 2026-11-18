@@ -1,6 +1,7 @@
 #!/bin/sh
 # Runs inside the pinned build image. Reads the guest binaries from /out (the
-# sender among them, the one dynamic Cloak program), the
+# sender among them, the one dynamic Cloak program) and Cloak's cover list
+# beside them, the
 # pinned Pi package from /pi, the pinned Node.js runtime from /node and the
 # reference wrapper from /wrapper, and writes /out/Image (the uncompressed
 # kernel), /out/initrd.gz (the guest root) and /out/guest-manifest.txt (what
@@ -35,6 +36,7 @@ for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport
 done
 install -m 0755 /out/cloak-adapter /out/cloak-port /out/cloak-rewrite-check /out/cloak-daemon /out/cloak-agent-check \
 	/out/cloak-runner /out/cloak-routing-probe /out/cloak-vsock-probe /out/cloak-sender $root/usr/bin/
+install -m 0444 /out/cover.json $root/etc/cloak/cover.json
 install -m 0755 /src/init $root/init
 install -m 0755 /src/boot $root/usr/lib/cloak/boot
 
@@ -112,6 +114,6 @@ chmod 1777 $root/tmp
 	(cd /node && sha256sum node-v24.22.2-linux-arm64.tar.xz)
 	(cd /pi && sha256sum earendil-works-pi-coding-agent-1.3.0.tgz)
 	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-port cloak-rewrite-check cloak-daemon cloak-agent-check \
-		cloak-runner cloak-routing-probe cloak-vsock-probe cloak-sender
+		cloak-runner cloak-routing-probe cloak-vsock-probe cloak-sender cover.json
 } > /out/guest-manifest.txt
 cat /out/guest-manifest.txt

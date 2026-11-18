@@ -7,8 +7,9 @@
 # own files stay untouched, and both with Cloak's input limit and deadline,
 # decision 6 in docs/plan.md, patched into copies of two of its files), then
 # the sender, then the kernel and root from pinned Debian packages, the pinned
-# Pi package and Node.js runtime, and the reference wrapper. Every pinned source is checked
-# against its pin first. Two cores, low priority.
+# Pi package and Node.js runtime, the reference wrapper and Cloak's cover list
+# (reference/cover.json, the daemon's /etc/cloak/cover.json). Every pinned
+# source is checked against its pin first. Two cores, low priority.
 set -eu
 cd "$(dirname "$0")/.."
 repo=$PWD
@@ -45,6 +46,7 @@ docker run --rm --cpus 2 --memory 4g -v "$repo/guest/sender:/src:ro" -v cloak-se
 	rust:1.97.1-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c \
 	sh -c 'nice -n 10 cargo build --quiet --release --locked -j 2 --manifest-path /src/Cargo.toml && cp /cache/target/release/cloak-sender /out/'
 
+cp reference/cover.json "$out/cover.json"
 docker build --quiet --memory 1g -t cloak-guest-build guest/image > /dev/null
 docker run --rm --cpus 2 --memory 1g -v "$out:/out" -v "$repo/guest/image:/src:ro" \
 	-v "$repo/reference/src/pi:/pi:ro" -v "$repo/reference/src/node:/node:ro" -v "$repo/reference/wrapper:/wrapper:ro" \

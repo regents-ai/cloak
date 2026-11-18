@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Cover traffic, the reference's own (release plan item 3). The guest's
+  daemon now starts the pinned daemon's cover worker as its own serve
+  does, from one list, `reference/cover.json`, that guest/build.sh puts
+  in the image. The list names no destinations, which is Sean's choice
+  to make, so cover is off; its rate is 0.05 a second with 2 at once,
+  below the reference's defaults. A list the daemon cannot take stops the
+  guest before any task. The once-a-minute totals go to the daemon's log
+  in the guest. `tests/test_cover_path.py` checks it against the stand-in
+  tor; the guest must be rebuilt. As the reference says, this is
+  background noise, not proven protection against traffic analysis.
+
 - The menu-bar icon is the 13-block Regents crown, drawn from the design
   system's master block for block, with a small badge at its lower
   corner for the state: play, pause, starting, stopping or needs

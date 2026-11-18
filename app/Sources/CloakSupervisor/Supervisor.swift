@@ -17,8 +17,10 @@ import os
 /// reword for the time `restAfter` gives, and the next request starts a new
 /// one as the first was started. The sender is Development mode's way to a
 /// remote model (decision 10 in docs/plan.md), and the guest's runner runs
-/// the owner's agent tasks (decision 12); sessions, the daemon's payment and
-/// cover are not built yet.
+/// the owner's agent tasks (decision 12); sessions and the daemon's payment
+/// are not built yet. The guest's daemon runs its own cover traffic from the
+/// one list in reference/cover.json, which names no destinations yet, so
+/// cover is off.
 @MainActor
 @Observable
 public final class Supervisor {
@@ -221,7 +223,7 @@ public final class Supervisor {
         var lines = [String]()
         switch phase {
         case .running:
-            lines.append("Running: tor is up, the worker is up or resting, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready (Development mode). Sessions, the daemon's payment and cover are not built yet.")
+            lines.append("Running: tor is up, the worker is up or resting, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready (Development mode). Sessions and the daemon's payment are not built yet, and cover traffic is off until its destinations are chosen.")
         case .ready:
             lines.append("Ready: the startup check passed and everything has stopped again.")
         case .paused:

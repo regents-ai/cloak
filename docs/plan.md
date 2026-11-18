@@ -120,9 +120,10 @@ stand-in; nothing here counts toward a gate):
   files stay untouched, but for the two copies decision 6 patches) that
   builds the API exactly as the daemon's own
   `serve` does after setup: the default configuration, the rewriter at the
-  adapter, Tor at `tor://127.0.0.1:9050`. It skips what needs the network or
-  a wallet: funding, the wallet companion, the deployment check, cover
-  traffic and the key-session monitors.
+  adapter, Tor at `tor://127.0.0.1:9050`, and the daemon's own cover
+  traffic from Cloak's one cover list ("Cover traffic in the guest" below).
+  It skips what needs the network or a wallet: funding, the wallet
+  companion, the deployment check and the key-session monitors.
 - The daemon's rewrite checks, as before.
 - `cloak-agent-check` runs each agent case as user `agent`: Pi 1.3.0 inside
   the reference wrapper (`pi-paranoid`, so bubblewrap with torsocks), talking
@@ -194,8 +195,8 @@ Choices made overnight, without asking (Sean's brief of 12 November):
 
 Missing for the full stack, and the next step for each:
 
-- **Cover traffic**: needs operator-chosen destinations. Not built, by
-  instruction.
+- **Cover traffic**: built (below), and off until Sean chooses its
+  destinations.
 - **Payment vault, funding, wallets**: not deployed at the pinned commit
   (A11). Not built, by instruction.
 - **The daemon's real `serve`** in place of the harness: needs the two above.
@@ -473,6 +474,79 @@ Known gaps:
 Open for Sean: tor on the Mac instead of in the guest; and whether tor on
 the Mac gets its own confinement (it runs unconfined; Apple's App Sandbox
 refused it as a bare program with no bundle identifier).
+
+### Cover traffic in the guest (built 18 November 2026)
+
+Release plan item 3. The guest's daemon runs the pinned daemon's own cover
+traffic (`internal/cover`; `zkapi-clientd/docs/COVER_TRAFFIC.md`), started
+the way the daemon's `serve` starts it (`startServeCover`), for as long as
+the daemon's API runs, and closed and joined when the API ends. No pinned
+file changed: the guest daemon's added file reads the settings and hands
+them to the daemon's own validation and start.
+
+- **One list**: `reference/cover.json`, `{"urls": [...], "rate": ...,
+  "concurrency": ...}`, is the only place the destinations, rate and
+  concurrency live. `guest/build.sh` puts it in the guest image as
+  `/etc/cloak/cover.json`, root's and read-only; the agent's sandbox does
+  not see `/etc/cloak`.
+- **Off while the list is empty**: no URLs is the daemon's own cleared
+  setting, and no cover worker starts. That is the one switch. The list
+  ships empty: which small static HTTPS files are polled, one to sixteen
+  on port 443 with leave to poll them, is Sean's decision.
+- **Rate 0.05 a second (about three a minute), 2 at once**: inside the
+  reference's ranges (0.01 to 5 a second, 1 to 8 at once) and below its
+  defaults (5 a second, 4 at once), as a gentle start for whoever owns the
+  files. At the daemon's 64 KiB cap per reply, that is at most about
+  11 MiB of replies an hour, before Tor's own overhead. A changed cover
+  default counts as a security-relevant change (UPD03), so keeping these
+  or the reference's defaults is Sean's to settle with the list.
+- **Anything else wrong stops the daemon**: a list that cannot be read,
+  has another shape, or fails the daemon's own checks (HTTPS on port 443
+  only, no credentials, query or fragment, public names, rate and
+  concurrency in range, `tor://` only) stops the daemon before it listens.
+  Its message is in `/run/cloak/daemon.log`, which the boot prints before
+  the guest powers off. There is no other path.
+- **Totals**: once a minute, the daemon's own line `Cover totals:
+  attempted=... succeeded=... failed=... skipped=... response_bytes=...`
+  goes to its log, `/run/cloak/daemon.log`. It prints a last one when the
+  API ends, which in practice never happens, as the guest powers off
+  without stopping the daemon. The app does not show these lines.
+
+Checks in `tests/test_cover_path.py`, all five passed on 18 November
+against a guest built with this change, as did the thirty existing checks
+in `tests/test_agent_path.py` and `tests/test_guest_path.py`. Each boots the guest against the stand-in
+tor with a list of its own, laid over the image's file in one more boot
+archive, as the host lays its per-boot files. A boot whose daemon starts
+runs one Pi task and then waits 65 seconds.
+
+- With two test destinations at the reference's highest rate, cover
+  connections reach the stand-in. Each asks only for a listed host on
+  port 443. The cover identities number no more than the concurrency, two,
+  and none is the conversation's, and no connection uses any other
+  identity. The daemon's totals line counts the attempts, all failed at the
+  stand-in.
+- With an empty list, the only connection is the conversation's.
+- A list with a plain HTTP address, a rate over 5 or a misspelt field
+  stops the daemon, and the guest powers off before any task, with nothing
+  sent to tor.
+
+Before any guest boot, the daemon was built for the Mac from the same file,
+with only the list's path and the tor port changed, and run against the
+stand-in tor on a loopback port (18 November). With the two test
+destinations at 5 a second and 2 at once, 326 connections arrived in 66
+seconds, each to one of the two hosts on port 443, on exactly two
+identities, and at the minute the daemon logged `Cover totals:
+attempted=297 succeeded=0 failed=297 skipped=0 response_bytes=0`. With
+the shipped list, and with an empty list at 5 a second, the daemon
+started and nothing arrived in 12 seconds. A plain HTTP address, a rate
+of 6, a misspelt field and a missing file each stopped the daemon before
+it listened, with one plain line, and nothing arrived.
+
+What it is, in the reference's own words: background noise, not proven
+protection against traffic analysis. It does not pad the model's
+requests, hide when Cloak starts or stops, or make traffic constant, and
+a global observer can still correlate traffic. Cloak claims no more. No
+real destination has been polled, so A08 stays open.
 
 ## Stage 3 so far
 
@@ -2439,7 +2513,7 @@ candidates, so the split has to be re-declared before any holdout opens.
 | A05 | Whole-agent containment | Open | |
 | A06 | Complete routing | Open: the reference wrapper fails it (static program bypass); in Cloak's guest, which has no network device and one relay to tor, the same static probe and a program without torsocks reach nothing (development evidence only, stand-in) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction), `tests/test_tor_path.py` |
 | A07 | Conversation isolation | Open | |
-| A08 | Cover behaviour | Open | |
+| A08 | Cover behaviour | Open: the guest's daemon runs the reference's own cover worker from one list, off while the list names no destinations, as it ships; checks against the stand-in tor written, to be run on a guest built with them; no destination chosen or polled, so no schedule or volume observed on the real route | `reference/cover.json`, `tests/test_cover_path.py`, [cover in the guest](#cover-traffic-in-the-guest-built-18-november-2026) |
 | A09 | Failure and pause | Open: in the app, a tor, worker or guest failure stops all work and ends in Needs attention with its reason, with nothing restarted and no other route or model; Pause and Quit stop everything, and a relaunch starts nothing (checks with stand-in processes, and a live run with one worker kill; development build, stand-in only); sleep pauses in the state machine's checks, but no live sleep and wake has been tried; no sessions, cover or payment yet to stop | [state machines](state-machines.md), `app/Tests/CloakTests/` |
 | A10 | Local authority | Open | |
 | A11 | Actual paid workflow | Open: no qualified deployment exists yet | |
