@@ -181,7 +181,11 @@ Sean's answers, 18 November:
   keychain. Apple's public intermediate certificate (Developer ID
   Certification Authority, G2) was added to the login keychain, and the
   Mac then showed one valid signing identity. It is in his personal
-  name; whether to keep that is his. The notarization sign-in is still
+  name. Sean is getting a D-U-N-S number for Regent Labs, Inc so that
+  the public release is signed by the company; when that Apple account
+  exists, a new key and certificate are made the same way and this one
+  is used for nothing public. No backup of the key is kept, by his
+  choice: it can be replaced at Apple. The notarization sign-in is still
   to come.
 - The key: made that day with `generate_keys --account cloak`, on his
   decision, in the login keychain of this Mac. Its public half is
