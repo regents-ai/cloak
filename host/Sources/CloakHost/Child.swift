@@ -24,6 +24,12 @@ final class Child: Sendable {
         exit = Task { for await _ in exits {} }
     }
 
+    /// The program and its arguments, read back from the process started:
+    /// tor and the worker each set both before it runs.
+    var command: [String] {
+        [process.executableURL!.path] + process.arguments!
+    }
+
     /// How the process ended, once it has.
     func exited() async -> Termination {
         await exit.value

@@ -24,7 +24,11 @@
 	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleScriptEnabled</key>
+	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>OSAScriptingDefinition</key>
+	<string>RegentsCloak.sdef</string>
 </dict>
 </plist>

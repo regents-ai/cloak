@@ -1,7 +1,8 @@
 #!/bin/sh
 # Builds the development app, app/build/Regents Cloak.app: the menu-bar app
 # and `cloak` (SwiftPM, release, two jobs, low priority, and one build at a
-# time on this Mac through /tmp/cloak-build.lock), the guest from guest/build,
+# time on this Mac through /tmp/cloak-build.lock), the app's AppleScript
+# dictionary (app/RegentsCloak.sdef), the guest from guest/build,
 # tor and libevent from host/.build/tor, and the manifest that pins them and
 # the installed worker. Signed ad hoc, the app with the virtualization
 # entitlement; no Developer ID and no notarization. Needs guest/build.sh,
@@ -18,6 +19,7 @@ app="app/build/Regents Cloak.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/guest" "$app/Contents/Resources/tor"
 cp "$bin/RegentsCloak" "$bin/cloak" "$app/Contents/MacOS/"
+cp app/RegentsCloak.sdef "$app/Contents/Resources/"
 cp guest/build/Image guest/build/initrd.gz "$app/Contents/Resources/guest/"
 cp host/.build/tor/tor host/.build/tor/libevent-2.1.7.dylib "$app/Contents/Resources/tor/"
 

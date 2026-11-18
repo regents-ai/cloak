@@ -222,6 +222,28 @@ struct SupervisorTests {
         #expect(try files.contentsOfDirectory(atPath: boot.path).sorted() == others.sorted())
         #expect(try files.attributesOfItem(atPath: boot.path)[.posixPermissions] as? Int == 0o700)
     }
+
+    @Test func theCommandsAreHowTheLastStartStartedTorAndTheWorker() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let supervisor = try fixture.supervisor()
+        #expect(supervisor.commands.isEmpty)
+        supervisor.send(.start)
+        #expect(await supervisor.settled() == .needsAttention(.guestFailed))
+        // Read back from the processes, and kept once the run has ended.
+        try #require(supervisor.commands.count == 2)
+        #expect(supervisor.commands[0].first == fixture.url(.tor).path)
+        #expect(supervisor.commands[0].contains("--DataDirectory"))
+        #expect(supervisor.commands[1]
+            == [fixture.url(.worker).path, "--name", "standin", "--dir", fixture.layout.model(fixture.manifest).path])
+
+        // The next start begins them again: one whose tor can't start has
+        // none.
+        try FileManager.default.removeItem(at: fixture.url(.tor))
+        supervisor.send(.start)
+        #expect(await supervisor.settled() == .needsAttention(.partMissing))
+        #expect(supervisor.commands.isEmpty)
+    }
 }
 
 /// Waits, up to 10 seconds, for something the test cannot be told about.

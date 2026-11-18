@@ -95,15 +95,13 @@ public final class Door {
         }
     }
 
-    /// The one port, on 127.0.0.1 only.
-    public static let port: UInt16 = 8742
-
     public private(set) var state = State.closed
     /// In the order they were added.
     public private(set) var apps: [AgentApp] = []
     /// The apps could not be read, or a change to them not kept.
     public private(set) var problem: String?
-    public let port: UInt16
+    /// The port taken at the last open, until the door closes.
+    private var opened: UInt16?
 
     private enum Access {
         case unread
@@ -116,6 +114,9 @@ public final class Door {
     @ObservationIgnored private let file: URL
     @ObservationIgnored private let walletFolder: URL
     @ObservationIgnored private let parts: Parts
+    /// The one port, on 127.0.0.1 only, asked at each open: in the app, the
+    /// Settings window's.
+    @ObservationIgnored private let chosen: () -> UInt16
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var serving: [UUID: Task<Void, Never>] = [:]
     /// By app, and by the agent's conversation.
@@ -132,12 +133,16 @@ public final class Door {
         case guest
     }
 
-    public init(file: URL, wallet: URL, parts: Parts, port: UInt16 = Door.port) {
+    public init(file: URL, wallet: URL, parts: Parts, port: @escaping () -> UInt16) {
         self.file = file
         self.walletFolder = wallet
         self.parts = parts
-        self.port = port
+        self.chosen = port
     }
+
+    /// The port the door listens on from its open until it closes, and
+    /// otherwise the one it opens on next.
+    public var port: UInt16 { opened ?? chosen() }
 
     /// What an app is pointed at.
     public var address: String { "http://127.0.0.1:\(port)/v1" }
@@ -225,6 +230,8 @@ public final class Door {
             state = .refused("Cloak couldn't read your apps, so they can't connect.")
             return
         }
+        let port = chosen()
+        opened = port
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
         parameters.allowLocalEndpointReuse = false
@@ -280,6 +287,7 @@ public final class Door {
         listener = nil
         if state == .open { logger.info("door closed") }
         state = .closed
+        opened = nil
         for conversation in boxes.keys { memories[conversation] = nil }
         boxes = [:]
         let serving = Array(self.serving.values)
@@ -467,7 +475,7 @@ public final class Door {
                 asked.body(messages), identity: identity, key: parts.key, deposits: DepositStore(folder: walletFolder, key: key),
                 exchange: parts.exchange)
         } catch {
-            logger.error("door send stopped: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .public)")
+            logger.error("door send stopped: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .private)")
             throw Failure(error)
         }
         return try Asked.answer(completion, streaming: asked.streaming)

@@ -2381,6 +2381,26 @@ candidates, so the split has to be re-declared before any holdout opens.
       Development mode pays from one wallet. The wallet sheet shows a
       QR code of the address beside Copy; nothing about the wallet
       itself changed. Not yet seen on screen.
+    - Taken, 18 November: settings. A Settings window (Command-comma)
+      with General (Launch at login, Free memory), Shortcut, Door (the
+      port, 1024 to 65535, checked free on 127.0.0.1 when saved,
+      applied at the next Start; loopback only, with no setting for
+      any other address) and Advanced (the commands tor and the worker
+      were started with, this session's log, Restore Defaults). No
+      setting can be set from a link, the door, AppleScript or the
+      guest. A quick prompt: a system-wide shortcut, none until chosen,
+      opens a small box whose text becomes a new chat's draft; it sends
+      nothing. Six AppleScript commands: start, pause, and show chat,
+      agents, details and settings. The header says Starting and
+      Stopping; a changed model has Show in Finder. Found and fixed:
+      three log lines wrote a stopped send's detail, the payment
+      toolkit's own words, which can hold amounts, as readable text;
+      it is now kept out of the readable log. Not yet seen on screen.
+    - Not taken, and why: a choice of context size, an overrides file
+      and a model folder choice (one model and one configuration ship);
+      sharing over a network (the door stays on this Mac); updates and
+      a Homebrew install (they need a signing key and a public release,
+      which are Sean's).
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.

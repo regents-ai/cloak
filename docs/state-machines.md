@@ -556,7 +556,7 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   passed. No session guest is built yet: the guest is gone once the check
   ends.
 - **Resting**: while Running, the worker rests (section 3) once Cloak has
-  reworded nothing for the time chosen as Free memory in the Details window
+  reworded nothing for the time chosen as Free memory in the Settings window
   (5 minutes until chosen, 15 minutes, 1 hour, or Never, which keeps it),
   kept in the app's defaults and read each time that wait starts, so a
   change applies from then with no restart. The next request starts a new
@@ -588,9 +588,13 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   Paused (`not_paused`). A refused command changes nothing.
 - **Sleep** pauses, so a wake finds nothing running; a relaunch starts
   Paused, having started nothing. So does the launch at login, which is
-  off unless the Details window's Login switch turns it on (a login item,
-  through `SMAppService`): the app opens Paused and starts nothing until
-  Start.
+  off unless the Settings window's Launch at login switch turns it on (a
+  login item, through `SMAppService`): the app opens Paused and starts
+  nothing until Start.
+- **Commands**: each start keeps how it started tor and then the worker,
+  each one's program and arguments read back from the process started, as
+  each comes up; they stay once the run ends, and the next start begins
+  them again. The Settings window's Advanced pane shows them, one line each.
 - **Launch**: before anything starts, the supervisor makes its boot folder,
   `control/boot` in the app's Application Support folder, owner-only, and
   removes from it every guest's `cloak-<UUID>` folder a killed app left,
@@ -598,16 +602,19 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   else. If it cannot, the app says it can't open, and ends.
 - **The menu's header** (`app/Sources/RegentsCloak/Menu.swift`) only reads
   the phase. Its dot is the state now: green Running, yellow Paused or
-  Ready, red Needs attention, grey while Preparing or Stopping, with the
-  state's word as its tooltip and for VoiceOver. Its line keeps the last
-  settled state's word through Preparing and Stopping, so no word shows only
-  for a moment, with "model unloaded" while Running and resting and
-  "downloading model" while the download is under way. Once settled in Needs
-  attention, the reason's title and remedy take the line's place, beside
-  the one fix the menu can take: Start Again for `tor_unavailable`,
-  `tor_stopped`, `worker_unavailable`, `worker_stopped`, `guest_failed` and
-  `check_failed`, Download Model… for `model_missing` (section 9a), none for
-  the rest. The menu is rebuilt each time it opens, and while it is open
+  Ready, red Needs attention, grey while Preparing or Stopping. Its line is
+  the state now, in the menu's words: Starting through Preparing, Stopping
+  through Stopping, with "model unloaded" while Running and resting and
+  "downloading model" while the download is under way; the dot's tooltip
+  and VoiceOver say the same word. Before (18 November): the line kept the
+  last settled state's word through a start or stop, which takes 8 to 13
+  seconds. Once settled in Needs attention, the reason's title and remedy
+  take the line's place, beside the one fix the menu can offer: Start Again
+  for `tor_unavailable`, `tor_stopped`, `worker_unavailable`,
+  `worker_stopped`, `guest_failed` and `check_failed`, Download Model… for
+  `model_missing` (section 9a), Show in Finder for `model_changed`, which
+  reveals the model's folder and changes nothing in it, and none for the
+  rest. The menu is rebuilt each time it opens, and while it is open
   whenever the phase, the rest or the download changes.
 
 What `cloak --json` prints for each phase (INS02):
@@ -638,7 +645,8 @@ comes back Paused; pausing while tor bootstraps stops it; pausing or
 quitting while the model loads stops the worker at once; a launch after a
 quit while working, as at a logout and the next login, is Paused and
 starts nothing; a launch removes
-the boot files a killed app left, and nothing else), `RestTests.swift`
+the boot files a killed app left, and nothing else; the commands are how
+the last start started tor and the worker), `RestTests.swift`
 (the relay with stand-in workers: a rest only after the time since the
 last answer; a request after a rest answered by a new worker, which rests
 in its turn; never two workers at once; an exit while idle is an exit and
@@ -646,9 +654,14 @@ never a rest; a worker that cannot start on a wake fails its request and
 is not tried again; a request cancelled during the load never sent;
 pausing while resting or during the load),
 `ControlTests.swift` (the JSON for each status; the socket answers only its
-owner's well-formed requests) and `MenuHeaderTests.swift` (the header's dot
-and line for every phase, settled and changing; the rest shown only with
-Running; the download offered in one place).
+owner's well-formed requests), `MenuHeaderTests.swift` (the header's dot
+and line for every phase, settled and changing, Starting or Stopping while
+changing; the rest shown only with Running; the download offered in one
+place; Show in Finder for a changed model) and `SettingsTests.swift` (the
+settings' defaults, kept and restored; the door's port refused out of
+range or while something listens on it, and kept when free; a shortcut
+needs Command, Option or Control; the quick prompt's text a new chat's
+draft, unsent; the log has this session's lines of Cloak's log only).
 
 ## 9a. The model's download (`app/Sources/CloakSupervisor/ModelDownload.swift`)
 

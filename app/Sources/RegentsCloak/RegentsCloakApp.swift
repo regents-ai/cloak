@@ -7,34 +7,53 @@ import os
 import SwiftUI
 
 /// The menu-bar app: one supervisor, the model's download, its menu, its
-/// Chat, Agents and Details windows, a welcome on the first launch, the door
-/// other apps and the agent in the guest send through while Cloak is
-/// Running, and the control channel `cloak` uses to drive the same
-/// supervisor.
+/// Chat, Agents, Details and Settings windows, the quick prompt, a welcome
+/// on the first launch, the door other apps and the agent in the guest send
+/// through while Cloak is Running, its AppleScript commands
+/// (`StartCommand` and the others), and the control channel `cloak` uses to
+/// drive the same supervisor.
 @main
 struct RegentsCloakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var app
 
-    // The menu is AppKit's (`StatusMenu`); this scene shows nothing, and
-    // takes no place in the app's menus.
+    // The menu is AppKit's (`StatusMenu`), and the Settings window is the
+    // app's own (`SettingsView`); this scene shows nothing. Command-comma
+    // opens Settings while one of the app's windows is in front.
     var body: some Scene {
         Settings { EmptyView() }
-            .commands { CommandGroup(replacing: .appSettings) {} }
+            .commands {
+                CommandGroup(replacing: .appSettings) {
+                    Button("Settings…") { app.showSettings() }
+                        .keyboardShortcut(",")
+                }
+            }
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The app's one delegate, for its AppleScript commands: SwiftUI puts
+    /// its own in `NSApp.delegate`.
+    private(set) static var current: AppDelegate!
+
     let supervisor = Launch.supervisor
     let download = ModelDownload(manifest: Launch.manifest, layout: Launch.layout)
-    private lazy var chat = AppWindow { [supervisor, door, unowned self] in
-        ChatView.window(
-            Chat(supervisor: supervisor, folder: Launch.layout.conversations, wallet: Launch.layout.wallet, door: door),
-            showDetails: { self.showDetails() })
+    /// Made at its window's first show or the quick prompt's first Return.
+    private lazy var conversations = Chat(
+        supervisor: supervisor, folder: Launch.layout.conversations, wallet: Launch.layout.wallet, door: door)
+    private lazy var chat = AppWindow { [unowned self] in
+        ChatView.window(conversations, showDetails: { self.showDetails() })
     }
     private lazy var details = AppWindow { [supervisor, download] in DetailsView.window(supervisor, download) }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
+    private lazy var settings = AppWindow { [supervisor, prompt, door] in
+        SettingsView.window(.standard, prompt: prompt, supervisor: supervisor, door: door)
+    }
     private lazy var welcome = AppWindow { WelcomeView.window() }
+    private lazy var prompt = QuickPrompt(settings: .standard) { [unowned self] text in
+        conversations.compose(text)
+        showChat()
+    }
     private var menu: StatusMenu?
     let door: Door = {
         let supervisor = Launch.supervisor, conversations = Launch.layout.conversations
@@ -45,14 +64,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 exchange: { request, keep in try await supervisor.exchange(request: request, keep: keep) },
                 wallet: { try await WalletKeychain.address() },
                 key: { try WalletKeychain.key() },
-                sealing: { try await ConversationStore.key(for: conversations, find: Keychain.find, make: Keychain.make) }))
+                sealing: { try await ConversationStore.key(for: conversations, find: Keychain.find, make: Keychain.make) }),
+            port: { AppSettings.standard.doorPort })
     }()
     private var server: ControlServer?
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "app")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.current = self
         menu = StatusMenu(
-            supervisor: supervisor, download: download, showChat: showChat, showAgents: showAgents, showDetails: showDetails)
+            supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest), showChat: showChat,
+            showAgents: showAgents, showDetails: showDetails, showSettings: showSettings)
+        // Made now, so the shortcut chosen works from launch.
+        _ = prompt
         // The agent's model requests from the guest come in at the door.
         supervisor.door = { [door] socket in door.accept(guest: socket) }
         do {
@@ -94,6 +118,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         details.show()
     }
 
+    func showSettings() {
+        settings.show()
+    }
+
     /// Quit, from the menu or the system, goes through the one shutdown,
     /// and ends once every app with a request under way has been answered.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -128,7 +156,7 @@ enum Launch {
 
     static let supervisor: Supervisor = {
         do {
-            return try Supervisor(manifest: manifest, layout: layout) { FreeMemory.chosen.after }
+            return try Supervisor(manifest: manifest, layout: layout) { AppSettings.freeMemory(in: .standard).after }
         } catch {
             Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot clear the boot files: \(String(describing: error), privacy: .public)")
             stop("Regents Cloak can't open.", "Quit Regents Cloak, then open it again.")

@@ -194,6 +194,9 @@ public final class Tor: Sendable {
     /// tor's process.
     public var processIdentifier: Int32 { child.process.processIdentifier }
 
+    /// The program and its arguments, exactly as tor was started.
+    public var command: [String] { child.command }
+
     /// How tor ended, once it has, for whatever reason.
     public func exited() async -> Termination {
         await child.exited()

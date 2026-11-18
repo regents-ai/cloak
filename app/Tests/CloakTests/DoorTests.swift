@@ -51,7 +51,8 @@ struct DoorTests {
         #expect(sealed.range(of: Pass.fingerprint(pass)) == nil)
         #expect(try FileManager.default.attributesOfItem(atPath: stand.folder.appending(path: "agents").path)[.posixPermissions] as? Int == 0o600)
         // Read again, the apps are as they were.
-        let again = Door(file: stand.folder.appending(path: "agents"), wallet: stand.folder, parts: stand.parts, port: stand.door.port)
+        let port = stand.door.port
+        let again = Door(file: stand.folder.appending(path: "agents"), wallet: stand.folder, parts: stand.parts, port: { port })
         await again.load()
         #expect(again.apps == stand.door.apps)
     }
@@ -345,7 +346,8 @@ struct Stand {
         parts = Door.Parts(
             reword: { texts throws(RewriteStop) in try await reworder.reword(texts) }, exchange: self.sender.exchange,
             wallet: { wallet }, key: { Data(repeating: 0x11, count: 32) }, sealing: { key })
-        door = Door(file: folder.appending(path: "agents"), wallet: folder.appending(path: "wallet"), parts: parts, port: try port ?? Self.freePort())
+        let port = try port ?? Self.freePort()
+        door = Door(file: folder.appending(path: "agents"), wallet: folder.appending(path: "wallet"), parts: parts, port: { port })
         await door.open()
         guard waitOpen else { return }
         for _ in 0..<100 where door.state != .open {

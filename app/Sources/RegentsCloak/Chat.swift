@@ -273,6 +273,15 @@ final class Chat {
         }
     }
 
+    /// A new chat whose message box holds `text`, exactly as if typed there
+    /// (the quick prompt's): nothing is sent or reworded. Before the store
+    /// opens, the text waits for the empty conversation it opens on.
+    func compose(_ text: String) {
+        kind = .chat
+        newConversation()
+        draft = text
+    }
+
     func delete(_ id: UUID) {
         guard case .open(let store) = access, let conversation = conversations.first(where: { $0.id == id }) else { return }
         if rewording?.conversation == id { rewording?.task.cancel() }
@@ -409,7 +418,7 @@ final class Chat {
                 update(conversation)
             }
         case .failure(let stop):
-            logger.error("a send stopped: \(stop.code.rawValue, privacy: .public) \(stop.detail, privacy: .public)")
+            logger.error("a send stopped: \(stop.code.rawValue, privacy: .public) \(stop.detail, privacy: .private)")
             sendStop = SendStop(turn: turn, stop: stop)
         }
         Task { await wallet.refresh() }

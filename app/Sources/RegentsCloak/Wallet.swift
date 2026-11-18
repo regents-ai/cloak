@@ -138,7 +138,7 @@ final class Wallet {
     }
 
     private func recorded(_ stop: RemoteStop) -> RemoteStop {
-        logger.error("wallet request stopped: \(stop.code.rawValue, privacy: .public) \(stop.detail, privacy: .public)")
+        logger.error("wallet request stopped: \(stop.code.rawValue, privacy: .public) \(stop.detail, privacy: .private)")
         return stop
     }
 }

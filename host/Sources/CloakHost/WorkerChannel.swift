@@ -84,6 +84,9 @@ public final class WorkerChannel: Sendable {
     /// The worker's process.
     public var processIdentifier: Int32 { child.process.processIdentifier }
 
+    /// The program and its arguments, exactly as the worker was started.
+    public var command: [String] { child.command }
+
     /// How the worker ended, once it has, for whatever reason.
     public func exited() async -> Termination {
         await child.exited()

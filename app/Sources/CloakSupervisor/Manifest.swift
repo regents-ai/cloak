@@ -111,7 +111,9 @@ public struct Layout: Sendable {
         url(manifest.pins.first { $0.part == part }!)
     }
 
-    func model(_ manifest: Manifest) -> URL {
+    /// The model's folder: its files, which the worker checks against their
+    /// pins at each start.
+    public func model(_ manifest: Manifest) -> URL {
         support.appending(path: "models").appending(path: manifest.model.name)
     }
 

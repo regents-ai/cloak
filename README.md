@@ -271,9 +271,9 @@ Running means tor is up, the worker is up or resting, a startup check sent
 one rewrite through the guest, the daemon and the worker, and the guest's
 sender is ready. The worker rests,
 and the model leaves memory, once Cloak has reworded nothing for the time
-chosen as Free memory in the Details window (5 minutes until chosen, or 15
+chosen as Free memory in the Settings window (5 minutes until chosen, or 15
 minutes, 1 hour or Never); the next request starts it again and waits a
-few seconds longer. The window's Memory row shows what all of Cloak holds
+few seconds longer. The Details window's Memory row shows what all of Cloak holds
 now (the app, tor, the worker and the guest's virtual machine, by the
 footprint Activity Monitor shows), read every 3 seconds while the window
 is on screen; it says it can't be measured when any part cannot be read,
@@ -293,8 +293,9 @@ app/build.sh
 The app opens Paused in the menu bar, and never starts by itself. On the
 first launch only, a Welcome window says what Cloak does and where it is,
 and starts nothing. The menu's top shows the state, as a coloured dot and
-in words; when Cloak needs attention, it says what went wrong and what to
-do, with a button for the fix when the app can take it. The release and
+in words, Starting or Stopping while it changes; when Cloak needs
+attention, it says what went wrong and what to do, with a button for the
+fix, or the way to it, when the app has one. The release and
 build are at the menu's foot. `cloak` is inside the app; `cloak start`
 opens the app if it isn't open:
 
@@ -317,6 +318,36 @@ It talks to the app over a socket only the same user can reach, in
 files, which hold its keys while it starts, are in `control/boot/`; each
 launch first removes any that a killed app left there.
 
+"Settings…" in the menu (Command-comma) is the one place the app's
+settings change; no link, script, app or agent can set one. General has
+Launch at login (off until turned on; the app still opens Paused) and Free
+memory. Shortcut sets the quick prompt's keys, none until chosen; keys
+without Command, Option or Control are refused, as is a shortcut macOS
+won't take. Door sets the port Agents answer on (below), 8742 until
+chosen: a number from 1024 to 65535 that nothing on this Mac listens on
+when it is saved, used from the next Start, and always on 127.0.0.1 only.
+Advanced shows exactly how the last start started tor and the worker, one
+command a line, and this session's lines of Cloak's log, each with Copy,
+and Restore Defaults, which puts these settings back and nothing else: not
+the wallet, the chats or the model.
+
+The quick prompt is a small box over whatever app is in front, opened and
+closed by its shortcut; Escape closes it too. Return opens Chat with a new
+chat whose message box holds what you wrote, as if typed there: nothing is
+sent or reworded until you send it.
+
+AppleScript can start and pause Cloak and show its windows, and nothing
+else: no command takes text, changes a setting, sends, spends or touches
+the wallet.
+
+```bash
+osascript -e 'tell application "Regents Cloak" to show chat'
+```
+
+The commands are `start`, `pause`, `show chat`, `show agents`, `show
+details` and `show settings`; a start or pause that doesn't apply now
+fails with the reason, as `cloak` would give it.
+
 The app downloads the model, the small lead (5.4 GiB), while it is not
 installed: the Details window, opened by Download Model in the menu, says
 its size, its host (huggingface.co), and that this download goes straight
@@ -336,8 +367,9 @@ When a file is missing or not its pinned size, Start needs attention with
 "The model isn't installed"; when the model's folder is not exactly the
 pinned files (the worker checks every file's hash as it loads), with "The
 model has changed": remove
-`~/Library/Application Support/Regents Cloak/models/small-lead-gguf-grammar/`,
-download it again, and start again.
+`~/Library/Application Support/Regents Cloak/models/small-lead-gguf-grammar/`
+(Show in Finder, in the menu, reveals it), download it again, and start
+again.
 
 "Chat" in the menu opens a Chat window. While Cloak is running, each
 message is reworded on the Mac and shown beside the original, with the
@@ -402,8 +434,8 @@ waits for it.
 "Agents" in the menu lets your other apps on this Mac send through Cloak,
 in Development mode too, as to any server that speaks OpenAI's chat
 format. While Cloak is running it answers at `http://127.0.0.1:8742/v1`,
-on 127.0.0.1 only; if another app holds that port, Agents says so and
-nothing opens. Add gives an app a name and a pass, shown once with Copy;
+or the port chosen in Settings, on 127.0.0.1 only; if another app holds
+that port, Agents says so and nothing opens. Add gives an app a name and a pass, shown once with Copy;
 Remove ends the pass at once. Point the app at the address with the pass as
 its key, for example with OpenAI's Python library:
 

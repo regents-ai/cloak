@@ -1,0 +1,362 @@
+import AppKit
+import Carbon.HIToolbox
+import CloakDoor
+import CloakSupervisor
+import OSLog
+import SwiftUI
+
+/// The Settings window, the one place a setting changes (`AppSettings`):
+/// General (whether the app opens at login, and how long the model may go
+/// unused before it leaves memory), Shortcut (the quick prompt's), Door (its
+/// port on 127.0.0.1) and Advanced (how Cloak started its parts, this
+/// session's log, and Restore Defaults).
+struct SettingsView: View {
+    let settings: AppSettings
+    let prompt: QuickPrompt
+    let supervisor: Supervisor
+    let door: Door
+
+    static func window(_ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door) -> NSWindow {
+        let window = ClosingWindow(
+            contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.title = "Settings"
+        let content = NSHostingController(rootView: SettingsView(settings: settings, prompt: prompt, supervisor: supervisor, door: door))
+        content.sceneBridgingOptions = [.toolbars]
+        window.contentViewController = content
+        window.setContentSize(NSSize(width: 680, height: 500))
+        return window
+    }
+
+    private enum Pane: String, CaseIterable, Identifiable {
+        case general, shortcut, door, advanced
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .general: "General"
+            case .shortcut: "Shortcut"
+            case .door: "Door"
+            case .advanced: "Advanced"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .general: "gearshape"
+            case .shortcut: "keyboard"
+            case .door: "door.left.hand.open"
+            case .advanced: "wrench.and.screwdriver"
+            }
+        }
+    }
+
+    @State private var pane: Pane? = .general
+
+    var body: some View {
+        // The sidebar's list can be left with nothing chosen.
+        let shown = pane ?? .general
+        NavigationSplitView {
+            List(Pane.allCases, selection: $pane) { pane in
+                Label(pane.title, systemImage: pane.symbol)
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 180, max: 220)
+        } detail: {
+            Group {
+                switch shown {
+                case .general: GeneralPane(settings: settings)
+                case .shortcut: ShortcutPane(settings: settings, prompt: prompt)
+                case .door: DoorPane(settings: settings, door: door)
+                case .advanced: AdvancedPane(settings: settings, prompt: prompt, supervisor: supervisor)
+                }
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .contentMargins(.top, 8, for: .scrollContent)
+            .navigationTitle(shown.title)
+        }
+        .frame(width: 680, height: 500)
+    }
+}
+
+private struct GeneralPane: View {
+    @Bindable var settings: AppSettings
+    @State private var login = LoginItem.isOn
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Launch at login", isOn: Binding(get: { login }, set: { login = LoginItem.set($0) }))
+            } footer: {
+                Footnote("Cloak opens paused, so nothing runs until you press Start.")
+            }
+            Section {
+                Picker("Free memory", selection: $settings.freeMemory) {
+                    ForEach(FreeMemory.allCases) { Text($0.title).tag($0) }
+                }
+            } footer: {
+                Footnote("The model leaves memory once Cloak has reworded nothing for that long, and the next message takes a few seconds longer.")
+            }
+        }
+        // The login item can change in System Settings while the window is
+        // away, so it is read again each time the window comes back.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            login = LoginItem.isOn
+        }
+    }
+}
+
+private struct ShortcutPane: View {
+    let settings: AppSettings
+    let prompt: QuickPrompt
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Quick prompt") {
+                    ShortcutRecorder(shortcut: settings.shortcut, refusal: prompt.refusal, choose: prompt.choose)
+                }
+            } footer: {
+                Footnote("Opens a box over any app. Return takes what you wrote to a new chat, unsent.")
+            }
+        }
+    }
+}
+
+/// The shortcut, or Record Shortcut. Pressed, it takes the next keys
+/// pressed as the shortcut; Escape stops it with nothing changed. Keys
+/// without Command, Option or Control are refused, with the words why, and
+/// so is a shortcut the system won't take.
+private struct ShortcutRecorder: View {
+    let shortcut: Shortcut?
+    let refusal: String?
+    let choose: (Shortcut?) -> Void
+    @State private var monitor: Any?
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 6) {
+                Button(monitor == nil ? shortcut?.title ?? "Record Shortcut" : "Press Keys…") {
+                    if monitor == nil { record() } else { stop() }
+                }
+                .accessibilityHint(monitor == nil ? "Records a new shortcut" : "Stops recording")
+                if shortcut != nil, monitor == nil {
+                    Button("Clear Shortcut", systemImage: "xmark.circle.fill") { choose(nil) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Clear Shortcut")
+                }
+            }
+            if let words = problem ?? refusal {
+                Text(words)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+        .onDisappear(perform: stop)
+    }
+
+    private func record() {
+        problem = nil
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            MainActor.assumeIsolated { take(event) }
+            return nil
+        }
+    }
+
+    private func take(_ event: NSEvent) {
+        if let shortcut = Shortcut(event) {
+            stop()
+            choose(shortcut)
+        } else if Int(event.keyCode) == kVK_Escape {
+            stop()
+        } else {
+            problem = "Hold ⌘, ⌥ or ⌃ with the key."
+        }
+    }
+
+    private func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+}
+
+private struct DoorPane: View {
+    let settings: AppSettings
+    let door: Door
+    @State private var text = ""
+    @State private var problem: String?
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Port") {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        HStack(spacing: 6) {
+                            TextField("Port", text: $text, prompt: Text(String(AppSettings.defaultDoorPort)))
+                                .labelsHidden()
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 80)
+                                .onSubmit(save)
+                            Button("Save", action: save)
+                                .disabled(text == String(settings.doorPort))
+                        }
+                        if let problem {
+                            Text(problem)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+            } footer: {
+                Footnote("Only apps on this Mac can connect. A new port applies at the next Start.")
+            }
+        }
+        .onAppear { text = String(settings.doorPort) }
+        .onChange(of: text) { problem = nil }
+    }
+
+    private func save() {
+        do throws(AppSettings.PortRefusal) {
+            try settings.choose(port: text, open: door.state == .open ? door.port : nil)
+            text = String(settings.doorPort)
+        } catch {
+            problem = error.words
+        }
+    }
+}
+
+private struct AdvancedPane: View {
+    let settings: AppSettings
+    let prompt: QuickPrompt
+    let supervisor: Supervisor
+    @State private var log: Result<[String], any Error>?
+    @State private var restoring = false
+
+    var body: some View {
+        let commands = supervisor.commands.map(Self.line).joined(separator: "\n")
+        Form {
+            Section("Commands") {
+                if commands.isEmpty {
+                    Text("Nothing has started yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ScrollView(.horizontal) {
+                        Text(commands)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .fixedSize()
+                            .padding(.vertical, 2)
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button("Copy") { copy(commands) }
+                        .accessibilityLabel("Copy Commands")
+                        .disabled(commands.isEmpty)
+                }
+            }
+            Section("Log") {
+                let lines = switch log {
+                case .success(let lines)?: lines.isEmpty ? "Nothing logged yet." : lines.joined(separator: "\n")
+                case .failure?: "Cloak couldn't read its log."
+                case nil: ""
+                }
+                ScrollView {
+                    Text(lines)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .defaultScrollAnchor(.bottom)
+                .frame(height: 180)
+                HStack {
+                    Spacer()
+                    Button("Refresh") { Task { await read() } }
+                    Button("Copy") { copy(lines) }
+                        .accessibilityLabel("Copy Log")
+                }
+            }
+            Section {
+                HStack {
+                    Spacer()
+                    Button("Restore Defaults…") { restoring = true }
+                }
+            } footer: {
+                Footnote("Puts every setting in this window back. Your wallet, chats and model stay as they are.")
+            }
+        }
+        .task { await read() }
+        .alert("Restore defaults?", isPresented: $restoring) {
+            Button("Restore Defaults", role: .destructive, action: restore)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(Self.restored)
+        }
+    }
+
+    /// What Restore Defaults does, from the defaults themselves.
+    private static let restored = """
+        Launch at login turns off, Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
+        the quick prompt loses its shortcut, and the door goes back to port \(AppSettings.defaultDoorPort).
+        """
+
+    private func read() async {
+        do {
+            log = .success(try await SessionLog.read())
+        } catch {
+            log = .failure(error)
+        }
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func restore() {
+        prompt.choose(nil)
+        settings.restore()
+        if LoginItem.isOn { _ = LoginItem.set(false) }
+    }
+
+    /// A command as a shell takes it, so it can be pasted into Terminal:
+    /// each word in single quotes when it holds anything a shell reads
+    /// specially.
+    static func line(_ command: [String]) -> String {
+        command.map { word in
+            !word.isEmpty && word.allSatisfy { $0.isLetter || $0.isNumber || "-_./:=@%+,".contains($0) }
+                ? word : "'" + word.replacing("'", with: #"'\''"#) + "'"
+        }
+        .joined(separator: " ")
+    }
+}
+
+/// This session's lines of Cloak's log, oldest first: the time, the part
+/// and the message.
+enum SessionLog {
+    @concurrent static func read() async throws -> [String] {
+        let store = try OSLogStore(scope: .currentProcessIdentifier)
+        return try store.getEntries(matching: NSPredicate(format: "subsystem == %@", "sh.regents.cloak.app"))
+            .compactMap { $0 as? OSLogEntryLog }
+            .map { "\($0.date.formatted(.dateTime.hour().minute().second())) \($0.category) \($0.composedMessage)" }
+    }
+}
+
+/// A form section's footer: one plain line.
+private struct Footnote: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+}

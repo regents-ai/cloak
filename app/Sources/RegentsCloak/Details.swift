@@ -1,17 +1,14 @@
 import AppKit
 import CloakControl
 import CloakSupervisor
-import os
-import ServiceManagement
 import SwiftUI
 
 /// The small window: the state, why it needs attention and what to do, the
 /// model's download while its files are not all in place, the release, the
 /// model and whether it is out of memory, what Cloak holds in memory now,
-/// the last check, how long the model may go unused before it leaves
-/// memory, whether the app opens at login, and technical detail on demand,
-/// the build and each part's memory among it. Closing it leaves the
-/// supervisor, and the download, as they are.
+/// the last check, and technical detail on demand, the build and each
+/// part's memory among it. Closing it leaves the supervisor, and the
+/// download, as they are. The settings are the Settings window's.
 struct DetailsView: View {
     let supervisor: Supervisor
     let download: ModelDownload
@@ -28,8 +25,6 @@ struct DetailsView: View {
     }
 
     @State private var technical = false
-    @State private var login = SMAppService.mainApp.status == .enabled
-    @AppStorage(FreeMemory.key) private var freeMemory = FreeMemory.unchosen
 
     var body: some View {
         let status = supervisor.status
@@ -58,22 +53,6 @@ struct DetailsView: View {
                 LabeledContent("Last check", value: lastCheck(status.check))
             }
             Section {
-                Picker("Free memory", selection: $freeMemory) {
-                    ForEach(FreeMemory.allCases) { Text($0.title).tag($0) }
-                }
-            } footer: {
-                Text("The model leaves memory once Cloak has reworded nothing for that long, and the next message takes a few seconds longer.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section {
-                Toggle("Launch Cloak on startup", isOn: Binding(get: { login }, set: openAtLogin))
-            } footer: {
-                Text("Cloak opens paused, so nothing runs until you press Start.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section {
                 DisclosureGroup(isExpanded: $technical) {
                     Text(status.detail)
                         .font(.system(.caption, design: .monospaced))
@@ -92,26 +71,11 @@ struct DetailsView: View {
         .scrollContentBackground(.hidden)
         .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
-        // The login item can change in System Settings while the window is
-        // away, and the model's files and the free space on disk too, so
-        // each is read again each time the window comes back.
+        // The model's files and the free space on disk can change while the
+        // window is away, so they are read again each time it comes back.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            login = SMAppService.mainApp.status == .enabled
             download.refresh()
         }
-    }
-
-    /// Adds the app to the login items, or takes it out. One the user turned
-    /// off in System Settings needs their approval there, which opens.
-    private func openAtLogin(_ on: Bool) {
-        let app = SMAppService.mainApp
-        do {
-            try on ? app.register() : app.unregister()
-        } catch {
-            Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot change the login item: \(String(describing: error), privacy: .public)")
-        }
-        if app.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
-        login = app.status == .enabled
     }
 
     private func lastCheck(_ check: StatusDocument.Check?) -> String {
@@ -152,43 +116,5 @@ final class MemoryWatch {
                 reading = supervisor.memory()
             } while (try? await Task.sleep(for: .seconds(3))) != nil
         } : nil
-    }
-}
-
-/// How long the model may go with nothing to reword before it leaves memory,
-/// as chosen in the Details window and kept in the app's defaults. The
-/// supervisor reads it each time that time starts again, so a change applies
-/// from then, with no restart.
-enum FreeMemory: String, CaseIterable, Identifiable {
-    case fiveMinutes, fifteenMinutes, oneHour, never
-
-    static let key = "freeMemory"
-    /// Until the person chooses.
-    static let unchosen = FreeMemory.fiveMinutes
-
-    /// The choice kept, or `unchosen`.
-    static var chosen: FreeMemory {
-        UserDefaults.standard.string(forKey: key).flatMap(FreeMemory.init) ?? unchosen
-    }
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .fiveMinutes: "After 5 minutes"
-        case .fifteenMinutes: "After 15 minutes"
-        case .oneHour: "After 1 hour"
-        case .never: "Never"
-        }
-    }
-
-    /// Nil: the model stays in memory while Cloak runs.
-    var after: Duration? {
-        switch self {
-        case .fiveMinutes: .seconds(5 * 60)
-        case .fifteenMinutes: .seconds(15 * 60)
-        case .oneHour: .seconds(60 * 60)
-        case .never: nil
-        }
     }
 }

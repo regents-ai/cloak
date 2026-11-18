@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Settings (decision 14, from Llama.app): a Settings window with Launch
+  at login, Free memory, a shortcut for a quick prompt, the door's port,
+  the commands Cloak started its parts with, this session's log and
+  Restore Defaults; six AppleScript commands; Starting and Stopping in
+  the menu's header; Show in Finder for a changed model. A stopped
+  send's detail no longer goes into the readable log, as it can hold
+  amounts.
+
 - Menu and windows (decision 14, from Llama.app): a header with a state
   dot and one plain line, a failure and its fix in one place, the build
   at the foot of the menu, clearer causes and remedies for every

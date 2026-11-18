@@ -30,6 +30,11 @@ public final class Supervisor {
     /// The worker rested while Running: the model is out of memory until the
     /// next request.
     public private(set) var resting = false
+    /// How the last start since the app opened started tor and then the
+    /// worker: each one's program and arguments, read back from the process
+    /// started, as each came up. Kept once the run has ended; the next start
+    /// begins them again. Every worker of a run starts the same way.
+    public private(set) var commands: [[String]] = []
     public let manifest: Manifest
     /// Takes each connection the guest's agent opens to the door port, as a
     /// socket it owns: in the app, the door's. Set before the first start;
@@ -91,6 +96,7 @@ public final class Supervisor {
             break
         case (_, .preparing):
             problem = nil
+            commands = []
             preparation = Task { await prepare() }
         case (_, .stopping):
             shutDown()
@@ -258,6 +264,7 @@ public final class Supervisor {
                 throw Failure(.torUnavailable, "cannot start tor: \(error)")
             }
             stack.tor = tor
+            commands.append(tor.command)
             watch("tor", as: .torStopped) { await tor.exited() }
             guard tor.bootstrapped else {
                 throw Failure(.torUnavailable, "tor did not bootstrap within 90 seconds of its start, or exited first")
@@ -276,6 +283,7 @@ public final class Supervisor {
             } catch {
                 throw Self.cannotStart(error)
             }
+            commands.append(worker.command)
             // The relay owns the worker from here: it rests and wakes it, and
             // tells of each change. A lost worker is not replaced, and a
             // worker that ends by itself or cannot start on a wake is a
