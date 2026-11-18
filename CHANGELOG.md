@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- zkAPI trial: two more trips at $2 on mainnet, on Sean's decision, with
+  stops and crashes in the middle of a deposit, an unsettled request and
+  a withdrawal. All recovered; nothing was paid or deposited twice.
+  Found: a key for every request makes requests take about 25 s and go
+  one at a time, and a request made while an earlier one settles after a
+  restart can fail rather than wait. Figures in `docs/plan.md`.
+
 - zkAPI trial: the whole trip run on mainnet outside Cloak, through Tor
   only, on Sean's decision: a $5 deposit, one paid request answered, its
   settlement, a restart, and a withdrawal of the full balance. Open

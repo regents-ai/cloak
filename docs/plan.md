@@ -1983,9 +1983,52 @@ candidates, so the split has to be re-declared before any holdout opens.
         the two network fees (deposit 0.000862827, withdrawal
         0.001116308). The address now holds 0.006221612 ETH; where it goes
         is Sean's to say.
-      - Not tried: a restart while a request is unsettled, while a deposit
-        is unmined, or while a withdrawal waits for finality; key reuse
-        off; more than one request; a second deposit.
+    - Two more trips at $2 each, 17 to 18 November, to try the edges
+      (Sean's "1. do some $2 rounds"). Every interruption recovered and no
+      step paid or deposited twice.
+      - Trip one, key reuse off, clean stops (SIGINT, then both
+        containers stopped and started). Stopped as "Deposit transaction
+        saved; waiting to be mined" showed: run again with nothing allowed
+        to answer, it said "Resuming your saved deposit; no new deposit
+        will be created" and confirmed. A model whose cap is above the
+        balance (`anthropic/claude-fable-5.2`, $4.50 against $2): HTTP 402
+        `funding_required`, nothing charged. `serve` stopped the instant an
+        answer came ("automatic settlement result ready=false"): after
+        both containers restarted, `serve` said "A previous inference is
+        settling; new requests will wait automatically" and settled it 35
+        s later. **Two requests sent in that half minute both failed,
+        HTTP 502 `anonymous_access_failed`, after 34 and 42 s; they did
+        not wait.** Nothing was charged for them. Containers stopped as
+        "Withdrawal submitted" showed: run again, it finished the saved
+        withdrawal without asking.
+      - **With a key for every request, requests go one at a time.** Each
+        new key waits for the last one's settlement ("request waiting
+        reason=previous_key_settlement"), about 23 s of proof and
+        settlement each: of two sent together, one took 23.7 s and the
+        other 77.7 s. A lone request takes 23 to 25 s.
+      - Trip two, the default 60 s key reuse, crashes (SIGKILL to the
+        daemon and companion together). Killed as the deposit transaction
+        was saved: run again, the deposit was found confirmed. Two
+        requests together shared one key (22.9 and 26.1 s); a third inside
+        the window took **3.9 s**. Killed with that key open and
+        unsettled, then withdrawal at once: "Waiting for your previous
+        inference to settle", then the quote, 0.001106562 ETH, the three
+        requests having cost 0.000000007. Killed as "Withdrawal submitted"
+        showed: run again, it finished without asking.
+      - Cost: trip one 0.002054537 ETH (about $3.71), trip two 0.001544572
+        (about $2.79), fees again nearly all of it. The address holds
+        0.002622503 ETH, about $4.74: not enough for another trip.
+      - What this means for Cloak: the choice between a key per request
+        (unlinked, about 25 s each and strictly one at a time) and a
+        shared window (fast, and the provider can link what shares a key)
+        is the post's "payment that does not link chats" question in
+        practice; an agent's task makes many model calls. And a request
+        made while an earlier one is still settling after a restart can
+        fail rather than wait, so Cloak must hold requests until the
+        daemon reports the settlement done.
+      - Still not tried: a kill in the middle of an answer being streamed;
+        a second deposit while one is open; the 30-day expiry; the
+        operator's pause.
 - Details while writing (15 November, decision 13). While a message or a
   task is written in Chat, the one worker reads the draft and proposes up
   to four details it leaves open; what the owner picks is added to the

@@ -88,9 +88,14 @@ settlement, a withdrawal, and a restart in the middle of each. This
 answers the open question first: whether Open Anonymity's service serves
 a client that is not its own app. **Answered 17 November: it does.** A
 $5 deposit, one paid request, its settlement, a restart and a full
-withdrawal all passed, for about $3.57 in fees. Still to run: a restart
-while a request is unsettled, while a deposit is unmined and while a
-withdrawal waits; key reuse turned off; several requests. Every deposit and transaction is Sean's own decision. If the service
+withdrawal all passed, for about $3.57 in fees. Two more trips at $2
+tried the edges: stops and crashes while a deposit was unmined, a request
+unsettled and a withdrawal waiting all recovered, with nothing paid
+twice. Two things for item 5 came out of them. A key for every request
+means about 25 s a request and one at a time; a shared 60 s window is
+fast and lets the provider link what shares it. And a request made while
+an earlier one is still settling after a restart can fail instead of
+waiting. Every deposit and transaction is Sean's own decision. If the service
 refuses us, the item stops here and comes back to Sean; it is not
 replaced by another way to pay.
 
