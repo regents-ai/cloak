@@ -390,19 +390,21 @@ enum MenuBarIcon {
             (31, 82), (67, 82), (103, 82), (139, 82), (175, 82),
             (31, 118), (67, 118), (103, 118), (139, 118), (175, 118),
         ]
-        // Its edges are on whole points, so on whole pixels at 1x and 2x.
-        let badge = NSRect(x: 17, y: 9, width: 9, height: 9)
+        // Large, over about a third of the crown at its lower trailing
+        // corner (Sean, 18 November). Its edges are on whole points, so on
+        // whole pixels at 1x and 2x.
+        let badge = NSRect(x: 12, y: 6, width: 12, height: 12)
         // The glyph is knocked out of a filled disc; Starting's dotted ring
         // is the badge itself.
         let glyph: (name: String, size: CGFloat, knockedOut: Bool) =
             switch phase {
-            case .running: ("play.fill", 6, true)
-            case .paused, .ready: ("pause.fill", 6, true)
-            case .preparing: ("circle.dotted", 9, false)
-            case .stopping: ("stop.fill", 4.5, true)
-            case .needsAttention: ("exclamationmark", 6, true)
+            case .running: ("play.fill", 8, true)
+            case .paused, .ready: ("pause.fill", 8, true)
+            case .preparing: ("circle.dotted", 12, false)
+            case .stopping: ("stop.fill", 6, true)
+            case .needsAttention: ("exclamationmark", 8, true)
             }
-        let image = NSImage(size: NSSize(width: 26, height: 18), flipped: true) { _ in
+        let image = NSImage(size: NSSize(width: 25, height: 19), flipped: true) { _ in
             guard let context = NSGraphicsContext.current else { return false }
             let crown = NSBezierPath()
             for block in blocks {

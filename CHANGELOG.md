@@ -5,7 +5,8 @@
 - The menu-bar icon is the 13-block Regents crown, drawn from the design
   system's master block for block, with a small badge at its lower
   corner for the state: play, pause, starting, stopping or needs
-  attention (Sean, 18 November).
+  attention (Sean, 18 November). The badge is large, over about a third
+  of the crown, as he then asked.
 
 - Signed updates prepared (Sparkle 2.8.1, as in Llama.app). Off until
   `app/release.json` names an update feed and a public update key, which

@@ -3,8 +3,9 @@ import CloakSupervisor
 @testable import RegentsCloak
 import Testing
 
-/// The menu bar icon draws the master crown's 13 blocks on its grid, and its
-/// badge hides none of them, in every state.
+/// The menu bar icon draws the master crown's blocks on its grid in every
+/// state, but for the three at its lower trailing corner, which the badge
+/// covers or cuts into by Sean's choice.
 struct MenuBarIconTests {
     @Test(arguments: [
         Phase.paused, .preparing(.run), .running, .ready, .stopping(.paused), .needsAttention(.workerStopped),
@@ -27,7 +28,7 @@ struct MenuBarIconTests {
         // over two full rows.
         let master = ["X.X.X", "XXXXX", "XXXXX"]
         for (row, cells) in master.enumerated() {
-            for (column, cell) in cells.enumerated() {
+            for (column, cell) in cells.enumerated() where !(row == 2 && column >= 3) && !(row == 1 && column == 4) {
                 // A point a point inside the cell's top leading corner, clear
                 // of the gaps between blocks and of the badge.
                 let pixel = try #require(bitmap.colorAt(x: 2 * (4 * column + 1), y: 2 * (4 * row + 1)))
