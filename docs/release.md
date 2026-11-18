@@ -175,9 +175,9 @@ Sean's answers, 18 November:
 - Developer ID: yes; asked for when the first release is made.
 - The key: made that day with `generate_keys --account cloak`, on his
   decision, in the login keychain of this Mac. Its public half is
-  `Dw2edhocMd1y+8c+Q5Lm0kG15miKI4TX+zj7tYuomjk=`. The private half has
-  no backup yet; a lost key means updates can only be signed again
-  through the Developer ID.
+  `Dw2edhocMd1y+8c+Q5Lm0kG15miKI4TX+zj7tYuomjk=`. The private half is
+  backed up, by Sean's own hand that day, as an entry in his Passwords
+  app; the file used for the copy was deleted.
 - Hosting: this repository, regents-ai/cloak, once it is public, which
   is its own decision. The feed will be
   `https://raw.githubusercontent.com/regents-ai/cloak/main/appcast.xml`
