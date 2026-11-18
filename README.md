@@ -262,9 +262,13 @@ Stage 5 has started with a development build of the app's core: one
 supervisor, run by a menu-bar app and by the `cloak` command. It runs the
 small lead, Qwen 3.5 9B (`small-lead-gguf-grammar`), needs a Mac with Apple
 silicon and 16 GB of memory, and has no sessions or cover traffic; the
-daemon's own payment is not built. Running means tor and the worker are up,
-a startup check sent one rewrite through the guest, the daemon and the
-worker, and the guest's sender is ready.
+daemon's own payment is not built. Running means tor is up, the worker is
+up or resting, a startup check sent one rewrite through the guest, the
+daemon and the worker, and the guest's sender is ready. The worker rests,
+and the model leaves memory, once Cloak has reworded nothing for the time
+chosen as Free memory in the Details window (5 minutes until chosen, or 15
+minutes, 1 hour or Never); the next request starts it again and waits a
+few seconds longer.
 
 With the guest, the host's tor and the worker built and installed (stage 2
 commands) and the small lead fetched (5.4 GiB):

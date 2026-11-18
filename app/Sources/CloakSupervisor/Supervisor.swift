@@ -10,13 +10,15 @@ import os
 /// starts tor, the worker and a guest, watches them, and stops them all
 /// through one shutdown. Its states and transitions are `Phase`'s.
 ///
-/// Running means tor and the worker are up, the startup check sent a
-/// rewrite through the guest, the daemon and the worker, and the guest's
-/// sender is ready: the guest stays up while Running, and its end is a
-/// failure. The sender is Development mode's way to a remote model
-/// (decision 10 in docs/plan.md), and the guest's runner runs the owner's
-/// agent tasks (decision 12); sessions, the daemon's payment and cover are
-/// not built yet.
+/// Running means tor is up, the worker is up or resting, the startup check
+/// sent a rewrite through the guest, the daemon and the worker, and the
+/// guest's sender is ready: the guest stays up while Running, and its end is
+/// a failure. The worker rests (`Relay.Resting`) once it has had nothing to
+/// reword for the time `restAfter` gives, and the next request starts a new
+/// one as the first was started. The sender is Development mode's way to a
+/// remote model (decision 10 in docs/plan.md), and the guest's runner runs
+/// the owner's agent tasks (decision 12); sessions, the daemon's payment and
+/// cover are not built yet.
 @MainActor
 @Observable
 public final class Supervisor {
@@ -25,6 +27,9 @@ public final class Supervisor {
     public private(set) var check: StatusDocument.Check?
     /// The technical detail of the last failure, until the next start.
     public private(set) var problem: String?
+    /// The worker rested while Running: the model is out of memory until the
+    /// next request.
+    public private(set) var resting = false
     public let manifest: Manifest
     /// Takes each connection the guest's agent opens to the door port, as a
     /// socket it owns: in the app, the door's. Set before the first start;
@@ -33,6 +38,9 @@ public final class Supervisor {
 
     @ObservationIgnored private let layout: Layout
     @ObservationIgnored private let hardware: Checks.Hardware
+    /// How long the worker may go with nothing to reword before it rests;
+    /// nil, never. Asked each time that time starts again.
+    @ObservationIgnored private let restAfter: @Sendable () -> Duration?
     @ObservationIgnored private var stack = Stack()
     @ObservationIgnored private var preparation: Task<Void, Never>?
     @ObservationIgnored private var quitting: (() -> Void)?
@@ -42,6 +50,7 @@ public final class Supervisor {
     /// that the shutdown stops exactly what started.
     private struct Stack {
         var tor: Tor?
+        /// The worker serving now; none while it rests.
         var worker: WorkerChannel?
         var relay: Relay?
         var verification: Verification?
@@ -51,18 +60,19 @@ public final class Supervisor {
         var tasks = AgentTasks()
     }
 
-    public convenience init(manifest: Manifest, layout: Layout) throws {
-        try self.init(manifest: manifest, layout: layout, hardware: .current)
+    public convenience init(manifest: Manifest, layout: Layout, restAfter: @escaping @Sendable () -> Duration?) throws {
+        try self.init(manifest: manifest, layout: layout, hardware: .current, restAfter: restAfter)
     }
 
     /// A guest's boot files carry the relay's channel token and the rewriter
     /// key, and last only while it starts, so an app killed then leaves
     /// them. The supervisor starts by removing those and making the boot
     /// folder, owner-only, for its own guests.
-    init(manifest: Manifest, layout: Layout, hardware: Checks.Hardware) throws {
+    init(manifest: Manifest, layout: Layout, hardware: Checks.Hardware, restAfter: @escaping @Sendable () -> Duration?) throws {
         self.manifest = manifest
         self.layout = layout
         self.hardware = hardware
+        self.restAfter = restAfter
         try Places.makeOwnerOnly(layout.bootFiles)
         try Guest.removeBootFiles(in: layout.bootFiles)
     }
@@ -199,7 +209,7 @@ public final class Supervisor {
         var lines = [String]()
         switch phase {
         case .running:
-            lines.append("Running: tor and the worker are up, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready (Development mode). Sessions, the daemon's payment and cover are not built yet.")
+            lines.append("Running: tor is up, the worker is up or resting, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready (Development mode). Sessions, the daemon's payment and cover are not built yet.")
         case .ready:
             lines.append("Ready: the startup check passed and everything has stopped again.")
         case .paused:
@@ -214,7 +224,11 @@ public final class Supervisor {
         if let problem { lines.append(problem) }
         if let check { lines.append("Last check \(check.passed ? "passed" : "failed"): \(check.detail)") }
         if let tor = stack.tor { lines.append("tor: process \(tor.processIdentifier)") }
-        if let worker = stack.worker { lines.append("worker: process \(worker.processIdentifier)") }
+        if let worker = stack.worker {
+            lines.append("worker: process \(worker.processIdentifier)")
+        } else if resting {
+            lines.append("worker: resting; the model is out of memory until the next request")
+        }
         lines.append("release \(manifest.release), build \(manifest.build)")
         lines.append("model: \(manifest.model.name), \(manifest.model.label), in \(layout.model(manifest).path)")
         return lines.joined(separator: "\n")
@@ -243,21 +257,32 @@ public final class Supervisor {
             }
             try Task.checkCancellation()
 
+            // Every worker of the run, the first and each after a rest,
+            // starts the same way.
+            let start: @Sendable () async throws -> WorkerChannel = {
+                [executable = layout.url(.worker, in: manifest), arguments = ["--name", manifest.model.name, "--dir", layout.model(manifest).path]] in
+                try await WorkerChannel.start(executable: executable, arguments: arguments)
+            }
             let worker: WorkerChannel
             do {
-                worker = try await WorkerChannel.start(
-                    executable: layout.url(.worker, in: manifest),
-                    arguments: ["--name", manifest.model.name, "--dir", layout.model(manifest).path])
-            } catch let error as WorkerChannel.NotReady where error.ended == Self.modelChanged {
-                throw Failure(.modelChanged, "the worker found the model's files differ from their pins: \(error)")
+                worker = try await start()
             } catch {
-                throw Failure(.workerUnavailable, "cannot start the worker: \(error)")
+                throw Self.cannotStart(error)
             }
-            // A lost worker is not replaced: its exit is a failure.
-            let relay = Relay(worker: worker) { nil }
+            // The relay owns the worker from here: it rests and wakes it, and
+            // tells of each change. A lost worker is not replaced, and a
+            // worker that ends by itself or cannot start on a wake is a
+            // failure.
+            let (changes, change) = AsyncStream.makeStream(of: Relay.Change.self)
+            let relay = Relay(worker: worker, resting: .init(after: restAfter, start: start, changed: { change.yield($0) }))
             stack.worker = worker
             stack.relay = relay
-            watch("the worker", as: .workerStopped) { await worker.exited() }
+            stack.watches.append(Task {
+                for await change in changes {
+                    guard !Task.isCancelled else { return }
+                    follow(change)
+                }
+            })
             try Task.checkCancellation()
 
             let verification = Verification()
@@ -299,6 +324,35 @@ public final class Supervisor {
     /// (llama-worker/Sources/cloak-rewriter-llama/main.swift).
     static let modelChanged = Termination(status: 3, signalled: false)
 
+    /// Why a worker did not start, at Start or on a wake: the model's files
+    /// differ from their pins, or anything else.
+    private static func cannotStart(_ error: any Error) -> Failure {
+        if let error = error as? WorkerChannel.NotReady, error.ended == modelChanged {
+            return Failure(.modelChanged, "the worker found the model's files differ from their pins: \(error)")
+        }
+        return Failure(.workerUnavailable, "cannot start the worker: \(error)")
+    }
+
+    /// What a change to the worker means while this run lasts: a rest or a
+    /// wake is shown; a worker that cannot wake, or ends by itself, is a
+    /// failure, as the first one's would be.
+    private func follow(_ change: Relay.Change) {
+        switch change {
+        case .rested:
+            logger.info("the worker rested; the model is out of memory until the next request")
+            stack.worker = nil
+            resting = true
+        case .woke(let worker):
+            logger.info("a new worker is ready")
+            stack.worker = worker
+            resting = false
+        case .cannotWake(let error):
+            fail(Self.cannotStart(error))
+        case .exited(let end):
+            fail(Failure(.workerStopped, "the worker ended (\(end))"))
+        }
+    }
+
     /// Raises `reason` if the part ends while this run lasts.
     private func watch(_ name: String, as reason: Reason, exited: @escaping @Sendable () async -> Termination) {
         stack.watches.append(Task {
@@ -329,6 +383,7 @@ public final class Supervisor {
             await preparation?.value
             let stack = self.stack
             self.stack = Stack()
+            resting = false
             for watch in stack.watches { watch.cancel() }
             try? await stack.guest?.stop()
             stack.verification?.close()

@@ -116,7 +116,7 @@ enum Launch {
 
     static let supervisor: Supervisor = {
         do {
-            return try Supervisor(manifest: manifest, layout: layout)
+            return try Supervisor(manifest: manifest, layout: layout) { FreeMemory.chosen.after }
         } catch {
             Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot clear the boot files: \(String(describing: error), privacy: .public)")
             stop("Regents Cloak can't open.", "Quit Regents Cloak, then open it again.")

@@ -171,8 +171,10 @@ its request is handed over) closes it without an answer; its request is
 never sent again. What the relay sends requests to is one slot:
 
 ```
+serving --no request for the rest time--> resting --a request's turn--> waking
+waking --ready--> serving a new worker, or --cannot start--> none
 serving --loss--> replacing --lost worker exited (section 2), afterLoss decided--> serving a new worker, or none
-any but replacing --finish--> finished
+any but replacing or waking --finish--> finished
 ```
 
 While replacing, no connection is served. What follows the lost worker is
@@ -182,6 +184,19 @@ worker from the same program and pinned files; the app's supervisor
 none, every later connection closes without an answer, with no further
 tries. `finish` (the end of a run) waits out a replacement first, so it ends
 the worker that replacement started.
+
+Only the app's relay rests (`Resting`; `cloak-host`'s never does). Once no
+request has been at the worker or waiting for it for the time the
+supervisor gives, counted from the last answer, the relay ends the worker
+as `finish` does, and the model is out of memory. The next request, in its
+turn, waits while a new worker, started as the first was, loads once the
+one that rested has exited, so two never hold the model at once; then it is
+served. Requests behind it keep their order, and one cancelled meanwhile is
+never sent. A new worker that cannot start leaves none, as above. A worker
+that exits by itself, idle or not, is a loss and never a rest: the relay
+tells the supervisor of each rest and wake and of every exit it did not
+cause (`Change`). `finish` while resting starts nothing, and while waking
+stops the load at once. Checks: `app/Tests/CloakTests/RestTests.swift`.
 
 The app's own requests (`answer(to:)`) take their turn with the
 connections, each as one call:
@@ -527,16 +542,28 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   A worker that exits before it is ready because the model folder is not
   exactly the pinned files (its exit status 3, section 1) is
   `model_changed`; any other is `worker_unavailable`.
-- **Running** means tor and the worker are up and that check passed. No
-  session guest is built yet: the guest is gone once the check ends.
+- **Running** means tor is up, the worker is up or resting, and that check
+  passed. No session guest is built yet: the guest is gone once the check
+  ends.
+- **Resting**: while Running, the worker rests (section 3) once Cloak has
+  reworded nothing for the time chosen as Free memory in the Details window
+  (5 minutes until chosen, 15 minutes, 1 hour, or Never, which keeps it),
+  kept in the app's defaults and read each time that wait starts, so a
+  change applies from then with no restart. The next request starts a new
+  worker with the same program and arguments as the first. While it rests,
+  the Model row says "unloaded" and the technical detail says the worker is
+  resting in place of its process. A new worker that cannot start is
+  `model_changed` or `worker_unavailable`, as at Preparing.
 - **Watches**: from its start until the run ends, tor exiting raises
-  `tor_stopped` and the worker exiting raises `worker_stopped`. The relay
-  replaces no lost worker (section 3): a worker the relay loses is stopped,
-  and its exit is the failure.
+  `tor_stopped`, and every worker exit the relay did not cause raises
+  `worker_stopped`; a rest never does. The relay replaces no lost worker
+  (section 3): a worker the relay loses is stopped, and its exit is the
+  failure.
 - **Stopping** is the one shutdown, for every destination: it cancels the
   preparation and the watches, waits for the preparation to end, then stops
   the guest, the worker and tor, in that order, each within its limit
-  (section 2). An event from work being stopped (a watch seeing its part
+  (section 2); a worker that rested is already gone, and one loading after a
+  rest is stopped at once. An event from work being stopped (a watch seeing its part
   stopped, a late failure) does not apply, and is dropped. Each wait in
   the preparation ends when it is cancelled: tor's bootstrap, the guest's
   boot and check, and the worker's model load, whose worker is stopped
@@ -587,7 +614,13 @@ comes back Paused; pausing while tor bootstraps stops it; pausing or
 quitting while the model loads stops the worker at once; a launch after a
 quit while working, as at a logout and the next login, is Paused and
 starts nothing; a launch removes
-the boot files a killed app left, and nothing else) and
+the boot files a killed app left, and nothing else), `RestTests.swift`
+(the relay with stand-in workers: a rest only after the time since the
+last answer; a request after a rest answered by a new worker, which rests
+in its turn; never two workers at once; an exit while idle is an exit and
+never a rest; a worker that cannot start on a wake fails its request and
+is not tried again; a request cancelled during the load never sent;
+pausing while resting or during the load) and
 `ControlTests.swift` (the JSON for each status; the socket answers only its
 owner's well-formed requests).
 

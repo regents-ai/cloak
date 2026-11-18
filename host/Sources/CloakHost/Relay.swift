@@ -18,9 +18,55 @@ import Synchronization
 /// it has not within `Child.exitLimit`) and `afterLoss` has decided what
 /// follows it: the worker it returns serves the next connection; with none,
 /// every later request fails. Two workers never hold the model at once.
+///
+/// A relay given `Resting` (the app's; `cloak-host`'s never rests) lets its
+/// worker rest: once no request has been at the worker or waiting for it for
+/// the time `Resting.after` gives, counted from the last answer, the worker
+/// is ended as `finish` ends it, and the model is out of memory. The next
+/// request, in its turn, waits while a new worker, started as the first was,
+/// loads once the one that rested has exited, and is then served. One that
+/// cannot start fails that request and every later one, and is not tried
+/// again. There a lost worker is followed by none, and the owner hears of
+/// each rest and wake, and of every exit the relay did not cause (`Change`).
 public final class Relay: Sendable {
     /// What follows a lost worker, once it has exited: a new worker, or none.
     public typealias AfterLoss = @Sendable () async -> WorkerChannel?
+
+    /// How a relay's worker rests, and whom it tells.
+    public struct Resting: Sendable {
+        /// How long the worker may go with no request before it rests; nil,
+        /// never. Asked each time the time starts again, so a change applies
+        /// from then.
+        let after: @Sendable () -> Duration?
+        /// Starts a worker exactly as the first was started.
+        let start: @Sendable () async throws -> WorkerChannel
+        /// Hears each change, in order.
+        let changed: @Sendable (Change) -> Void
+
+        public init(
+            after: @escaping @Sendable () -> Duration?, start: @escaping @Sendable () async throws -> WorkerChannel,
+            changed: @escaping @Sendable (Change) -> Void
+        ) {
+            self.after = after
+            self.start = start
+            self.changed = changed
+        }
+    }
+
+    /// What became of a resting relay's worker.
+    public enum Change: Sendable {
+        /// The worker rested and has exited: the model is out of memory until
+        /// the next request.
+        case rested
+        /// A worker started for a request is ready, and serves from now on.
+        case woke(WorkerChannel)
+        /// A worker started for a request could not start, with what `start`
+        /// threw; that request and every later one fail.
+        case cannotWake(any Error)
+        /// A worker the relay did not end has exited: it crashed, or was
+        /// stopped once lost.
+        case exited(Termination)
+    }
 
     static let port: UInt32 = 8012
     static let maxRequest = 1 << 20
@@ -29,39 +75,80 @@ public final class Relay: Sendable {
 
     /// The worker requests go to:
     ///
+    ///     serving --no request for the rest time--> resting --a request's turn--> waking
+    ///     waking --ready--> serving, or --cannot start--> none
     ///     serving --loss--> replacing --afterLoss--> serving, or none
-    ///     any but replacing --finish--> finished
+    ///     any but replacing or waking --finish--> finished
     ///
-    /// `finish` waits out a replacement first, so it ends the worker that
-    /// replacement started.
+    /// Only a relay given `Resting` rests and wakes. The queue waits while a
+    /// worker wakes, and its worker starts only once the one that rested has
+    /// exited. `finish` waits out a replacement and stops a wake at once,
+    /// then ends the worker either left.
     private enum Slot {
         case serving(WorkerChannel)
+        /// The worker rested; the task ends once it has exited and the owner
+        /// has been told.
+        case resting(Task<Void, Never>)
+        /// A worker is starting for the request whose turn it is.
+        case waking(Task<Void, Never>)
         case replacing(Task<Void, Never>)
         case none
         case finished
     }
 
+    /// The slot, and what resting keeps beside it.
+    private struct State {
+        var slot: Slot
+        /// Requests that have arrived and are not yet answered or dropped:
+        /// at the worker, or waiting for their turn.
+        var requests = 0
+        /// Rests the serving worker once its time has passed. It exists only
+        /// while `requests` is zero: armed when the last is answered, and
+        /// cancelled, under the lock, by the next to arrive.
+        var idle: Task<Void, Never>?
+        /// The worker whose exit the owner hears of. The relay lets go of it,
+        /// under the lock, before it ends that worker itself; its watch lets
+        /// go of it once it has exited by itself. Whichever is first decides.
+        var watched: WorkerChannel?
+    }
+
     /// The per-boot channel token the guest must present.
     let token = randomBytes(32)
     private let afterLoss: AfterLoss
-    private let slot: Mutex<Slot>
+    private let resting: Resting?
+    private let state: Mutex<State>
     /// The last request that gives way, until a later request cancels it.
     private let yielding = Mutex<Call?>(nil)
     private let queue = DispatchQueue(label: "sh.regents.cloak.relay")
     private let watch = DispatchQueue(label: "sh.regents.cloak.relay.watch")
 
+    /// A relay whose worker never rests; what follows a lost one is what
+    /// `afterLoss` decides.
     public init(worker: WorkerChannel, afterLoss: @escaping AfterLoss) {
-        self.slot = Mutex(.serving(worker))
+        state = Mutex(State(slot: .serving(worker)))
         self.afterLoss = afterLoss
+        resting = nil
+    }
+
+    /// A relay whose worker rests as `resting` says, its time starting now.
+    /// A lost worker is followed by none.
+    public init(worker: WorkerChannel, resting: Resting) {
+        state = Mutex(State(slot: .serving(worker), watched: worker))
+        afterLoss = { nil }
+        self.resting = resting
+        watchExit(of: worker, resting)
+        state.withLock { arm(&$0) }
     }
 
     /// Takes ownership of the socket.
     func accept(_ socket: Int32) {
+        arrived()
         giveWay(to: nil)
         queue.async { [self] in
             let lost = serve(socket)
             close(socket)
             if let lost { replaceAfter(lost) }
+            answered()
         }
     }
 
@@ -74,6 +161,7 @@ public final class Relay: Sendable {
     /// same way; with `yielding`, this one gives way to the next.
     public func answer(to request: Data, yielding: Bool = false) async -> Data? {
         let call = Call()
+        arrived()
         giveWay(to: yielding ? call : nil)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -81,6 +169,7 @@ public final class Relay: Sendable {
                     let (answer, lost) = serve(request, call)
                     continuation.resume(returning: answer)
                     if let lost { replaceAfter(lost) }
+                    answered()
                 }
             }
         } onCancel: {
@@ -144,28 +233,147 @@ public final class Relay: Sendable {
         }
     }
 
+    /// A request has arrived, so the worker does not rest while it waits or
+    /// is served.
+    private func arrived() {
+        state.withLock { state in
+            state.requests += 1
+            state.idle?.cancel()
+            state.idle = nil
+        }
+    }
+
+    /// A request has been answered or dropped: with none left, the time to
+    /// the rest starts again.
+    private func answered() {
+        state.withLock { state in
+            state.requests -= 1
+            arm(&state)
+        }
+    }
+
+    /// Starts the time to the rest, when this relay rests, a worker serves,
+    /// no request is left and a time is chosen.
+    private func arm(_ state: inout State) {
+        guard let resting, state.requests == 0, case .serving = state.slot, let after = resting.after() else { return }
+        state.idle = Task {
+            guard (try? await Task.sleep(for: after)) != nil else { return }
+            rest(resting)
+        }
+    }
+
+    /// Rests the serving worker: ends it as `finish` does, then tells the
+    /// owner once it has exited. Nothing happens when a request arrived since
+    /// the time started (it cancelled this task, under the lock) or the
+    /// worker has already exited by itself (its watch has let go of it).
+    /// Runs on the idle task.
+    private func rest(_ resting: Resting) {
+        state.withLock { state in
+            guard !Task.isCancelled, state.requests == 0, case .serving(let worker) = state.slot, state.watched === worker
+            else { return }
+            state.idle = nil
+            state.watched = nil
+            state.slot = .resting(Task {
+                await worker.finish()
+                resting.changed(.rested)
+            })
+        }
+    }
+
+    /// The worker for the request whose turn it is, woken first when it
+    /// rests; nil when there is none. The wake is made under the lock, so its
+    /// own use of the slot comes after this one, and the queue waits for it,
+    /// so the requests behind this one keep their order. Runs on the queue.
+    private func worker() -> WorkerChannel? {
+        let woken = DispatchSemaphore(value: 0)
+        let waking = state.withLock { state in
+            guard case .resting(let rest) = state.slot, let resting = self.resting else { return false }
+            state.slot = .waking(Task {
+                await wake(after: rest, resting)
+                woken.signal()
+            })
+            return true
+        }
+        if waking { woken.wait() }
+        guard case .serving(let worker) = state.withLock({ $0.slot }) else { return nil }
+        return worker
+    }
+
+    /// Starts a new worker once the one that rested has exited, and puts it
+    /// in the slot, or none when it cannot start, which the owner hears of.
+    /// A wake that `finish` cancels stops the worker loading at once, and
+    /// tells nothing.
+    private func wake(after rest: Task<Void, Never>, _ resting: Resting) async {
+        await rest.value
+        var next: WorkerChannel?
+        do {
+            try Task.checkCancellation()
+            next = try await resting.start()
+        } catch is CancellationError {
+            // `finish` stopped the load.
+        } catch {
+            resting.changed(.cannotWake(error))
+        }
+        state.withLock { state in
+            state.slot = next.map(Slot.serving) ?? .none
+            state.watched = next
+        }
+        guard let next else { return }
+        resting.changed(.woke(next))
+        watchExit(of: next, resting)
+    }
+
+    /// Tells the owner once `worker` has exited, unless the relay let go of
+    /// it first to end it itself.
+    private func watchExit(of worker: WorkerChannel, _ resting: Resting) {
+        Task {
+            let end = await worker.exited()
+            let unended = state.withLock { state in
+                guard state.watched === worker else { return false }
+                state.watched = nil
+                return true
+            }
+            if unended { resting.changed(.exited(end)) }
+        }
+    }
+
     /// Nothing more is served until the replacement has settled. The task is
     /// made under the lock, so its own use of the slot comes after this one.
     /// Runs on the queue.
     private func replaceAfter(_ lost: WorkerChannel) {
         queue.suspend()
-        slot.withLock { $0 = .replacing(Task { await replace(lost) }) }
+        state.withLock { $0.slot = .replacing(Task { await replace(lost) }) }
     }
 
-    /// Ends the worker, after any replacement in progress has settled.
+    /// Ends the worker: after any replacement in progress has settled, once
+    /// a wake in progress has stopped, and once a worker that rested has
+    /// exited. The owner hears of no exit it causes.
     public func finish() async {
         while true {
-            let next: Slot = slot.withLock { slot in
-                let current = slot
-                if case .replacing = current { return current }
-                slot = .finished
-                return current
+            let next: Slot = state.withLock { state in
+                let current = state.slot
+                switch current {
+                case .replacing, .waking:
+                    return current
+                case .serving, .resting, .none, .finished:
+                    state.slot = .finished
+                    state.idle?.cancel()
+                    state.idle = nil
+                    state.watched = nil
+                    return current
+                }
             }
             switch next {
             case .replacing(let replacement):
                 await replacement.value
+            case .waking(let wake):
+                wake.cancel()
+                await wake.value
             case .serving(let worker):
                 await worker.finish()
+                return
+            case .resting(let rest):
+                await rest.value
                 return
             case .none, .finished:
                 return
@@ -184,7 +392,7 @@ public final class Relay: Sendable {
         guard let header = Self.read(socket, 5), header[0] == 0x52 else { return nil }
         let length = header.dropFirst().reduce(0) { $0 << 8 | Int($1) }
         guard length <= Self.maxRequest, let request = Self.read(socket, length) else { return nil }
-        guard case .serving(let worker) = slot.withLock({ $0 }) else {
+        guard let worker = worker() else {
             log("no worker; closing the guest connection without an answer")
             return nil
         }
@@ -200,7 +408,7 @@ public final class Relay: Sendable {
     /// was lost on it.
     private func serve(_ request: Data, _ call: Call) -> (Data?, WorkerChannel?) {
         defer { call.finish() }
-        guard case .serving(let worker) = slot.withLock({ $0 }) else {
+        guard let worker = worker() else {
             log("no worker; the app's request has no answer")
             return (nil, nil)
         }
@@ -217,7 +425,7 @@ public final class Relay: Sendable {
     private func replace(_ lost: WorkerChannel) async {
         await lost.end()
         let next = await afterLoss()
-        slot.withLock { $0 = next.map(Slot.serving) ?? .none }
+        state.withLock { $0.slot = next.map(Slot.serving) ?? .none }
         queue.resume()
     }
 

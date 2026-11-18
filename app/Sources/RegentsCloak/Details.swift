@@ -6,9 +6,10 @@ import ServiceManagement
 import SwiftUI
 
 /// The small window: the state, why it needs attention and what to do, the
-/// release, the model, the last check, whether the app opens at login, and
-/// technical detail on demand, the build among it. Closing it leaves the
-/// supervisor as it is.
+/// release, the model and whether it is out of memory, the last check, how
+/// long the model may go unused before it leaves memory, whether the app
+/// opens at login, and technical detail on demand, the build among it.
+/// Closing it leaves the supervisor as it is.
 struct DetailsView: View {
     let supervisor: Supervisor
 
@@ -23,6 +24,7 @@ struct DetailsView: View {
 
     @State private var technical = false
     @State private var login = SMAppService.mainApp.status == .enabled
+    @AppStorage(FreeMemory.key) private var freeMemory = FreeMemory.unchosen
 
     var body: some View {
         let status = supervisor.status
@@ -43,8 +45,17 @@ struct DetailsView: View {
             }
             Section {
                 LabeledContent("Release", value: status.release)
-                LabeledContent("Model", value: status.model.label)
+                LabeledContent("Model", value: supervisor.resting ? "\(status.model.label), unloaded" : status.model.label)
                 LabeledContent("Last check", value: lastCheck(status.check))
+            }
+            Section {
+                Picker("Free memory", selection: $freeMemory) {
+                    ForEach(FreeMemory.allCases) { Text($0.title).tag($0) }
+                }
+            } footer: {
+                Text("The model leaves memory once Cloak has reworded nothing for that long, and the next message takes a few seconds longer.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Launch Cloak on startup", isOn: Binding(get: { login }, set: openAtLogin))
@@ -96,5 +107,43 @@ struct DetailsView: View {
         guard let check else { return "Not yet" }
         let time = check.at.formatted(date: .omitted, time: .shortened)
         return check.passed ? "Passed at \(time)" : "Failed at \(time)"
+    }
+}
+
+/// How long the model may go with nothing to reword before it leaves memory,
+/// as chosen in the Details window and kept in the app's defaults. The
+/// supervisor reads it each time that time starts again, so a change applies
+/// from then, with no restart.
+enum FreeMemory: String, CaseIterable, Identifiable {
+    case fiveMinutes, fifteenMinutes, oneHour, never
+
+    static let key = "freeMemory"
+    /// Until the person chooses.
+    static let unchosen = FreeMemory.fiveMinutes
+
+    /// The choice kept, or `unchosen`.
+    static var chosen: FreeMemory {
+        UserDefaults.standard.string(forKey: key).flatMap(FreeMemory.init) ?? unchosen
+    }
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .fiveMinutes: "After 5 minutes"
+        case .fifteenMinutes: "After 15 minutes"
+        case .oneHour: "After 1 hour"
+        case .never: "Never"
+        }
+    }
+
+    /// Nil: the model stays in memory while Cloak runs.
+    var after: Duration? {
+        switch self {
+        case .fiveMinutes: .seconds(5 * 60)
+        case .fifteenMinutes: .seconds(15 * 60)
+        case .oneHour: .seconds(60 * 60)
+        case .never: nil
+        }
     }
 }

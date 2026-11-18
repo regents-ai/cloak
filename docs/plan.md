@@ -2317,6 +2317,29 @@ candidates, so the split has to be re-declared before any holdout opens.
     of no pin. A details request never holds up a rewrite: any later
     request to the worker stops it. It is no rewrite stage and leaves the
     daemon's request, instruction, grammar and checks as they are.
+14. Borrow from Llama.app, do not fork it. Decided 18 November 2026 (Sean,
+    "1. a", after asking for a list of what Cloak could take from
+    [ggml-org/Llama-macOS](https://github.com/ggml-org/Llama-macOS) and
+    offering to fork it). Cloak keeps its own base. Ideas, and small
+    pieces under its MIT licence with their notice, are taken one at a
+    time: memory first, then the model download, then the menu. Not
+    taken: its crash reporting to an outside service, update checks and
+    model downloads that go straight to the internet unsaid, installing
+    whatever engine is newest, and an agent that runs on the Mac itself.
+    - Taken, 18 November: the model leaves memory when idle. The relay
+      rests its worker once nothing has been asked of it for the time
+      chosen as Free memory in the Details window (5 minutes until
+      chosen; 15 minutes, 1 hour or Never), and the next request starts
+      a new worker, as the first was started, and waits for it, about
+      4 s on the 9B. Two workers never hold the model at once; a worker
+      that ends by itself, or cannot start again, is the failure it was,
+      and nothing is tried again
+      ([state-machines.md](state-machines.md), sections 3 and 9). Not
+      yet seen in the running app, and the supervisor's part is not
+      covered by a test, since a test cannot reach Running.
+    - Found on the way and left: the door's tests pick a free port, let
+      it go and open the door on it, so another program sometimes takes
+      it first and a run fails.
 
 ## Gates
 

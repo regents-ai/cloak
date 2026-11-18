@@ -89,10 +89,11 @@ struct Fixture {
             pins: pins)
     }
 
-    /// A supervisor on this installation, on a Mac that meets the manifest.
+    /// A supervisor on this installation, on a Mac that meets the manifest,
+    /// whose worker never rests.
     @MainActor
     func supervisor(hardware: Checks.Hardware = .init(appleSilicon: true, memory: 64 << 30)) throws -> Supervisor {
-        try Supervisor(manifest: manifest, layout: layout, hardware: hardware)
+        try Supervisor(manifest: manifest, layout: layout, hardware: hardware) { nil }
     }
 
     func url(_ part: Manifest.Part) -> URL {

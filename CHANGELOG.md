@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The model leaves memory when idle (decision 14, the first idea taken
+  from Llama.app). Once Cloak has reworded nothing for the time chosen as
+  Free memory in the Details window (5 minutes until chosen; 15 minutes,
+  1 hour or Never), the worker is ended and its memory is free; the next
+  request starts a new one the same way and waits for it. A worker that
+  ends by itself or cannot start again is still a failure, and nothing
+  is tried again. The Details window says when the model is unloaded.
+
 - zkAPI trial: two more trips at $2 on mainnet, on Sean's decision, with
   stops and crashes in the middle of a deposit, an unsettled request and
   a withdrawal. All recovered; nothing was paid or deposited twice.
