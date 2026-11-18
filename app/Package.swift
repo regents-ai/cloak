@@ -7,6 +7,7 @@ let package = Package(
     dependencies: [
         .package(path: "../host"),
         .package(url: "https://github.com/apple/swift-argument-parser", exact: "1.8.2"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.8.1"),
     ],
     targets: [
         .target(name: "CloakControl"),
@@ -15,7 +16,11 @@ let package = Package(
             dependencies: ["CloakControl", .product(name: "CloakHost", package: "host")]),
         .target(name: "CloakChat", dependencies: ["CloakControl", .product(name: "CloakHost", package: "host")]),
         .target(name: "CloakDoor", dependencies: ["CloakControl", "CloakSupervisor", "CloakChat"]),
-        .executableTarget(name: "RegentsCloak", dependencies: ["CloakControl", "CloakSupervisor", "CloakChat", "CloakDoor"]),
+        .executableTarget(
+            name: "RegentsCloak",
+            dependencies: [
+                "CloakControl", "CloakSupervisor", "CloakChat", "CloakDoor", .product(name: "Sparkle", package: "Sparkle"),
+            ]),
         .executableTarget(
             name: "cloak",
             dependencies: ["CloakControl", .product(name: "ArgumentParser", package: "swift-argument-parser")]),

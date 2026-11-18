@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Signed updates prepared (Sparkle 2.8.1, as in Llama.app). Off until
+  `app/release.json` names an update feed and a public update key, which
+  are Sean's to supply; then the menu gains Check for Updates and
+  Settings an Updates switch. An update is taken only with a valid
+  signature and a press of Install, and Cloak opens Paused after it.
+  The bundle's version is now the commit count, so builds can be told
+  apart by number.
+
 - Settings (decision 14, from Llama.app): a Settings window with Launch
   at login, Free memory, a shortcut for a quick prompt, the door's port,
   the commands Cloak started its parts with, this session's log and

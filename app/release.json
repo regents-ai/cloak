@@ -3,5 +3,7 @@
   "model": "small-lead-gguf-grammar",
   "model_label": "Qwen 3.5 9B",
   "model_memory_gib": 7,
-  "cloak_memory_gib": 10
+  "cloak_memory_gib": 10,
+  "update_feed": "",
+  "update_key": ""
 }

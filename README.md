@@ -281,10 +281,10 @@ and the technical details, like `cloak status --json`, give each part's
 figure.
 
 With the guest, the host's tor and the worker built and installed (stage 2
-commands), build `app/build/Regents Cloak.app`,
-signed ad hoc with the virtualization entitlement, with a manifest that pins
-the guest, tor and the installed worker (rebuild after reinstalling any of
-them):
+commands), build `app/build/Regents Cloak.app`, with Sparkle.framework
+inside, signed ad hoc and inside out, the app with the virtualization
+entitlement, with a manifest that pins the guest, tor and the installed
+worker (rebuild after reinstalling any of them):
 
 ```bash
 app/build.sh
@@ -320,8 +320,8 @@ launch first removes any that a killed app left there.
 
 "Settings…" in the menu (Command-comma) is the one place the app's
 settings change; no link, script, app or agent can set one. General has
-Launch at login (off until turned on; the app still opens Paused) and Free
-memory. Shortcut sets the quick prompt's keys, none until chosen; keys
+Launch at login (off until turned on; the app still opens Paused), Free
+memory and, in a build with an update feed, Updates (below). Shortcut sets the quick prompt's keys, none until chosen; keys
 without Command, Option or Control are refused, as is a shortcut macOS
 won't take. Door sets the port Agents answer on (below), 8742 until
 chosen: a number from 1024 to 65535 that nothing on this Mac listens on
@@ -330,6 +330,19 @@ Advanced shows exactly how the last start started tor and the worker, one
 command a line, and this session's lines of Cloak's log, each with Copy,
 and Restore Defaults, which puts these settings back and nothing else: not
 the wallet, the chats or the model.
+
+Updates come through Sparkle 2.8.1, and only to a build whose
+`app/release.json` sets both `update_feed` and `update_key` (both empty
+today, so no build has an updater; `app/build.sh` stops if only one is
+set). Such a build has Check for Updates… in the menu, above Quit, and
+Updates in General: Sparkle's own setting for checking once a day, off
+until the person answers Sparkle's question on the second launch or turns
+it on, and off again after Restore Defaults. A check goes straight from
+the Mac to the feed's host, not through Tor, with a generic User-Agent,
+and carries nothing from a chat. Sparkle takes an update only with a
+signature it checks, and installs it once Cloak has quit through its
+shutdown; the new app opens Paused. What a release needs is in
+[docs/release.md](docs/release.md), item 7.
 
 The quick prompt is a small box over whatever app is in front, opened and
 closed by its shortcut; Escape closes it too. Return opens Chat with a new

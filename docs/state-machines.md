@@ -587,7 +587,8 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
 - **Refused**: any command while Stopping (`busy`), and `resume` anywhere but
   Paused (`not_paused`). A refused command changes nothing.
 - **Sleep** pauses, so a wake finds nothing running; a relaunch starts
-  Paused, having started nothing. So does the launch at login, which is
+  Paused, having started nothing, the one after an update included
+  (Sparkle installs it once the app has quit through its shutdown). So does the launch at login, which is
   off unless the Settings window's Launch at login switch turns it on (a
   login item, through `SMAppService`): the app opens Paused and starts
   nothing until Start.

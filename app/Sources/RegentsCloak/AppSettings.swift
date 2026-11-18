@@ -9,8 +9,9 @@ import ServiceManagement
 /// is named here, once, and read and written only here. Only the Settings
 /// window sets them. No setting can be set from a link, from the door, from
 /// AppleScript or from the guest: none of those reaches this type. Whether
-/// the app opens at login is the system's login item (`LoginItem`), not a
-/// default.
+/// the app opens at login is the system's login item (`LoginItem`), and
+/// whether it checks for updates by itself is Sparkle's own setting
+/// (`Updates`); neither is a default kept here.
 @MainActor
 @Observable
 final class AppSettings {

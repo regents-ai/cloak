@@ -32,7 +32,12 @@ final class AppWindow: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        let closing = notification.object as? NSWindow
+        Self.leaveDock(closing: notification.object as? NSWindow)
+    }
+
+    /// Makes the app a menu-bar app again, unless one of its windows other
+    /// than `closing` is open.
+    static func leaveDock(closing: NSWindow? = nil) {
         guard !NSApp.windows.contains(where: { $0 !== closing && $0 is ClosingWindow && $0.isVisible }) else { return }
         NSApp.setActivationPolicy(.accessory)
     }

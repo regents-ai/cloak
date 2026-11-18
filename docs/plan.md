@@ -2410,8 +2410,20 @@ candidates, so the split has to be re-declared before any holdout opens.
       the table release plan item 8 asks for. Not seen: the Welcome,
       the quick prompt, the QR code, a download, the Shortcut, Door and
       Advanced panes, a failure in the menu.
-    - Sean's ruling, 18 November: signed updates wait until the stage 2
-      protections (private payment, cover traffic) are in.
+    - Signed updates, prepared 18 November (Sean first ruled they wait
+      for stage 2, then the same day: "prepare the mac app signed
+      updates now"). Sparkle 2.8.1, as Llama.app has it, is in the app
+      and its bundle. `app/release.json` has an update feed and a
+      public update key, both empty; with them empty the app has no
+      updater and no update item. With both set: Check for Updates in
+      the menu, an Updates switch in Settings that starts off, a check
+      straight from this Mac under a generic client name, an update
+      taken only with a valid signature and only when the person
+      presses Install (the offer to install by itself is turned off),
+      and the app opens Paused after it. No key was made and nothing
+      was signed, notarized or published: those are Sean's
+      ([release.md](release.md), item 7). Not run: a real feed, a real
+      update.
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.

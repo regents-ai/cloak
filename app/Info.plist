@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSAppleScriptEnabled</key>
 	<true/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>OSAScriptingDefinition</key>

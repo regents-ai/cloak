@@ -6,7 +6,8 @@ import Observation
 /// The menu-bar item and its menu: the header (the app's name, the state's
 /// dot and its line, or a failure with its fix), the way to the model's
 /// download while its files are not all in place, Start or Pause, Chat,
-/// Agents, Details, Settings, Quit, and the release and build. Every action
+/// Agents, Details, Settings, Check for Updates… when the app has an
+/// updater (`Updates`), Quit, and the release and build. Every action
 /// but Show in Finder is reachable from the keyboard, since the header's
 /// other fixes are also Start or Details. It is AppKit's menu, since a
 /// SwiftUI menu holds only plain items and the header is a view of its own.
@@ -18,16 +19,19 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let showAgents: () -> Void
     private let showDetails: () -> Void
     private let showSettings: () -> Void
+    private let checkForUpdates: (() -> Void)?
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
     private let header = NSMenuItem()
     private let headerView = MenuHeaderView()
     private var open = false
 
-    /// `model` is the model's folder, which Show in Finder reveals.
+    /// `model` is the model's folder, which Show in Finder reveals;
+    /// `checkForUpdates` is nil when the app has no updater.
     init(
         supervisor: Supervisor, download: ModelDownload, model: URL, showChat: @escaping () -> Void,
-        showAgents: @escaping () -> Void, showDetails: @escaping () -> Void, showSettings: @escaping () -> Void
+        showAgents: @escaping () -> Void, showDetails: @escaping () -> Void, showSettings: @escaping () -> Void,
+        checkForUpdates: (() -> Void)?
     ) {
         self.supervisor = supervisor
         self.download = download
@@ -35,6 +39,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         self.showAgents = showAgents
         self.showDetails = showDetails
         self.showSettings = showSettings
+        self.checkForUpdates = checkForUpdates
         super.init()
         header.view = headerView
         headerView.act = { [unowned self] fix in
@@ -114,6 +119,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(Action("Details", key: "d", run: showDetails))
         menu.addItem(Action("Settings…", key: ",", run: showSettings))
         menu.addItem(.separator())
+        if let checkForUpdates { menu.addItem(Action("Check for Updates…", run: checkForUpdates)) }
         menu.addItem(Action("Quit", key: "q") { NSApp.terminate(nil) })
         menu.addItem(footer)
     }

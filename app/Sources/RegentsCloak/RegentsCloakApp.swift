@@ -10,8 +10,9 @@ import SwiftUI
 /// Chat, Agents, Details and Settings windows, the quick prompt, a welcome
 /// on the first launch, the door other apps and the agent in the guest send
 /// through while Cloak is Running, its AppleScript commands
-/// (`StartCommand` and the others), and the control channel `cloak` uses to
-/// drive the same supervisor.
+/// (`StartCommand` and the others), the control channel `cloak` uses to
+/// drive the same supervisor, and its updater when the bundle names a feed
+/// (`Updates`).
 @main
 struct RegentsCloakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var app
@@ -46,8 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private lazy var details = AppWindow { [supervisor, download] in DetailsView.window(supervisor, download) }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
-    private lazy var settings = AppWindow { [supervisor, prompt, door] in
-        SettingsView.window(.standard, prompt: prompt, supervisor: supervisor, door: door)
+    private lazy var settings = AppWindow { [supervisor, prompt, door, updates] in
+        SettingsView.window(.standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates)
     }
     private lazy var welcome = AppWindow { WelcomeView.window() }
     private lazy var prompt = QuickPrompt(settings: .standard) { [unowned self] text in
@@ -55,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showChat()
     }
     private var menu: StatusMenu?
+    /// Made at launch; none when the bundle names no update feed.
+    private var updates: Updates?
     let door: Door = {
         let supervisor = Launch.supervisor, conversations = Launch.layout.conversations
         return Door(
@@ -72,9 +75,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.current = self
+        updates = Updates.start()
         menu = StatusMenu(
             supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest), showChat: showChat,
-            showAgents: showAgents, showDetails: showDetails, showSettings: showSettings)
+            showAgents: showAgents, showDetails: showDetails, showSettings: showSettings,
+            checkForUpdates: updates.map { updates in updates.check })
         // Made now, so the shortcut chosen works from launch.
         _ = prompt
         // The agent's model requests from the guest come in at the door.

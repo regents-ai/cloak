@@ -6,21 +6,26 @@ import OSLog
 import SwiftUI
 
 /// The Settings window, the one place a setting changes (`AppSettings`):
-/// General (whether the app opens at login, and how long the model may go
-/// unused before it leaves memory), Shortcut (the quick prompt's), Door (its
-/// port on 127.0.0.1) and Advanced (how Cloak started its parts, this
-/// session's log, and Restore Defaults).
+/// General (whether the app opens at login, how long the model may go
+/// unused before it leaves memory, and, when the app has an updater,
+/// whether it checks for updates by itself), Shortcut (the quick prompt's),
+/// Door (its port on 127.0.0.1) and Advanced (how Cloak started its parts,
+/// this session's log, and Restore Defaults).
 struct SettingsView: View {
     let settings: AppSettings
     let prompt: QuickPrompt
     let supervisor: Supervisor
     let door: Door
+    let updates: Updates?
 
-    static func window(_ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door) -> NSWindow {
+    static func window(
+        _ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door, updates: Updates?
+    ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Settings"
-        let content = NSHostingController(rootView: SettingsView(settings: settings, prompt: prompt, supervisor: supervisor, door: door))
+        let content = NSHostingController(
+            rootView: SettingsView(settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
         window.setContentSize(NSSize(width: 680, height: 500))
@@ -65,10 +70,10 @@ struct SettingsView: View {
         } detail: {
             Group {
                 switch shown {
-                case .general: GeneralPane(settings: settings)
+                case .general: GeneralPane(settings: settings, updates: updates)
                 case .shortcut: ShortcutPane(settings: settings, prompt: prompt)
                 case .door: DoorPane(settings: settings, door: door)
-                case .advanced: AdvancedPane(settings: settings, prompt: prompt, supervisor: supervisor)
+                case .advanced: AdvancedPane(settings: settings, prompt: prompt, supervisor: supervisor, updates: updates)
                 }
             }
             .formStyle(.grouped)
@@ -82,6 +87,7 @@ struct SettingsView: View {
 
 private struct GeneralPane: View {
     @Bindable var settings: AppSettings
+    let updates: Updates?
     @State private var login = LoginItem.isOn
 
     var body: some View {
@@ -98,11 +104,37 @@ private struct GeneralPane: View {
             } footer: {
                 Footnote("The model leaves memory once Cloak has reworded nothing for that long, and the next message takes a few seconds longer.")
             }
+            if let updates { UpdatesSection(updates: updates) }
         }
         // The login item can change in System Settings while the window is
         // away, so it is read again each time the window comes back.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             login = LoginItem.isOn
+        }
+    }
+}
+
+/// Whether Sparkle checks for updates by itself: its own setting, which it
+/// keeps, shown here and changed here.
+private struct UpdatesSection: View {
+    let updates: Updates
+    @State private var checks: Bool
+
+    init(updates: Updates) {
+        self.updates = updates
+        _checks = State(initialValue: updates.checksAutomatically)
+    }
+
+    var body: some View {
+        Section {
+            Toggle("Updates", isOn: Binding(get: { checks }, set: { updates.checksAutomatically = $0; checks = $0 }))
+        } footer: {
+            Footnote("Each check goes straight from this Mac to the update server, which sees this Mac's internet address but nothing from your chats.")
+        }
+        // Sparkle's own question about checking can be answered while the
+        // window is away, so the setting is read again when it comes back.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            checks = updates.checksAutomatically
         }
     }
 }
@@ -233,6 +265,7 @@ private struct AdvancedPane: View {
     let settings: AppSettings
     let prompt: QuickPrompt
     let supervisor: Supervisor
+    let updates: Updates?
     @State private var log: Result<[String], any Error>?
     @State private var restoring = false
 
@@ -294,15 +327,18 @@ private struct AdvancedPane: View {
             Button("Restore Defaults", role: .destructive, action: restore)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(Self.restored)
+            Text(restored)
         }
     }
 
     /// What Restore Defaults does, from the defaults themselves.
-    private static let restored = """
-        Launch at login turns off, Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
+    private var restored: String {
+        """
+        \(updates == nil ? "Launch at login turns" : "Launch at login and Updates turn") off, \
+        Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
         the quick prompt loses its shortcut, and the door goes back to port \(AppSettings.defaultDoorPort).
         """
+    }
 
     private func read() async {
         do {
@@ -321,6 +357,7 @@ private struct AdvancedPane: View {
         prompt.choose(nil)
         settings.restore()
         if LoginItem.isOn { _ = LoginItem.set(false) }
+        updates?.checksAutomatically = false
     }
 
     /// A command as a shell takes it, so it can be pasted into Terminal:

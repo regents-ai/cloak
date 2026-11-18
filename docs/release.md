@@ -142,6 +142,51 @@ now. Choosing and paying them is Sean's.
   and never mixed up with the route prompts take.
 - First run in steps, in plain words.
 
+**Signed updates, prepared (18 November).** The app carries Sparkle
+2.8.1. `update_feed` and `update_key` in `app/release.json` are empty, so
+the app has no updater and shows nothing about updates. With both set,
+`app/build.sh` writes them into the bundle, and the app gets Check for
+Updates… in its menu and an Updates switch in Settings, General (off
+until the person answers Sparkle's question on the second launch, or
+turns it on). With only one set, the build stops. They stay empty until
+the stage 2 protections are in (Sean, 18 November, in plan.md).
+
+What Sean supplies and decides first:
+
+1. An Apple Developer ID: the Developer ID Application certificate that
+   signs the app and every part inside it, and the account that
+   notarizes it. Sparkle also takes an update signed with the same
+   Developer ID as the installed app, so a key can be changed; whoever
+   holds the certificate can therefore make an update Cloak accepts, and
+   it is guarded like the update key.
+2. The update signing key: a pair made once with Sparkle's
+   `generate_keys`. The public half goes into `update_key`. The private
+   half signs every update, so where it lives is his choice: the
+   keychain of the Mac that makes releases, an offline backup, or both.
+   It never goes into the repository or within reach of an agent.
+3. Where the feed and the downloads are hosted. The host sees each
+   Mac's internet address at every check (at most once a day, and when
+   someone presses Check for Updates…) and at every download, and
+   nothing from a chat. Its address goes into `update_feed`, and must be
+   HTTPS.
+
+Then each release:
+
+1. Raise `release` in `app/release.json`.
+2. Build the app with `app/build.sh`, its parts signed inside out with
+   the Developer ID in place of ad hoc, with the hardened runtime.
+3. Notarize the app and staple the ticket to it.
+4. Pack it in a zip or disk image.
+5. Sign that file with the private update key (Sparkle's `sign_update`).
+6. Upload it to the download host.
+7. Add the release to the feed: its release, its build number (the
+   commit count `app/build.sh` gives the bundle, which Sparkle compares
+   to find a newer one), its notes written inside the feed (no link,
+   image or page from elsewhere), the file's address, its size and its
+   signature.
+8. Publish the feed, then check from a Mac with the previous release
+   that it finds the update, takes it, and opens Paused.
+
 **8. Memory and speed, measured.** One table: the model and its
 quantization; peak memory with the guest, tor, Pi, payment and the model
 all active; cold and warm start; typical and worst rewording time; under
