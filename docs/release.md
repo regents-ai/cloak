@@ -172,7 +172,11 @@ What Sean supplies and decides first:
 
 Sean's answers, 18 November:
 
-- Developer ID: yes; asked for when the first release is made.
+- Developer ID: yes. Its private key was made that day, at Sean's word,
+  inside the login keychain of this Mac (named "Regents Cloak Developer
+  ID", RSA 2048), and never written to a file. The request file for
+  Apple went to his Desktop for him to upload. The certificate, its
+  backup, the Team ID and the notarization sign-in are still to come.
 - The key: made that day with `generate_keys --account cloak`, on his
   decision, in the login keychain of this Mac. Its public half is
   `Dw2edhocMd1y+8c+Q5Lm0kG15miKI4TX+zj7tYuomjk=`. The private half is
