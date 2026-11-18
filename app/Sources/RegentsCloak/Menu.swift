@@ -20,7 +20,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let showDetails: () -> Void
     private let showSettings: () -> Void
     private let checkForUpdates: (() -> Void)?
-    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    // As wide as its icon, which is wider than the bar is tall.
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let header = NSMenuItem()
     private let headerView = MenuHeaderView()
@@ -54,13 +55,13 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.delegate = self
         item.menu = menu
-        showIcon(supervisor.phase)
+        item.button?.image = MenuBarIcon.image(supervisor.phase)
         // The menu lasts as long as the app, and so does this.
         Task {
             for await watched in Observations({
                 Watched(phase: supervisor.phase, resting: supervisor.resting, download: download.state)
             }) {
-                showIcon(watched.phase)
+                item.button?.image = MenuBarIcon.image(watched.phase)
                 if open { rebuild() }
             }
         }
@@ -71,11 +72,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         var phase: Phase
         var resting: Bool
         var download: ModelDownload.State
-    }
-
-    /// The menu bar icon (`Phase.symbol`), named for VoiceOver.
-    private func showIcon(_ phase: Phase) {
-        item.button?.image = NSImage(systemSymbolName: phase.symbol, accessibilityDescription: "Regents Cloak, \(MenuHeader.word(phase.state))")
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -374,9 +370,71 @@ private final class StateDot: NSView {
     }
 }
 
+/// The menu bar icon: the 13-block Regents crown, block for block as the
+/// design system's logos/regents-crown-flat-dark.svg draws it, with the state
+/// in a 9-point badge over its lower trailing corner, cut clear of the crown
+/// by a 1-point gap (an idea from the Llama app's icon, decision 14 in
+/// docs/plan.md). The badge is play while Running, pause while Paused or
+/// Ready, a dotted ring while starting, stop while stopping and an
+/// exclamation mark when Cloak needs attention, so the state never rests on
+/// colour alone. A template image, so the menu bar colours it as it does its
+/// own icons; named for VoiceOver.
+enum MenuBarIcon {
+    static func image(_ phase: Phase) -> NSImage {
+        // The master's blocks, 34 units square on a 36-unit pitch, at their
+        // origins in its 252 by 186 view. At a ninth of a point per unit the
+        // crown is 19.8 by 11.8 points and every origin lands on a whole
+        // point, so on whole pixels at 1x and 2x.
+        let blocks: [(x: CGFloat, y: CGFloat)] = [
+            (31, 46), (103, 46), (175, 46),
+            (31, 82), (67, 82), (103, 82), (139, 82), (175, 82),
+            (31, 118), (67, 118), (103, 118), (139, 118), (175, 118),
+        ]
+        // Its edges are on whole points, so on whole pixels at 1x and 2x.
+        let badge = NSRect(x: 17, y: 9, width: 9, height: 9)
+        // The glyph is knocked out of a filled disc; Starting's dotted ring
+        // is the badge itself.
+        let glyph: (name: String, size: CGFloat, knockedOut: Bool) =
+            switch phase {
+            case .running: ("play.fill", 6, true)
+            case .paused, .ready: ("pause.fill", 6, true)
+            case .preparing: ("circle.dotted", 9, false)
+            case .stopping: ("stop.fill", 4.5, true)
+            case .needsAttention: ("exclamationmark", 6, true)
+            }
+        let image = NSImage(size: NSSize(width: 26, height: 18), flipped: true) { _ in
+            guard let context = NSGraphicsContext.current else { return false }
+            let crown = NSBezierPath()
+            for block in blocks {
+                crown.appendRect(NSRect(x: (block.x - 31) / 9, y: (block.y - 46) / 9, width: 34 / 9, height: 34 / 9))
+            }
+            crown.fill()
+            context.compositingOperation = .destinationOut
+            NSBezierPath(ovalIn: badge.insetBy(dx: -1, dy: -1)).fill()
+            context.compositingOperation = .sourceOver
+            if glyph.knockedOut { NSBezierPath(ovalIn: badge).fill() }
+            // Every name is a system symbol.
+            let symbol = NSImage(systemSymbolName: glyph.name, accessibilityDescription: nil)!
+                .withSymbolConfiguration(.init(pointSize: glyph.size, weight: .heavy))!
+            let size = symbol.size
+            // On a whole point, so a pause's bars stay apart at 1x.
+            symbol.draw(
+                in: NSRect(
+                    x: (badge.midX - size.width / 2).rounded(), y: (badge.midY - size.height / 2).rounded(), width: size.width,
+                    height: size.height),
+                from: .zero, operation: glyph.knockedOut ? .destinationOut : .sourceOver, fraction: 1, respectFlipped: true,
+                hints: nil)
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Regents Cloak, \(MenuHeader.word(phase.state))"
+        return image
+    }
+}
+
 extension Phase {
-    /// The menu bar icon: one shape per state, so the state never rests on
-    /// colour alone.
+    /// The state's symbol in Details and Chat: one shape per state, so the
+    /// state never rests on colour alone.
     var symbol: String {
         switch state {
         case .paused: "pause.circle"
