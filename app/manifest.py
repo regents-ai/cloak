@@ -5,7 +5,8 @@
 
 The manifest names the release and the build, the one model (from
 app/release.json; its files and sizes from reference/models.json), the memory
-floor, and pins every part the supervisor runs by its sha256: the guest's
+the model and all of Cloak need (from app/release.json, in GiB there and in
+bytes here), and pins every part the supervisor runs by its sha256: the guest's
 kernel and root, tor and libevent in the bundle, and the worker as
 llama-worker/install.sh installed it in the Application Support folder.
 
@@ -44,7 +45,8 @@ def main() -> None:
     manifest = {
         "release": release["release"],
         "build": build,
-        "minimum_memory": release["minimum_memory_gib"] << 30,
+        "model_memory": round(release["model_memory_gib"] * 2**30),
+        "cloak_memory": round(release["cloak_memory_gib"] * 2**30),
         "model": {
             "name": model["name"],
             "label": release["model_label"],

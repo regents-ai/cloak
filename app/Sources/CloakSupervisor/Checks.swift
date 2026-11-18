@@ -1,6 +1,7 @@
 import CloakControl
 import CryptoKit
 import Foundation
+import Metal
 
 /// A requirement that failed: why, and the technical detail.
 public struct Failure: Error, Sendable, Equatable {
@@ -19,21 +20,36 @@ public struct Failure: Error, Sendable, Equatable {
 /// file must be present at its pinned size, so a missing or partial download
 /// is named before anything starts.
 enum Checks {
+    /// The Mac: whether it has Apple silicon, its memory, and the most
+    /// memory Metal recommends its graphics hold
+    /// (`recommendedMaxWorkingSetSize`), nil when that cannot be read.
     struct Hardware: Sendable {
         var appleSilicon: Bool
         var memory: UInt64
+        var graphicsLimit: UInt64?
 
         static var current: Hardware {
             var arm: Int32 = 0
             var size = MemoryLayout<Int32>.size
             let found = sysctlbyname("hw.optional.arm64", &arm, &size, nil, 0) == 0
-            return Hardware(appleSilicon: found && arm == 1, memory: ProcessInfo.processInfo.physicalMemory)
+            return Hardware(
+                appleSilicon: found && arm == 1, memory: ProcessInfo.processInfo.physicalMemory,
+                graphicsLimit: MTLCreateSystemDefaultDevice()?.recommendedMaxWorkingSetSize)
         }
     }
 
+    /// Kept spare within the graphics limit, for what the model's figure
+    /// cannot see: llama.cpp's own margin. With `keptForMacOS`, the memory
+    /// budget of the Llama app (`deviceMemoryBudgetMb`, decision 14 in
+    /// docs/plan.md).
+    static let graphicsSpare: UInt64 = 1 << 30
+    /// Kept out of Cloak's reach for macOS and other apps; a fixed amount,
+    /// since the desktop needs no less on a small Mac.
+    static let keptForMacOS: UInt64 = 4 << 30
+
     /// Each check's finding, and the failure it stands for when it failed.
     static func run(_ manifest: Manifest, _ layout: Layout, hardware: Hardware) async -> [(Finding, Failure?)] {
-        var results = [hardwareCheck(hardware, minimum: manifest.minimumMemory)]
+        var results = [hardwareCheck(hardware, model: manifest.modelMemory, cloak: manifest.cloakMemory)]
         for pin in manifest.pins {
             results.append(await pinCheck(pin, at: layout.url(pin)))
         }
@@ -41,10 +57,25 @@ enum Checks {
         return results
     }
 
-    static func hardwareCheck(_ hardware: Hardware, minimum: UInt64) -> (Finding, Failure?) {
-        let memory = "\(hardware.memory >> 30) GB"
-        let detail = "\(hardware.appleSilicon ? "Apple silicon" : "not Apple silicon"), \(memory) of memory; needs Apple silicon and \(minimum >> 30) GB"
-        let passed = hardware.appleSilicon && hardware.memory >= minimum
+    /// Passes a Mac with Apple silicon whose graphics limit holds the
+    /// model's `model` bytes with `graphicsSpare` to spare, and whose memory
+    /// holds all of Cloak's `cloak` bytes with `keptForMacOS` kept for
+    /// macOS. A graphics limit that cannot be read fails.
+    static func hardwareCheck(_ hardware: Hardware, model: UInt64, cloak: UInt64) -> (Finding, Failure?) {
+        let text = Memory.text
+        let cloakRoom = max(hardware.memory, keptForMacOS) - keptForMacOS
+        let modelRoom = hardware.graphicsLimit.map { max($0, graphicsSpare) - graphicsSpare }
+        let modelLine = if let limit = hardware.graphicsLimit, let modelRoom {
+            "Model: needs \(text(model)); room \(text(modelRoom)) (graphics limit \(text(limit)), less \(text(graphicsSpare)) spare)."
+        } else {
+            "Model: needs \(text(model)); the graphics limit cannot be read."
+        }
+        let detail = [
+            "\(hardware.appleSilicon ? "Apple silicon" : "Not Apple silicon, which Cloak needs"); \(text(hardware.memory)) of memory.",
+            modelLine,
+            "All of Cloak: needs \(text(cloak)); room \(text(cloakRoom)) (\(text(hardware.memory)), less \(text(keptForMacOS)) for macOS).",
+        ].joined(separator: " ")
+        let passed = hardware.appleSilicon && modelRoom.map { model <= $0 } == true && cloak <= cloakRoom
         return (Finding(name: "Mac", passed: passed, detail: detail), passed ? nil : Failure(.unsupportedHardware, detail))
     }
 

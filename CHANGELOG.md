@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The Mac check and a Memory figure (decision 14, from Llama.app). The
+  check asks Metal what this Mac's graphics will hold and keeps 4 GiB
+  for macOS, in place of a flat 16 GB; `app/release.json` states what
+  the model and all of Cloak need. The Details window shows what Cloak
+  holds in memory now, and the technical details each part's share.
+
 - The model leaves memory when idle (decision 14, the first idea taken
   from Llama.app). Once Cloak has reworded nothing for the time chosen as
   Free memory in the Details window (5 minutes until chosen; 15 minutes,

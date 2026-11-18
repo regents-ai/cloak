@@ -534,7 +534,10 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
 ```
 
 - **Preparing** takes each step only once the one before it is up: the
-  checks (the Mac; each installed part's SHA-256 against the bundle's
+  checks (the Mac: Apple silicon, the model's memory within Metal's graphics
+  limit less 1 GiB, and all of Cloak's within the memory less 4 GiB for
+  macOS, both needs from the manifest, a graphics limit that cannot be read
+  failing it; each installed part's SHA-256 against the bundle's
   manifest; the model's files and sizes, whose hashes the worker checks
   itself), then tor, started and bootstrapped, then the worker, started and
   ready, then a check guest, which sends one rewrite through the daemon, the
@@ -551,8 +554,9 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   kept in the app's defaults and read each time that wait starts, so a
   change applies from then with no restart. The next request starts a new
   worker with the same program and arguments as the first. While it rests,
-  the Model row says "unloaded" and the technical detail says the worker is
-  resting in place of its process. A new worker that cannot start is
+  the Model row says "unloaded", the Memory row's figure falls by the
+  worker's, and the technical detail says the worker is resting in place of
+  its process. A new worker that cannot start is
   `model_changed` or `worker_unavailable`, as at Preparing.
 - **Watches**: from its start until the run ends, tor exiting raises
   `tor_stopped`, and every worker exit the relay did not cause raises

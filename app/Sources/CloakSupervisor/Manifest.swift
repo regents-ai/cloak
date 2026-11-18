@@ -1,8 +1,9 @@
 import Foundation
 
 /// The app's manifest, written into the bundle by app/build.sh: the release
-/// and build, the one model (spec: no picker, no switching), the memory
-/// floor, and every part the supervisor runs, each pinned by its sha256.
+/// and build, the one model (spec: no picker, no switching), the memory the
+/// model and all of Cloak need, and every part the supervisor runs, each
+/// pinned by its sha256.
 public struct Manifest: Codable, Sendable, Equatable {
     public enum Part: String, Codable, Sendable, CaseIterable {
         /// The guest's kernel and base root, in the bundle.
@@ -58,14 +59,18 @@ public struct Manifest: Codable, Sendable, Equatable {
 
     public var release: String
     public var build: String
-    public var minimumMemory: UInt64
+    /// The bytes the model needs, which the graphics must hold.
+    public var modelMemory: UInt64
+    /// The bytes everything Cloak runs needs, the model among it.
+    public var cloakMemory: UInt64
     public var model: Model
     public var pins: [Pin]
 
-    public init(release: String, build: String, minimumMemory: UInt64, model: Model, pins: [Pin]) {
+    public init(release: String, build: String, modelMemory: UInt64, cloakMemory: UInt64, model: Model, pins: [Pin]) {
         self.release = release
         self.build = build
-        self.minimumMemory = minimumMemory
+        self.modelMemory = modelMemory
+        self.cloakMemory = cloakMemory
         self.model = model
         self.pins = pins
     }

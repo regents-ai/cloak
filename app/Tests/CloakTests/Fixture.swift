@@ -84,7 +84,7 @@ struct Fixture {
         try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: model.appending(path: "config.json"))
         manifest = Manifest(
-            release: "0.0.0-test", build: "test", minimumMemory: 8 << 30,
+            release: "0.0.0-test", build: "test", modelMemory: 7 << 30, cloakMemory: 10 << 30,
             model: .init(name: "standin", label: "development stand-in", files: [.init(path: "config.json", size: 2)]),
             pins: pins)
     }
@@ -92,7 +92,7 @@ struct Fixture {
     /// A supervisor on this installation, on a Mac that meets the manifest,
     /// whose worker never rests.
     @MainActor
-    func supervisor(hardware: Checks.Hardware = .init(appleSilicon: true, memory: 64 << 30)) throws -> Supervisor {
+    func supervisor(hardware: Checks.Hardware = .init(appleSilicon: true, memory: 64 << 30, graphicsLimit: 48 << 30)) throws -> Supervisor {
         try Supervisor(manifest: manifest, layout: layout, hardware: hardware) { nil }
     }
 

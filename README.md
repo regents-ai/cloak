@@ -260,15 +260,25 @@ uv run --with pytest==8.4.2 --with scikit-learn==1.9.1 --with numpy==2.5.4 \
 
 Stage 5 has started with a development build of the app's core: one
 supervisor, run by a menu-bar app and by the `cloak` command. It runs the
-small lead, Qwen 3.5 9B (`small-lead-gguf-grammar`), needs a Mac with Apple
-silicon and 16 GB of memory, and has no sessions or cover traffic; the
-daemon's own payment is not built. Running means tor is up, the worker is
-up or resting, a startup check sent one rewrite through the guest, the
-daemon and the worker, and the guest's sender is ready. The worker rests,
+small lead, Qwen 3.5 9B (`small-lead-gguf-grammar`), and has no sessions or
+cover traffic; the daemon's own payment is not built. It needs a Mac with
+Apple silicon whose graphics limit (Metal's recommended working set) holds
+the model's 7 GiB with 1 GiB to spare, and whose memory holds all of
+Cloak's 10 GiB with 4 GiB kept for macOS: a 16 GB Mac passes, an 8 GB one
+does not, and one whose graphics limit cannot be read fails. The two needs
+are `model_memory_gib` and `cloak_memory_gib` in `app/release.json`.
+Running means tor is up, the worker is up or resting, a startup check sent
+one rewrite through the guest, the daemon and the worker, and the guest's
+sender is ready. The worker rests,
 and the model leaves memory, once Cloak has reworded nothing for the time
 chosen as Free memory in the Details window (5 minutes until chosen, or 15
 minutes, 1 hour or Never); the next request starts it again and waits a
-few seconds longer.
+few seconds longer. The window's Memory row shows what all of Cloak holds
+now (the app, tor, the worker and the guest's virtual machine, by the
+footprint Activity Monitor shows), read every 3 seconds while the window
+is on screen; it says it can't be measured when any part cannot be read,
+and the technical details, like `cloak status --json`, give each part's
+figure.
 
 With the guest, the host's tor and the worker built and installed (stage 2
 commands) and the small lead fetched (5.4 GiB):

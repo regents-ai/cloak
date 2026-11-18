@@ -8,7 +8,7 @@ import Testing
 @Suite(.serialized)
 struct ControlTests {
     static let manifest = Manifest(
-        release: "0.5.0-dev", build: "abc1234", minimumMemory: 32 << 30,
+        release: "0.5.0-dev", build: "abc1234", modelMemory: 7 << 30, cloakMemory: 10 << 30,
         model: .init(name: "standin", label: "development stand-in", files: []), pins: [])
 
     /// Each status the supervisor produces, from the phases that produce it,

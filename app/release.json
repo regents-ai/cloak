@@ -2,5 +2,6 @@
   "release": "0.5.0-dev",
   "model": "small-lead-gguf-grammar",
   "model_label": "Qwen 3.5 9B",
-  "minimum_memory_gib": 16
+  "model_memory_gib": 7,
+  "cloak_memory_gib": 10
 }

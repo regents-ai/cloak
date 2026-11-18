@@ -6,19 +6,22 @@ import ServiceManagement
 import SwiftUI
 
 /// The small window: the state, why it needs attention and what to do, the
-/// release, the model and whether it is out of memory, the last check, how
-/// long the model may go unused before it leaves memory, whether the app
-/// opens at login, and technical detail on demand, the build among it.
-/// Closing it leaves the supervisor as it is.
+/// release, the model and whether it is out of memory, what Cloak holds in
+/// memory now, the last check, how long the model may go unused before it
+/// leaves memory, whether the app opens at login, and technical detail on
+/// demand, the build and each part's memory among it. Closing it leaves the
+/// supervisor as it is.
 struct DetailsView: View {
     let supervisor: Supervisor
+    let memory: MemoryWatch
 
     static func window(_ supervisor: Supervisor) -> NSWindow {
         let window = ClosingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
             styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Details"
-        window.contentViewController = NSHostingController(rootView: DetailsView(supervisor: supervisor))
+        window.contentViewController = NSHostingController(
+            rootView: DetailsView(supervisor: supervisor, memory: MemoryWatch(supervisor, window: window)))
         return window
     }
 
@@ -46,6 +49,7 @@ struct DetailsView: View {
             Section {
                 LabeledContent("Release", value: status.release)
                 LabeledContent("Model", value: supervisor.resting ? "\(status.model.label), unloaded" : status.model.label)
+                LabeledContent("Memory", value: memory.reading.total.map(Memory.text) ?? "Can't be measured")
                 LabeledContent("Last check", value: lastCheck(status.check))
             }
             Section {
@@ -107,6 +111,40 @@ struct DetailsView: View {
         guard let check else { return "Not yet" }
         let time = check.at.formatted(date: .omitted, time: .shortened)
         return check.passed ? "Passed at \(time)" : "Failed at \(time)"
+    }
+}
+
+/// What Cloak holds in memory (`Supervisor.memory`), read again every 3
+/// seconds while the Details window is on screen and not at all otherwise.
+/// The window and its views are kept when it closes, and their tasks run
+/// on, so this follows the window's own visibility.
+@MainActor
+@Observable
+final class MemoryWatch {
+    private(set) var reading: Memory
+    @ObservationIgnored private let supervisor: Supervisor
+    @ObservationIgnored private var refresh: Task<Void, Never>?
+
+    init(_ supervisor: Supervisor, window: NSWindow) {
+        self.supervisor = supervisor
+        reading = supervisor.memory()
+        // The window, and so this, lasts as long as the app.
+        _ = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+        ) { [weak self, weak window] _ in
+            MainActor.assumeIsolated {
+                self?.follow(onScreen: window?.occlusionState.contains(.visible) == true)
+            }
+        }
+    }
+
+    private func follow(onScreen: Bool) {
+        refresh?.cancel()
+        refresh = onScreen ? Task {
+            repeat {
+                reading = supervisor.memory()
+            } while (try? await Task.sleep(for: .seconds(3))) != nil
+        } : nil
     }
 }
 

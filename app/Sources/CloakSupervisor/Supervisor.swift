@@ -203,8 +203,14 @@ public final class Supervisor {
         manifest.status(of: phase, check: check, detail: detail)
     }
 
-    /// What the state means, the last failure, the processes running, and
-    /// the release, build and model.
+    /// What Cloak holds in memory now (`Memory`); a guest started for this
+    /// run must have its virtual machine among it.
+    public func memory() -> Memory {
+        Memory.read(guest: stack.guest != nil)
+    }
+
+    /// What the state means, the last failure, the processes running, what
+    /// Cloak holds in memory now, and the release, build and model.
     public var detail: String {
         var lines = [String]()
         switch phase {
@@ -229,6 +235,7 @@ public final class Supervisor {
         } else if resting {
             lines.append("worker: resting; the model is out of memory until the next request")
         }
+        lines.append(memory().detail)
         lines.append("release \(manifest.release), build \(manifest.build)")
         lines.append("model: \(manifest.model.name), \(manifest.model.label), in \(layout.model(manifest).path)")
         return lines.joined(separator: "\n")

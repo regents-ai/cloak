@@ -94,8 +94,9 @@ struct SupervisorTests {
     }
 
     @Test(arguments: [
-        Checks.Hardware(appleSilicon: false, memory: 64 << 30),
-        Checks.Hardware(appleSilicon: true, memory: 4 << 30),
+        Checks.Hardware(appleSilicon: false, memory: 64 << 30, graphicsLimit: 48 << 30),
+        Checks.Hardware(appleSilicon: true, memory: 8 << 30, graphicsLimit: 5_726_623_744),
+        Checks.Hardware(appleSilicon: true, memory: 64 << 30, graphicsLimit: nil),
     ])
     func aMacOutsideTheManifestIsUnsupportedAndNothingStarts(hardware: Checks.Hardware) async throws {
         let fixture = try Fixture()

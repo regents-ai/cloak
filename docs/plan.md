@@ -2341,6 +2341,18 @@ candidates, so the split has to be re-declared before any holdout opens.
       wake is covered by the relay's tests and has not been seen in the
       running app; the supervisor's part is not covered by a test,
       since a test cannot reach Running.
+    - Taken, 18 November: the Mac check and a Memory figure. The check
+      passes a Mac whose graphics limit, as Metal gives it, holds the
+      model (7 GiB stated in `app/release.json`) with 1 GiB spare, and
+      whose memory holds all of Cloak (10 GiB stated) with 4 GiB kept
+      for macOS; a limit that cannot be read fails. Both stated figures
+      are still to be measured again. The Details window has a Memory
+      row: the footprint of the app, tor, the worker and the guest's
+      virtual machine together, read every 3 s while the window shows,
+      and no figure when a part cannot be read. The virtual machine's
+      process is found through a macOS function that is not public
+      (`responsibility_get_pid_responsible_for_pid`), as `scripts/boot.py`
+      does. Not yet seen on screen.
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.
