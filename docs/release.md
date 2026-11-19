@@ -106,11 +106,16 @@ through Tor, each worker on its own Tor identity, no payment used. Its
 destinations, rate and concurrency live in one list,
 `reference/cover.json`, which ships with no destinations, and an empty
 list is cover off. The rate is 0.05 a second with 2 at once, inside the
-reference's ranges and below its defaults of 5 a second and 4 at once.
-Checks against the stand-in tor are written (`tests/test_cover_path.py`),
-to be run on a guest built with them. Still to do: the destinations (one
-to sixteen small static files someone has leave to poll) and the rate,
-both Sean's decision; then a run on the real route, measured. The goal,
+reference's ranges and below its defaults of 5 a second and 4 at once;
+Sean kept it on 18 November. The destinations are a pool of real,
+current, popular pages (Sean, 18 November), which may hold more than the
+sixteen the reference's worker takes: at each start the guest picks
+sixteen of them at random and gives those to the worker unchanged, until
+the next start, and the pages themselves change over time. Checks
+against the stand-in tor (`tests/test_cover_path.py`): the first five
+passed on a guest built with them; the four for the pool are written, to
+be run on a guest built with the pool. Still to do: the pages in the
+pool, Sean's to approve; then a run on the real route, measured. The goal,
 corrected: **Cloak reproduces the reference's cover
 traffic and claims nothing the reference does not.** Its own document says
 it is background noise, not proven protection against traffic analysis,

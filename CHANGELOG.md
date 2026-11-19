@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Cover traffic: the list's addresses are now a pool of pages that may
+  hold more than the sixteen the reference's worker takes (Sean,
+  18 November: a changing mix of real, current, popular pages). At each
+  start the guest's daemon picks sixteen of them at random and gives
+  those to the worker unchanged; the same sixteen serve until the next
+  start. A pool of sixteen or fewer is used whole, as before. Every
+  address in the pool must pass the reference's own checks, picked or
+  not, and none may be listed twice, or the daemon does not start. The
+  picked addresses are not logged. The pool still ships empty, so cover
+  stays off until Sean approves its pages. Four checks for the pool are
+  added to `tests/test_cover_path.py`; the guest must be rebuilt.
+
 - Cover traffic, the reference's own (release plan item 3). The guest's
   daemon now starts the pinned daemon's cover worker as its own serve
   does, from one list, `reference/cover.json`, that guest/build.sh puts

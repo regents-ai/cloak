@@ -489,10 +489,19 @@ them to the daemon's own validation and start.
   concurrency live. `guest/build.sh` puts it in the guest image as
   `/etc/cloak/cover.json`, root's and read-only; the agent's sandbox does
   not see `/etc/cloak`.
+- **A pool, sixteen at a time**: the list's URLs are a pool, which may
+  hold more than the sixteen the pinned worker takes. Each time the
+  daemon starts, and only then, it picks sixteen distinct URLs from the
+  pool at random, each as likely as any other, from the same source of
+  randomness as the worker's own (Go's `crypto/rand`), and hands them to
+  the worker unchanged. The same sixteen serve until the next start. A
+  pool of sixteen or fewer is handed over whole, as before. The picked
+  URLs are not logged, as the worker logs no destinations. The URLs
+  name real, popular pages, so what is fetched from them changes as the
+  pages themselves change (Sean, 18 November).
 - **Off while the list is empty**: no URLs is the daemon's own cleared
   setting, and no cover worker starts. That is the one switch. The list
-  ships empty: which small static HTTPS files are polled, one to sixteen
-  on port 443 with leave to poll them, is Sean's decision.
+  ships empty: which pages are in the pool is Sean's to approve.
 - **Rate 0.05 a second (about three a minute), 2 at once**: inside the
   reference's ranges (0.01 to 5 a second, 1 to 8 at once) and below its
   defaults (5 a second, 4 at once), as a gentle start for whoever owns the
@@ -504,6 +513,11 @@ them to the daemon's own validation and start.
   has another shape, or fails the daemon's own checks (HTTPS on port 443
   only, no credentials, query or fragment, public names, rate and
   concurrency in range, `tor://` only) stops the daemon before it listens.
+  Every URL in the pool is put through those checks, one at a time,
+  whether it is picked or not, so a bad URL anywhere stops the daemon at
+  every start, not only at the starts that happen to pick it. So does a
+  URL listed twice, which would make its site come up twice as often, and
+  an entry holding a space, which the worker would read as two URLs.
   Its message is in `/run/cloak/daemon.log`, which the boot prints before
   the guest powers off. There is no other path.
 - **Totals**: once a minute, the daemon's own line `Cover totals:
@@ -521,7 +535,9 @@ and one fetch each through real Tor showed Reddit, Stack Overflow and the
 New York Times refuse Tor visitors (403), while Wikipedia, Hacker News,
 GitHub, the BBC, the Guardian, arXiv, DuckDuckGo, Lobsters, NPR and Open
 Library answer. An HTTPS watcher sees the site's name, the size and the
-timing, never the path or a search. The choice of approach is with Sean.
+timing, never the path or a search. Sean then chose the approach the same
+day: a changing mix of real, current, popular pages, kept as a pool larger
+than sixteen, with sixteen picked at random at each start (the pool, above).
 
 Checks in `tests/test_cover_path.py`, all five passed on 18 November
 against a guest built with this change, as did the thirty existing checks
@@ -541,6 +557,26 @@ runs one Pi task and then waits 65 seconds.
   stops the daemon, and the guest powers off before any task, with nothing
   sent to tor.
 
+Through the real tor, 19 November: 81 well-known pages were each asked
+once as the worker asks (same headers, no redirect, 64 KiB read); 58
+answered 200 or 206. With those 58 as a pool for one boot at the shipped
+rate, two six-minute guest runs gave the daemon's own totals of 7 and 17
+attempts (18 is the mean), nothing skipped, 0.4 and 1.0 MB read. Most
+attempts are counted as failed, and that is the worker's rule, not a
+fault: a page longer than 64 KiB is read to the cap and counted failed.
+The pool is not in the repository until Sean approves it.
+
+Four checks for the pool were added on 19 November, in the same file; all
+nine passed that day on a guest built with the pool:
+
+- With a pool of 24 test URLs, each on a host of its own, the daemon
+  starts (it would refuse more than sixteen), every cover connection asks
+  for one of the pool's hosts on port 443, and no more than sixteen
+  distinct hosts are asked in the boot.
+- A pool of 24 whose 21st URL is plain HTTP, one with a URL listed twice,
+  and one with two URLs in one entry each stop the daemon, and the guest
+  powers off before any task, with nothing sent to tor.
+
 Before any guest boot, the daemon was built for the Mac from the same file,
 with only the list's path and the tor port changed, and run against the
 stand-in tor on a loopback port (18 November). With the two test
@@ -552,6 +588,17 @@ the shipped list, and with an empty list at 5 a second, the daemon
 started and nothing arrived in 12 seconds. A plain HTTP address, a rate
 of 6, a misspelt field and a missing file each stopped the daemon before
 it listened, with one plain line, and nothing arrived.
+
+The pool was run the same way on 19 November, at 5 a second and 2 at
+once, with 24 test URLs on hosts of their own. Two starts of 30 seconds
+each brought 137 and 162 connections, each to exactly sixteen of the
+pool's hosts on port 443, on two identities each; the two starts picked
+different sixteens, sharing eleven. No pool host's name appeared in the
+daemon's log. A pool of exactly sixteen brought all sixteen hosts and no
+other, and an empty pool brought nothing. A plain HTTP URL at position 21
+of 24, a query on the 24th, a URL listed twice, two URLs in one entry, an
+entry with a leading space and an empty entry each stopped the daemon
+before it listened, with one plain line, and nothing arrived.
 
 What it is, in the reference's own words: background noise, not proven
 protection against traffic analysis. It does not pad the model's

@@ -10,14 +10,18 @@
 // request logging) with the reference settings: Tor routing at
 // tor://127.0.0.1:9050 and the rewriter on the guest adapter. It starts the
 // daemon's own cover traffic as serve does (startServeCover, for the life of
-// the API, closed and joined when it ends), with the destinations, rate and
-// concurrency of Cloak's one cover list, /etc/cloak/cover.json in the image
-// (reference/cover.json): an empty list of URLs is cover off, the daemon's
-// own cleared setting; any other list must pass the daemon's own cover
-// validation, or the daemon does not start. What serve does first and this
-// does not, because its prerequisites are absent: the funding check and
-// deposit, the wallet companion and its connect proxy, the deployment check,
-// and the session and settlement monitors.
+// the API, closed and joined when it ends), with the rate and concurrency of
+// Cloak's one cover list, /etc/cloak/cover.json in the image
+// (reference/cover.json), and destinations from the list's pool of URLs. A
+// pool of more than the 16 the daemon takes gives it 16, distinct and picked
+// at random at each start; those 16 serve until the next start. An empty
+// pool is cover off, the daemon's own cleared setting. Every URL in the
+// pool, picked or not, must pass the daemon's own cover validation, one to
+// an entry and none listed twice, or the daemon does not start. The picked
+// URLs are not logged, as the daemon logs no destinations. What serve does
+// first and this does not, because its prerequisites are absent: the funding
+// check and deposit, the wallet companion and its connect proxy, the
+// deployment check, and the session and settlement monitors.
 // With no companion, every request stops after its rewrite and its Tor route
 // (or at the route, with the checks' stand-in tor): no key is acquired, so
 // nothing reaches a target model. No fallback exists here, as in the daemon.
@@ -29,15 +33,19 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
 	"github.com/ethereum/zkapi/zkapi-clientd/internal/cover"
@@ -51,6 +59,8 @@ const (
 	guestTorRoute    = "tor://127.0.0.1:9050"
 	guestRewriterURL = "http://127.0.0.1:8012/v1"
 	guestCoverList   = "/etc/cloak/cover.json"
+	// The most cover URLs the daemon takes (cover.Config.Validate).
+	guestCoverMost = 16
 )
 
 func init() {
@@ -123,8 +133,10 @@ func cloakGuestServe(args []string, logger *log.Logger) error {
 // guestCover reads Cloak's cover list, {"urls": [...], "rate": <requests a
 // second>, "concurrency": <requests at once>}, as the daemon's own cover
 // settings. No URLs is the zero setting, cover off, as `config
-// --clear-cover` leaves it. The settings are checked by the daemon's own
-// validation (config.Validate), not here.
+// --clear-cover` leaves it. Otherwise each URL, with the list's rate and
+// concurrency, must pass the daemon's own cover validation on its own, hold
+// no space (so one entry is one URL to the daemon) and be listed once (so
+// none is twice as likely); then coverPick chooses the URLs the daemon gets.
 func guestCover(path string) (cover.Config, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -144,5 +156,43 @@ func guestCover(path string) (cover.Config, error) {
 	if len(list.URLs) == 0 {
 		return cover.Config{}, nil
 	}
-	return cover.Config{Rate: list.Rate, Concurrency: list.Concurrency, URLs: strings.Join(list.URLs, " ")}, nil
+	listed := make(map[string]bool, len(list.URLs))
+	for _, address := range list.URLs {
+		one := cover.Config{Rate: list.Rate, Concurrency: list.Concurrency, URLs: address}
+		if err := one.Validate(guestTorRoute); err != nil {
+			return cover.Config{}, fmt.Errorf("cover list %s: %w", path, err)
+		}
+		if strings.ContainsFunc(address, unicode.IsSpace) {
+			return cover.Config{}, fmt.Errorf("cover list %s: a URL holds a space", path)
+		}
+		if listed[address] {
+			return cover.Config{}, fmt.Errorf("cover list %s: a URL is listed twice", path)
+		}
+		listed[address] = true
+	}
+	urls, err := coverPick(list.URLs)
+	if err != nil {
+		return cover.Config{}, err
+	}
+	return cover.Config{Rate: list.Rate, Concurrency: list.Concurrency, URLs: strings.Join(urls, " ")}, nil
+}
+
+// coverPick returns the whole pool when it holds no more than the daemon
+// takes. Otherwise it returns guestCoverMost of its URLs, distinct and each
+// as likely as any other, by a partial Fisher-Yates shuffle of a copy drawn
+// from crypto/rand, the source of the daemon's own cover randomness.
+func coverPick(pool []string) ([]string, error) {
+	if len(pool) <= guestCoverMost {
+		return pool, nil
+	}
+	picked := slices.Clone(pool)
+	for i := range guestCoverMost {
+		j, err := rand.Int(rand.Reader, big.NewInt(int64(len(picked)-i)))
+		if err != nil {
+			return nil, err
+		}
+		k := i + int(j.Int64())
+		picked[i], picked[k] = picked[k], picked[i]
+	}
+	return picked[:guestCoverMost], nil
 }

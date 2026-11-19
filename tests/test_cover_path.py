@@ -42,6 +42,9 @@ CONVERSATION = "openrouter.ai:443"
 COVER = {"urls": ["https://cover-a.example/a.txt", "https://cover-b.example:443/b.json"],
          "rate": 5, "concurrency": 2}
 COVER_DESTINATIONS = {"cover-a.example:443", "cover-b.example:443"}
+# A pool of more than the daemon's 16, each on a host of its own.
+POOL = COVER | {"urls": [f"https://pool-{n}.example/page.txt" for n in range(24)]}
+POOL_DESTINATIONS = {f"pool-{n}.example:443" for n in range(24)}
 CASES = [{"name": "task", "agent": {"prompt": "case:ok find the top 5 vegan restaurants in Tallinn", "continue": False}},
          {"name": "wait", "sandbox": ["/bin/sh", "-c", "sleep 65"]}]
 
@@ -144,6 +147,15 @@ def test_cover_goes_only_to_the_list_on_identities_of_its_own(tmp_path):
     assert counts["failed"] <= counts["attempted"]
 
 
+def test_a_pool_gives_the_daemon_at_most_sixteen_of_its_addresses(tmp_path):
+    # The daemon itself refuses more than 16, so its start shows the pick.
+    out, results = boot(tmp_path, POOL)
+    ran(out, results)
+    asked = {r["destination"] for r in routes(tmp_path) if r["destination"] is not None}
+    assert asked <= POOL_DESTINATIONS | {CONVERSATION}
+    assert 0 < len(asked - {CONVERSATION}) <= 16
+
+
 def test_an_empty_list_sends_no_cover(tmp_path):
     out, results = boot(tmp_path, COVER | {"urls": []})
     ran(out, results)
@@ -154,6 +166,10 @@ def test_an_empty_list_sends_no_cover(tmp_path):
     COVER | {"urls": ["http://cover-a.example/a.txt"]},  # refused by the daemon's own validation
     COVER | {"rate": 6},  # over the daemon's own limit
     {"url": COVER["urls"], "rate": 5, "concurrency": 2},  # not the list's shape
+    # The daemon's own validation refuses the 21st of 24, which a pick might skip.
+    POOL | {"urls": POOL["urls"][:20] + ["http://pool-20.example/page.txt"] + POOL["urls"][21:]},
+    POOL | {"urls": POOL["urls"] + POOL["urls"][3:4]},  # one address listed twice
+    POOL | {"urls": POOL["urls"][:23] + ["https://pool-23.example/a.txt https://pool-24.example/b.txt"]},  # two in one entry
 ])
 def test_a_list_the_daemon_cannot_take_stops_the_guest_before_any_task(tmp_path, cover):
     out, results = boot(tmp_path, cover)
