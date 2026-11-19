@@ -101,6 +101,26 @@ a new wallet sheet); the real service with no money; the first deposit
 (Sean's own decision); the cutover, which deletes the sender, its host
 half, the Tempo wallet parts and Development mode.
 
+Sean's answers, 19 November:
+
+- Send Original stays: a button "Send Original Text" in the message
+  review area, and a checkbox "Never reword text. Reduces your privacy."
+  With the box ticked Cloak departs from the post's "all prompts are
+  locally rewritten", and says so. Read as Chat's own: what other apps
+  and agents send through the door is always reworded.
+- A deposit is the size the owner chooses, with a warning above $50 and
+  a notice that mainnet fees for a deposit and a withdrawal come to
+  about $3.50.
+- Everyone may fund, but not while a deposit can be taken: "These
+  contracts should never expire and take people's deposits, ever." The
+  live vault's 30-day `claimExpired` and its pause are Open Anonymity's,
+  in their contract. He also wants an address or ENS name, optionally
+  given with the deposit, that may withdraw it. Neither can be had by
+  changing Cloak; the way to them (ask upstream, or a vault and operator
+  of Regents' own) is his open decision.
+- The trial address's remainder stays where it is.
+- Open: whether Chat's message goes ahead of a running task's requests.
+
 ## Gates for stage 2
 
 Each is a check that runs, not a statement.
