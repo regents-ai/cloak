@@ -9,14 +9,14 @@ at the route and nothing is fetched.
     host/build.sh
     uv run --with pytest==8.4.2 pytest tests/test_cover_path.py
 
-Each check boots the guest once with a cover list of its own in place of the
-built image's /etc/cloak/cover.json (reference/cover.json): the built root,
-then one more archive holding only that file, which the guest kernel unpacks
-over it, as it unpacks the host's per-boot files
-(host/Sources/CloakHost/BootFiles.swift). A guest whose daemon starts runs
-one Pi task, whose model request stops at its Tor route, then waits 65
-seconds in the sandbox, so the wait holds one of the daemon's once-a-minute
-cover totals.
+The first check boots the image as built, with the list it ships
+(reference/cover.json, the image's /etc/cloak/cover.json). Each other check
+boots the guest once with a cover list of its own laid over the image's
+(cover_list.py). A guest whose daemon starts runs one Pi task, whose model
+request stops at its Tor route, then waits in the sandbox: 65 seconds with a
+list of the check's own, so the wait holds one of the daemon's once-a-minute
+cover totals, and 200 seconds with the shipped list, whose 0.05 a second
+then brings no cover at all about once in 22,000 boots (e^-10).
 """
 
 import json
@@ -24,8 +24,10 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
+from cover_list import BUILT, SHIPPED, initrd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -45,8 +47,11 @@ COVER_DESTINATIONS = {"cover-a.example:443", "cover-b.example:443"}
 # A pool of more than the daemon's 16, each on a host of its own.
 POOL = COVER | {"urls": [f"https://pool-{n}.example/page.txt" for n in range(24)]}
 POOL_DESTINATIONS = {f"pool-{n}.example:443" for n in range(24)}
-CASES = [{"name": "task", "agent": {"prompt": "case:ok find the top 5 vegan restaurants in Tallinn", "continue": False}},
-         {"name": "wait", "sandbox": ["/bin/sh", "-c", "sleep 65"]}]
+# Every URL the daemon takes is on port 443 (cover.Config.Validate).
+SHIPPED_DESTINATIONS = {f"{urlsplit(url).hostname}:443" for url in SHIPPED["urls"]}
+TASK = {"name": "task", "agent": {"prompt": "case:ok find the top 5 vegan restaurants in Tallinn", "continue": False}}
+CASES = [TASK, {"name": "wait", "sandbox": ["/bin/sh", "-c", "sleep 65"]}]
+SHIPPED_CASES = [TASK, {"name": "wait", "sandbox": ["/bin/sh", "-c", "sleep 200"]}]
 
 
 def fake(tmp_path: Path) -> Path:
@@ -64,29 +69,6 @@ def fake_tor(tmp_path: Path) -> Path:
     return launcher
 
 
-def archive(path: str, data: bytes) -> bytes:
-    """One file, root's and readable by all, then the trailer, as an
-    uncompressed newc archive."""
-    out = b""
-    for inode, mode, name, body in [(1, 0o100444, path, data), (0, 0, "TRAILER!!!", b"")]:
-        name = name.encode() + b"\0"
-        fields = [inode, mode, 0, 0, 1, 0, len(body), 0, 0, 0, 0, len(name), 0]
-        out += b"070701" + "".join(f"{field:08X}" for field in fields).encode() + name
-        out += bytes(-len(out) % 4) + body
-        out += bytes(-len(out) % 4)
-    return out
-
-
-def initrd(tmp_path: Path, cover: dict) -> Path:
-    """The built root with this cover list laid over its own. The kernel
-    skips zero bytes between archives, so the root is padded to the next
-    4-byte boundary."""
-    base = (ROOT / "guest/build/initrd.gz").read_bytes()
-    path = tmp_path / "initrd"
-    path.write_bytes(base + bytes(-len(base) % 4) + archive("etc/cloak/cover.json", json.dumps(cover).encode()))
-    return path
-
-
 def routes(tmp_path: Path) -> list[dict]:
     """Every connection the stand-in tor saw in the boot, in the order they
     ended."""
@@ -94,12 +76,12 @@ def routes(tmp_path: Path) -> list[dict]:
     return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
-def boot(tmp_path: Path, cover: dict) -> tuple[str, dict[str, dict]]:
-    """Boots the guest once with this cover list; its console and each case's result."""
+def boot(tmp_path: Path, root: Path, cases: list[dict] = CASES) -> tuple[str, dict[str, dict]]:
+    """Boots the guest once from this root; its console and each case's result."""
     cases_file = tmp_path / "cases.jsonl"
-    cases_file.write_text("".join(json.dumps(c) + "\n" for c in CASES))
+    cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
     host = subprocess.Popen(
-        [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", initrd(tmp_path, cover),
+        [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", root,
          "--cases", cases_file, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
          "--tor", fake_tor(tmp_path), "--tor-data", tmp_path / "tor-data"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -113,30 +95,47 @@ def boot(tmp_path: Path, cover: dict) -> tuple[str, dict[str, dict]]:
     return out, {r["name"]: r for r in results}
 
 
-def ran(out: str, results: dict[str, dict]) -> None:
-    """The boot ran both cases, and the task reached its Tor route."""
+def ran(out: str, results: dict[str, dict], cases: list[dict] = CASES) -> None:
+    """The boot ran every case, and the task reached its Tor route."""
     assert "cloak-guest: agent check exited 0" in out, out
-    assert list(results) == [c["name"] for c in CASES]
+    assert list(results) == [c["name"] for c in cases]
     assert results["task"]["output"].strip() == TOR_STOP
 
 
-def test_cover_goes_only_to_the_list_on_identities_of_its_own(tmp_path):
-    out, results = boot(tmp_path, COVER)
-    ran(out, results)
+def cover_routes(tmp_path: Path, destinations: set[str], concurrency: int) -> list[dict]:
+    """The boot's cover connections, once checked: there are some, each asks
+    for one of these destinations, they use no more identities than the
+    concurrency and none of the conversation's, and no connection uses any
+    other identity."""
     seen = routes(tmp_path)
     # A connection cut off by the guest's power-off may end before it asks.
     asked = [r for r in seen if r["destination"] is not None]
-    assert {r["destination"] for r in asked} <= COVER_DESTINATIONS | {CONVERSATION}
+    assert {r["destination"] for r in asked} <= destinations | {CONVERSATION}
     conversation = {r["identity"] for r in asked if r["destination"] == CONVERSATION}
-    cover = [r for r in asked if r["destination"] in COVER_DESTINATIONS]
+    cover = [r for r in asked if r["destination"] in destinations]
     assert len(conversation) == 1 and "none" not in conversation
     assert cover
     identities = {r["identity"] for r in cover}
     assert "none" not in identities
-    assert len(identities) <= COVER["concurrency"]
+    assert len(identities) <= concurrency
     assert not identities & conversation
     # No connection at all, asked or not, used any other identity.
     assert {r["identity"] for r in seen} - {"none"} <= identities | conversation
+    return cover
+
+
+def test_the_image_as_built_sends_cover_to_its_own_list(tmp_path):
+    out, results = boot(tmp_path, BUILT, SHIPPED_CASES)
+    ran(out, results, SHIPPED_CASES)
+    cover = cover_routes(tmp_path, SHIPPED_DESTINATIONS, SHIPPED["concurrency"])
+    # The daemon was handed at most 16 of the pool's URLs.
+    assert len({r["destination"] for r in cover}) <= 16
+
+
+def test_cover_goes_only_to_the_list_on_identities_of_its_own(tmp_path):
+    out, results = boot(tmp_path, initrd(tmp_path, COVER))
+    ran(out, results)
+    cover_routes(tmp_path, COVER_DESTINATIONS, COVER["concurrency"])
     # The daemon's totals line, in its log during the wait: every attempt
     # failed at the stand-in, and those not yet failed are still in flight.
     totals = [line.split("Cover totals: ")[1] for line in results["wait"]["daemon"] if "Cover totals: " in line]
@@ -149,7 +148,7 @@ def test_cover_goes_only_to_the_list_on_identities_of_its_own(tmp_path):
 
 def test_a_pool_gives_the_daemon_at_most_sixteen_of_its_addresses(tmp_path):
     # The daemon itself refuses more than 16, so its start shows the pick.
-    out, results = boot(tmp_path, POOL)
+    out, results = boot(tmp_path, initrd(tmp_path, POOL))
     ran(out, results)
     asked = {r["destination"] for r in routes(tmp_path) if r["destination"] is not None}
     assert asked <= POOL_DESTINATIONS | {CONVERSATION}
@@ -157,7 +156,7 @@ def test_a_pool_gives_the_daemon_at_most_sixteen_of_its_addresses(tmp_path):
 
 
 def test_an_empty_list_sends_no_cover(tmp_path):
-    out, results = boot(tmp_path, COVER | {"urls": []})
+    out, results = boot(tmp_path, initrd(tmp_path, COVER | {"urls": []}))
     ran(out, results)
     assert [r["destination"] for r in routes(tmp_path)] == [CONVERSATION]
 
@@ -172,7 +171,7 @@ def test_an_empty_list_sends_no_cover(tmp_path):
     POOL | {"urls": POOL["urls"][:23] + ["https://pool-23.example/a.txt https://pool-24.example/b.txt"]},  # two in one entry
 ])
 def test_a_list_the_daemon_cannot_take_stops_the_guest_before_any_task(tmp_path, cover):
-    out, results = boot(tmp_path, cover)
+    out, results = boot(tmp_path, initrd(tmp_path, cover))
     assert "cloak-guest: daemon did not start" in out, out
     assert results == {}
     assert routes(tmp_path) == []

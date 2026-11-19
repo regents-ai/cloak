@@ -16,7 +16,7 @@ or inconclusive check is not a pass. Progress lives here.
 | 2. Build the local path | Minimal guest adapter and native worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
 | 3. Check feasibility early | Runs of each of the two candidates (decision 7's small pair, as GGUF files on llama.cpp under the reply grammar: decisions 8 and 9) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the small lead has two feasibility runs and two EVAL01 screens, the small challenger none |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner of the two candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split is to be settled before any holdout opens (decisions 7 to 9) |
-| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead, with Chat sending in a Development mode only (decision 10; "Stage 5 so far"); no signed full bundle, setup, recovery, updates, sessions, the daemon's own payment or cover |
+| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead, with Chat sending in a Development mode only (decision 10; "Stage 5 so far"), and the daemon's own cover traffic in its guest (on since 19 November); no signed full bundle, setup, recovery, updates, sessions or the daemon's own payment |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
 Stage 2 builds and tests the path with a small model labelled as a
@@ -195,8 +195,8 @@ Choices made overnight, without asking (Sean's brief of 12 November):
 
 Missing for the full stack, and the next step for each:
 
-- **Cover traffic**: built (below), and off until Sean chooses its
-  destinations.
+- **Cover traffic**: built (below), and on since 19 November with the
+  pool of pages Sean approved.
 - **Payment vault, funding, wallets**: not deployed at the pinned commit
   (A11). Not built, by instruction.
 - **The daemon's real `serve`** in place of the harness: needs the two above.
@@ -499,16 +499,16 @@ them to the daemon's own validation and start.
   URLs are not logged, as the worker logs no destinations. The URLs
   name real, popular pages, so what is fetched from them changes as the
   pages themselves change (Sean, 18 November).
-- **Off while the list is empty**: no URLs is the daemon's own cleared
-  setting, and no cover worker starts. That is the one switch. The list
-  ships empty: which pages are in the pool is Sean's to approve.
+- **On, with a pool of 58 pages** (Sean, 19 November, below). A list
+  with no URLs would be the daemon's own cleared setting, and no cover
+  worker would start. That is the one switch.
 - **Rate 0.05 a second (about three a minute), 2 at once**: inside the
   reference's ranges (0.01 to 5 a second, 1 to 8 at once) and below its
   defaults (5 a second, 4 at once), as a gentle start for whoever owns the
   files. At the daemon's 64 KiB cap per reply, that is at most about
   11 MiB of replies an hour, before Tor's own overhead. A changed cover
-  default counts as a security-relevant change (UPD03), so keeping these
-  or the reference's defaults is Sean's to settle with the list.
+  default counts as a security-relevant change (UPD03): Sean kept these
+  on 18 November and turned cover on at them on 19 November.
 - **Anything else wrong stops the daemon**: a list that cannot be read,
   has another shape, or fails the daemon's own checks (HTTPS on port 443
   only, no credentials, query or fragment, public names, rate and
@@ -564,7 +564,7 @@ rate, two six-minute guest runs gave the daemon's own totals of 7 and 17
 attempts (18 is the mean), nothing skipped, 0.4 and 1.0 MB read. Most
 attempts are counted as failed, and that is the worker's rule, not a
 fault: a page longer than 64 KiB is read to the cap and counted failed.
-The pool is not in the repository until Sean approves it.
+Sean approved those 58 on 19 November (below).
 
 Four checks for the pool were added on 19 November, in the same file; all
 nine passed that day on a guest built with the pool:
@@ -600,11 +600,45 @@ of 24, a query on the 24th, a URL listed twice, two URLs in one entry, an
 entry with a leading space and an empty entry each stopped the daemon
 before it listened, with one plain line, and nothing arrived.
 
+**On, 19 November.** Sean's decision ("1. a"): cover on, with the pool
+of 58 pages that answered a Tor visitor in the measurement above, at the
+rate already in the list, 0.05 a second with 2 at once. They are the
+list's URLs, each exactly as fetched then: all HTTPS, none with a query
+or a space, none listed twice, on 32 sites. From the next guest build,
+every start of the guest, in the app and in the stage kits (which run the
+real tor), sends cover through Tor to sixteen of them. Known limits:
+
+- The sites have not agreed to automated visits. The spec asks for
+  destinations that permit the traffic (NET04); that is not shown.
+- The worker counts a page longer than 64 KiB as failed: it reads to the
+  cap and stops. 48 of the 58 reached the cap in the probe, so most
+  attempts on this pool count as failed in the totals although the
+  request went out.
+- The same sixteen serve until the next start.
+
+With cover on in the image, the checks that list every connection the
+stand-in tor sees (`tests/test_agent_path.py`, `tests/test_tor_path.py`)
+boot with an empty list laid over the image's, the same one-file archive
+as the cover checks (`tests/cover_list.py`), so they assert what they
+did; the Tor check on the public Tor network thereby still sends only
+what it lists. The checks that list no connections
+(`tests/test_guest_path.py`, `tests/test_task_path.py`,
+`tests/test_worker_stop.py`) boot the image as built, with cover on. One
+more check in `tests/test_cover_path.py` boots the image as built, with
+no list laid over it: cover connections arrive, each for one of the
+list's sites on port 443, at most sixteen sites, on no more than two
+identities and none the conversation's. Its Pi task is followed by a
+200-second wait, so at 0.05 a second about one boot in 22,000 sees no
+cover at all (e^-10). Written 19 November; to be run once the guest is
+rebuilt.
+
 What it is, in the reference's own words: background noise, not proven
 protection against traffic analysis. It does not pad the model's
 requests, hide when Cloak starts or stops, or make traffic constant, and
-a global observer can still correlate traffic. Cloak claims no more. No
-real destination has been polled, so A08 stays open.
+a global observer can still correlate traffic. Cloak claims no more.
+Real pages have been fetched only in the measurement above; no schedule
+or lifecycle has been checked against the policy on the real route, so
+A08 stays open.
 
 ## Stage 3 so far
 
@@ -1395,7 +1429,7 @@ candidates, so the split has to be re-declared before any holdout opens.
   check guest stays up after its check only to run Development mode's
   sender, and its end is a failure), the daemon's own payment
   and wallets (Development mode's one wallet, decision 10, is not them),
-  cover traffic, the OS-approval and funding states, setup and model download
+  the OS-approval and funding states, setup and model download
   from the app, updates, recovery, and a Developer ID signature and
   notarization.
 - Live run on the development Mac, 13 November, stand-in only: from Paused,
@@ -2533,6 +2567,12 @@ candidates, so the split has to be re-declared before any holdout opens.
       sharing over a network (the door stays on this Mac); updates and
       a Homebrew install (they need a signing key and a public release,
       which are Sean's).
+    - Already here, and not widened yet: the door (Agents, 14 November)
+      gives other apps on the Mac an address in OpenAI's shape, each with
+      a pass of its own. Sean's answer of 19 November: first confirm
+      Cloak works as expected, then connect more local AI apps to it. The
+      chief's question to him that day wrongly said only Cloak's own
+      windows could use it.
     - Seen in the running app, build `7cdc1d2`, 18 November: the menu
       (header, dot, footer), the Details window and the Settings
       window's General pane. Measured there just after the startup
@@ -2571,8 +2611,8 @@ candidates, so the split has to be re-declared before any holdout opens.
 | A05 | Whole-agent containment | Open | |
 | A06 | Complete routing | Open: the reference wrapper fails it (static program bypass); in Cloak's guest, which has no network device and one relay to tor, the same static probe and a program without torsocks reach nothing (development evidence only, stand-in) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction), `tests/test_tor_path.py` |
 | A07 | Conversation isolation | Open | |
-| A08 | Cover behaviour | Open: the guest's daemon runs the reference's own cover worker from one list, off while the list names no destinations, as it ships; checks against the stand-in tor written, to be run on a guest built with them; no destination chosen or polled, so no schedule or volume observed on the real route | `reference/cover.json`, `tests/test_cover_path.py`, [cover in the guest](#cover-traffic-in-the-guest-built-18-november-2026) |
-| A09 | Failure and pause | Open: in the app, a tor, worker or guest failure stops all work and ends in Needs attention with its reason, with nothing restarted and no other route or model; Pause and Quit stop everything, and a relaunch starts nothing (checks with stand-in processes, and a live run with one worker kill; development build, stand-in only); sleep pauses in the state machine's checks, but no live sleep and wake has been tried; no sessions, cover or payment yet to stop | [state machines](state-machines.md), `app/Tests/CloakTests/` |
+| A08 | Cover behaviour | Open: the guest's daemon runs the reference's own cover worker from one list, on since 19 November with a pool of 58 pages Sean approved, sixteen picked at each start; nine checks against the stand-in tor passed on 19 November, and the check of the image as built is written, to be run on a rebuilt guest; on the real route only two six-minute runs' totals were measured, so the schedule and lifecycle are not checked against the policy, and the sites have not agreed to automated visits (NET04) | `reference/cover.json`, `tests/test_cover_path.py`, [cover in the guest](#cover-traffic-in-the-guest-built-18-november-2026) |
+| A09 | Failure and pause | Open: in the app, a tor, worker or guest failure stops all work and ends in Needs attention with its reason, with nothing restarted and no other route or model; Pause and Quit stop everything, and a relaunch starts nothing (checks with stand-in processes, and a live run with one worker kill; development build, stand-in only); sleep pauses in the state machine's checks, but no live sleep and wake has been tried; no sessions or payment yet to stop; cover runs in the guest's daemon and ends with the guest, which no check has watched | [state machines](state-machines.md), `app/Tests/CloakTests/` |
 | A10 | Local authority | Open | |
 | A11 | Actual paid workflow | Open: no qualified deployment exists yet | |
 | A12 | Financial interruption | Open | |

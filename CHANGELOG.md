@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Cover traffic is on (Sean, 19 November). `reference/cover.json` now
+  holds the pool of 58 well-known pages, on 32 sites, that each answered
+  a Tor visitor on 18 November, at the same rate: 0.05 a second, 2 at
+  once, about three fetches a minute. Once the guest is rebuilt, every
+  start of it, in the app and in the stage kits, sends cover through Tor
+  to sixteen of them picked at random. Known limits: the sites have not
+  agreed to automated visits; the worker counts a page over 64 KiB as
+  failed, and 48 of the 58 reached that cap; the same sixteen serve until the next
+  start. The agent and Tor checks, which list every connection the
+  stand-in tor sees, now boot with an empty list laid over the image's
+  (`tests/cover_list.py`, shared with the cover checks), and one new cover
+  check boots the image as built and waits 200 seconds for its cover. The
+  app's details now say cover runs. As the reference says, this is
+  background noise, not proven protection against traffic analysis.
+
 - Cover traffic: the list's addresses are now a pool of pages that may
   hold more than the sixteen the reference's worker takes (Sean,
   18 November: a changing mix of real, current, popular pages). At each

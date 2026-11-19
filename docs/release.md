@@ -28,7 +28,7 @@ left by a route it does not allow.
 | A circuit per conversation | Built: each conversation has its own Tor identity | A check that two conversations never share one |
 | Local rewording | Works; a failure sends nothing | The comparison with the reference on meaning and on what leaks |
 | Payment that does not link chats | **Missing.** One wallet pays for every chat | All of it |
-| Cover traffic | Built, and off: the guest runs the daemon's own cover from one list, which names no destinations yet | Destinations chosen, then checked and measured on the real route |
+| Cover traffic | On: the guest runs the daemon's own cover, about three fetches a minute from a pool of 58 well-known pages Sean approved | Checked and measured on the real route; the sites have not agreed to automated visits |
 | Easy install | Built from source by the chief | All of it |
 | Review by someone else | None | All of it |
 
@@ -100,22 +100,27 @@ refuses us, the item stops here and comes back to Sean; it is not
 replaced by another way to pay.
 
 **3. Cover traffic, the reference's own** (was item 4). Built 18
-November, and off. The guest's daemon runs the pinned daemon's own cover
-(`zkapi-clientd/docs/COVER_TRAFFIC.md`): random background HTTPS GETs
-through Tor, each worker on its own Tor identity, no payment used. Its
-destinations, rate and concurrency live in one list,
-`reference/cover.json`, which ships with no destinations, and an empty
-list is cover off. The rate is 0.05 a second with 2 at once, inside the
-reference's ranges and below its defaults of 5 a second and 4 at once;
-Sean kept it on 18 November. The destinations are a pool of real,
-current, popular pages (Sean, 18 November), which may hold more than the
-sixteen the reference's worker takes: at each start the guest picks
-sixteen of them at random and gives those to the worker unchanged, until
-the next start, and the pages themselves change over time. Checks
-against the stand-in tor (`tests/test_cover_path.py`): the first five
-passed on a guest built with them; the four for the pool are written, to
-be run on a guest built with the pool. Still to do: the pages in the
-pool, Sean's to approve; then a run on the real route, measured. The goal,
+November, and on since 19 November. The guest's daemon runs the pinned
+daemon's own cover (`zkapi-clientd/docs/COVER_TRAFFIC.md`): random
+background HTTPS GETs through Tor, each worker on its own Tor identity,
+no payment used. Its destinations, rate and concurrency live in one list,
+`reference/cover.json`; an empty list would be cover off. The rate is
+0.05 a second with 2 at once, inside the reference's ranges and below its
+defaults of 5 a second and 4 at once; Sean kept it on 18 November. The
+destinations are a pool of real, current, popular pages (Sean,
+18 November), which may hold more than the sixteen the reference's
+worker takes: at each start the guest picks sixteen of them at random and
+gives those to the worker unchanged, until the next start, and the pages
+themselves change over time. On 19 November Sean approved the pool: the
+58 pages, on 32 sites, that answered a Tor visitor in one fetch each the
+day before. Known limits: the sites have not agreed to automated visits;
+the worker counts a page over 64 KiB as failed, and 48 of the 58 reached
+that cap in the probe;
+the same sixteen serve until the next start. Checks against the stand-in
+tor (`tests/test_cover_path.py`): nine passed on 19 November; one more,
+which boots the image as built and sees its cover arrive, is written, to
+be run on a rebuilt guest. Still to do: a run on the real route, measured
+against the policy. The goal,
 corrected: **Cloak reproduces the reference's cover
 traffic and claims nothing the reference does not.** Its own document says
 it is background noise, not proven protection against traffic analysis,

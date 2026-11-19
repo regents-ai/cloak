@@ -24,6 +24,11 @@ The host starts the guest only once tor has bootstrapped, or after it has
 exited or been stopped at the host's 90-second limit; a tor whose SOCKS port
 has not opened by then fails the host, and no guest starts. Each other check
 boots the guest once; the guest prints one result per case.
+
+Every guest here boots with cover off, an empty cover list laid over the
+image's (cover_list.py): the checks with the stand-in list every connection
+it sees, and the first check sends off the Mac only what is listed above.
+test_cover_path.py checks cover on its own.
 """
 
 import json
@@ -39,6 +44,8 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+
+from cover_list import NO_COVER, initrd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -104,7 +111,7 @@ def host(tmp_path: Path, cases: list[dict], tor_launcher: Path) -> dict:
     guest boot, with tor's lasting folder in tmp_path."""
     cases_file = tmp_path / "cases.jsonl"
     cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
-    return {"args": [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
+    return {"args": [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", initrd(tmp_path, NO_COVER),
                      "--cases", cases_file, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
                      "--tor", tor_launcher, "--tor-data", tmp_path / "tor-data"],
             "env": os.environ | {"FAKE_WORKER_LOG": str(tmp_path)}}

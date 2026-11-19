@@ -150,9 +150,13 @@ uv run --with pytest==8.4.2 pytest tests/test_agent_path.py
 
 Check the daemon's own cover traffic in the guest. Its destinations, rate
 and concurrency live in one list, `reference/cover.json`, which the guest
-image carries; it names no destinations yet, so cover is off. Each check
-boots the guest with a list of its own against the stand-in tor, and waits
-past the daemon's first once-a-minute totals:
+image carries: a pool of 58 well-known pages, sixteen picked at random at
+each start, at about three fetches a minute. Every check is against the
+stand-in tor, so nothing is fetched. The first boots the image as built and
+waits 200 seconds for its cover; each other check boots the guest with a
+list of its own and waits past the daemon's first once-a-minute totals. The
+agent and Tor checks above and below boot with an empty list laid over the
+image's, so cover is off in them:
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_cover_path.py
@@ -270,8 +274,10 @@ uv run --with pytest==8.4.2 --with scikit-learn==1.9.1 --with numpy==2.5.4 \
 
 Stage 5 has started with a development build of the app's core: one
 supervisor, run by a menu-bar app and by the `cloak` command. It runs the
-small lead, Qwen 3.5 9B (`small-lead-gguf-grammar`), and has no sessions or
-cover traffic; the daemon's own payment is not built. It needs a Mac with
+small lead, Qwen 3.5 9B (`small-lead-gguf-grammar`), and has no sessions;
+the daemon's own payment is not built. While the guest is up, its daemon
+sends the reference's own cover traffic through Tor, background noise of
+about three page fetches a minute from `reference/cover.json`. It needs a Mac with
 Apple silicon whose graphics limit (Metal's recommended working set) holds
 the model's 7 GiB with 1 GiB to spare, and whose memory holds all of
 Cloak's 10 GiB with 4 GiB kept for macOS: a 16 GB Mac passes, an 8 GB one

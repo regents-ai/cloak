@@ -11,7 +11,10 @@ model request stops at Tor route preparation after its rewrite.
     host/build.sh
     uv run --with pytest==8.4.2 pytest tests/test_agent_path.py
 
-Each check boots the guest once; the guest prints one result per case.
+Each check boots the guest once; the guest prints one result per case. Four
+checks list every connection the stand-in tor sees, so every check boots
+with cover off: an empty cover list laid over the image's (cover_list.py).
+test_cover_path.py checks cover on its own.
 """
 
 import json
@@ -19,6 +22,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+from cover_list import NO_COVER, initrd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -67,7 +72,7 @@ def boot(tmp_path: Path, cases: list[dict], worker: Path) -> dict[str, dict]:
     cases_file = tmp_path / "cases.jsonl"
     cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
     host = subprocess.Popen(
-        [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
+        [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", initrd(tmp_path, NO_COVER),
          "--cases", cases_file, "--worker", worker, "--name", NAME, "--dir", DEST / NAME,
          "--tor", fake_tor(tmp_path), "--tor-data", tmp_path / "tor-data"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

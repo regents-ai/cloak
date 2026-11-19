@@ -387,7 +387,7 @@ MANUAL_STEPS = [
 
 NOT_MEASURED = [
     "The full stack: the guest runs the daemon's local API and has Pi in the reference wrapper, and the host "
-    "runs tor for it on the public Tor network, but there is no cover traffic or payment vault yet, and this "
+    "runs tor for it on the public Tor network, and the daemon's own cover traffic runs, but there is no payment vault yet, and this "
     "kit's calls come from the daemon's rewrite code, not from Pi; "
     "so 'with the full stack loaded' (stage 3's exit condition) is not met by any record from this kit.",
     "The daemon's full serve path: its payment vault is not deployed at the pinned commit; the kit drives the "
