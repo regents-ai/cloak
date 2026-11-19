@@ -512,6 +512,17 @@ them to the daemon's own validation and start.
   API ends, which in practice never happens, as the guest powers off
   without stopping the daemon. The app does not show these lines.
 
+Sean, 18 November: the gentle rate stands (0.05 a second, two at once).
+On destinations he asked for cover that is real and changing (popular
+pages, subreddits, searches) and not a few files of our own. What bounds
+that, found the same day: the pinned worker takes at most 16 addresses,
+refuses any with a query, follows no redirect and reads at most 64 KiB;
+and one fetch each through real Tor showed Reddit, Stack Overflow and the
+New York Times refuse Tor visitors (403), while Wikipedia, Hacker News,
+GitHub, the BBC, the Guardian, arXiv, DuckDuckGo, Lobsters, NPR and Open
+Library answer. An HTTPS watcher sees the site's name, the size and the
+timing, never the path or a search. The choice of approach is with Sean.
+
 Checks in `tests/test_cover_path.py`, all five passed on 18 November
 against a guest built with this change, as did the thirty existing checks
 in `tests/test_agent_path.py` and `tests/test_guest_path.py`. Each boots the guest against the stand-in
