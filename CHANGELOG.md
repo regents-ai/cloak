@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- NEAR mode, begun: the proof checker (`guest/near`, decision 14 in
+  `docs/plan.md`). Through a SOCKS5 proxy it asks NEAR AI Cloud, with no
+  account and no key, for one model's hardware report on one TLS
+  connection, and Intel's collateral straight from Intel; then a pure
+  check, for NEAR's front server and for every server of the model:
+  Intel's TDX quote (`dcap-qvl` 0.7.1), `UpToDate` only, not debug, the
+  quote tied to the server's key, its TLS key and our fresh nonce, the
+  event log and compose file tied to the quote, the measurements equal
+  to a set in `reference/near-pins.json`, one encryption key across all
+  the model's servers and the same as the key each quote binds. Run live
+  through Tor on 19 November for `Qwen/Qwen3.8-27B` (one server) and
+  `z-ai/glm-5.3-flash` (three): every check passed. One gate check,
+  offline against a saved real report: it passes, and is refused for
+  another nonce, TLS key, pin, key, model name, an empty list and stale
+  collateral. Not checked, and said so in its README: the GPU, the
+  model's own software, where the images came from, replies. Not in the
+  guest image or the app yet; sends no chat request.
+
 - Agents: a request in Activity opens to show its texts (Sean, 19
   November, "1. b"). Each user message as the app wrote it and as Cloak
   sent it, with the changed words marked as Chat marks them; one that

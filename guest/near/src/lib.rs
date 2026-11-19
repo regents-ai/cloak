@@ -1,0 +1,113 @@
+//! The guest's check of NEAR AI Cloud's hardware proof, made before anything
+//! is sent to it (slice 1 of the NEAR mode: the proof checker alone).
+//!
+//! [`fetch_report`] opens one TLS connection to NEAR's gateway through a
+//! SOCKS5 proxy (the guest's Tor port), records the SHA-256 of the gateway
+//! certificate's public key, and on that connection asks for the attestation
+//! report of one model with a fresh nonce and no account key.
+//! [`fetch_collateral`] fetches, through the same proxy, the Intel collateral
+//! the report's quotes need, straight from Intel's servers. [`verify`] is
+//! pure: it checks the report against the nonce, the key seen on the
+//! connection, the model's name, the collateral, the pinned measurements and
+//! a time given by the caller, and answers with a [`CpuOnlyProof`] or one
+//! [`Refusal`].
+//!
+//! What a [`CpuOnlyProof`] covers: genuine, up-to-date Intel TDX hardware
+//! reports that the gateway and every listed instance of the model run the
+//! pinned images, that the gateway's report is tied to the TLS key this
+//! client saw and to this client's nonce, and that every instance holds the
+//! one encryption key it names. What it does not cover: the NVIDIA GPU, the
+//! model workload the measured launcher fetches, where the images came from,
+//! and anything about the replies.
+
+mod fetch;
+mod verify;
+
+use std::net::SocketAddr;
+
+use serde::{Deserialize, Serialize};
+
+pub use dcap_qvl::{QuoteCollateralV3, TcbStatus};
+pub use fetch::{fetch_collateral, fetch_report, FetchError, Fetched};
+pub use verify::{verify, Refusal, Who};
+
+/// The SOCKS5 proxy every connection goes through. Names are resolved by the
+/// proxy; the user name and password ask Tor for a circuit of their own.
+#[derive(Clone, Copy, Debug)]
+pub struct Proxy<'a> {
+    pub addr: SocketAddr,
+    pub user: &'a str,
+    pub password: &'a str,
+}
+
+/// Intel's collateral for the quotes of one platform family (one FMSPC and
+/// one issuing CA), as Intel's servers gave it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Collateral {
+    /// The platform family, in upper-case hex as Intel's URLs take it.
+    pub fmspc: String,
+    /// The CA that issued the platform's key: `platform` or `processor`.
+    pub ca: String,
+    pub intel: QuoteCollateralV3,
+}
+
+/// The accepted measurements: reference/near-pins.json. A server passes when
+/// its measurements equal one accepted set for its role, every value alike.
+/// NEAR runs one model's instances on more than one image, and one image for
+/// more than one model, so the model sets are not tied to a model.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Pins {
+    pub gateway: Vec<Measurements>,
+    pub model: Vec<Measurements>,
+}
+
+/// One server's measurements, read from its verified quote and from its
+/// replayed RTMR3 event log. Every value is hex in the pins file.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Measurements {
+    /// The TD's firmware.
+    #[serde(with = "hex")]
+    pub mrtd: Vec<u8>,
+    /// Firmware configuration.
+    #[serde(with = "hex")]
+    pub rtmr0: Vec<u8>,
+    /// The kernel.
+    #[serde(with = "hex")]
+    pub rtmr1: Vec<u8>,
+    /// The kernel command line and initial file system.
+    #[serde(with = "hex")]
+    pub rtmr2: Vec<u8>,
+    /// 01, the SHA-256 of the app's compose file, then 15 zero bytes.
+    #[serde(with = "hex")]
+    pub mrconfigid: Vec<u8>,
+    /// RTMR3 event `app-id`.
+    #[serde(with = "hex")]
+    pub app_id: Vec<u8>,
+    /// RTMR3 event `key-provider`: which key service hands out its keys.
+    #[serde(with = "hex")]
+    pub key_provider: Vec<u8>,
+    /// RTMR3 event `mr-kms`.
+    #[serde(with = "hex")]
+    pub mr_kms: Vec<u8>,
+    /// RTMR3 event `os-image-hash`.
+    #[serde(with = "hex")]
+    pub os_image_hash: Vec<u8>,
+}
+
+/// What a passed check establishes about the CPU side only. The NVIDIA GPU
+/// that holds the prompt while the model runs is not checked.
+#[derive(Clone, Debug)]
+pub struct CpuOnlyProof {
+    /// The gateway's Ed25519 key, bound to its quote with the TLS key seen.
+    pub gateway_key: [u8; 32],
+    /// The model's one Ed25519 encryption key, bound to every instance's
+    /// quote.
+    pub model_key: [u8; 32],
+    /// How many instances of the model the report listed, each checked.
+    pub instances: usize,
+    /// Intel's verdict on the gateway's platform.
+    pub gateway_tcb: TcbStatus,
+    /// Intel's verdict on each instance's platform, in the report's order.
+    pub model_tcb: Vec<TcbStatus>,
+}

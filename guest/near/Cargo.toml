@@ -1,0 +1,23 @@
+[package]
+name = "cloak-near"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The guest's check of NEAR AI Cloud's Intel TDX proof, before anything is sent (CPU only, no GPU)"
+
+# dcap-qvl checks the Intel quotes, pinned exactly to a version after every
+# advisory it has had, with its pure-Rust crypto and without its collateral
+# client. Every other crate is pinned by Cargo.lock, built --locked.
+[dependencies]
+dcap-qvl = { version = "=0.7.1", default-features = false, features = ["std", "rustcrypto", "default-x509"] }
+der = { version = "0.8.1", default-features = false, features = ["alloc"] }
+hex = { version = "0.4", features = ["serde"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+sha2 = "0.11"
+webpki-roots = "1"
+x509-cert = { version = "0.3.0", default-features = false }
+
+[profile.release]
+strip = true

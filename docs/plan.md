@@ -2906,6 +2906,24 @@ candidates, so the split has to be re-declared before any holdout opens.
       NVIDIA payload, event logs, and a signed key configuration for
       oblivious HTTP each. The earlier 400 was a model name NEAR does not
       have. Nothing verified yet.
+    - NEAR's proof checker, 19 November (`guest/near`, with its README).
+      Choices, the chief's: the accepted measurements ship with Cloak
+      (`reference/near-pins.json`, taken from that day's live reports;
+      NEAR publishes no signed list), so a new NEAR image stops the mode
+      until the pins are renewed; a fresh report before every message;
+      Intel's verdict `UpToDate` only, with three platform flags every
+      NEAR server shows accepted (sockets can be added, keys cached by
+      Intel's registration service, SMT on); the model's pins are one
+      list, since one machine served two models and one model ran on
+      three measured setups; a report of up to 4 MiB. Sean's: requests
+      use the owner's own NEAR key. Live through Tor: both models passed
+      every check, a report in 3 to 13 seconds, Intel's collateral in 8
+      to 16, no refusals for rate. Next: the request itself, encrypted to
+      the checked key, with his key; then the GPU check through NVIDIA's
+      service; then the guest image and the app. From NEAR's own words,
+      to be said on screen: the model's software is not in the
+      measurement, a key ties every request to one account, and on 8
+      November a flaw on one server exposed requests in progress.
     - NEAR without an account, through real Tor, 19 November: the model
       list (63 models) and the attestation report both answered 200 to a
       Tor visitor with no key. The report holds the gateway's Intel
