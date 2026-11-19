@@ -179,6 +179,17 @@ send nothing off the Mac, and four of them wait out that 90-second limit:
 uv run --with pytest==8.4.2 pytest tests/test_tor_path.py
 ```
 
+Check what a hostile agent in the sandbox can reach: the guest's loopback
+services, the Tor port by hand, vsock, the guest's files, other ways out,
+a process that tries to outlive its command, and another conversation's
+files. Two boots, both against the stand-in tor: the first with cover off,
+the second serving two conversations to the stand-in door
+(`docs/plan.md`, "Escape checks"):
+
+```bash
+uv run --with pytest==8.4.2 pytest tests/test_escape_path.py
+```
+
 ## Stage 3 commands
 
 With the stage 2 parts built and a candidate's weights on disk (fetched only

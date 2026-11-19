@@ -92,6 +92,74 @@
         }
       },
       "response": "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 521\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\ndata: {\"id\":\"gen-hold\",\"object\":\"chat.completion.chunk\",\"created\":1763140000,\"model\":\"deepseek/deepseek-v4-flash-0731\",\"choices\":[{\"index\":0,\"finish_reason\":\"tool_calls\",\"delta\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_hold\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\": \\\"setsid sh -c 'sleep 600 | busybox nc 127.0.0.1 8742' & sleep 600 | busybox nc 127.0.0.1 8742\\\"}\"},\"index\":0}]}}],\"usage\":{\"prompt_tokens\":1500,\"completion_tokens\":40,\"total_tokens\":1540}}\n\ndata: [DONE]\n\n"
+    },
+    "peek": {
+      "completion": {
+        "id": "gen-peek",
+        "object": "chat.completion",
+        "created": 1763140000,
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "tool_calls",
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_peek",
+                  "type": "function",
+                  "function": {
+                    "name": "bash",
+                    "arguments": "{\"command\": \"for p in /home/agent/conversations /home/agent/conversations/s-b /run/cloak-runner/s-b; do ls \\\"$p\\\" > /dev/null 2>&1; echo \\\"list $p $?\\\"; done; echo \\\"copies: $(ls /run/cloak-runner)\\\"; find /home /workspace /run /tmp -type f -name models.json 2>/dev/null | xargs -r cat; echo\"}"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 1500,
+          "completion_tokens": 60,
+          "total_tokens": 1560
+        }
+      },
+      "response": "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 719\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\ndata: {\"id\":\"gen-peek\",\"object\":\"chat.completion.chunk\",\"created\":1763140000,\"model\":\"deepseek/deepseek-v4-flash-0731\",\"choices\":[{\"index\":0,\"finish_reason\":\"tool_calls\",\"delta\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_peek\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\": \\\"for p in /home/agent/conversations /home/agent/conversations/s-b /run/cloak-runner/s-b; do ls \\\\\\\"$p\\\\\\\" > /dev/null 2>&1; echo \\\\\\\"list $p $?\\\\\\\"; done; echo \\\\\\\"copies: $(ls /run/cloak-runner)\\\\\\\"; find /home /workspace /run /tmp -type f -name models.json 2>/dev/null | xargs -r cat; echo\\\"}\"},\"index\":0}]}}],\"usage\":{\"prompt_tokens\":1500,\"completion_tokens\":60,\"total_tokens\":1560}}\n\ndata: [DONE]\n\n"
+    },
+    "plant": {
+      "completion": {
+        "id": "gen-plant",
+        "object": "chat.completion",
+        "created": 1763140000,
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "tool_calls",
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_plant",
+                  "type": "function",
+                  "function": {
+                    "name": "bash",
+                    "arguments": "{\"command\": \"mv /home/agent/.pi /home/agent/.pi-moved && ln -s /home/agent/conversations/s-b/workspace /home/agent/.pi; echo \\\"planted $?\\\"\"}"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 1500,
+          "completion_tokens": 60,
+          "total_tokens": 1560
+        }
+      },
+      "response": "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 561\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\ndata: {\"id\":\"gen-plant\",\"object\":\"chat.completion.chunk\",\"created\":1763140000,\"model\":\"deepseek/deepseek-v4-flash-0731\",\"choices\":[{\"index\":0,\"finish_reason\":\"tool_calls\",\"delta\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_plant\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\": \\\"mv /home/agent/.pi /home/agent/.pi-moved && ln -s /home/agent/conversations/s-b/workspace /home/agent/.pi; echo \\\\\\\"planted $?\\\\\\\"\\\"}\"},\"index\":0}]}}],\"usage\":{\"prompt_tokens\":1500,\"completion_tokens\":60,\"total_tokens\":1560}}\n\ndata: [DONE]\n\n"
     }
   },
   "requests": {

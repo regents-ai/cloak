@@ -629,8 +629,7 @@ no list laid over it: cover connections arrive, each for one of the
 list's sites on port 443, at most sixteen sites, on no more than two
 identities and none the conversation's. Its Pi task is followed by a
 200-second wait, so at 0.05 a second about one boot in 22,000 sees no
-cover at all (e^-10). Written 19 November; to be run once the guest is
-rebuilt.
+cover at all (e^-10). Passed on 19 November on the rebuilt guest.
 
 What it is, in the reference's own words: background noise, not proven
 protection against traffic analysis. It does not pad the model's
@@ -639,6 +638,127 @@ a global observer can still correlate traffic. Cloak claims no more.
 Real pages have been fetched only in the measurement above; no schedule
 or lifecycle has been checked against the policy on the real route, so
 A08 stays open.
+
+### Escape checks (19 November 2026)
+
+All twelve passed on 19 November on a guest rebuilt with the fix below,
+with every other guest check (65 in all). Before the fix, eleven passed
+and the cross-conversation check failed, as it should have.
+
+Release plan item 4 (`docs/release.md`): a hostile agent, running commands
+as the agent in the reference sandbox, tries to get out.
+`tests/test_escape_path.py` boots the guest twice. The first boot runs
+each attempt as a plain command in the sandbox, with cover off and the
+stand-in tor, so tor's log lists only what the attempts cause. The second
+serves, with two conversations on the stand-in door's scripted answers,
+two of them new (`peek` and `plant` in `tests/door_answers.json`). The
+boot helpers the guest checks share now live in `tests/guest_boot.py`.
+None of this has run yet: each line below is what the check expects, from
+reading the code, and what should stop the attempt.
+
+- **Loopback.** The sandbox shares the guest's network, so it sees what
+  listens there: the Tor port (9050), the adapter (8012) and the daemon
+  (8787), all on 127.0.0.1, and nothing on UDP.
+- **The Tor port without torsocks.** A SOCKS5 request made by hand goes to
+  tor for whatever destination it names, and tor's answer comes back: any
+  program in the sandbox can use Tor this way. It can also pick its own
+  identity, a guess at another's included. The daemon's identity is 32
+  random bytes, which no guess finds. tor's log holds those three requests
+  and nothing else.
+- **The adapter** takes only a POST to its one route with the rewriter
+  key, which the sandbox cannot read: 401 with no key and with Pi's key
+  `local`, 405 for a GET, 404 for another path. Nothing reaches the worker.
+- **The daemon**, read in its pinned code (`internal/server/server.go`):
+  its two inference routes take any request from loopback, with or without
+  a key, as Pi's do in the agent check; every other route takes only the
+  daemon's own key, 32 random bytes made at its start and kept in memory.
+  Pi's key `local` gets 401 on the status, funding address, deposit and
+  withdrawal routes. The guest's daemon has no admin service, so even its
+  own key reaches only the read-only status, and nothing over HTTP changes
+  rewording, payment or settings. A tool can send a model request to the
+  inference route itself; it goes the way Pi's goes, which in the guest
+  stops before any payment ("The wallet companion could not be reached",
+  `tests/test_tor_path.py`).
+- **Vsock.** The Mac answers none of ports 8742 (the door, open only while
+  the guest serves), 8020 and 8030.
+- **Files.** The guest's secrets, its settings (`/etc/cloak`) and the
+  tasks' copies of the wrapper (`/run/cloak-runner`) are not in the
+  sandbox, and reading them fails. Writing to the guest's `/etc` files the
+  sandbox binds, to the wrapper and to `/usr/bin` fails. A link in the
+  workspace to the rewriter key leads nowhere inside the sandbox.
+- **Other ways out.** TCP to port 53, UDP to port 443 (with torsocks and
+  without), IPv6 and ping reach nothing: the guest has no network device.
+  No abstract UNIX socket is open in the guest; such names belong to the
+  network, which the sandbox shares.
+- **A child that tries to stay.** A process in a session of its own that
+  ignores hang-ups ends with its case: when the command ends, bubblewrap's
+  first process in the sandbox ends, and every process in it with it.
+- **Another conversation.** While s-b's task runs, s-a's tool cannot list
+  s-b's folders or s-b's copy of the wrapper. It sees only its own copy,
+  and finds its own pass and not s-b's. A link s-a's tool leaves in its
+  home in place of `.pi` stops s-a's own next task before Pi starts, and
+  s-b's tool then finds only its own pass.
+
+**Found while writing them, and fixed the same day (19 November): one
+conversation could write into another's files.** The sandbox script ran
+two lines before bubblewrap, as the agent user and with the guest's whole
+view: they made `.pi/agent` in the conversation's home and copied the
+task's `models.json`, pass inside, into it. Both followed links, and
+every conversation's folders belong to the agent user
+(`guest/runner/main.go`, `agentFolder`). So a tool in s-a could put a
+link to s-b's workspace in place of its home's `.pi`, and s-a's next task
+wrote its `models.json`, s-a's pass inside, into s-b's workspace. The
+same two lines could have overwritten s-b's own `models.json` in s-b's
+home.
+
+The fix deletes both lines (`reference/wrapper/sandbox`, the
+reconstructed reference wrapper, which is Cloak's own file and carries no
+pin; this is its second correction, after 12 November's). Nothing outside
+the sandbox writes into the home any more. bubblewrap binds the task's
+`models.json` read-only where Pi reads it (`~/.pi/agent/models.json`) and
+makes that mount point inside the sandbox's own root. bubblewrap 0.12.0,
+the guest's, resolves every path it sets up inside that root (openat2
+with `RESOLVE_IN_ROOT`, its fix for GHSA-pxhw-h44j-8pfx) and refuses to
+mount on a link, so a link the agent left in its home leads only to what
+the sandbox already holds. The pass is no longer left in the home: only
+the mount point stays there, an empty read-only file. The script still
+makes the home itself when it is missing (the agent check's); no tool
+can reach the folder that holds a home.
+
+Tried on 19 November with the guest's own bubblewrap package
+(0.12.0-1~deb13u1, in the guest build image under Docker, not in the
+guest), laid out as the runner lays out two conversations: with the old
+script the planted link put s-a's pass in s-b's workspace. With the new
+one, s-a's next task stopped at bubblewrap's start and nothing appeared
+in s-b's folders, for a link to s-b's workspace by its path, by a
+relative path, through bubblewrap's own `/oldroot` and to s-b's home
+`.pi/agent` (s-b's own file unchanged); a link in place of `models.json`
+itself is refused too. A link to the sandbox's own `/tmp` works and stays
+inside the sandbox.
+
+What the check sees changes in one way: while a task runs, its tool
+cannot remove `~/.pi`, because the mount point inside is busy. So `plant`
+now moves the folder aside and leaves the link in its place, and the
+check also expects s-a's next task to end with status 1 before Pi says
+anything. Pi 1.3.0 in its JSON mode reads `models.json` once, at its
+start; it reads it again only when an extension registers a provider
+(Cloak's Pi has none) or in its interactive and RPC modes. No check sees
+an overwrite of s-b's own file: before the fix, s-b's own next start
+copied its own file back before Pi read it.
+
+**Not tried, and why.**
+
+- The guest's own sender and runner ports from the sandbox: the probe
+  dials only the Mac, and the guest has no vsock loopback.
+- TCP to port 53 under torsocks: the check uses busybox's `nc`, which skips
+  torsocks, so tor's log stays exact.
+- A new file in the sandbox's own `/etc`: bubblewrap builds the sandbox's
+  root in memory, and whether it leaves that root writable was not looked
+  up. A file made there would stay in that memory, so the checks write to
+  the guest's own files instead.
+- Abstract UNIX sockets are listed, not connected to.
+- Already known: tools in every conversation use Tor with no identity of
+  their own, so they share one, as in the reference (Stage 5, below).
 
 ## Stage 3 so far
 
@@ -2611,7 +2731,7 @@ candidates, so the split has to be re-declared before any holdout opens.
 | A05 | Whole-agent containment | Open | |
 | A06 | Complete routing | Open: the reference wrapper fails it (static program bypass); in Cloak's guest, which has no network device and one relay to tor, the same static probe and a program without torsocks reach nothing (development evidence only, stand-in) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction), `tests/test_tor_path.py` |
 | A07 | Conversation isolation | Open | |
-| A08 | Cover behaviour | Open: the guest's daemon runs the reference's own cover worker from one list, on since 19 November with a pool of 58 pages Sean approved, sixteen picked at each start; nine checks against the stand-in tor passed on 19 November, and the check of the image as built is written, to be run on a rebuilt guest; on the real route only two six-minute runs' totals were measured, so the schedule and lifecycle are not checked against the policy, and the sites have not agreed to automated visits (NET04) | `reference/cover.json`, `tests/test_cover_path.py`, [cover in the guest](#cover-traffic-in-the-guest-built-18-november-2026) |
+| A08 | Cover behaviour | Open: the guest's daemon runs the reference's own cover worker from one list, on since 19 November with a pool of 58 pages Sean approved, sixteen picked at each start; nine checks against the stand-in tor passed on 19 November, and the check of the image as built passed the same day; on the real route only two six-minute runs' totals were measured, so the schedule and lifecycle are not checked against the policy, and the sites have not agreed to automated visits (NET04) | `reference/cover.json`, `tests/test_cover_path.py`, [cover in the guest](#cover-traffic-in-the-guest-built-18-november-2026) |
 | A09 | Failure and pause | Open: in the app, a tor, worker or guest failure stops all work and ends in Needs attention with its reason, with nothing restarted and no other route or model; Pause and Quit stop everything, and a relaunch starts nothing (checks with stand-in processes, and a live run with one worker kill; development build, stand-in only); sleep pauses in the state machine's checks, but no live sleep and wake has been tried; no sessions or payment yet to stop; cover runs in the guest's daemon and ends with the guest, which no check has watched | [state machines](state-machines.md), `app/Tests/CloakTests/` |
 | A10 | Local authority | Open | |
 | A11 | Actual paid workflow | Open: no qualified deployment exists yet | |

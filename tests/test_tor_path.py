@@ -39,23 +39,12 @@ import signal
 import socket
 import stat
 import subprocess
-import sys
-import threading
 import time
-from collections.abc import Callable
 from pathlib import Path
 
-from cover_list import NO_COVER, initrd
+from guest_boot import ROOT, boot, fake_tor, host, launcher, routes, sandbox
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts"))
-from fetch_model import DEST  # noqa: E402
-
-HOST = ROOT / "host/.build/release/cloak-host"
 TOR = ROOT / "host/.build/tor/tor"
-FAKE = ROOT / "tests/fake_worker.py"
-FAKE_TOR = ROOT / "tests/fake_tor.py"
-NAME = "standin-gguf-grammar"
 TOR_STOP = ("Authenticated Tor route preparation failed before key acquisition. "
             "Check the configured Tor SOCKS listener; no direct fallback was used.")
 PROMPT = "case:ok find the top 5 vegan restaurants in Tallinn"
@@ -63,10 +52,6 @@ PROMPT = "case:ok find the top 5 vegan restaurants in Tallinn"
 
 def agent(name: str, prompt: str) -> dict:
     return {"name": name, "agent": {"prompt": prompt, "continue": False}}
-
-
-def sandbox(name: str, script: str) -> dict:
-    return {"name": name, "sandbox": ["/bin/sh", "-c", script]}
 
 
 def fetch(url: str, timeout_ms: int) -> str:
@@ -79,71 +64,9 @@ def fetch(url: str, timeout_ms: int) -> str:
             ".on(\"error\", e => console.log(\"refused\", e.code ?? e.name, e.message))'")
 
 
-def launcher(tmp_path: Path, name: str, body: str) -> Path:
-    path = tmp_path / name
-    path.write_text("#!/bin/sh\n" + body)
-    path.chmod(0o755)
-    return path
-
-
-def fake(tmp_path: Path) -> Path:
-    return launcher(tmp_path, "fake-worker", f'export FAKE_WORKER_READ_DELAY=0\nexec "{sys.executable}" -I "{FAKE}" "$@"\n')
-
-
-def fake_tor(tmp_path: Path, start: str) -> Path:
-    """The stand-in tor, started as FAKE_TOR_START says (fake_tor.py)."""
-    return launcher(tmp_path, "fake-tor", f'export FAKE_TOR_LOG="{tmp_path}" FAKE_TOR_START={start}\n'
-                                          f'exec "{sys.executable}" -I "{FAKE_TOR}" "$@"\n')
-
-
 def tor(tmp_path: Path, *settings: str) -> Path:
     """tor itself, with the host's settings and then these."""
     return launcher(tmp_path, "tor", f'exec "{TOR}" "$@" ' + " ".join(f'"{s}"' for s in settings) + "\n")
-
-
-def routes(tmp_path: Path) -> list[dict]:
-    log = tmp_path / "tor.jsonl"
-    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-
-
-def host(tmp_path: Path, cases: list[dict], tor_launcher: Path) -> dict:
-    """The host's command line and environment, to run the cases in one
-    guest boot, with tor's lasting folder in tmp_path."""
-    cases_file = tmp_path / "cases.jsonl"
-    cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
-    return {"args": [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", initrd(tmp_path, NO_COVER),
-                     "--cases", cases_file, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
-                     "--tor", tor_launcher, "--tor-data", tmp_path / "tor-data"],
-            "env": os.environ | {"FAKE_WORKER_LOG": str(tmp_path)}}
-
-
-def boot(tmp_path: Path, cases: list[dict], tor_launcher: Path,
-         on_log: Callable[[str], None] = lambda line: None) -> tuple[dict[str, dict], str]:
-    """Runs the cases in one guest boot; returns each case's result and the
-    host's log, each line of which also goes to on_log as it comes."""
-    console = tmp_path / "console"
-    with console.open("w") as stdout:
-        running = subprocess.Popen(**host(tmp_path, cases, tor_launcher), stdout=stdout, stderr=subprocess.PIPE, text=True)
-    lines = []
-
-    def read() -> None:
-        for line in running.stderr:
-            lines.append(line)
-            on_log(line)
-
-    reader = threading.Thread(target=read)
-    reader.start()
-    try:
-        running.wait(timeout=900)
-    finally:
-        running.kill()
-        reader.join()
-    out, err = console.read_text(), "".join(lines)
-    assert running.returncode == 0, err
-    assert "cloak-guest: agent check exited 0" in out, out + err
-    results = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
-    assert [r["name"] for r in results] == [c["name"] for c in cases]
-    return {r["name"]: r for r in results}, err
 
 
 def unreachable(output: str) -> bool:

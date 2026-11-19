@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- Fixed: one conversation's agent could make its own next task write
+  into another conversation's folder. The sandbox script no longer copies
+  the task's settings file, pass inside, into the conversation's home
+  before the sandbox starts (`reference/wrapper/sandbox`). The sandbox now
+  gives Pi that file read-only where Pi reads it, and bubblewrap 0.12.0,
+  the guest's, sets that up inside the sandbox's own root, where a link
+  the agent leaves in its home cannot lead out. The pass is no longer
+  left in the home either. A link planted that way now stops only the
+  planting conversation's next task. Tried with the guest's bubblewrap
+  package under Docker: the old script put one conversation's pass in the
+  other's folder, the new one put nothing there. The escape check now
+  expects the fix; its planted link moves the `.pi` folder aside, since a
+  running task's settings file can no longer be deleted. The guest checks
+  have not run on it yet.
+
+- Escape checks, all passing on 19 November (`tests/test_escape_path.py`,
+  release plan item 4). In two guest boots, a hostile agent in the
+  sandbox tries the guest's loopback services without torsocks, the Tor
+  port by hand with an identity of its own and a guessed one, the Mac's
+  vsock ports, the guest's secrets, settings and programs, TCP to port
+  53, UDP, IPv6, ping, abstract UNIX sockets, a process that tries to
+  outlive its command, and another conversation's files. Found while
+  writing them: the two lines the sandbox script ran before bubblewrap
+  followed links the agent made, so one conversation's next task could
+  write its pass into another conversation's folder; fixed the same day
+  (the entry above). The guest checks' shared boot helpers move to
+  `tests/guest_boot.py`. The stand-in door
+  gains two scripted answers, `peek` and `plant`, and the door's own
+  check (`DoorGuestTests`) expects them.
+
 - Cover traffic is on (Sean, 19 November). `reference/cover.json` now
   holds the pool of 58 well-known pages, on 32 sites, that each answered
   a Tor visitor on 18 November, at the same rate: 0.05 a second, 2 at

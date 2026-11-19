@@ -6,8 +6,8 @@ import Testing
 /// door port, each a socket the door takes, read and answered as any app's
 /// are. Box passes work there only, and app passes only on 127.0.0.1; each
 /// conversation has its own pass and memory until the door closes; and the
-/// door's answers are those the task path's stand-in door replays
-/// (tests/door_answers.json). Test-only keys and folders, as in DoorTests.
+/// door's answers are those the guest checks' stand-in door replays
+/// (tests/door_answers.json, tests/guest_boot.py). Test-only keys and folders, as in DoorTests.
 @MainActor
 @Suite(.serialized)
 struct DoorGuestTests {
@@ -141,14 +141,14 @@ struct DoorGuestTests {
         #expect(stand.reworder.asked.isEmpty && stand.sender.read.isEmpty)
     }
 
-    /// The door's answer to each completion the task path's stand-in door
+    /// The door's answer to each completion the guest checks' stand-in door
     /// replays is the one it replays, byte for byte but for the order of the
     /// keys in its one event.
     @Test func theDoorsAnswersAreTheOnesTheTaskPathReplays() async throws {
         let fixture = try Self.fixture()
         let model = try #require(fixture["model"] as? String)
         let answers = try #require(fixture["answers"] as? [String: [String: Any]])
-        #expect(Set(answers.keys) == ["tool", "final", "hold"])
+        #expect(Set(answers.keys) == ["tool", "final", "hold", "peek", "plant"])
         for (name, answer) in answers {
             let completion = try JSONSerialization.data(withJSONObject: try #require(answer["completion"]))
             let models = #"{"object":"list","data":[{"id":"\#(model)","object":"model"}]}"#

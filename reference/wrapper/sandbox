@@ -12,9 +12,12 @@ workspace="$(realpath "${1:?usage: sandbox WORKSPACE COMMAND [arguments...]}")"
 shift
 here="$(dirname "$(realpath "$0")")"
 agent_home="${PI_PARANOID_HOME:-$HOME/.pi-paranoid}"
-mkdir -p "$agent_home/.pi/agent"
-cp -f "$here/models.json" "$agent_home/.pi/agent/models.json"
+mkdir -p "$agent_home"
 
+# Pi reads its provider file at ~/.pi/agent/models.json. It is bound there
+# read-only, never copied into the home: bubblewrap makes the mount point
+# inside the sandbox's own root, where a link the agent left in its home
+# leads only to what the sandbox already holds.
 exec bwrap \
   --unshare-user --unshare-ipc --unshare-pid --unshare-uts --unshare-cgroup \
   --die-with-parent --new-session \
@@ -26,6 +29,7 @@ exec bwrap \
   --ro-bind "$here" "$here" \
   --proc /proc --dev /dev --tmpfs /tmp \
   --bind "$agent_home" /home/agent \
+  --ro-bind "$here/models.json" /home/agent/.pi/agent/models.json \
   --bind "$workspace" /workspace --chdir /workspace \
   --clearenv \
   --setenv HOME /home/agent --setenv PATH /usr/local/bin:/usr/bin \

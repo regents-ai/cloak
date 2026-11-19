@@ -25,11 +25,11 @@
 // number of conversations side by side. Each task has its own copy of the
 // wrapper, in /run/cloak-runner/<session>, whose models.json names the door
 // and carries the task's pass, and which is removed when the task ends. The
-// sandbox copies that models.json into the conversation's home before Pi
-// starts, so no two tasks running at once ever share either file. The task
-// text reaches Pi on its standard input, never on a command line. When the
-// host closes the connection, the task's sandbox is killed, and every process
-// in it with it.
+// sandbox binds that models.json, read-only, where Pi reads it in the
+// conversation's home, so the pass is never written into the home, and no
+// two tasks running at once ever share the file. The task text reaches Pi on
+// its standard input, never on a command line. When the host closes the
+// connection, the task's sandbox is killed, and every process in it with it.
 //
 // Nothing of a task's text, pass or output is logged: only how each task
 // ended, and how long it took.
