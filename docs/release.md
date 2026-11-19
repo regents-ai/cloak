@@ -130,6 +130,12 @@ and Cloak says the same.
 conversation separation, and host and guest, written as checks that try
 to break out. Several exist in pieces (`tests/test_tor_path.py`,
 `tests/test_agent_path.py`); none tries a hostile agent end to end.
+**19 November:** `tests/test_escape_path.py` now does, twelve attempts
+in two guest boots, all passing; it found and closed one way for a
+conversation to write its pass into another's folder. Not yet tried: the
+guest's own sender and runner ports from inside the sandbox, payment
+credentials (payment is not in the guest), and the Mac's files beyond
+the guest having no disk or shared folder.
 
 ### P1
 
