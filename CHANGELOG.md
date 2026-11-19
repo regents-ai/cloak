@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Agents: a request in Activity opens to show its texts (Sean, 19
+  November, "1. b"). Each user message as the app wrote it and as Cloak
+  sent it, with the changed words marked as Chat marks them; one that
+  went unchanged is shown once. A stopped request's second text is
+  headed Reworded, since it may not have left this Mac. Only the newest
+  20 requests keep texts, in memory only, never on disk or in the log,
+  and gone when Cloak quits; user messages only, never instructions,
+  tools, tool results or answers. The section's footer says "Kept in
+  memory only, and gone when Cloak quits." Seen on screen empty only.
+
 - Agents: an Activity section (Sean, 19 November: "show what local apps
   are putting in"). The last 24 hours' count of chat requests and the
   share answered, then the latest 20: who sent each (an app, or Cloak's

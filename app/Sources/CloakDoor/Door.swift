@@ -20,7 +20,8 @@ public struct AgentApp: Codable, Sendable, Identifiable, Equatable {
 
 /// One chat request at the door, for the Agents window: who sent it, the
 /// model, how many user messages went reworded, where it is now and how
-/// long it took. Never a message's text.
+/// long it took, and, while it is among the newest `Door.latest`, each user
+/// message as the app wrote it and as Cloak sent it. In memory only.
 public struct AgentRequest: Identifiable, Sendable {
     public enum Sender: Equatable, Sendable {
         /// An app on this Mac, by its id.
@@ -37,6 +38,14 @@ public struct AgentRequest: Identifiable, Sendable {
         case stopped(String)
     }
 
+    /// One user message's text as the app wrote it, and the text Cloak sent
+    /// in its place; a message of several text parts, each part on lines of
+    /// its own.
+    public struct Message: Sendable {
+        public let written: String
+        public let sent: String
+    }
+
     public let id = UUID()
     public let sender: Sender
     public let started = Date.now
@@ -48,6 +57,10 @@ public struct AgentRequest: Identifiable, Sendable {
     public internal(set) var stage = Stage.rewording
     /// Once it is answered or stopped.
     public internal(set) var took: Duration?
+    /// Each user message with text, in the order the app sent them, once
+    /// every one is reworded and while the request is among the newest
+    /// `Door.latest`; otherwise none.
+    public internal(set) var messages: [Message] = []
 
     mutating func end(_ stage: Stage) {
         self.stage = stage
@@ -96,9 +109,11 @@ enum Pass {
 /// the one wallet (decision 10 in docs/plan.md). The owner's agent in the
 /// guest sends its requests the same way, from the guest's door port, each
 /// conversation with a box pass of its own (`pass(for:)`, decision 12).
-/// Open only while Cloak is Running. No message's text is kept, shown or
-/// logged: an app's requests are counted, and its last one timed, and the
-/// latest chat requests are listed with their counts and times.
+/// Open only while Cloak is Running. No message's text is logged or written
+/// to disk: an app's requests are counted, and its last one timed, and the
+/// latest chat requests are listed with their counts and times, the newest
+/// `latest` of them with each user message as written and as sent, in
+/// memory only until Cloak quits.
 @MainActor
 @Observable
 public final class Door {
@@ -139,8 +154,12 @@ public final class Door {
     /// The apps could not be read, or a change to them not kept.
     public private(set) var problem: String?
     /// The latest chat requests, newest first, at most 200. In memory only,
-    /// never on disk or in the log, and kept until Cloak quits.
+    /// never on disk or in the log, and kept until Cloak quits. Only the
+    /// newest `latest` keep their messages' texts.
     public private(set) var requests: [AgentRequest] = []
+    /// The requests the Agents window lists, newest first, and the only
+    /// ones that keep their messages' texts.
+    public static let latest = 20
     /// The port taken at the last open, until the door closes.
     private var opened: UInt16?
 
@@ -355,9 +374,16 @@ public final class Door {
     /// the door last reworded it: its text, or its texts on lines of their
     /// own. Nil before the door has reworded one, and once the door closes.
     public func reworded(for conversation: UUID) -> String? {
-        guard boxes[conversation] != nil, let user = memories[conversation]?.transcript.last(where: { $0.user != nil })?.user,
-            let content = (try? GoJSON.read(user))?.members?["content"]
+        guard boxes[conversation] != nil, let user = memories[conversation]?.transcript.last(where: { $0.user != nil })?.user
         else { return nil }
+        return Self.text(ofUser: user)
+    }
+
+    /// A user message's text as it is written in these bytes: its content,
+    /// or its non-blank text parts on lines of their own. Nil when it has
+    /// none.
+    private nonisolated static func text(ofUser message: [UInt8]) -> String? {
+        guard let content = (try? GoJSON.read(message))?.members?["content"] else { return nil }
         switch content.value {
         case .string(let text):
             return text
@@ -466,6 +492,8 @@ public final class Door {
                 let listed = AgentRequest(sender: side == .mac ? .app(app) : .agent)
                 requests.insert(listed, at: 0)
                 if requests.count > 200 { requests.removeLast() }
+                // The one this pushed out of the newest drops its texts.
+                if requests.count > Self.latest { requests[Self.latest].messages = [] }
                 do throws(Failure) {
                     let response = try await complete(request, body: body, for: app, listed: listed.id)
                     note(listed.id) { $0.end(.answered) }
@@ -517,6 +545,10 @@ public final class Door {
             entry.reworded = asked.messages.count { $0.draft != nil }
             entry.stage = .sending
         }
+        let pairs = await Self.pairs(asked, sent: messages)
+        if let index = requests.firstIndex(where: { $0.id == listed }), index < Self.latest {
+            requests[index].messages = pairs
+        }
         let key = try await sealing()
         do {
             guard try await parts.wallet() != nil else {
@@ -539,6 +571,17 @@ public final class Door {
             throw Failure(error)
         }
         return try Asked.answer(completion, streaming: asked.streaming)
+    }
+
+    /// Each user message with text, as the app wrote it (its draft's texts)
+    /// and as it goes (`sent`, the messages `Memory.rewrite` returns, in the
+    /// same order), read off the main thread.
+    @concurrent
+    private static func pairs(_ asked: Asked, sent: [[UInt8]]) async -> [AgentRequest.Message] {
+        zip(asked.messages, sent).compactMap { message, sent in
+            guard let draft = message.draft, let text = text(ofUser: sent) else { return nil }
+            return AgentRequest.Message(written: draft.texts.joined(separator: "\n"), sent: text)
+        }
     }
 
     /// Changes a listed request, while it is still in the list.

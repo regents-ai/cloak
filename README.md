@@ -502,9 +502,13 @@ requests and when it was last used are kept on disk, sealed in
 conversations' key. Agents' Activity shows the last 24 hours' count of chat
 requests and the share answered, then the latest 20: who sent each (an app
 or Cloak's own agent), the model, how many messages went reworded, whether
-it is under way, answered or stopped and why, and how long it took. Up to
-200 are held in memory until Cloak quits, never on disk. No request's text
-is kept, shown or logged.
+it is under way, answered or stopped and why, and how long it took. Once a
+request's messages are reworded, its row opens a sheet with each of its
+user messages' text as the app wrote it and as Cloak sent it, the newest
+first, the changed words marked as in Chat; system prompts, tools, tool
+results and the model's answers are not shown. Up to 200 requests are held
+in memory until Cloak quits, never on disk, and only the latest 20 keep
+their text. No request's text is ever logged or written to disk.
 
 Run the app's gate checks (the door end to end and as the guest's agent
 meets it, with each conversation's turns checked against the pinned

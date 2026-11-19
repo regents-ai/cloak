@@ -769,6 +769,14 @@ its stages first.
   moves it to sending once every user message is reworded, so it shows as
   rewording while the provider's list of models is asked for too. One that
   falls off the end of the list while under way is no longer updated.
+  Its texts (`AgentRequest.messages`: each user message with text, as
+  written and as sent) are filled once, when the move to sending is noted,
+  and only while the request is among the newest 20 (`Door.latest`, the
+  ones the Agents window shows); each new request empties the one it
+  pushes to 21st. So a request that stops before every message is
+  reworded has none, one that stops after keeps them, and one pushed out
+  of the newest 20 while still rewording never gets them. Never on disk
+  or in the log.
 - **What the door remembers of one app** (`app/Sources/CloakDoor/Asked.swift`).
   The identity and digests are kept before the rewording and the
   transcript after it, so a rewording that stops, or two requests from one

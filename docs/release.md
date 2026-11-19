@@ -137,7 +137,12 @@ Later the same day he settled these:
   one payment queue.
 - No Anthropic-shaped address for now; again after private payment works.
 - The Agents window shows what local apps send: each request's sender,
-  model, stage and time, never its text.
+  model, stage and time. First built without any text; then, asked,
+  he chose that a request opens to show what the app wrote and what
+  Cloak sent instead, in memory only and gone when Cloak quits.
+- NEAR's requests use the owner's own NEAR key, kept in the keychain;
+  later each person brings their own. A key shared by all, run by
+  Regents, is not planned.
 - NEAR's enclave models are built now as a second, named mode, not after
   zkAPI is in the guest (decision 14 in [plan.md](plan.md)).
 

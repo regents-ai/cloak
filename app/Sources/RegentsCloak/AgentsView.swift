@@ -1,11 +1,13 @@
 import AppKit
+import CloakChat
 import CloakDoor
 import SwiftUI
 
 /// The owner's other apps that send through Cloak: the address to point
 /// them at, each app with a pass of its own, shown once when it is added,
-/// and the latest chat requests. Counts and times only; never what an app
-/// sent.
+/// and the latest chat requests, each with its texts once reworded, as the
+/// app wrote them and as Cloak sent them. The door keeps those in memory
+/// only.
 struct AgentsView: View {
     static func window(_ door: Door) -> NSWindow {
         let window = ClosingWindow(
@@ -19,6 +21,7 @@ struct AgentsView: View {
     let door: Door
     @State private var adding = false
     @State private var removing: AgentApp?
+    @State private var opened: AgentRequest?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -73,14 +76,16 @@ struct AgentsView: View {
                                     .accessibilityLabel(summary.joined(separator: ", "))
                             }
                         }
-                        ForEach(door.requests.prefix(20)) { request in
-                            RequestRow(request: request, sender: sender(of: request))
+                        ForEach(door.requests.prefix(Door.latest)) { request in
+                            RequestRow(
+                                request: request, sender: sender(of: request),
+                                open: request.messages.isEmpty ? nil : { opened = request })
                         }
                     }
                 } header: {
                     Text("Activity")
                 } footer: {
-                    Text("Counts and times only. Cloak never keeps what an app sent.")
+                    Text("Kept in memory only, and gone when Cloak quits.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -98,6 +103,9 @@ struct AgentsView: View {
         .task { await door.load() }
         .sheet(isPresented: $adding) {
             AddApp(door: door)
+        }
+        .sheet(item: $opened) { request in
+            RequestTexts(request: request, sender: sender(of: request))
         }
         .confirmationDialog(
             "Remove \(removing?.name ?? "")?",
@@ -131,36 +139,60 @@ struct AgentsView: View {
 }
 
 /// One chat request: who sent it, its model, how many messages went
-/// reworded and how long it took, and where it is now.
+/// reworded and how long it took, and where it is now. With its texts, the
+/// whole row is a button, with a chevron, that opens them.
 private struct RequestRow: View {
     let request: AgentRequest
     let sender: String
+    /// Nil while the request has no texts to show.
+    let open: (() -> Void)?
 
     var body: some View {
         // Drawn again each minute, so "2 minutes ago" stays true.
         TimelineView(.everyMinute) { _ in
             let when = request.started.formatted(.relative(presentation: .named))
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(sender)
-                        .fontWeight(.medium)
-                    if !details.isEmpty {
-                        Text(details.joined(separator: " · "))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
+            let words = ([stageWords] + details + [when]).joined(separator: ", ")
+            if let open {
+                Button(action: open) {
+                    row(when: when)
+                        .contentShape(.rect)
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    stage
-                    Text(when)
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .accessibilityLabel(sender)
+                .accessibilityValue(words)
+                .accessibilityHint("Shows what the app wrote and what Cloak sent.")
+            } else {
+                row(when: when)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(sender)
+                    .accessibilityValue(words)
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(sender)
-            .accessibilityValue(([stageWords] + details + [when]).joined(separator: ", "))
+        }
+    }
+
+    private func row(when: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(sender)
+                    .fontWeight(.medium)
+                if !details.isEmpty {
+                    Text(details.joined(separator: " · "))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                stage
+                Text(when)
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            if open != nil {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 
@@ -210,6 +242,91 @@ private struct RequestRow: View {
             details.append(took.formatted(.units(allowed: [.minutes, .seconds], width: .wide, fractionalPart: .show(length: 1))))
         }
         return details
+    }
+}
+
+/// One request's user messages, the newest first: each as the app wrote it
+/// and as Cloak sent it, in the boxes Chat's cards use, with the words
+/// taken out and put in marked; one sent as written is shown once.
+private struct RequestTexts: View {
+    let request: AgentRequest
+    let sender: String
+    @Environment(\.dismiss) private var dismiss
+
+    /// False for a request that stopped: it may not have left this Mac,
+    /// so its texts are called reworded, not sent.
+    private var went: Bool {
+        if case .stopped = request.stage { false } else { true }
+    }
+
+    var body: some View {
+        let when = request.started.formatted(date: .abbreviated, time: .shortened)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(sender)
+                    .font(.headline)
+                Text(request.model.map { "\($0) · \(when)" } ?? when)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            .padding(20)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(request.messages.enumerated().reversed()), id: \.offset) { _, message in
+                        MessageTexts(message: message, went: went)
+                    }
+                }
+                .padding(20)
+            }
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+        }
+        // As tall as what it shows, up to the Agents window's height; past
+        // that, the messages scroll.
+        .frame(width: 500)
+        .frame(maxHeight: 540)
+        // Escape closes it too; Return is Done's.
+        .onExitCommand { dismiss() }
+    }
+}
+
+/// One user message: Written above Sent, as Chat marks them, or Written
+/// alone when it went as written.
+private struct MessageTexts: View {
+    let message: AgentRequest.Message
+    /// False for a request that stopped (`RequestTexts.went`).
+    let went: Bool
+
+    var body: some View {
+        let sent = went ? "Sent" : "Reworded"
+        Card {
+            if message.written == message.sent {
+                Pane(title: "Written", count: nil, mark: .removed) {
+                    TextBox(text: .constant(message.written), label: "Written", editable: false)
+                }
+                Text(went ? "Sent as written" : "Not reworded")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                let diff = WordDiff(original: message.written, reworded: message.sent)
+                Pane(title: "Written", count: diff.removed.count, mark: .removed) {
+                    TextBox(text: .constant(message.written), label: "Written", editable: false, marks: diff.removed, mark: .removed)
+                }
+                Pane(title: sent, count: diff.added.count, mark: .added) {
+                    TextBox(text: .constant(message.sent), label: sent, editable: false, marks: diff.added, mark: .added)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 

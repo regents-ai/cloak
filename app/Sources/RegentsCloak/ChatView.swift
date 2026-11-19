@@ -602,7 +602,7 @@ private struct Progress: View {
     }
 }
 
-private struct Card<Content: View>: View {
+struct Card<Content: View>: View {
     /// An accent edge in place of the separator's.
     var highlighted = false
     @ViewBuilder let content: Content
@@ -620,7 +620,7 @@ private struct Card<Content: View>: View {
 }
 
 /// A titled text, with how many words are marked and how they look.
-private struct Pane<Content: View>: View {
+struct Pane<Content: View>: View {
     let title: String
     let count: Int?
     let mark: TextBox.Mark
