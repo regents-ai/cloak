@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- NEAR mode: the request (`guest/near`, `ask`). One call, in one order:
+  the request is checked, the proof fetched under a fresh nonce and
+  verified, and only then the request sent, on a new connection taken
+  only if its certificate key is the one the proof bound. Every message,
+  tool and tool call is encrypted for the model's checked key (NEAR's
+  version 2 scheme, all fields) with a client key made for that request;
+  a request with a field NEAR would leave readable is refused, and so is
+  a reply with a field that does not open. Not streamed yet. Four gate
+  checks: NEAR's published vectors, a round trip with a stand-in server,
+  a tampered or plain reply refused, another certificate key refused
+  before a byte is written. Live through Tor with a deliberately invalid
+  key and the word "ping": the proof passed and NEAR answered 401, as it
+  should. Unproven until a real key exists: that a real reply opens and
+  that NEAR takes all-fields mode. The stand-in's test certificate and
+  its key are in `tests/fixtures/stand-in`; nothing trusts them. Not in
+  the guest image or the app yet.
+
 - NEAR mode, begun: the proof checker (`guest/near`, decision 14 in
   `docs/plan.md`). Through a SOCKS5 proxy it asks NEAR AI Cloud, with no
   account and no key, for one model's hardware report on one TLS

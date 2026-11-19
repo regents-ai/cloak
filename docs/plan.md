@@ -2919,7 +2919,12 @@ candidates, so the split has to be re-declared before any holdout opens.
       use the owner's own NEAR key. Live through Tor: both models passed
       every check, a report in 3 to 13 seconds, Intel's collateral in 8
       to 16, no refusals for rate. Next: the request itself, encrypted to
-      the checked key, with his key; then the GPU check through NVIDIA's
+      the checked key (built the same day, `ask`; proven with a
+      stand-in and NEAR's vectors, and live as far as NEAR's 401 to an
+      invalid key; a real reply waits for his key. NEAR's own SDK sends
+      version 3 of the encryption, which also ties the reply key into
+      the request; Cloak sends version 2, the documented one, and moves
+      to 3 outright once a live test shows it works); then the GPU check through NVIDIA's
       service; then the guest image and the app. From NEAR's own words,
       to be said on screen: the model's software is not in the
       measurement, a key ties every request to one account, and on 8

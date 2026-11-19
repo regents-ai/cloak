@@ -1,0 +1,17 @@
+{
+  "about": "NEAR AI's published test vectors for its end-to-end encryption, version 2, Ed25519, copied under the MIT licence beside this file from github.com/nearai/inference-sdk at commit 9cc67f723614781f70c8e7475c909780483d35e8. The first is the ed25519 case of rs/tests/fixtures/e2ee-python.json (sealed by NEAR's Python SDK 0.1.0 for the key of the seed). The second is the fixed response vector of js/test/e2ee.spec.ts (seed of 32 bytes 0x0b, plaintext 'fixed v2 vector'); that file gives no public key, so the one here was derived from the seed with OpenSSL 3.6.4, which gives the first vector's published key from its seed alike.",
+  "vectors": [
+    {
+      "private_seed": "0707070707070707070707070707070707070707070707070707070707070707",
+      "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "plaintext": "Hello 🌍 — exact UTF-8",
+      "ciphertext": "8c6ae89329045bf445b83174da7ab8ea906297a01af666e629bbe5b6f815f0301b02d804eead903d4852c6a3194a464c44bac21cfe0f31b08a1558ad4f1952d1399347ac946e6ce7f26c4a40b3e2efc2a709bda590cddb8391d0b07d7fba7b750590"
+    },
+    {
+      "private_seed": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+      "public_key": "66be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a",
+      "plaintext": "fixed v2 vector",
+      "ciphertext": "07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7ca0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b743d22a6968fbbdf88cd066c79b3dacd53a6991f06ce8c564e03b7eb60e2376"
+    }
+  ]
+}

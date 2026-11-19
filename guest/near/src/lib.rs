@@ -1,5 +1,12 @@
 //! The guest's check of NEAR AI Cloud's hardware proof, made before anything
-//! is sent to it (slice 1 of the NEAR mode: the proof checker alone).
+//! is sent to it, and the one chat request that follows a passed check
+//! (slices 1 and 2 of the NEAR mode).
+//!
+//! [`ask`] is the only way to send: in one call it fetches a report under a
+//! fresh nonce, fetches Intel's collateral or reuses what [`KeptCollateral`]
+//! holds, checks the proof, and only then sends the chat request, encrypted
+//! to the model key the proof checked, on a new connection that must show
+//! the gateway certificate key the proof is tied to.
 //!
 //! [`fetch_report`] opens one TLS connection to NEAR's gateway through a
 //! SOCKS5 proxy (the guest's Tor port), records the SHA-256 of the gateway
@@ -20,16 +27,31 @@
 //! model workload the measured launcher fetches, where the images came from,
 //! and anything about the replies.
 
+mod chat;
+mod e2ee;
 mod fetch;
+#[cfg(test)]
+mod gate;
 mod verify;
 
 use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
+pub use chat::{ask, Answered, KeptCollateral, Stop};
 pub use dcap_qvl::{QuoteCollateralV3, TcbStatus};
 pub use fetch::{fetch_collateral, fetch_report, FetchError, Fetched};
 pub use verify::{verify, Refusal, Who};
+
+/// `N` bytes from the system's secure random source; None if it fails.
+fn random<const N: usize>() -> Option<[u8; N]> {
+    let mut bytes = [0u8; N];
+    rustls::crypto::ring::default_provider()
+        .secure_random
+        .fill(&mut bytes)
+        .ok()?;
+    Some(bytes)
+}
 
 /// The SOCKS5 proxy every connection goes through. Names are resolved by the
 /// proxy; the user name and password ask Tor for a circuit of their own.

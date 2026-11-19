@@ -1,6 +1,7 @@
 //! The network half: the report from NEAR's gateway and Intel's collateral,
 //! every connection through the caller's SOCKS5 proxy, with names resolved
-//! by the proxy and ordinary certificate checks against Mozilla's roots.
+//! by the proxy and ordinary certificate checks against Mozilla's roots. The
+//! chat request (`chat.rs`) uses the same connection and HTTP code.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -17,7 +18,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{Collateral, Proxy, QuoteCollateralV3};
 
-const NEAR: &str = "cloud-api.near.ai";
+pub(crate) const NEAR: &str = "cloud-api.near.ai";
 const INTEL_API: &str = "api.trustedservices.intel.com";
 const INTEL_CERTS: &str = "certificates.trustedservices.intel.com";
 /// The largest report taken; live ones are about 245 KB for each of the
@@ -90,22 +91,21 @@ impl From<io::Error> for FetchError {
 /// report under a fresh nonce, on one connection whose certificate key it
 /// records.
 pub fn fetch_report(proxy: &Proxy, model: &str) -> Result<Fetched, FetchError> {
-    let mut nonce = [0u8; 32];
-    provider()
-        .secure_random
-        .fill(&mut nonce)
-        .map_err(|_| FetchError::Connect("no randomness for the nonce".into()))?;
-    let (mut tls, spki_sha256) = connect(proxy, NEAR)?;
+    let nonce =
+        crate::random().ok_or_else(|| FetchError::Connect("no randomness for the nonce".into()))?;
+    let (mut tls, spki_sha256) = connect(proxy, NEAR, &mozilla())?;
     let path = format!(
         "/v1/attestation/report?model={}&provider=near&signing_algo=ed25519&include_tls_fingerprint=true&nonce={}",
         percent_encode(model),
         hex::encode(nonce)
     );
-    let answer = get(
+    let answer = request(
         &mut tls,
+        "GET",
         NEAR,
         &path,
         &[("Accept", "application/json"), ("x-no-aliasing", "true")],
+        None,
         REPORT_LIMIT,
     )?;
     match answer.status {
@@ -130,13 +130,18 @@ pub fn fetch_report(proxy: &Proxy, model: &str) -> Result<Fetched, FetchError> {
 /// Fetches from Intel's own servers the collateral for every platform family
 /// the report's quotes name.
 pub fn fetch_collateral(proxy: &Proxy, report: &[u8]) -> Result<Vec<Collateral>, FetchError> {
-    let mut families = BTreeSet::new();
-    for quote in crate::verify::quotes(report).map_err(|r| FetchError::Malformed(r.to_string()))? {
-        families.insert(crate::verify::family(&quote).map_err(FetchError::Malformed)?);
-    }
-    families
+    families(report)?
         .into_iter()
         .map(|(fmspc, ca)| family_collateral(proxy, fmspc, ca))
+        .collect()
+}
+
+/// The platform family, FMSPC and issuing CA, of every quote in a report.
+pub(crate) fn families(report: &[u8]) -> Result<BTreeSet<(String, String)>, FetchError> {
+    crate::verify::quotes(report)
+        .map_err(|r| FetchError::Malformed(r.to_string()))?
+        .iter()
+        .map(|quote| crate::verify::family(quote).map_err(FetchError::Malformed))
         .collect()
 }
 
@@ -180,8 +185,8 @@ fn family_collateral(proxy: &Proxy, fmspc: String, ca: String) -> Result<Collate
 
 /// One GET to Intel on a connection of its own.
 fn intel(proxy: &Proxy, host: &'static str, path: &str) -> Result<Answer, FetchError> {
-    let (mut tls, _) = connect(proxy, host)?;
-    let answer = get(&mut tls, host, path, &[], INTEL_LIMIT)?;
+    let (mut tls, _) = connect(proxy, host, &mozilla())?;
+    let answer = request(&mut tls, "GET", host, path, &[], None, INTEL_LIMIT)?;
     match answer.status {
         200 => Ok(answer),
         code => Err(FetchError::Status {
@@ -204,24 +209,29 @@ fn signed(body: &[u8], key: &str) -> Result<(String, Vec<u8>), FetchError> {
     Ok((object, hex::decode(signature).map_err(|_| malformed())?))
 }
 
-type Tls = StreamOwned<ClientConnection, TcpStream>;
+pub(crate) type Tls = StreamOwned<ClientConnection, TcpStream>;
 
-fn provider() -> rustls::crypto::CryptoProvider {
-    rustls::crypto::ring::default_provider()
+/// Mozilla's roots, which every certificate is checked against.
+pub(crate) fn mozilla() -> RootCertStore {
+    RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    }
 }
 
 /// A TLS connection to `host`:443 through the proxy, after ordinary
-/// certificate checks, and the SHA-256 of the leaf certificate's
-/// SubjectPublicKeyInfo.
-fn connect(proxy: &Proxy, host: &str) -> Result<(Tls, [u8; 32]), FetchError> {
+/// certificate checks against `roots`, and the SHA-256 of the leaf
+/// certificate's SubjectPublicKeyInfo.
+pub(crate) fn connect(
+    proxy: &Proxy,
+    host: &str,
+    roots: &RootCertStore,
+) -> Result<(Tls, [u8; 32]), FetchError> {
     let tcp = socks(proxy, host, 443)?;
-    let roots = RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
-    let mut config = ClientConfig::builder_with_provider(Arc::new(provider()))
+    let provider = rustls::crypto::ring::default_provider();
+    let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
         .map_err(|e| FetchError::Connect(e.to_string()))?
-        .with_root_certificates(roots)
+        .with_root_certificates(roots.clone())
         .with_no_client_auth();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     let name =
@@ -297,11 +307,11 @@ fn socks(proxy: &Proxy, host: &str, port: u16) -> Result<TcpStream, FetchError> 
     Ok(stream)
 }
 
-struct Answer {
-    status: u16,
+pub(crate) struct Answer {
+    pub(crate) status: u16,
     /// Names in lower case.
     headers: Vec<(String, String)>,
-    body: Vec<u8>,
+    pub(crate) body: Vec<u8>,
 }
 
 impl Answer {
@@ -321,7 +331,7 @@ impl Answer {
     }
 
     /// The start of the body, printable, for a status other than 200.
-    fn detail(&self) -> String {
+    pub(crate) fn detail(&self) -> String {
         String::from_utf8_lossy(&self.body[..self.body.len().min(300)])
             .chars()
             .map(|c| if c.is_control() { ' ' } else { c })
@@ -329,23 +339,32 @@ impl Answer {
     }
 }
 
-/// One HTTP/1.1 GET on the connection, which it then closes, with an
-/// uncompressed body of at most `limit` bytes.
-fn get(
+/// One HTTP/1.1 request on the connection, with a body if one is given,
+/// after which the connection closes; the answer's body is uncompressed and
+/// at most `limit` bytes.
+pub(crate) fn request(
     tls: &mut Tls,
+    method: &str,
     host: &str,
     path: &str,
     headers: &[(&str, &str)],
+    body: Option<&[u8]>,
     limit: usize,
 ) -> Result<Answer, FetchError> {
-    let mut request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept-Encoding: identity\r\nConnection: close\r\n"
+    let mut head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept-Encoding: identity\r\nConnection: close\r\n"
     );
     for (name, value) in headers {
-        request.push_str(&format!("{name}: {value}\r\n"));
+        head.push_str(&format!("{name}: {value}\r\n"));
     }
-    request.push_str("\r\n");
-    tls.write_all(request.as_bytes())?;
+    if let Some(body) = body {
+        head.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
+    head.push_str("\r\n");
+    tls.write_all(head.as_bytes())?;
+    if let Some(body) = body {
+        tls.write_all(body)?;
+    }
     tls.flush()?;
 
     let mut reader = Reader {

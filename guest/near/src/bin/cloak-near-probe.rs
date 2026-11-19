@@ -4,18 +4,26 @@
 //! account key, no chat request: GETs of the report and Intel's collateral.
 //!
 //!     cloak-near-probe --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B [--save DIR]
+//!     cloak-near-probe --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B --key-file FILE
 //!
 //! With --save, the report, nonce, TLS key hash, collateral and fetch time go
 //! into DIR, as the gate check's fixtures are kept.
+//!
+//! With --key-file, the account key is read from FILE and the probe makes
+//! one chat request through `ask` instead: the proof check, then the message
+//! "ping", encrypted to the checked model key. The key is never printed.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use cloak_near::{fetch_collateral, fetch_report, verify, FetchError, Pins, Proxy};
+use cloak_near::{
+    ask, fetch_collateral, fetch_report, verify, FetchError, KeptCollateral, Pins, Proxy, Stop,
+};
 use hex::encode as hex;
+use serde_json::json;
 
 const PINS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -27,19 +35,26 @@ fn main() -> ExitCode {
     let mut socks = None;
     let mut model = None;
     let mut save = None;
+    let mut key_file = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--socks" => socks = args.next().and_then(|a| a.parse::<SocketAddr>().ok()),
             "--model" => model = args.next(),
             "--save" => save = args.next().map(PathBuf::from),
+            "--key-file" => key_file = args.next().map(PathBuf::from),
             _ => return usage(),
         }
     }
     let (Some(socks), Some(model)) = (socks, model) else {
         return usage();
     };
-    match run(socks, &model, save) {
+    let outcome = match (key_file, save) {
+        (Some(_), Some(_)) => return usage(),
+        (Some(key_file), None) => chat(socks, &model, &key_file),
+        (None, save) => run(socks, &model, save),
+    };
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             println!("Stopped: {message}");
@@ -49,8 +64,72 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: cloak-near-probe --socks HOST:PORT --model NAME [--save DIR]");
+    eprintln!(
+        "usage: cloak-near-probe --socks HOST:PORT --model NAME [--save DIR | --key-file FILE]"
+    );
     ExitCode::from(2)
+}
+
+/// The proof check and then one chat request saying "ping", with the
+/// account key in `key_file`.
+fn chat(socks: SocketAddr, model: &str, key_file: &Path) -> Result<(), String> {
+    let pins: Pins = serde_json::from_str(PINS).map_err(|e| format!("the pins file: {e}"))?;
+    let key = std::fs::read_to_string(key_file)
+        .map_err(|e| format!("reading {}: {e}", key_file.display()))?;
+    println!("Checking NEAR AI Cloud's proof for {model}, then sending \"ping\", through {socks}");
+
+    let (near_identity, intel_identity) = (fresh_identity()?, fresh_identity()?);
+    let near = Proxy {
+        addr: socks,
+        user: &near_identity,
+        password: "cloak",
+    };
+    let intel = Proxy {
+        addr: socks,
+        user: &intel_identity,
+        password: "cloak",
+    };
+    let mut kept =
+        KeptCollateral::new(Duration::from_secs(60 * 60)).expect("an hour is within a day");
+    let body = json!({"model": model, "messages": [{"role": "user", "content": "ping"}]});
+    let started = Instant::now();
+    let outcome = ask(
+        &near,
+        &intel,
+        model,
+        key.trim(),
+        body.to_string().as_bytes(),
+        &pins,
+        &mut kept,
+    );
+    let took = started.elapsed().as_secs_f64();
+    match outcome {
+        Ok(answered) => {
+            println!(
+                "The proof passed for {} model instance(s), model encryption key {}",
+                answered.proof.instances,
+                hex(answered.proof.model_key)
+            );
+            println!("NEAR answered 200 in {took:.1} s; the reply, every encrypted field opened:");
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&answered.reply).expect("JSON prints")
+            );
+            Ok(())
+        }
+        Err(Stop::Pin) => {
+            println!("The proof passed; nothing was sent to the chat endpoint ({took:.1} s).");
+            Err(Stop::Pin.to_string())
+        }
+        Err(stop @ (Stop::Send(_) | Stop::Status { .. } | Stop::Reply(_))) => {
+            println!("The proof passed; the encrypted request went after it ({took:.1} s in all).");
+            Err(stop.to_string())
+        }
+        Err(stop) => {
+            println!("Nothing was sent to the chat endpoint ({took:.1} s).");
+            Err(stop.to_string())
+        }
+    }
 }
 
 fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), String> {
