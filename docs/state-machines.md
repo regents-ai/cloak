@@ -261,7 +261,11 @@ worker ready --> guest checked --> waiting for tor --> boot files written --> gu
 waiting for tor --> tor's SOCKS port never opened --> tor stopped --> failed
 ```
 
-The boot files carry the per-boot channel token and rewriter key.
+The boot files carry the per-boot channel token and rewriter key, and,
+in the app when its owner's Cover setting is off as they are written, a
+cover list with no URLs laid over the image's (`/etc/cloak/cover.json`),
+the daemon's own cleared setting, so no cover worker starts in that guest
+(section 9); `cloak-host` never lays one.
 "Worker finished" closes the worker's channel and waits for it to exit; a
 busy worker first stops its rewrite (section 1), so the rewrite in progress
 fails and is not sent again. "Worker finished" and "Tor stopped" each wait
@@ -565,6 +569,16 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   worker's, and the technical detail says the worker is resting in place of
   its process. A new worker that cannot start is
   `model_changed` or `worker_unavailable`, as at Preparing.
+- **Cover**: the owner's Cover setting (`AppSettings.cover`, on until
+  turned off) is read once per run, as the guest's boot files are written
+  at Preparing; off, they lay a cover list with no URLs over the image's
+  (section 5), and the guest's daemon starts no cover worker. The value
+  read is `Supervisor.cover` from then until the shutdown starts stopping
+  the run's parts, nil otherwise; the technical detail says which while
+  Running. A change while
+  a guest is up waits for the next Start, and Chat says so under its
+  message box ("Cover changes at the next Start.") while the two differ.
+  Nothing else in the run depends on it.
 - **Watches**: from its start until the run ends, tor exiting raises
   `tor_stopped`, and every worker exit the relay did not cause raises
   `worker_stopped`; a rest never does. The relay replaces no lost worker
@@ -731,7 +745,18 @@ its stages first.
   reworded, open card drops its reworded text and sends it. Either way
   `Turn.reworded` is nil from then on. Send Original Text is sent on each
   press as Send is, so a press of it while the reworded text is still
-  sending pays twice, and the turn is kept as sent as written.
+  sending pays twice, and the turn is kept as sent as written. With Review
+  off (`AppSettings.review`), a rewording that finishes, a new message's or
+  a Reword's, sends the turn at once, as a press of Send would, through
+  the same checks: one that cannot go stays reworded and open, saying why,
+  so "reworded and open" is skipped only when the send can start.
+- **One conversation on disk** (`Chat.update`, `Chat.unsaved`). Saved, each
+  change sealed and written, or in memory only: a conversation changed
+  while Saved chats is off (`AppSettings.savedChats`) joins `unsaved`, and
+  nothing of it is written again until Cloak quits, even once the setting
+  is on again; Delete takes it out and removes its file if it has one. A
+  file written before stays as it was. Turning the setting off deletes
+  nothing.
 - **One task card** (`app/Sources/CloakChat/Agent.swift`,
   `app/Sources/RegentsCloak/ChatView.swift`). Running, reworded, stepping,
   answered, ended: read off `Agent.runs[conversation]`, `Agent.ran`,

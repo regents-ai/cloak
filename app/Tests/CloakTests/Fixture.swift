@@ -42,10 +42,12 @@ struct Fixture {
     }
 
     /// A supervisor on this installation, on a Mac that meets the manifest,
-    /// whose worker never rests.
+    /// whose guests send cover traffic and whose worker never rests.
     @MainActor
     func supervisor() throws -> Supervisor {
-        try Supervisor(manifest: manifest, layout: layout, hardware: .init(appleSilicon: true, memory: 64 << 30, graphicsLimit: 48 << 30)) { nil }
+        try Supervisor(
+            manifest: manifest, layout: layout, hardware: .init(appleSilicon: true, memory: 64 << 30, graphicsLimit: 48 << 30),
+            cover: { true }) { nil }
     }
 
     func remove() {

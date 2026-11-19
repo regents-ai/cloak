@@ -275,7 +275,10 @@ supervisor, run by a menu-bar app and by the `cloak` command. It runs the
 small lead, Qwen 3.5 9B (`small-lead-gguf-grammar`), and has no sessions;
 the daemon's own payment is not built. While the guest is up, its daemon
 sends the reference's own cover traffic through Tor, background noise of
-about three page fetches a minute from `reference/cover.json`. It needs a Mac with
+about three page fetches a minute from `reference/cover.json`, unless Cover
+traffic was off in Settings at Start: the guest's boot files then lay a
+list with no URLs over that one, the daemon's own cleared setting, and no
+cover worker starts in that run. It needs a Mac with
 Apple silicon whose graphics limit (Metal's recommended working set) holds
 the model's 7 GiB with 1 GiB to spare, and whose memory holds all of
 Cloak's 10 GiB with 4 GiB kept for macOS: a 16 GB Mac passes, an 8 GB one
@@ -334,9 +337,12 @@ launch first removes any that a killed app left there.
 
 "Settings…" in the menu (Command-comma) is where the app's settings
 change, and the one place but for Never reword, which Chat's review area
-also has; no link, script, app or agent can set one. General has Launch
+also has, and Cover traffic, which Chat's Cover pill also turns on and
+off; no link, script, app or agent can set one. General has Launch
 at login (off until turned on; the app still opens Paused), "Never reword
-text. Reduces your privacy." (off until ticked; see Chat, below), Free
+text. Reduces your privacy." (off until ticked; see Chat, below), Review
+and Saved chats (on until turned off; see Chat, below), Cover traffic (on
+until turned off; used from the next Start), Free
 memory and, in a build with an update feed, Updates (below). Shortcut sets the quick prompt's keys, none until chosen; keys
 without Command, Option or Control are refused, as is a shortcut macOS
 won't take. Door sets the port Agents answer on (below), 8742 until
@@ -403,13 +409,29 @@ again.
 "Chat" in the menu opens a Chat window. While Cloak is running, each
 message is reworded on the Mac and shown beside the original, with the
 words taken out and put in marked; the reworded text can be edited until
-it is sent. An answer's formatting is drawn (headings, lists, code,
+it is sent. With Review off (Settings, General), the box's button reads
+Send, and each message is sent as soon as it is reworded, through the
+same checks as Send: one that cannot go yet (no wallet, no funds) stays
+open, saying why. Review does nothing while Never reword is ticked, and
+the agent's tasks and the door never have this step. An answer's
+formatting is drawn (headings, lists, code,
 quotes, tables); its links show their address and never open, and its
 images are never loaded. Each conversation, answers included, is kept as
 one sealed file
 in `~/Library/Application Support/Regents Cloak/conversations/`, with its
 key in the login keychain. After a rebuild, the Mac asks once whether the
-new build may use that key.
+new build may use that key. With Saved chats off, a conversation started
+or continued is no longer written, and is marked "Not saved" in the list
+for as long as Cloak runs, even if Saved chats is turned on again: what was
+said in it since Saved chats went off is gone when Cloak quits. A
+conversation saved before keeps its file as it was; turning Saved chats
+off deletes nothing, and Delete still removes a file.
+
+Under the message box, three small pills show Cover, Tor and zkAPI, each
+with a dot, filled while on. Cover turns cover traffic on and off, as in
+Settings, and while Cloak is running with the other value it says "Cover
+changes at the next Start." Tor is always on and zkAPI is off, since one
+wallet pays for everything; neither can be changed yet.
 
 Send is Development mode (decision 10 in [docs/plan.md](docs/plan.md)),
 marked as such at the top of Chat, and never part of a release: the

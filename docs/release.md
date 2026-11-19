@@ -140,6 +140,11 @@ Later the same day he settled these:
   model, stage and time. First built without any text; then, asked,
   he chose that a request opens to show what the app wrote and what
   Cloak sent instead, in memory only and gone when Cloak quits.
+- Switches (his answers "1. a 2. a 3. a" and after): Cover traffic
+  now; a Tor switch and a choice between zkAPI and the owner's own
+  provider key after private payment and NEAR are in the app; Review,
+  Saved chats and NEAR's proof freshness in Settings; and Cover, Tor and
+  zkAPI shown on or off as pills under Chat's message box.
 - NEAR's requests use the owner's own NEAR key, kept in the keychain;
   later each person brings their own. A key shared by all, run by
   Regents, is not planned.

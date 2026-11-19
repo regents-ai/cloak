@@ -56,14 +56,17 @@ public final class Guest: NSObject {
 
     /// Writes the guest's boot files: its base root `base`, then the relay's
     /// channel token, a fresh rewriter key, the check cases and the model's
-    /// name, and when it `serve`s, the mark that starts the door port, the
+    /// name; without `cover`, a cover list with no URLs in place of the
+    /// image's, the daemon's own cleared setting, so its cover worker never
+    /// starts; and when it `serve`s, the mark that starts the door port, the
     /// runner and the sender after the checks. The token and key exist only
     /// in this process and the guest's memory; the file that carries them
     /// exists only until `start` ends. With a `door`, the guest's connections
     /// to the door port are handed to it, each as a socket it owns; without
     /// one, that port is not open.
     public func prepare(
-        base: URL, cases: Data, model: String, relay: Relay, tor: Tor, serve: Bool, door: ((Int32) -> Void)?
+        base: URL, cases: Data, model: String, relay: Relay, tor: Tor, cover: Bool, serve: Bool,
+        door: ((Int32) -> Void)?
     ) throws {
         var entries: [BootFiles.Entry] = [
             .init(path: "run/cloak/adapter-token", mode: 0o400, uid: 1001, gid: 1001, data: hex(relay.token)),
@@ -71,6 +74,9 @@ public final class Guest: NSObject {
             .init(path: "etc/cloak/cases.jsonl", mode: 0o444, uid: 0, gid: 0, data: cases),
             .init(path: "etc/cloak/model", mode: 0o444, uid: 0, gid: 0, data: Data(model.utf8)),
         ]
+        if !cover {
+            entries.append(.init(path: "etc/cloak/cover.json", mode: 0o444, uid: 0, gid: 0, data: Data(#"{"urls":[]}"#.utf8)))
+        }
         if serve {
             entries.append(.init(path: "etc/cloak/serve", mode: 0o444, uid: 0, gid: 0, data: Data()))
         }

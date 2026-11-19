@@ -12,7 +12,9 @@ import Foundation
 // and rewriter key, relays the guest's rewrite requests to the worker one at
 // a time and its Tor port to tor, starts a new worker after a lost one, and
 // exits when the guest powers off, after stopping both. The guest's console
-// is this process's standard output.
+// is this process's standard output. The guest's cover traffic follows the
+// cover list in the root given (/etc/cloak/cover.json): this command never
+// lays an empty one over it, as the app does when its owner turns Cover off.
 //
 // With --serve the guest runs the sender after its checks (Development mode,
 // decision 10 in docs/plan.md) and its console goes to standard error: each
@@ -97,7 +99,7 @@ do { tor = try await Tor.start(executable: path("--tor"), data: path("--tor-data
 
 do {
     try guest.prepare(base: path("--initrd"), cases: try Data(contentsOf: path("--cases")), model: arguments["--name"]!,
-                      relay: relay, tor: tor, serve: serving,
+                      relay: relay, tor: tor, cover: true, serve: serving,
                       door: arguments["--door"].map { door in { guest in carry(guest, to: door) } })
     if let tasks = arguments["--runner"] {
         try serveTasks(at: tasks, on: guest)

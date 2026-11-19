@@ -20,11 +20,17 @@ import os
 /// the owner's agent tasks (decision 12); sessions and the daemon's payment
 /// are not built yet. While the guest is up, its daemon runs its own cover
 /// traffic through Tor from the one list in reference/cover.json: the
-/// reference's background noise, about three page fetches a minute.
+/// reference's background noise, about three page fetches a minute. When
+/// the owner's Cover setting is off as the guest's boot files are written,
+/// they lay a list with no URLs over that one, and no cover worker starts
+/// in that run.
 @MainActor
 @Observable
 public final class Supervisor {
     public private(set) var phase: Phase = .paused
+    /// Whether the guest up now sends cover traffic, as the setting was when
+    /// its boot files were written; nil while no guest is up.
+    public private(set) var cover: Bool?
     /// The last startup check since the app opened.
     public private(set) var check: StatusDocument.Check?
     /// The technical detail of the last failure, until the next start.
@@ -45,6 +51,9 @@ public final class Supervisor {
 
     @ObservationIgnored private let layout: Layout
     @ObservationIgnored private let hardware: Checks.Hardware
+    /// Whether the next guest sends cover traffic: the owner's setting,
+    /// asked each time a guest's boot files are written.
+    @ObservationIgnored private let wantsCover: @MainActor () -> Bool
     /// How long the worker may go with nothing to reword before it rests;
     /// nil, never. Asked each time that time starts again.
     @ObservationIgnored private let restAfter: @Sendable () -> Duration?
@@ -67,18 +76,25 @@ public final class Supervisor {
         var tasks = AgentTasks()
     }
 
-    public convenience init(manifest: Manifest, layout: Layout, restAfter: @escaping @Sendable () -> Duration?) throws {
-        try self.init(manifest: manifest, layout: layout, hardware: .current, restAfter: restAfter)
+    public convenience init(
+        manifest: Manifest, layout: Layout, cover: @escaping @MainActor () -> Bool,
+        restAfter: @escaping @Sendable () -> Duration?
+    ) throws {
+        try self.init(manifest: manifest, layout: layout, hardware: .current, cover: cover, restAfter: restAfter)
     }
 
     /// A guest's boot files carry the relay's channel token and the rewriter
     /// key, and last only while it starts, so an app killed then leaves
     /// them. The supervisor starts by removing those and making the boot
     /// folder, owner-only, for its own guests.
-    init(manifest: Manifest, layout: Layout, hardware: Checks.Hardware, restAfter: @escaping @Sendable () -> Duration?) throws {
+    init(
+        manifest: Manifest, layout: Layout, hardware: Checks.Hardware, cover: @escaping @MainActor () -> Bool,
+        restAfter: @escaping @Sendable () -> Duration?
+    ) throws {
         self.manifest = manifest
         self.layout = layout
         self.hardware = hardware
+        wantsCover = cover
         self.restAfter = restAfter
         try Places.makeOwnerOnly(layout.bootFiles)
         try Guest.removeBootFiles(in: layout.bootFiles)
@@ -223,7 +239,11 @@ public final class Supervisor {
         var lines = [String]()
         switch phase {
         case .running:
-            lines.append("Running: tor is up, the worker is up or resting, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready (Development mode). Sessions and the daemon's payment are not built yet. Cover traffic runs in the guest while Cloak is running: the reference's own background noise, about three page fetches a minute through Tor.")
+            lines.append("Running: tor is up, the worker is up or resting, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready (Development mode). Sessions and the daemon's payment are not built yet.")
+            lines.append(
+                cover == false
+                    ? "Cover traffic is off in this run: the setting was off at Start, so the guest's daemon started no cover worker."
+                    : "Cover traffic runs in the guest while Cloak is running: the reference's own background noise, about three page fetches a minute through Tor.")
         case .ready:
             lines.append("Ready: the startup check passed and everything has stopped again.")
         case .paused:
@@ -308,8 +328,10 @@ public final class Supervisor {
             do {
                 guest = try Guest(kernel: layout.url(.kernel, in: manifest), console: verification.console.fileHandleForWriting,
                                   bootFolder: layout.bootFiles)
+                let cover = wantsCover()
                 try guest.prepare(base: layout.url(.initrd, in: manifest), cases: Verification.cases,
-                                  model: manifest.model.name, relay: relay, tor: tor, serve: true, door: door)
+                                  model: manifest.model.name, relay: relay, tor: tor, cover: cover, serve: true, door: door)
+                self.cover = cover
                 stack.guest = guest
                 try await guest.start { verification.ended($0) }
             } catch {
@@ -401,6 +423,7 @@ public final class Supervisor {
             let stack = self.stack
             self.stack = Stack()
             resting = false
+            cover = nil
             for watch in stack.watches { watch.cancel() }
             try? await stack.guest?.stop()
             stack.verification?.close()

@@ -9,12 +9,14 @@ import os
 /// message being written, the one rewording at a time, and the turns being
 /// sent. A turn leaves this Mac as reworded, or as written when its owner
 /// presses Send Original Text on it or has Never reword ticked (decision 11
-/// in docs/plan.md), and only when its owner presses a Send: in
+/// in docs/plan.md), and only when its owner presses a Send, or, with
+/// Review off, the box's Send, which sends it once it is reworded: in
 /// Development mode (decision 10)
 /// through the guest's sender and Tor to a remote model, paid from the one
 /// wallet. A conversation whose first message is a task is the agent's
 /// (decision 12): each task runs when its owner presses Run, its model
-/// requests reworded at the door.
+/// requests reworded at the door. With Saved chats off, a conversation
+/// started or continued is kept in memory only (`unsaved`).
 @MainActor
 @Observable
 final class Chat {
@@ -77,7 +79,7 @@ final class Chat {
     }
 
     let supervisor: Supervisor
-    /// Read here for Never reword, which only `NeverReword` sets.
+    /// Read here for Never reword, Review and Saved chats.
     let settings: AppSettings
     let agent: Agent
     let folder: URL
@@ -87,6 +89,11 @@ final class Chat {
     private(set) var conversations: [Conversation] = []
     /// Conversation files that did not open; they are left as they are.
     private(set) var unreadable: [UUID] = []
+    /// The conversations started or continued while Saved chats was off:
+    /// none of their changes is written, for as long as Cloak runs, even
+    /// once it is on again, so what was said while it was off never reaches
+    /// the disk. One saved before keeps its file as it was then.
+    private(set) var unsaved: Set<UUID> = []
     var selection: UUID? {
         didSet {
             guard selection != oldValue else { return }
@@ -304,13 +311,15 @@ final class Chat {
             }
         }
         conversations.removeAll { $0.id == id }
+        unsaved.remove(id)
         if selection == id {
             selection = nil
             newConversation()
         }
     }
 
-    /// Rewords the message written, as a new turn of the conversation shown;
+    /// Rewords the message written, as a new turn of the conversation shown,
+    /// sent once reworded when Review is off;
     /// or, with Never reword ticked, adds it as written and sends it, the
     /// model on this Mac not asked; or, in the agent's conversation, runs it
     /// as its next task. The message goes with a line for each detail
@@ -507,14 +516,20 @@ final class Chat {
         guard var conversation = conversations.first(where: { $0.id == id }) else { return }
         switch result {
         case .success(let reworded):
-            if case .again(let turn) = asked, let index = conversation.turns.firstIndex(where: { $0.id == turn }) {
+            let turn: UUID
+            if case .again(let again) = asked, let index = conversation.turns.firstIndex(where: { $0.id == again }) {
                 conversation.turns[index].reworded = reworded
+                turn = again
             } else {
                 let new = Turn(original: original, reworded: reworded)
                 conversation.turns.append(new)
                 opened = new.id
+                turn = new.id
             }
             update(conversation)
+            // With Review off it goes now, as if Send were pressed: through
+            // the same checks, so one certain to stop stays open, saying why.
+            if !settings.review { send(turn, in: id) }
         case .failure(let reason):
             guard case .new(let written, let picked) = asked else {
                 stop = Stop(reason: reason, newMessage: false)
@@ -532,10 +547,16 @@ final class Chat {
         }
     }
 
-    /// Puts the conversation in place of its old self and saves it.
+    /// Puts the conversation in place of its old self and saves it, unless
+    /// Saved chats is off now or was off at one of its changes since Cloak
+    /// opened (`unsaved`).
     private func update(_ conversation: Conversation) {
         guard case .open(let store) = access, let index = conversations.firstIndex(where: { $0.id == conversation.id }) else { return }
         conversations[index] = conversation
+        guard settings.savedChats, !unsaved.contains(conversation.id) else {
+            unsaved.insert(conversation.id)
+            return
+        }
         do {
             try store.save(conversation)
             problem = nil

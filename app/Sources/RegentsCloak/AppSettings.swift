@@ -8,11 +8,12 @@ import ServiceManagement
 /// Cloak's settings, kept in the app's defaults: every key and its default
 /// is named here, once, and read and written only here. Only the Settings
 /// window sets them, and Never reword also Chat's review area, beside Send
-/// Original Text. No setting can be set from a link, from the door, from
-/// AppleScript or from the guest: none of those reaches this type. Whether
-/// the app opens at login is the system's login item (`LoginItem`), and
-/// whether it checks for updates by itself is Sparkle's own setting
-/// (`Updates`); neither is a default kept here.
+/// Original Text, and Cover also its pill under Chat's message box. No
+/// setting can be set from a link, from the door, from AppleScript or from
+/// the guest: none of those reaches this type. Whether the app opens at
+/// login is the system's login item (`LoginItem`), and whether it checks
+/// for updates by itself is Sparkle's own setting (`Updates`); neither is a
+/// default kept here.
 @MainActor
 @Observable
 final class AppSettings {
@@ -24,10 +25,14 @@ final class AppSettings {
         case shortcut
         case doorPort
         case neverReword
+        case cover
+        case review
+        case savedChats
     }
 
     /// Each setting until it is chosen, and again after Restore Defaults.
-    /// The quick prompt's shortcut has none; Never reword is off.
+    /// The quick prompt's shortcut has none; Never reword is off; Cover,
+    /// Review and Saved chats are on.
     nonisolated static let defaultFreeMemory = FreeMemory.fiveMinutes
     nonisolated static let defaultDoorPort: UInt16 = 8742
     /// The ports the door may take: none the system keeps for itself.
@@ -91,6 +96,48 @@ final class AppSettings {
         }
     }
 
+    /// Whether the guest's daemon sends cover traffic: its own background
+    /// fetches of the public pages in the one list (reference/cover.json).
+    /// The supervisor reads it as it writes a guest's boot files, so a
+    /// change applies from the next Start.
+    var cover: Bool {
+        get {
+            access(keyPath: \.cover)
+            return defaults.object(forKey: Key.cover.rawValue) as? Bool ?? true
+        }
+        set {
+            withMutation(keyPath: \.cover) { defaults.set(newValue, forKey: Key.cover.rawValue) }
+        }
+    }
+
+    /// Whether Chat shows each reworded message for its owner to edit and
+    /// send. Off, a message is sent as soon as its rewording finishes, as if
+    /// Send were pressed then. Never reword leaves nothing to review; the
+    /// agent's tasks and the door never have this step.
+    var review: Bool {
+        get {
+            access(keyPath: \.review)
+            return defaults.object(forKey: Key.review.rawValue) as? Bool ?? true
+        }
+        set {
+            withMutation(keyPath: \.review) { defaults.set(newValue, forKey: Key.review.rawValue) }
+        }
+    }
+
+    /// Whether Chat writes its conversations to disk, sealed. Off, a
+    /// conversation started or continued is kept in memory only, for as
+    /// long as Cloak runs, even once this is on again; the files already
+    /// saved stay as they are until their owner deletes them.
+    var savedChats: Bool {
+        get {
+            access(keyPath: \.savedChats)
+            return defaults.object(forKey: Key.savedChats.rawValue) as? Bool ?? true
+        }
+        set {
+            withMutation(keyPath: \.savedChats) { defaults.set(newValue, forKey: Key.savedChats.rawValue) }
+        }
+    }
+
     /// Why a port can't be the door's.
     enum PortRefusal: Error, Equatable {
         /// Not a whole number in `doorPorts`.
@@ -134,15 +181,19 @@ final class AppSettings {
         }
     }
 
-    /// Puts every setting kept here back to its default.
+    /// Puts every setting kept here back to its default, each change told
+    /// to whatever watches that setting.
     func restore() {
-        withMutation(keyPath: \.freeMemory) {
-            withMutation(keyPath: \.shortcut) {
-                withMutation(keyPath: \.doorPort) {
-                    withMutation(keyPath: \.neverReword) {
-                        for key in Key.allCases { defaults.removeObject(forKey: key.rawValue) }
-                    }
-                }
+        for key in Key.allCases {
+            let remove = { self.defaults.removeObject(forKey: key.rawValue) }
+            switch key {
+            case .freeMemory: withMutation(keyPath: \.freeMemory, remove)
+            case .shortcut: withMutation(keyPath: \.shortcut, remove)
+            case .doorPort: withMutation(keyPath: \.doorPort, remove)
+            case .neverReword: withMutation(keyPath: \.neverReword, remove)
+            case .cover: withMutation(keyPath: \.cover, remove)
+            case .review: withMutation(keyPath: \.review, remove)
+            case .savedChats: withMutation(keyPath: \.savedChats, remove)
             }
         }
     }

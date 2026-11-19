@@ -49,11 +49,21 @@ private struct Sidebar: View {
         List(selection: $chat.selection) {
             ForEach(chat.conversations) { conversation in
                 let agent = chat.isAgent(conversation)
+                let unsaved = chat.unsaved.contains(conversation.id)
                 HStack(spacing: 6) {
                     Text(agent && conversation.turns.isEmpty ? "New task" : conversation.title)
                         .lineLimit(1)
-                    if agent {
+                    if agent || unsaved {
                         Spacer(minLength: 0)
+                    }
+                    if unsaved {
+                        Image(systemName: "externaldrive.badge.xmark")
+                            .imageScale(.small)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Not saved")
+                            .help("Not saved. What's new here is gone when Cloak quits.")
+                    }
+                    if agent {
                         Image(systemName: "hammer")
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
@@ -180,7 +190,9 @@ private struct Turns: View {
                                 Text(
                                     chat.settings.neverReword
                                         ? "Rewording is off, so each message is sent as you wrote it."
-                                        : "Each message is reworded on this Mac first. You see both, can edit the reworded one, and send it."
+                                        : chat.settings.review
+                                            ? "Each message is reworded on this Mac first. You see both, can edit the reworded one, and send it."
+                                            : "Each message is reworded on this Mac, then sent as soon as it's ready. You see both."
                                 )
                                 .foregroundStyle(.secondary)
                             }
@@ -660,11 +672,13 @@ extension View {
 
 /// The box for the next message, with a line under it while Never reword is
 /// ticked, what stopped the last rewording, and, unless Cloak is running,
-/// why rewording or sending waits and a Start button. In the agent's
-/// conversation, the box for the next task,
+/// why rewording or sending waits and a Start button. Its button rewords,
+/// or sends when nothing is left to review: with Never reword ticked or
+/// Review off. In the agent's conversation, the box for the next task,
 /// with Run, or Stop while a task runs there, and a note when the agent
 /// starts without the earlier tasks. While the conversation is empty, what
-/// it is to be: a chat or the agent's. Above either box, its details.
+/// it is to be: a chat or the agent's. Above either box, its details; at
+/// the foot, the Cover, Tor and zkAPI switches.
 private struct Compose: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
@@ -675,6 +689,7 @@ private struct Compose: View {
         let agent = conversation.map(chat.isAgent) ?? false
         let running = conversation.flatMap { chat.agent.runs[$0.id] } != nil
         let neverReword = !agent && chat.settings.neverReword
+        let sends = neverReword || (!agent && !chat.settings.review)
         let label = agent ? "Task" : "Message"
         VStack(alignment: .leading, spacing: 10) {
             if let stop = chat.stop {
@@ -688,7 +703,7 @@ private struct Compose: View {
                 }
             }
             if chat.supervisor.phase != .running {
-                Waiting(supervisor: chat.supervisor, to: agent ? "run" : neverReword ? "send" : "reword", showDetails: showDetails)
+                Waiting(supervisor: chat.supervisor, to: agent ? "run" : sends ? "send" : "reword", showDetails: showDetails)
             }
             DetailsRow(chat: chat)
             HStack(alignment: .bottom, spacing: 10) {
@@ -718,7 +733,7 @@ private struct Compose: View {
                         .keyboardShortcut(".", modifiers: .command)
                         .padding(.bottom, 4)
                 } else {
-                    let title: LocalizedStringKey = agent ? "Run" : neverReword ? "Send" : "Reword"
+                    let title: LocalizedStringKey = agent ? "Run" : sends ? "Send" : "Reword"
                     Button(title, systemImage: "arrow.up") { chat.submit() }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderedProminent)
@@ -760,9 +775,77 @@ private struct Compose: View {
                 }
             }
             .font(.callout)
+            Switches(settings: chat.settings, supervisor: chat.supervisor)
         }
         .padding(16)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: chat.picks.details)
+    }
+}
+
+/// Cover, Tor and zkAPI, each a small glass pill whose dot shows at a glance
+/// whether it is on. Cover is the setting (`AppSettings.cover`), which the
+/// guest takes at Start, so while Cloak runs with the other value a few
+/// words beside the pills say when it changes. Tor is always on, and zkAPI
+/// is off, since one wallet pays for everything (the Development bar);
+/// neither changes here yet.
+private struct Switches: View {
+    @Bindable var settings: AppSettings
+    let supervisor: Supervisor
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                SwitchPill(title: "Cover", isOn: $settings.cover, help: "Background visits to ordinary public pages.")
+                SwitchPill(title: "Tor", isOn: .constant(true), help: "Always on for now.", fixed: true)
+                SwitchPill(title: "zkAPI", isOn: .constant(false), help: "Not available yet.", fixed: true)
+            }
+            if let started = supervisor.cover, started != settings.cover {
+                Text("Cover changes at the next Start.")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+    }
+}
+
+/// One switch, as a small glass pill: a dot, filled while on and hollow
+/// while off, then its name; read by VoiceOver as a switch with its state.
+/// One `fixed` is shown but can't be changed here yet: not a button, its
+/// name dimmed, and its help says why.
+private struct SwitchPill: View {
+    let title: String
+    @Binding var isOn: Bool
+    let help: String
+    var fixed = false
+
+    var body: some View {
+        let pill = HStack(spacing: 5) {
+            Image(systemName: isOn ? "circle.fill" : "circle")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(isOn ? Color.green : Color.secondary)
+            Text(title)
+                .foregroundStyle(fixed ? HierarchicalShapeStyle.secondary : .primary)
+        }
+        .padding(.horizontal, 10)
+        .frame(minHeight: 24)
+        .contentShape(.capsule)
+        Group {
+            if fixed {
+                pill
+                    .glassEffect(.regular, in: .capsule)
+            } else {
+                Button { isOn.toggle() } label: { pill }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+            }
+        }
+        .accessibilityRepresentation {
+            Toggle(title, isOn: $isOn)
+                .toggleStyle(.switch)
+                .disabled(fixed)
+        }
+        .help(help)
     }
 }
 

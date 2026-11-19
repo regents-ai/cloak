@@ -6,9 +6,11 @@ import OSLog
 import SwiftUI
 
 /// The Settings window, where every setting changes (`AppSettings`):
-/// General (whether the app opens at login, whether Chat never rewords, how
-/// long the model may go unused before it leaves memory, and, when the app
-/// has an updater, whether it checks for updates by itself), Shortcut (the
+/// General (whether the app opens at login, whether Chat never rewords,
+/// whether it shows each reworded message before sending it, whether it
+/// saves chats, whether the guest sends cover traffic, how long the model
+/// may go unused before it leaves memory, and, when the app has an updater,
+/// whether it checks for updates by itself), Shortcut (the
 /// quick prompt's), Door (its port on 127.0.0.1) and Advanced (how Cloak
 /// started its parts, this session's log, and Restore Defaults).
 struct SettingsView: View {
@@ -101,6 +103,22 @@ private struct GeneralPane: View {
                 NeverReword(settings: settings)
             } footer: {
                 Footnote("Chat then sends each message as you wrote it. Tasks, and what other apps send through the door, are always reworded.")
+            }
+            Section {
+                Toggle("Review", isOn: $settings.review)
+                    .disabled(settings.neverReword)
+            } footer: {
+                Footnote("Chat shows each reworded message for you to edit and send. Off, it's sent as soon as it's reworded. Not used while Never reword is on.")
+            }
+            Section {
+                Toggle("Saved chats", isOn: $settings.savedChats)
+            } footer: {
+                Footnote("Off, chats you start or continue aren't saved and are gone when Cloak quits. Chats already saved stay until you delete them.")
+            }
+            Section {
+                Toggle("Cover traffic", isOn: $settings.cover)
+            } footer: {
+                Footnote("Cloak visits ordinary public pages in the background, so your real requests stand out less. It uses some bandwidth, and a change applies at the next Start.")
             }
             Section {
                 Picker("Free memory", selection: $settings.freeMemory) {
@@ -340,7 +358,7 @@ private struct AdvancedPane: View {
     private var restored: String {
         """
         \(updates == nil ? "Launch at login turns" : "Launch at login and Updates turn") off, \
-        rewording turns back on, \
+        rewording, Review, Saved chats and Cover traffic turn back on, \
         Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
         the quick prompt loses its shortcut, and the door goes back to port \(AppSettings.defaultDoorPort).
         """

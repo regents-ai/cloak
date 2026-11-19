@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Chat: three pills under the message box, Cover, Tor and zkAPI, each
+  showing on or off (Sean, 19 November). Cover is a switch, on until
+  turned off; off, the next Start lays a cover list with no pages over
+  the image's and the guest's daemon starts no cover worker, and Chat
+  says "Cover changes at the next Start." while the run and the setting
+  differ. Tor shows on and zkAPI off; neither can be changed yet ("Always
+  on for now.", "Not available yet."): a Tor switch and a choice of
+  payment come after private payment and NEAR are in the app, by his
+  answers. Settings, General gains Cover traffic, Review (off, a
+  reworded message is sent as soon as it is reworded) and Saved chats
+  (off, chats started or continued are not written to disk and are gone
+  when Cloak quits; chats already saved stay until deleted, and a chat
+  touched while it was off stays unsaved until Cloak quits). Restore
+  Defaults turns all three on. Seen on screen: the pills and the
+  Settings pane; with Cover off at Start the app reported no cover
+  worker. Not exercised: Review off, Saved chats off.
+
 - NEAR mode: the GPU check moves to Intel's signed tokens, and NVIDIA's
   service is gone (`guest/near`, `gpu.rs`). NEAR's front server asks
   Intel Trust Authority for two tokens under our nonce; Cloak fetches

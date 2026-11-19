@@ -77,8 +77,12 @@ public struct ConversationStore: Sendable {
         }
     }
 
+    /// Removes the conversation's file. One never saved, as with Saved chats
+    /// off, has none, and nothing is removed.
     public func delete(_ id: UUID) throws {
-        try FileManager.default.removeItem(at: file(id))
+        do {
+            try FileManager.default.removeItem(at: file(id))
+        } catch CocoaError.fileNoSuchFile {}
     }
 
     func file(_ id: UUID) -> URL {
