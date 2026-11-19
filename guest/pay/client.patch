@@ -1,0 +1,48 @@
+--- a/internal/zkapi/client.go
++++ b/internal/zkapi/client.go
+@@ -19,6 +19,7 @@
+ 	"time"
+ 
+ 	"github.com/ethereum/zkapi/zkapi-clientd/internal/activity"
++	"github.com/ethereum/zkapi/zkapi-clientd/internal/relay"
+ )
+ 
+ const (
+@@ -36,7 +37,7 @@
+ 	BridgeToken      string        `json:"bridge_token"`
+ 	Network          string        `json:"network"` // empty means mainnet; Sepolia is explicit
+ 	InferenceBaseURL string        `json:"inference_base_url"`
+-	HTTPClient       *http.Client  `json:"-"` // remote HTTPS, direct or over Wisp as configured
++	HTTPClient       *http.Client  `json:"-"` // remote HTTPS, through Tor
+ 	KeyReuseWindow   time.Duration `json:"-"` // fixed, in-memory window; zero disables reuse
+ }
+ 
+@@ -240,6 +241,18 @@
+ 		return &Error{http.StatusBadGateway, "companion_deployment_mismatch"}
+ 	}
+ 	return nil
++}
++
++// Regents Cloak (guest/pay/client.patch): the conversation's Tor identity,
++// which the Mac sends with each request, travels to Complete under this key,
++// which no dialer reads. Complete puts it on the inference request's dials
++// alone; every other connection a request causes, the model policy's among
++// them, gets a fresh identity from the relay.
++type conversationKey struct{}
++
++// WithConversation carries a conversation's Tor identity to Complete.
++func WithConversation(ctx context.Context, identity string) context.Context {
++	return context.WithValue(ctx, conversationKey{}, identity)
+ }
+ 
+ // Complete passes the caller's JSON unchanged over the anonymous HTTP client.
+@@ -277,7 +290,8 @@
+ 		c.cachedLease = nil
+ 		return nil, err
+ 	}
+-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.InferenceBaseURL+"/chat/completions", bytes.NewReader(body))
++	conversation, _ := ctx.Value(conversationKey{}).(string)
++	req, err := http.NewRequestWithContext(relay.WithTorIdentity(ctx, conversation), http.MethodPost, c.config.InferenceBaseURL+"/chat/completions", bytes.NewReader(body))
+ 	if err != nil {
+ 		c.cachedLease = nil
+ 		return nil, fmt.Errorf("create inference request: %w", err)

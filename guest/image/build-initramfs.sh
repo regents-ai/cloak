@@ -35,7 +35,7 @@ for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport
 	xz -dc $(find /lib/modules/$kernel -name "$module.ko.xz") > $root/usr/lib/modules/$module.ko
 done
 install -m 0755 /out/cloak-adapter /out/cloak-port /out/cloak-rewrite-check /out/cloak-daemon /out/cloak-agent-check \
-	/out/cloak-runner /out/cloak-routing-probe /out/cloak-vsock-probe /out/cloak-sender $root/usr/bin/
+	/out/cloak-runner /out/cloak-routing-probe /out/cloak-vsock-probe /out/cloak-sender /out/cloak-pay $root/usr/bin/
 install -m 0444 /out/cover.json $root/etc/cloak/cover.json
 install -m 0755 /src/init $root/init
 install -m 0755 /src/boot $root/usr/lib/cloak/boot
@@ -88,6 +88,7 @@ agent:x:1005:1005:agent:/home/agent:/bin/sh
 torport:x:1006:1006:torport:/:/bin/sh
 sender:x:1007:1007:sender:/:/bin/sh
 door:x:1008:1008:door:/:/bin/sh
+pay:x:1009:1009:pay:/:/bin/sh
 PASSWD
 cat > $root/etc/group <<GROUP
 root:x:0:
@@ -99,6 +100,7 @@ agent:x:1005:
 torport:x:1006:
 sender:x:1007:
 door:x:1008:
+pay:x:1009:
 GROUP
 chmod 0755 $root/run/cloak
 chmod 1777 $root/tmp
@@ -114,6 +116,6 @@ chmod 1777 $root/tmp
 	(cd /node && sha256sum node-v24.22.2-linux-arm64.tar.xz)
 	(cd /pi && sha256sum earendil-works-pi-coding-agent-1.3.0.tgz)
 	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-port cloak-rewrite-check cloak-daemon cloak-agent-check \
-		cloak-runner cloak-routing-probe cloak-vsock-probe cloak-sender cover.json
+		cloak-runner cloak-routing-probe cloak-vsock-probe cloak-sender cloak-pay cover.json
 } > /out/guest-manifest.txt
 cat /out/guest-manifest.txt

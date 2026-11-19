@@ -748,8 +748,12 @@ copied its own file back before Pi read it.
 
 **Not tried, and why.**
 
-- The guest's own sender and runner ports from the sandbox: the probe
-  dials only the Mac, and the guest has no vsock loopback.
+- The guest's own sender and runner ports from the sandbox: these checks
+  dial the Mac only. The probe takes any vsock address since 19
+  November (an optional third argument), but the guest loads no vsock
+  loopback module, so its own address is not expected to reach them;
+  `tests/test_pay_path.py`, not yet run, tries that for `cloak-pay`'s
+  port.
 - TCP to port 53 under torsocks: the check uses busybox's `nc`, which skips
   torsocks, so tor's log stays exact.
 - A new file in the sandbox's own `/etc`: bubblewrap builds the sandbox's
@@ -759,6 +763,163 @@ copied its own file back before Pi read it.
 - Abstract UNIX sockets are listed, not connected to.
 - Already known: tools in every conversation use Tor with no identity of
   their own, so they share one, as in the reference (Stage 5, below).
+
+### Payment in the guest: cloak-pay (begun 19 November 2026)
+
+Build order steps 1 and 2 of the release plan (`docs/release.md`, "Who
+owns what"): the front over vsock and the Tor identities, with stand-ins
+only. Nothing in the running product changes. The guest image gains the
+program and a user for it, but the boot does not start it, the sender
+stays as it is, and no guest has been rebuilt with it.
+
+**What is built.** `cloak-pay` is the pinned mainnet daemon
+(`reference/src/zkapi-mainnet/zkapi-clientd`, never edited in place)
+compiled with an overlay, the way `cloak-daemon` is: two files added to
+its command package (`guest/pay/zz_cloak_pay.go`, and
+`guest/pay/zz_cloak_pay_linux.go`, which builds only for Linux), and
+copies of three of its files patched at build time (`guest/pay/*.patch`).
+`guest/build.sh` builds it, and the image installs it as
+`/usr/bin/cloak-pay`, with a guest user `pay` (1009) to run it as.
+
+**The front.** It serves the host only, on the guest's vsock port 8021
+(the sender's is 8020), one request to a connection, in the sender's
+framing: a kind byte, a four-byte big-endian length, the payload.
+
+    host:      R {"identity": "<64 hex>", "body": "<chat request, JSON>"}
+    cloak-pay: A {"status": <HTTP status>, "body": "<answer, JSON>"}
+
+The body is the Mac's request in OpenAI's chat shape, already reworded.
+The identity is the conversation's Tor identity, checked as the sender
+checks it (32 bytes in hex). No key and no wallet secret is in a frame.
+The body goes through the daemon's own inference API
+(`internal/server/server.go`), called in the process as a POST to
+`/v1/chat/completions`, and the answer is what that API writes. A frame
+that does not read, has another field, or carries no valid identity gets
+status 400 and nothing leaves for it. A connection from any vsock address
+but the host's (2) is closed with no answer. If the host hangs up first,
+the request is cancelled, as the daemon's HTTP server cancels one whose
+client goes away.
+
+**No loopback listener.** The daemon's local API (127.0.0.1:8787), with
+its keyless loopback inference and its admin routes, is never started.
+`cloak-pay`'s start is an `init` function that runs before the daemon's
+`main` and ends the process itself, so none of the daemon's commands runs:
+not its local API, not its admin service, not its companion start or the
+companion's CONNECT proxy. The inference API is built as the daemon's
+own `serve` builds it, from the same relay client, wallet client, error
+mapping and request log, but with bearer authentication on (its key made
+at start and kept in memory), no admin handler, and nothing listening:
+the front calls it directly. The daemon's session reporting and automatic
+settlement run as upstream runs them.
+
+**The Tor identities.** The patches make Tor the only route and carry over
+the post's identity code (from `zkapi-clientd` at vbuterin/zkapi
+`0fb263b0`, `internal/relay`):
+
+- `relay.patch` (+43, −171 lines): a route must be `tor://` with a
+  numeric loopback address and port, or the daemon does not start. Every
+  connection goes through Tor's SOCKS port under an identity: the one
+  its request carries, or a new one of 32 random bytes. The direct
+  route, the Wisp relay and the default relay address are deleted.
+- `socks5.patch` (+17, −4): the SOCKS greeting offers only user name and
+  password (RFC 1929), the identity as the user name and `x` as the
+  password, as upstream's identity code does. The method with no
+  authentication is gone.
+- `client.patch` (+16, −2): the conversation's identity reaches the
+  wallet client under a key no dialer reads, and the client puts it on
+  the inference request alone. Everything else a request causes, the
+  model policy, the companion's settlement and RPC through the CONNECT
+  proxy, gets a new identity for each connection.
+
+`guest/pay/check.sh` runs the checks below but the vsock run. The
+mainnet tree is untrusted, as in `guest/zkapi/build.sh`, and none of its
+code runs on the Mac: there the script only formats, vets and compiles,
+with cgo off, no VCS stamping (which runs git in the tree), no toolchain
+download and its own `GOFLAGS`. Everything that runs the tree's code
+runs in the pinned Go image of `guest/zkapi/build.sh`, with no network,
+the repository and the Mac's Go module cache read-only, its build cache
+in a Docker volume of its own (`cloak-pay-check`), two cores, 4 GB and
+low priority. `guest/build.sh`'s new lines only compile, the same way.
+
+**What each check showed (19 November; the tests in the pinned Go image,
+as above).**
+
+- **Two conversations, stand-ins only** (`zz_cloak_pay_test.go`). A
+  stand-in for the guest's Tor port records each connection's
+  authentication, user name and destination, and answers only the model
+  policy and OpenRouter, itself, under a test certificate authority that
+  is the only one the test trusts. A stand-in companion answers the
+  daemon's status, lease and settlement calls. Two frames, under
+  identities a and b, each got the canned answer. The two inferences
+  reached Tor under a and then b. The four model policy fetches, and two
+  connections the test made through the CONNECT proxy as the companion
+  would, each reached Tor under an identity of its own, neither a nor b.
+  Every connection offered only user name and password. The two requests
+  carried two different provider keys, and the provider got each body as
+  sent, less the `user` field the daemon drops. Four bad frames (an
+  identity not hex, one too short, none, and an extra field) each got the
+  400, and reached neither Tor nor the companion. The container's
+  listening TCP sockets (`/proc/net/tcp` and `tcp6`) were the two
+  stand-ins' before and after.
+- **Three broken copies of the patches** (by hand, in the same image),
+  each failing that check as it should: no identity on the inference
+  (caught: the inferences arrived under new identities), the
+  conversation's identity on the whole request (caught: the model policy
+  arrived under it), and a greeting with no authentication (the stand-in
+  refused it, and the request failed).
+- The check ten times over under Go's race detector: passed.
+- **Tor only.** An empty route, `socks5://`, `wss://`, a `tor://` route
+  to an address not on loopback, and one with a user name: the daemon and
+  the CONNECT proxy each refuse to start on every one.
+- **The accept rule**, as a function: only address 2 is taken (0, 1, 3
+  and the "any" address are not).
+- **In Linux, over real vsock**, run once by hand and not in the script,
+  as it needs the container's default system call filter lifted so a
+  vsock socket can be opened. The guest build of `cloak-pay` in a Linux
+  container with no network (Docker Desktop's Linux): it printed
+  `ready`; the container's TCP and UDP tables were empty; the process
+  held one socket, its vsock port; a whole frame sent
+  from the container's own vsock address (1) was closed with no answer,
+  and the process kept running. A control build that takes address 1 as
+  the host answered the same frame: 502, `anonymous_access_failed`, as
+  there is no companion. It refused any command-line argument.
+- The daemon's own tests of the wallet client package pass with
+  `client.patch`. gofmt and go vet (for the guest, tests included) are
+  clean, and the guest build is a static linux/arm64 program.
+
+**The guest check, written but not run.** `tests/test_pay_path.py`, from
+the agent's sandbox: the loopback table stays the three of the escape
+checks, nothing answers on 8790, and a whole frame to vsock port 8021
+reaches nothing at address 1 (the guest's own), 2 (the Mac) or 3 (the
+guest's, as the Mac gives it). It is marked skip: with nothing starting
+`cloak-pay`, it would pass whether or not `cloak-pay` holds. Its
+docstring gives the boot lines and the commands. 8787 there is the
+guest daemon's, the sender's path, until that path is removed. The
+probe (`guest/vsockprobe`) now takes the vsock address as an optional
+third argument.
+
+**Not built, or not shown.**
+
+- Holding during settlement, the encrypted disk, the real companion and
+  proving keys, the Mac side, removing the sender: later steps. Nothing
+  starts the companion, so every request stops at the daemon's companion
+  check, before a key is asked for (read in the code; the Linux run
+  answered in 1 ms).
+- The host's tor isolating by these user names: the stand-in only records
+  them.
+- A connection from the real Mac over vsock: the host's address could not
+  be taken on the Mac or in the container.
+- What fights the design: upstream starts its companion as an HTTP server
+  on 127.0.0.1:8790 and gives it the daemon's CONNECT proxy on another
+  loopback port. Each has a secret, but both would be listeners on the
+  network the sandbox shares. Step 5 has to settle where they listen.
+- The answer frame carries the status and body only, not the API's
+  headers, `X-OA-Verification-Status` among them. A streamed answer
+  arrives whole, in one frame, when the API returns. The daemon's own
+  error messages, which name `zkapi-clientd config`, reach the host as
+  they are.
+- No signal handling: a stop ends the process at once, which matters
+  once settlement is held (step 3).
 
 ## Stage 3 so far
 

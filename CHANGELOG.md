@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Payment in the guest begun: `cloak-pay`, the mainnet zkAPI daemon
+  built with Cloak's front added and Tor as its only route
+  (`guest/pay/`, release plan build steps 1 and 2). It serves the Mac
+  only, one request per connection on the guest's vsock port 8021: in
+  goes the reworded request with the conversation's Tor identity, out
+  comes the answer. It opens no loopback port; the daemon's local API
+  and admin routes never start. The conversation's identity goes on the
+  model request only, and every payment connection gets a new one. It
+  refuses to start on any route but Tor. Checked with stand-ins only:
+  the mainnet code runs only inside the pinned Go image under Docker,
+  with no network (`guest/pay/check.sh`), and once in a Linux container
+  over real vsock, also with no network. On the Mac it is only compiled. Not started at boot: nothing in the running product changes,
+  and the sender stays. The guest check from the agent's sandbox,
+  `tests/test_pay_path.py`, is written and waits for the boot lines.
+  The guest's vsock probe takes an optional address.
+
 - Fixed: one conversation's agent could make its own next task write
   into another conversation's folder. The sandbox script no longer copies
   the task's settings file, pass inside, into the conversation's home

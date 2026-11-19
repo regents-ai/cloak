@@ -5,8 +5,9 @@
 # probe), the daemon's rewrite check and the guest daemon (both
 # compiled inside the pinned daemon module with an overlay, so the daemon's
 # own files stay untouched, and both with Cloak's input limit and deadline,
-# decision 6 in docs/plan.md, patched into copies of two of its files), then
-# the sender, then the kernel and root from pinned Debian packages, the pinned
+# decision 6 in docs/plan.md, patched into copies of two of its files), the
+# payer cloak-pay (compiled the same way inside the pinned mainnet daemon
+# module), then the sender, then the kernel and root from pinned Debian packages, the pinned
 # Pi package and Node.js runtime, the reference wrapper and Cloak's cover list
 # (reference/cover.json, the daemon's /etc/cloak/cover.json). Every pinned
 # source is checked against its pin first. Two cores, low priority.
@@ -36,6 +37,18 @@ printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_guest.go":"%s/guest/daemon/zz
 	"$module" "$repo" "$rewriter" "$module" "$out" > "$out/daemon-overlay.json"
 (cd "$module" && nice -n 10 go build -p 2 -trimpath -overlay "$out/daemon-overlay.json" \
 	-ldflags="-X main.version=privacy-$(git rev-parse --short HEAD)-dev" -o "$out/cloak-daemon" ./cmd/zkapi-clientd)
+# cloak-pay: the mainnet daemon with guest/pay's two files added by overlay
+# and Tor as its only route patched into copies of three of its files
+# (guest/pay/check.sh checks it). Not started at boot yet. The mainnet tree
+# is untrusted (guest/zkapi/build.sh): this only compiles it, with cgo off
+# (above) and without VCS stamping, which would run git in the tree.
+mainnet=$repo/reference/src/zkapi-mainnet/zkapi-clientd
+patch -s -o "$out/pay-relay.go" "$mainnet/internal/relay/relay.go" guest/pay/relay.patch
+patch -s -o "$out/pay-socks5.go" "$mainnet/internal/relay/socks5.go" guest/pay/socks5.patch
+patch -s -o "$out/pay-client.go" "$mainnet/internal/zkapi/client.go" guest/pay/client.patch
+printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_pay.go":"%s/guest/pay/zz_cloak_pay.go","%s/cmd/zkapi-clientd/zz_cloak_pay_linux.go":"%s/guest/pay/zz_cloak_pay_linux.go","%s/internal/relay/relay.go":"%s/pay-relay.go","%s/internal/relay/socks5.go":"%s/pay-socks5.go","%s/internal/zkapi/client.go":"%s/pay-client.go"}}' \
+	"$mainnet" "$repo" "$mainnet" "$repo" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$out" > "$out/pay-overlay.json"
+(cd "$mainnet" && nice -n 10 go build -p 2 -trimpath -buildvcs=false -overlay "$out/pay-overlay.json" -o "$out/cloak-pay" ./cmd/zkapi-clientd)
 
 # The sender (Development mode, decision 10 in docs/plan.md): Rust, built
 # --locked in the pinned Rust image, whose toolchain is the one

@@ -3,12 +3,13 @@
 // talks vsock to the host directly, past the guest's Tor port, as any guest
 // program could:
 //
-//	cloak-vsock-probe <port> <bytes>
+//	cloak-vsock-probe <port> <bytes> [<cid>]
 //
-// It connects to the host (CID 2) on the port, sends the bytes (Go escapes
-// such as \x05 are read), and prints the first answer: "refused (...)" when
-// nothing listens there, "closed, no answer (...)" when the host closed
-// without a byte, or "answered <hex>".
+// It connects to the host (CID 2), or to the vsock address given, on the
+// port, sends the bytes (Go escapes such as \x05 are read), and prints the
+// first answer: "refused (...)" when nothing listens there or the connection
+// cannot be made, "closed, no answer (...)" when the other side closed without
+// a byte, or "answered <hex>".
 package main
 
 import (
@@ -23,8 +24,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Fprintln(os.Stderr, "usage: cloak-vsock-probe <port> <bytes>")
+	if len(os.Args) != 3 && len(os.Args) != 4 {
+		fmt.Fprintln(os.Stderr, "usage: cloak-vsock-probe <port> <bytes> [<cid>]")
 		os.Exit(2)
 	}
 	port, err := strconv.ParseUint(os.Args[1], 10, 32)
@@ -32,12 +33,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	cid := uint64(2)
+	if len(os.Args) == 4 {
+		if cid, err = strconv.ParseUint(os.Args[3], 10, 32); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
 	payload, err := strconv.Unquote(`"` + os.Args[2] + `"`)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	conn, err := vsock.Dial(2, uint32(port), nil)
+	conn, err := vsock.Dial(uint32(cid), uint32(port), nil)
 	if err != nil {
 		fmt.Printf("refused (%v)\n", err)
 		return
