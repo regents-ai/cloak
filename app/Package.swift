@@ -27,7 +27,7 @@ let package = Package(
         .testTarget(
             name: "CloakTests",
             dependencies: [
-                "CloakSupervisor", "CloakChat", "CloakDoor", .product(name: "CloakHost", package: "host"),
+                "CloakChat", .product(name: "CloakHost", package: "host"),
             ]),
     ]
 )

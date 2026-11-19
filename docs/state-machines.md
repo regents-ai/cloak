@@ -59,10 +59,7 @@ rewriting: request checked --> prompt rendered --> context made --> grammar made
   the pinned files, and 2 when anything else stops it loading; the app tells
   the two apart (section 9).
 
-Checks: `tests/test_llama_worker.py` (a cancel while generating and while
-reading the prompt, each protocol fault and the end of the channel
-mid-rewrite, the token limit, each refused model folder, and the replies
-under the grammar).
+Checks: none since 19 November (decision 15 in [plan.md](plan.md)).
 
 The faults below were found on the first worker, on MLX (`worker/`,
 deleted on 14 November 2026 when decision 8 chose llama.cpp). The same
@@ -492,18 +489,10 @@ the two cannot disagree. A refused turn is its own error, which the local
 API answers with status 413 and the plain message; every other failure
 keeps the daemon's own answer. Before (the reference): 128 KiB counted in
 bytes, refused as an ordinary rewrite failure, and a flat 90 s. Checks:
-`test_a_short_input_keeps_the_base_deadline`,
-`test_the_longest_input_is_accepted_and_given_the_grown_deadline`,
-`test_an_input_over_the_limit_is_refused_at_once` (`tests/test_guest_path.py`)
-and `test_a_prompt_over_the_input_limit_stops_its_task_with_the_length_and_the_limit`
-(`tests/test_agent_path.py`).
+none since 19 November (decision 15 in [plan.md](plan.md)).
 
 ## 8. Files built in steps
 
-- **Altered model folders for the worker checks** (`tests/test_llama_worker.py`):
-  built as `<case>.building`, then renamed. A run stopped part way left the
-  half-built folder, and every later run failed until it was removed by hand.
-  A leftover is now cleared before building.
 - **Model downloads** (`scripts/fetch_model.py`): each file goes to
   `<file>.part`, is checked, then renamed; a mismatch is kept as `<file>.bad`.
   Any leftover makes the worker refuse the folder as holding extra files, so

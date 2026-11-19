@@ -210,10 +210,9 @@ themselves change over time. On 19 November Sean approved the pool: the
 day before. Known limits: the sites have not agreed to automated visits;
 the worker counts a page over 64 KiB as failed, and 48 of the 58 reached
 that cap in the probe;
-the same sixteen serve until the next start. Checks against the stand-in
-tor (`tests/test_cover_path.py`): nine passed on 19 November; one more,
-which boots the image as built and sees its cover arrive, is written, to
-be run on a rebuilt guest. Still to do: a run on the real route, measured
+the same sixteen serve until the next start. Its checks against the
+stand-in tor passed on 19 November and were then deleted (decision 15 in
+[plan.md](plan.md)); nothing checks cover now. Still to do: a run on the real route, measured
 against the policy. The goal,
 corrected: **Cloak reproduces the reference's cover
 traffic and claims nothing the reference does not.** Its own document says
@@ -222,8 +221,7 @@ and Cloak says the same.
 
 **4. Escape and boundary checks.** The gates above for network escape,
 conversation separation, and host and guest, written as checks that try
-to break out. Several exist in pieces (`tests/test_tor_path.py`,
-`tests/test_agent_path.py`); none tries a hostile agent end to end.
+to break out. `tests/test_tor_path.py` covers the Tor port.
 **19 November:** `tests/test_escape_path.py` now does, twelve attempts
 in two guest boots, all passing; it found and closed one way for a
 conversation to write its pass into another's folder. Not yet tried: the

@@ -57,9 +57,10 @@ The contract is [docs/spec-v0.4.md](docs/spec-v0.4.md). Read sections 1, 4, 7,
 - The reference model runs only on rented or borrowed high-memory hardware,
   and rented hardware sees approved synthetic fixtures only.
 - Real funding and wallet work is protected: it needs Sean's explicit go.
-- Gate checks only (the checks behind `docs/release.md`, "Gates for stage
-  2"), written after a feature works. No ordinary unit tests are written
-  (decision 15 in `docs/plan.md`).
+- Checks are written for three things only: money, break-outs from the
+  sandbox or the guest, and proof before sending. Nothing else gets a
+  check, and each is written after the feature works (decision 15 in
+  `docs/plan.md`).
 - Python runs through `uv`. Never read `.env` files.
 - Delete nothing you did not make; stop only processes you started, by pid.
 - Keep memory and disk use low: check free RAM and disk before any large

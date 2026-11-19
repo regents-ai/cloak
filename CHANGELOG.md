@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Checks cut to three things: money, break-outs and proof before sending
+  (Sean, 19 November: "I want to delete many tests, the pace of
+  development is too slow"). Deleted: `tests/test_llama_worker.py`,
+  `tests/test_guest_path.py`, `tests/test_agent_path.py`,
+  `tests/test_task_path.py`, `tests/test_cover_path.py`, the Go helpers
+  `tests/daemon_reply` and `tests/daemon_transcript`, and the app's
+  `DoorTests`, `DoorGuestTests`, `StoppedRewriteTests` and `Fixture.swift`
+  (78 checks, 2,480 lines). Kept: the escape and Tor checks, the payment
+  checks, the sender's, the app's send and wallet checks, and
+  `guest/near`'s. No longer checked by anything: the model worker, the
+  rewrite path through the guest, Pi's tasks, cover traffic, the app's
+  door, and that a rewording which stops sends nothing. `AGENTS.md` and
+  decision 15 in `docs/plan.md` carry the new rule.
+
 - Chat: three pills under the message box, Cover, Tor and zkAPI, each
   showing on or off (Sean, 19 November). Cover is a switch, on until
   turned off; off, the next Start lays a cover list with no pages over

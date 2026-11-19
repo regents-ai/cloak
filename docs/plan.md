@@ -2989,19 +2989,31 @@ candidates, so the split has to be re-declared before any holdout opens.
       openings that let a check give the control channel its own socket,
       lock and user, and the model download its own folder, hardware,
       network watch, free-space reading and retry waits.
-    - Kept, by the gate each backs: `tests/test_escape_path.py` (network
-      escape, conversation separation, host and guest);
-      `tests/test_tor_path.py` (network escape); `tests/test_agent_path.py`
-      and `tests/test_task_path.py` (usefulness, network escape);
-      `tests/test_guest_path.py`, `tests/test_llama_worker.py`, and the
-      app's `DoorTests`, `DoorGuestTests` and `StoppedRewriteTests`
-      (rewording; the worker's sandbox and the guest's own door passes also
-      host and guest, each conversation's pass also conversation
-      separation); `tests/test_cover_path.py` (cover traffic);
-      `tests/test_pay_path.py` (payment, host and guest);
-      `guest/pay/check.sh` and the sender's Rust checks (payment,
-      conversation separation); the app's `SendTests` and
-      `WalletPresenceTests` (payment, wallet recovery).
+    - Kept then, by the gate each backs: the escape, Tor, agent, task,
+      guest, worker, cover and payment checks in `tests/`,
+      `guest/pay/check.sh`, the sender's Rust checks, and the app's door,
+      stopped-rewording, send and wallet checks.
+    - Cut again the same day. Sean: "I want to delete many tests, the pace
+      of development is too slow", and he chose to keep only what guards
+      money, break-outs and proof before sending. Deleted:
+      `tests/test_llama_worker.py`, `tests/test_guest_path.py`,
+      `tests/test_agent_path.py`, `tests/test_task_path.py`,
+      `tests/test_cover_path.py`, the two Go helpers only they used
+      (`tests/daemon_reply`, `tests/daemon_transcript`), and the app's
+      `DoorTests`, `DoorGuestTests`, `StoppedRewriteTests` and their
+      `Fixture.swift`. Earlier mentions of these files in this document
+      are history.
+    - Kept now: `tests/test_escape_path.py` and `tests/test_tor_path.py`
+      (break-outs); `tests/test_pay_path.py`, `guest/pay/check.sh`, the
+      sender's Rust checks, and the app's `SendTests` and
+      `WalletPresenceTests` (money); `guest/near`'s checks (proof before
+      sending). New checks are written only for those three things.
+    - No longer checked by anything since this second cut: the worker's
+      channel, cancel, model pins, sandbox and replies under the grammar;
+      the rewrite path through the guest and its input limit and
+      deadline; Pi's tasks through the daemon; cover traffic; the app's
+      door, its passes for each app and conversation, and that a
+      rewording which stops sends nothing.
     - What the deleted checks checked is no longer checked by anything: the
       app's phases and its supervisor with stand-in tor and worker, the
       relay's rest and wake, a details request giving way, the control
@@ -3024,8 +3036,8 @@ candidates, so the split has to be re-declared before any holdout opens.
 | A05 | Whole-agent containment | Open | |
 | A06 | Complete routing | Open: the reference wrapper fails it (static program bypass); in Cloak's guest, which has no network device and one relay to tor, the same static probe and a program without torsocks reach nothing (development evidence only, stand-in) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction), `tests/test_tor_path.py` |
 | A07 | Conversation isolation | Open | |
-| A08 | Cover behaviour | Open: the guest's daemon runs the reference's own cover worker from one list, on since 19 November with a pool of 58 pages Sean approved, sixteen picked at each start; nine checks against the stand-in tor passed on 19 November, and the check of the image as built passed the same day; on the real route only two six-minute runs' totals were measured, so the schedule and lifecycle are not checked against the policy, and the sites have not agreed to automated visits (NET04) | `reference/cover.json`, `tests/test_cover_path.py`, [cover in the guest](#cover-traffic-in-the-guest-built-18-november-2026) |
-| A09 | Failure and pause | Open: in the app, a tor, worker or guest failure stops all work and ends in Needs attention with its reason, with nothing restarted and no other route or model; Pause and Quit stop everything, and a relaunch starts nothing (shown by checks with stand-in processes until they were deleted on 19 November, decision 15, and by a live run with one worker kill; development build, stand-in only); sleep paused in the state machine's checks, deleted the same day, and no live sleep and wake has been tried; closing the door answers a request under way and sends nothing (`app/Tests/CloakTests/DoorTests.swift`); no sessions or payment yet to stop; cover runs in the guest's daemon and ends with the guest, which no check has watched | [state machines](state-machines.md), `app/Tests/CloakTests/` |
+| A08 | Cover behaviour | Open: the guest's daemon runs the reference's own cover worker from one list, on since 19 November with a pool of 58 pages Sean approved, sixteen picked at each start; nine checks against the stand-in tor passed on 19 November, and the check of the image as built passed the same day; on the real route only two six-minute runs' totals were measured, so the schedule and lifecycle are not checked against the policy, and the sites have not agreed to automated visits (NET04) | `reference/cover.json`, [cover in the guest](#cover-traffic-in-the-guest-built-18-november-2026) |
+| A09 | Failure and pause | Open: in the app, a tor, worker or guest failure stops all work and ends in Needs attention with its reason, with nothing restarted and no other route or model; Pause and Quit stop everything, and a relaunch starts nothing (shown by checks with stand-in processes until they were deleted on 19 November, decision 15, and by a live run with one worker kill; development build, stand-in only); sleep paused in the state machine's checks, deleted the same day, and no live sleep and wake has been tried; closing the door answers a request under way and sends nothing (its check was deleted on 19 November, decision 15); no sessions or payment yet to stop; cover runs in the guest's daemon and ends with the guest, which no check has watched | [state machines](state-machines.md), `app/Tests/CloakTests/` |
 | A10 | Local authority | Open | |
 | A11 | Actual paid workflow | Open: no qualified deployment exists yet | |
 | A12 | Financial interruption | Open | |
@@ -3036,8 +3048,8 @@ candidates, so the split has to be re-declared before any holdout opens.
 | A17 | Hardware | Open | |
 | A18 | Usability | Open | |
 | A19 | Claims | Open | |
-| A20 | Unchanged rewrite API | Open: contract captured; the daemon's own rewrite code runs in the guest, unchanged but for Cloak's input limit and deadline (decision 6, a departure from the spec's limits by Sean's ruling), and refuses nine kinds of bad reply (stand-in model only) | [contract](../reference/rewriter-contract.md), `tests/test_guest_path.py` |
-| A21 | Host–guest worker boundary | Open: one token-checked virtio socket, guest has no network device, host relays only rewrite frames, worker sandboxed with no network (development signing; stand-in model) | `host/`, `guest/`, `llama-worker/cloak-rewriter.entitlements`, `tests/test_guest_path.py`, `tests/test_llama_worker.py` |
+| A20 | Unchanged rewrite API | Open: contract captured; the daemon's own rewrite code runs in the guest, unchanged but for Cloak's input limit and deadline (decision 6, a departure from the spec's limits by Sean's ruling), and refuses nine kinds of bad reply (stand-in model only) | [contract](../reference/rewriter-contract.md) |
+| A21 | Host–guest worker boundary | Open: one token-checked virtio socket, guest has no network device, host relays only rewrite frames, worker sandboxed with no network (development signing; stand-in model) | `host/`, `guest/`, `llama-worker/cloak-rewriter.entitlements` |
 | A22 | Authorship and linkability | Open: attack 1 and the sign-flip bound built and proven on synthetic development data only; attack 2 not built; no holdout | `scripts/stage4.py`, `scripts/privacy.py` |
 | A23 | Long and cold tasks | Open | |
 | A24 | Artifact provenance | Open: files pinned for the reference, the two candidates and the stand-in; each candidate takes its tokenizer and chat template files from its vendor (decision 1) | [models](../reference/models.md) |

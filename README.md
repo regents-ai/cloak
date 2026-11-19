@@ -107,16 +107,6 @@ builds it:
 uv run scripts/drive_worker.py --name standin-gguf-grammar "a text to rewrite"
 ```
 
-Run the worker's functional checks against the stand-in
-(`standin-gguf-grammar`, decoded under the reply grammar, decision 9): the
-channel, cancellation, the model pins, the sandbox, no network code linked,
-numbers-only logs, and its replies judged by the daemon's own check (built
-with Go inside the pinned daemon source):
-
-```bash
-uv run --with pytest==8.4.2 pytest tests/test_llama_worker.py
-```
-
 Build the guest (Go cross-builds and a pinned Debian image in Docker, two
 cores), then the host supervisor, signed with the virtualization
 entitlement, with the pinned tor beside it (the Tor Project's own build,
@@ -130,37 +120,11 @@ guest/build.sh
 host/build.sh
 ```
 
-Run the whole path: the daemon's own rewrite code in the guest, the adapter,
-the host and a worker (one guest boot per check; two checks wait out the
-daemon's deadline, which is 90 seconds plus 20 ms for each character, for
-about 90 and 290 seconds):
-
-```bash
-uv run --with pytest==8.4.2 pytest tests/test_guest_path.py
-```
-
-Run Pi 1.3.0 in the guest, inside the reference wrapper, through the
-daemon's local API (the host's tor is a stand-in that refuses every route,
-so every task stops at the Tor route after its rewrite; one check uses the
-real worker):
-
-```bash
-uv run --with pytest==8.4.2 pytest tests/test_agent_path.py
-```
-
-Check the daemon's own cover traffic in the guest. Its destinations, rate
+The daemon's own cover traffic runs in the guest. Its destinations, rate
 and concurrency live in one list, `reference/cover.json`, which the guest
 image carries: a pool of 58 well-known pages, sixteen picked at random at
-each start, at about three fetches a minute. Every check is against the
-stand-in tor, so nothing is fetched. The first boots the image as built and
-waits 200 seconds for its cover; each other check boots the guest with a
-list of its own and waits past the daemon's first once-a-minute totals. The
-agent and Tor checks above and below boot with an empty list laid over the
-image's, so cover is off in them:
-
-```bash
-uv run --with pytest==8.4.2 pytest tests/test_cover_path.py
-```
+each start, at about three fetches a minute. The checks below boot with an
+empty list laid over the image's, so cover is off in them.
 
 Check the guest's one way out, the Tor port relayed to the host's tor. The
 host starts the guest only once tor has bootstrapped, or after tor exits or
@@ -532,11 +496,8 @@ results and the model's answers are not shown. Up to 200 requests are held
 in memory until Cloak quits, never on disk, and only the latest 20 keep
 their text. No request's text is ever logged or written to disk.
 
-Run the app's gate checks (the door end to end and as the guest's agent
-meets it, with each conversation's turns checked against the pinned
-daemon's own transcript, which needs Go and the daemon's source from the
-stage 1 commands; every way a rewording stops sends nothing; the send path
-with the deposit kept sealed; and whether this Mac holds the wallet):
+Run the app's checks (the send path with the deposit kept sealed, and
+whether this Mac holds the wallet):
 
 ```bash
 swift test --package-path app

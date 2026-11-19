@@ -9,8 +9,7 @@ import Foundation
 /// agent cases (there are none here), then starts the sender and prints
 /// "cloak-guest: sender ready", and runs until it is stopped.
 final class Verification: Sendable {
-    /// The one case, as tests/test_guest_path.py writes cases: a plain
-    /// request the model rewrites cleanly.
+    /// The one case: a plain request the model rewrites cleanly.
     static let cases = Data(#"{"name":"startup","body":{"model":"target","messages":[{"role":"user","content":"Hey, could you please tell me the three biggest rivers in Europe? Thanks!!"}]},"cancel_after_ms":0}"#.utf8 + [0x0a])
     /// How long the guest has to boot and finish the check.
     static let limit: Duration = .seconds(300)

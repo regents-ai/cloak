@@ -28,7 +28,6 @@ boots the guest once; the guest prints one result per case.
 Every guest here boots with cover off, an empty cover list laid over the
 image's (cover_list.py): the checks with the stand-in list every connection
 it sees, and the first check sends off the Mac only what is listed above.
-test_cover_path.py checks cover on its own.
 """
 
 import json

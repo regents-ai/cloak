@@ -10,11 +10,10 @@ attempt fails or reaches only what the design gives it. docs/plan.md,
     uv run --with pytest==8.4.2 pytest tests/test_escape_path.py
 
 The file boots the guest twice, each boot shared by the checks that read it.
-The first runs plain commands in the sandbox, one case each, as
-test_agent_path.py's sandbox check does, with cover off and the stand-in tor
-(fake_tor.py), which notes each connection's SOCKS identity and destination
-and refuses it, so its log lists only what the attempts cause. The second is
-a serving guest, as in test_task_path.py, whose runner runs Pi's tools in two
+The first runs plain commands in the sandbox, one case each, with cover off
+and the stand-in tor (fake_tor.py), which notes each connection's SOCKS
+identity and destination and refuses it, so its log lists only what the
+attempts cause. The second is a serving guest, whose runner runs Pi's tools in two
 conversations on the stand-in door's scripted answers
 (tests/door_answers.json).
 """
