@@ -1,5 +1,6 @@
 //! Slice 2: one chat request to NEAR AI Cloud, sent only after the proof
-//! check of the same call passes, Intel's side and NVIDIA's (slice 3). Every
+//! check of the same call passes, the Intel quotes and Intel Trust
+//! Authority's verdict on the GPUs (slice 3). Every
 //! field that holds the person's words is sealed for the model key the proof
 //! checked (NEAR's encryption, version 2, with `X-Encrypt-All-Fields`), it
 //! goes on a new connection whose gateway certificate key must be the one
@@ -18,8 +19,8 @@ use crate::e2ee::{ReplyKey, SealKey};
 use crate::fetch::{connect, families, mozilla, request, NEAR};
 use crate::gpu::keys_cover;
 use crate::{
-    fetch_collateral, fetch_gpu_verdict, fetch_nvidia_keys, fetch_report, gpu_evidence, verify_gpu,
-    verify_intel, Collateral, FetchError, Pins, Proof, Proxy, Refusal, Routes,
+    fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, verify_gpu, verify_intel,
+    Collateral, FetchError, Pins, Proof, Proxy, Refusal, Routes,
 };
 
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -53,8 +54,8 @@ pub enum Stop {
     /// The request cannot go as given, or the system gave no randomness or
     /// time.
     Request(String),
-    /// Fetching the report, Intel's collateral, NVIDIA's verdicts or
-    /// NVIDIA's keys failed.
+    /// Fetching the report, Intel's collateral, Intel Trust Authority's
+    /// tokens or Intel's keys for them failed.
     Fetch(FetchError),
     /// The proof was refused.
     Refused(Refusal),
@@ -91,17 +92,17 @@ impl fmt::Display for Stop {
 
 impl std::error::Error for Stop {}
 
-/// Intel's collateral and NVIDIA's signing keys, kept between requests,
-/// each for at most the age chosen. The collateral is fetched again when it
-/// is older, or does not cover every platform family a new report's quotes
-/// name; the keys when they are older, or do not hold every key NVIDIA's
-/// new verdicts name.
+/// Intel's collateral and Intel Trust Authority's signing keys, kept
+/// between requests, each for at most the age chosen. The collateral is
+/// fetched again when it is older, or does not cover every platform family
+/// a new report's quotes name; the keys when they are older, or do not hold
+/// every key new tokens name.
 pub struct Kept {
     max_age: u64,
     collateral_at: u64,
     collateral: Vec<Collateral>,
     keys_at: u64,
-    /// NVIDIA's key list as it came.
+    /// Intel Trust Authority's key list as it came.
     keys: Vec<u8>,
 }
 
@@ -139,10 +140,10 @@ impl Kept {
         Ok(&self.collateral)
     }
 
-    /// NVIDIA's key list for `answers` at `now`.
-    fn keys_for(&mut self, nvidia: &Proxy, answers: &[Vec<u8>], now: u64) -> Result<&[u8], Stop> {
-        if !keys_cover(answers, &self.keys) || now.saturating_sub(self.keys_at) > self.max_age {
-            self.keys = fetch_nvidia_keys(nvidia).map_err(Stop::Fetch)?;
+    /// Intel Trust Authority's key list for the tokens in `answer` at `now`.
+    fn keys_for(&mut self, intel: &Proxy, answer: &[u8], now: u64) -> Result<&[u8], Stop> {
+        if !keys_cover(answer, &self.keys) || now.saturating_sub(self.keys_at) > self.max_age {
+            self.keys = fetch_ita_keys(intel).map_err(Stop::Fetch)?;
             self.keys_at = now;
         }
         Ok(&self.keys)
@@ -162,13 +163,13 @@ pub struct Answered {
 /// to NEAR AI Cloud with `api_key`, in this order and no other: the request
 /// is checked; a report is fetched under a fresh nonce on the `near` route;
 /// Intel's collateral is reused from `kept` or fetched on the `intel` route;
-/// the Intel side is checked against `pins`; each instance's GPU evidence is
-/// checked to carry the nonce and posted to NVIDIA's service on the `nvidia`
-/// route, whose signing keys are reused from `kept` or fetched there; the
-/// GPU side is checked; and only then, with both proofs, is the request
-/// sent. A failed step returns its [`Stop`], and nothing is sent. The key is
-/// used only in the request's Authorization header: never kept, logged or
-/// put in a [`Stop`].
+/// the Intel quotes are checked against `pins`; Intel Trust Authority's
+/// tokens are fetched from NEAR's gateway under the same nonce on the `near`
+/// route, and the keys Intel signs them with are reused from `kept` or
+/// fetched on the `intel` route; the GPU side is checked; and only then,
+/// with both proofs, is the request sent. A failed step returns its
+/// [`Stop`], and nothing is sent. The key is used only in the request's
+/// Authorization header: never kept, logged or put in a [`Stop`].
 pub fn ask(
     routes: &Routes,
     model: &str,
@@ -193,18 +194,13 @@ pub fn ask(
         now,
     )
     .map_err(Stop::Refused)?;
-    let answers = gpu_evidence(&fetched.report, &fetched.nonce)
-        .map_err(Stop::Refused)?
-        .iter()
-        .map(|evidence| fetch_gpu_verdict(&routes.nvidia, evidence))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(Stop::Fetch)?;
-    // NVIDIA dates its verdicts by its own clock, so they are checked at a
-    // time read after they came.
+    let tokens = fetch_ita_tokens(&routes.near, model, &fetched.nonce).map_err(Stop::Fetch)?;
+    // Intel dates its tokens by its own clock, so they are checked at a time
+    // read after they came.
     let now = seconds()?;
-    let keys = kept.keys_for(&routes.nvidia, &answers, now)?;
-    let gpu =
-        verify_gpu(&fetched.report, &fetched.nonce, &answers, keys, now).map_err(Stop::Refused)?;
+    let keys = kept.keys_for(&routes.intel, &tokens, now)?;
+    let gpu = verify_gpu(&tokens, &fetched.nonce, model, &intel, keys, pins, now)
+        .map_err(Stop::Refused)?;
     let proof = Proof { intel, gpu };
     let reply = send(
         &proof,

@@ -35,8 +35,7 @@ impl fmt::Display for Who {
 /// The one reason a report was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// A field is missing or not in the form NEAR documents, NVIDIA's key
-    /// list is not one, or there is not one NVIDIA answer for each instance.
+    /// A field is missing or not in the form NEAR documents.
     Malformed(String),
     /// Signed with something other than Ed25519.
     Algorithm(Who),
@@ -74,8 +73,9 @@ pub enum Refusal {
     SameInstance(Who),
     /// Measurements that equal no accepted set.
     Pin { who: Who, seen: Box<Measurements> },
-    /// The instance's GPU evidence, or NVIDIA's verdict on it, did not pass.
-    Gpu { who: Who, refusal: GpuRefusal },
+    /// Intel Trust Authority's verdict on the GPUs, or its tie to our nonce,
+    /// did not pass.
+    Gpu(GpuRefusal),
 }
 
 impl fmt::Display for Refusal {
@@ -105,7 +105,7 @@ impl fmt::Display for Refusal {
                 hex::encode(&seen.mrconfigid),
                 hex::encode(&seen.os_image_hash)
             ),
-            Refusal::Gpu { who, refusal } => write!(f, "{who}: {refusal}"),
+            Refusal::Gpu(refusal) => write!(f, "Intel's GPU verdict: {refusal}"),
         }
     }
 }
@@ -253,6 +253,7 @@ pub fn verify_intel(
 
     Ok(IntelProof {
         gateway_key,
+        gateway_tls_key: *spki_sha256,
         model_key,
         instances: models.len(),
         gateway_tcb: gateway_measured.tcb,

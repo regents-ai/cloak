@@ -3,15 +3,15 @@ name = "cloak-near"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "The guest's check of NEAR AI Cloud's Intel TDX proof and NVIDIA's verdict on its GPUs, then one chat request encrypted to the checked key"
+description = "The guest's check of NEAR AI Cloud's Intel TDX proof and Intel Trust Authority's verdict on its GPUs, then one chat request encrypted to the checked key"
 
 # dcap-qvl checks the Intel quotes, pinned exactly to a version after every
 # advisory it has had, with its pure-Rust crypto and without its collateral
 # client. chacha20poly1305, curve25519-dalek and hkdf are NEAR's encryption,
 # version 2 (curve25519-dalek is the copy dcap-qvl already brings). ring
-# (the copy rustls already brings) checks NVIDIA's ES384 signatures, and
-# base64 (the copy dcap-qvl already brings) reads NVIDIA's tokens. Every
-# other crate is pinned by Cargo.lock, built --locked.
+# (the copy rustls already brings) checks Intel Trust Authority's PS384
+# signatures, and base64 (the copy dcap-qvl already brings) reads its
+# tokens. Every other crate is pinned by Cargo.lock, built --locked.
 [dependencies]
 base64 = "0.23.1"
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- NEAR mode: the GPU check moves to Intel's signed tokens, and NVIDIA's
+  service is gone (`guest/near`, `gpu.rs`). NEAR's front server asks
+  Intel Trust Authority for two tokens under our nonce; Cloak fetches
+  them and Intel's key list through Tor and checks, itself: each
+  token's signature, issuer and times; that the front server's quote in
+  the token is over Intel's nonce and our own; that every GPU's
+  evidence is under the hash of that same nonce; Intel's verdict; and
+  each GPU's measurement, secure boot, debug and certificate claims.
+  Said plainly in the README: the verdict covers the GPUs of one server
+  NEAR picks, and nothing ties them to a server whose quote Cloak
+  checked; evidence may be five minutes old; it rests on Intel's online
+  service. Cloak still checks every Intel quote itself. Live through
+  Tor, no key: six of seven runs passed with 8 GPUs each, 17 to 27
+  seconds; one stopped because its Tor exit could not reach Intel.
+  NEAR answered 502 to 2 of 8 token requests for one model. Nothing
+  retries. Sixteen proof checks and four request checks pass.
+
 - NEAR mode: the GPU check, built, and stopped by NVIDIA most of the
   time (`guest/near`, `gpu.rs`). Each server's NVIDIA evidence must name
   our nonce before it is posted to NVIDIA's service; the tokens that

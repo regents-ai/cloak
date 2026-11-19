@@ -6,31 +6,32 @@
 //! Intel's collateral, kept in tests/fixtures, checked against
 //! reference/near-pins.json.
 //!
-//! NVIDIA's side: a real report for Qwen/Qwen3.8-27B (one instance, eight
-//! GPUs), fetched with no account key through Tor on 19 November 2026, with
-//! its nonce, NVIDIA's answer to that instance's GPU evidence (fetched
-//! through Tor with no key) and NVIDIA's published key list, kept in
-//! tests/fixtures/nvidia. Changes that NVIDIA's signature would forbid are
-//! made by signing the changed token again with a key made for each run
-//! alone, added to the key list under the id `cloak-test`; the real tokens
-//! signed again unchanged that way pass, so each refusal comes from its
-//! change.
+//! The GPU side: one consistent set fetched together, with no account key,
+//! through Tor on 19 November 2026 by the probe's `--save`, kept in
+//! tests/fixtures/ita: a real report for Qwen/Qwen3.8-27B (one instance),
+//! its nonce, gateway TLS key hash and Intel collateral, NEAR's answer of
+//! Intel Trust Authority's tokens under the same nonce (the gateway's, and
+//! one on eight GPUs) and Intel's published key list. Its Intel side is
+//! checked first, as `ask` does. Changes that Intel's signature would forbid
+//! are made by signing the changed token again with a test key
+//! (tests/fixtures/ita/test-key.der, made for these checks alone), added to
+//! the key list under the id `cloak-test`; the real tokens signed again
+//! unchanged that way pass, so each refusal comes from its change.
 //!
 //! Each real set passes at its fetch time and is refused for each change
 //! below.
 //!
 //!     cargo test --locked --manifest-path guest/near/Cargo.toml
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use cloak_near::{
-    gpu_evidence, verify_gpu, verify_intel, Collateral, GpuProof, GpuRefusal, IntelProof, Pins,
-    Refusal, TcbStatus, Who,
+    verify_gpu, verify_intel, Collateral, GpuProof, GpuRefusal, IntelProof, Pins, Refusal,
+    TcbStatus, Who,
 };
 use ring::rand::SystemRandom;
-use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P384_SHA384_FIXED_SIGNING};
-use serde_json::value::RawValue;
-use serde_json::{json, Map, Value};
+use ring::signature::{RsaKeyPair, RsaPublicKeyComponents, RSA_PSS_SHA384};
+use serde_json::{json, Value};
 
 const DAY: u64 = 24 * 60 * 60;
 const TEST_KID: &str = "cloak-test";
@@ -61,6 +62,22 @@ impl Case {
             collateral: serde_json::from_str(include_str!("fixtures/collateral.json")).unwrap(),
             pins: serde_json::from_str(include_str!("../../../reference/near-pins.json")).unwrap(),
             now: include_str!("fixtures/fetched-at.txt")
+                .trim()
+                .parse()
+                .unwrap(),
+        }
+    }
+
+    /// The report of the GPU side's set.
+    fn ita() -> Case {
+        Case {
+            report: include_bytes!("fixtures/ita/report.json").to_vec(),
+            nonce: hex32(include_str!("fixtures/ita/nonce.hex")),
+            spki: hex32(include_str!("fixtures/ita/spki.hex")),
+            model: include_str!("fixtures/ita/model.txt").trim().to_owned(),
+            collateral: serde_json::from_str(include_str!("fixtures/ita/collateral.json")).unwrap(),
+            pins: serde_json::from_str(include_str!("../../../reference/near-pins.json")).unwrap(),
+            now: include_str!("fixtures/ita/fetched-at.txt")
                 .trim()
                 .parse()
                 .unwrap(),
@@ -208,255 +225,173 @@ fn expired_collateral_is_refused() {
     ));
 }
 
+/// Where the gateway's token, and the one on the GPUs, sit in NEAR's answer.
+const GATEWAY: &str = "/gateway/token";
+const GPUS: &str = "/models/0/token";
+
 struct GpuCase {
-    report: Vec<u8>,
+    /// The report side, checked unchanged before every GPU check.
+    case: Case,
+    /// What the GPU check is given; the real values until a check changes
+    /// them.
     nonce: [u8; 32],
-    /// NVIDIA's answer for each model entry, as it came.
-    answers: Vec<Vec<u8>>,
-    /// NVIDIA's key list, as it came until the test key is added.
-    keys: Vec<u8>,
+    pins: Pins,
     now: u64,
-    test_key: EcdsaKeyPair,
+    /// NEAR's answer of Intel's tokens.
+    answer: Value,
+    /// Intel's key list, as it came until the test key is added.
+    keys: Value,
+    test_key: RsaKeyPair,
 }
 
 impl GpuCase {
     fn real() -> GpuCase {
-        let answers: Vec<Box<RawValue>> =
-            serde_json::from_str(include_str!("fixtures/nvidia/nvidia.json")).unwrap();
-        let rng = SystemRandom::new();
-        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P384_SHA384_FIXED_SIGNING, &rng).unwrap();
+        let case = Case::ita();
         GpuCase {
-            report: include_bytes!("fixtures/nvidia/report.json").to_vec(),
-            nonce: hex32(include_str!("fixtures/nvidia/nonce.hex")),
-            answers: answers
-                .iter()
-                .map(|a| a.get().as_bytes().to_vec())
-                .collect(),
-            keys: include_bytes!("fixtures/nvidia/nvidia-keys.json").to_vec(),
-            now: include_str!("fixtures/nvidia/fetched-at.txt")
-                .trim()
-                .parse()
-                .unwrap(),
-            test_key: EcdsaKeyPair::from_pkcs8(
-                &ECDSA_P384_SHA384_FIXED_SIGNING,
-                pkcs8.as_ref(),
-                &rng,
-            )
-            .unwrap(),
+            nonce: case.nonce,
+            pins: case.pins.clone(),
+            now: case.now,
+            case,
+            answer: serde_json::from_str(include_str!("fixtures/ita/ita.json")).unwrap(),
+            keys: serde_json::from_str(include_str!("fixtures/ita/ita-keys.json")).unwrap(),
+            test_key: RsaKeyPair::from_der(include_bytes!("fixtures/ita/test-key.der")).unwrap(),
         }
     }
 
     fn check(&self) -> Result<GpuProof, Refusal> {
+        let intel: IntelProof = self.case.check().expect("the report side passes");
         verify_gpu(
-            &self.report,
+            &serde_json::to_vec(&self.answer).unwrap(),
             &self.nonce,
-            &self.answers,
-            &self.keys,
+            &self.case.model,
+            &intel,
+            &serde_json::to_vec(&self.keys).unwrap(),
+            &self.pins,
             self.now,
         )
     }
 
-    fn answer(&self, instance: usize) -> Value {
-        serde_json::from_slice(&self.answers[instance]).unwrap()
+    fn token(&self, at: &str) -> String {
+        self.answer
+            .pointer(at)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned()
     }
 
-    /// The first instance's overall token, or the token of `gpu`.
-    fn token(&self, gpu: Option<&str>) -> String {
-        let answer = self.answer(0);
-        let token = match gpu {
-            None => &answer[0][1],
-            Some(gpu) => &answer[1][gpu],
-        };
-        token.as_str().unwrap().to_owned()
+    fn replace(&mut self, at: &str, token: String) {
+        *self.answer.pointer_mut(at).unwrap() = Value::String(token);
     }
 
-    /// Puts `token` in place of the first instance's overall token, or of
-    /// `gpu`'s.
-    fn replace(&mut self, gpu: Option<&str>, token: String) {
-        let mut answer = self.answer(0);
-        match gpu {
-            None => answer[0][1] = Value::String(token),
-            Some(gpu) => answer[1][gpu] = Value::String(token),
-        }
-        self.answers[0] = serde_json::to_vec(&answer).unwrap();
-    }
-
-    /// Signs the first instance's overall token, or `gpu`'s, again with the
-    /// test key, its claims changed by `change`, and adds the test key to
-    /// the key list.
-    fn resign(&mut self, gpu: Option<&str>, change: impl FnOnce(&mut Map<String, Value>)) {
-        let token = self.token(gpu);
-        let mut claims = claims(&token);
+    /// Signs the token at `at` again with the test key, its claims changed
+    /// by `change`, and adds the test key to the key list.
+    fn resign(&mut self, at: &str, change: impl FnOnce(&mut Value)) {
+        let mut claims = claims(&self.token(at));
         change(&mut claims);
-        let header = URL_SAFE_NO_PAD.encode(json!({"kid": TEST_KID, "alg": "ES384"}).to_string());
-        let body = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
-        let signed = format!("{header}.{body}");
-        let signature = self
-            .test_key
-            .sign(&SystemRandom::new(), signed.as_bytes())
+        let header = json!({"alg": "PS384", "kid": TEST_KID, "typ": "JWT"});
+        let signed = format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(header.to_string()),
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap())
+        );
+        let mut signature = vec![0; self.test_key.public().modulus_len()];
+        self.test_key
+            .sign(
+                &RSA_PSS_SHA384,
+                &SystemRandom::new(),
+                signed.as_bytes(),
+                &mut signature,
+            )
             .unwrap();
         self.replace(
-            gpu,
-            format!("{signed}.{}", URL_SAFE_NO_PAD.encode(signature.as_ref())),
+            at,
+            format!("{signed}.{}", URL_SAFE_NO_PAD.encode(signature)),
         );
 
-        let mut keys: Value = serde_json::from_slice(&self.keys).unwrap();
-        let list = keys["keys"].as_array_mut().unwrap();
+        let list = self.keys["keys"].as_array_mut().unwrap();
         if !list.iter().any(|k| k["kid"] == TEST_KID) {
-            let point = self.test_key.public_key().as_ref();
+            let public = RsaPublicKeyComponents::<Vec<u8>>::from(self.test_key.public());
             list.push(json!({
-                "kty": "EC",
-                "crv": "P-384",
+                "kty": "RSA",
+                "alg": "PS384",
+                "use": "sig",
                 "kid": TEST_KID,
-                "x": URL_SAFE_NO_PAD.encode(&point[1..49]),
-                "y": URL_SAFE_NO_PAD.encode(&point[49..]),
+                "n": URL_SAFE_NO_PAD.encode(&public.n),
+                "e": URL_SAFE_NO_PAD.encode(&public.e),
             }));
         }
-        self.keys = serde_json::to_vec(&keys).unwrap();
-    }
-
-    /// The same case with the report changed by `change`.
-    fn edited(mut self, change: impl FnOnce(&mut Value)) -> GpuCase {
-        let mut report: Value = serde_json::from_slice(&self.report).unwrap();
-        change(&mut report);
-        self.report = serde_json::to_vec(&report).unwrap();
-        self
     }
 }
 
 /// A token's claims, read without checking anything.
-fn claims(token: &str) -> Map<String, Value> {
+fn claims(token: &str) -> Value {
     let body = token.split('.').nth(1).unwrap();
     serde_json::from_slice(&URL_SAFE_NO_PAD.decode(body).unwrap()).unwrap()
 }
 
-/// `case`'s GPU refusal for the first instance.
+/// `case`'s GPU refusal.
 fn gpu_refusal(case: GpuCase) -> GpuRefusal {
     match case.check() {
-        Err(Refusal::Gpu {
-            who: Who::Model(0),
-            refusal,
-        }) => refusal,
-        other => panic!("expected a GPU refusal for the first instance, got {other:?}"),
+        Err(Refusal::Gpu(refusal)) => refusal,
+        other => panic!("expected a GPU refusal, got {other:?}"),
     }
 }
 
+/// The claims of one GPU in the token on the GPUs.
+fn gpu<'a>(claims: &'a mut Value, name: &str) -> &'a mut Value {
+    &mut claims["nvgpu"]["claim_details"][name]
+}
+
 #[test]
-fn the_real_gpu_verdicts_pass_at_their_fetch_time() {
+fn the_real_gpu_verdict_passes_at_its_fetch_time() {
     let case = GpuCase::real();
-    let report: Value = serde_json::from_slice(&case.report).unwrap();
-    let payload: Value = serde_json::from_str(
-        report["model_attestations"][0]["nvidia_payload"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(payload["evidence_list"].as_array().unwrap().len(), 8);
-    assert_eq!(case.check().unwrap().gpus, vec![8]);
+    let report: Value = serde_json::from_slice(&case.case.report).unwrap();
+    assert_eq!(report["model_attestations"].as_array().unwrap().len(), 1);
+    assert_eq!(case.answer["models"].as_array().unwrap().len(), 1);
+    assert_eq!(case.check().unwrap().gpus, 8);
 
     // Signed again with the test key, unchanged, they pass too.
     let mut case = GpuCase::real();
-    case.resign(None, |_| {});
-    case.resign(Some("GPU-0"), |_| {});
-    assert_eq!(case.check().unwrap().gpus, vec![8]);
+    case.resign(GATEWAY, |_| {});
+    case.resign(GPUS, |_| {});
+    assert_eq!(case.check().unwrap().gpus, 8);
 }
 
 #[test]
-fn another_evidence_nonce_is_refused_before_anything_is_posted() {
-    let case = GpuCase::real().edited(|r| {
-        let entry = &mut r["model_attestations"][0];
-        let mut payload: Value =
-            serde_json::from_str(entry["nvidia_payload"].as_str().unwrap()).unwrap();
-        payload["nonce"] = json!("11".repeat(32));
-        entry["nvidia_payload"] = Value::String(payload.to_string());
-    });
-    let refused = Refusal::Gpu {
-        who: Who::Model(0),
-        refusal: GpuRefusal::EvidenceNonce,
-    };
-    assert_eq!(
-        gpu_evidence(&case.report, &case.nonce).unwrap_err(),
-        refused
-    );
-    assert_eq!(case.check().unwrap_err(), refused);
-}
-
-#[test]
-fn missing_evidence_is_refused() {
-    let case = GpuCase::real().edited(|r| {
-        r["model_attestations"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("nvidia_payload");
-    });
-    assert_eq!(gpu_refusal(case), GpuRefusal::NoEvidence);
-
-    // In the three-instance report, the third entry without it.
-    let case = Case::real();
-    assert_eq!(gpu_evidence(&case.report, &case.nonce).unwrap().len(), 3);
-    let case = case.edited(|r| r["model_attestations"][2]["nvidia_payload"] = Value::Null);
-    assert_eq!(
-        gpu_evidence(&case.report, &case.nonce).unwrap_err(),
-        Refusal::Gpu {
-            who: Who::Model(2),
-            refusal: GpuRefusal::NoEvidence
-        }
-    );
+fn a_gpu_verdict_for_another_nonce_is_refused() {
+    let mut case = GpuCase::real();
+    case.nonce[0] ^= 1;
+    assert_eq!(gpu_refusal(case), GpuRefusal::ReportData);
 }
 
 #[test]
 fn a_changed_signature_or_an_unlisted_key_is_refused() {
-    for gpu in [None, Some("GPU-5")] {
+    for at in [GATEWAY, GPUS] {
         let mut case = GpuCase::real();
-        let token = case.token(gpu);
+        let token = case.token(at);
         let (signed, signature) = token.rsplit_once('.').unwrap();
         let mut signature = URL_SAFE_NO_PAD.decode(signature).unwrap();
         signature[10] ^= 1;
         case.replace(
-            gpu,
+            at,
             format!("{signed}.{}", URL_SAFE_NO_PAD.encode(signature)),
         );
-        assert_eq!(gpu_refusal(case), GpuRefusal::Signature, "{gpu:?}");
+        assert_eq!(gpu_refusal(case), GpuRefusal::Signature, "{at}");
     }
 
-    // Signed by a key NVIDIA does not list.
+    // Signed by a key Intel does not list.
     let mut case = GpuCase::real();
     let keys = case.keys.clone();
-    case.resign(None, |_| {});
+    case.resign(GPUS, |_| {});
     case.keys = keys;
     assert_eq!(gpu_refusal(case), GpuRefusal::UnknownKey);
 }
 
 #[test]
-fn another_token_nonce_is_refused() {
+fn a_failed_gpu_claim_or_verdict_is_refused() {
     let mut case = GpuCase::real();
-    case.resign(None, |c| {
-        c.insert("eat_nonce".into(), json!("11".repeat(32)));
-    });
-    assert_eq!(gpu_refusal(case), GpuRefusal::TokenNonce);
-
-    let mut case = GpuCase::real();
-    case.resign(Some("GPU-2"), |c| {
-        c.insert("eat_nonce".into(), json!("11".repeat(32)));
-    });
-    assert_eq!(gpu_refusal(case), GpuRefusal::TokenNonce);
-}
-
-#[test]
-fn a_false_overall_verdict_is_refused() {
-    let mut case = GpuCase::real();
-    case.resign(None, |c| {
-        c.insert("x-nvidia-overall-att-result".into(), json!(false));
-    });
-    assert_eq!(gpu_refusal(case), GpuRefusal::Verdict);
-}
-
-#[test]
-fn a_failed_gpu_claim_or_a_missing_gpu_is_refused() {
-    let mut case = GpuCase::real();
-    case.resign(Some("GPU-3"), |c| {
-        c.insert("measres".into(), json!("fail"));
-    });
+    case.resign(GPUS, |c| gpu(c, "GPU-3")["measres"] = json!("fail"));
     assert_eq!(
         gpu_refusal(case),
         GpuRefusal::Claim {
@@ -466,16 +401,78 @@ fn a_failed_gpu_claim_or_a_missing_gpu_is_refused() {
     );
 
     let mut case = GpuCase::real();
-    let mut answer = case.answer(0);
-    answer[1].as_object_mut().unwrap().remove("GPU-7");
-    case.answers[0] = serde_json::to_vec(&answer).unwrap();
-    assert_eq!(gpu_refusal(case), GpuRefusal::GpuCount);
+    case.resign(GPUS, |c| {
+        gpu(c, "GPU-5")["x-nvidia-gpu-driver-rim-cert-chain"]["x-nvidia-cert-ocsp-status"] =
+            json!("revoked")
+    });
+    assert_eq!(
+        gpu_refusal(case),
+        GpuRefusal::Claim {
+            gpu: "GPU-5".into(),
+            claim: "x-nvidia-gpu-driver-rim-cert-chain"
+        }
+    );
+
+    let mut case = GpuCase::real();
+    case.resign(GPUS, |c| {
+        c["nvgpu"]["x-nvidia-overall-att-result"] = json!(false);
+    });
+    assert_eq!(gpu_refusal(case), GpuRefusal::Verdict);
 }
 
 #[test]
-fn expired_verdicts_are_refused() {
+fn a_missing_gpu_token_is_refused() {
     let mut case = GpuCase::real();
-    let expires = claims(&case.token(None))["exp"].as_u64().unwrap();
+    case.answer["models"] = json!([]);
+    assert_eq!(gpu_refusal(case), GpuRefusal::Models);
+
+    // A token on the GPUs without its GPU half, and with no GPU in it.
+    let mut case = GpuCase::real();
+    case.resign(GPUS, |c| {
+        c.as_object_mut().unwrap().remove("nvgpu");
+    });
+    assert_eq!(gpu_refusal(case), GpuRefusal::NoGpus);
+
+    let mut case = GpuCase::real();
+    case.resign(GPUS, |c| c["nvgpu"]["claim_details"] = json!({}));
+    assert_eq!(gpu_refusal(case), GpuRefusal::NoGpus);
+}
+
+#[test]
+fn gpu_evidence_not_under_intels_nonce_is_refused() {
+    let mut case = GpuCase::real();
+    case.resign(GPUS, |c| {
+        gpu(c, "GPU-1")["eat_nonce"] = json!("11".repeat(32))
+    });
+    assert_eq!(gpu_refusal(case), GpuRefusal::GpuNonce);
+
+    // The GPU half naming another of Intel's nonces than the TDX half.
+    let mut case = GpuCase::real();
+    case.resign(GPUS, |c| {
+        c["nvgpu"]["verifier_nonce"]["val"] = json!(STANDARD.encode("another nonce"));
+    });
+    assert_eq!(gpu_refusal(case), GpuRefusal::GpuNonce);
+}
+
+#[test]
+fn an_old_intel_nonce_or_an_unpinned_gateway_is_refused() {
+    let mut case = GpuCase::real();
+    case.resign(GATEWAY, |c| {
+        c["tdx"]["verifier_nonce"]["iat"] = json!(STANDARD.encode("2026-11-19 23:10:00 +0000 UTC"));
+    });
+    assert_eq!(gpu_refusal(case), GpuRefusal::NonceAge);
+
+    let mut case = GpuCase::real();
+    for pin in &mut case.pins.gateway {
+        pin.mrconfigid[1] ^= 1;
+    }
+    assert_eq!(gpu_refusal(case), GpuRefusal::NotGateway);
+}
+
+#[test]
+fn an_expired_token_is_refused() {
+    let mut case = GpuCase::real();
+    let expires = claims(&case.token(GPUS))["exp"].as_u64().unwrap();
     case.now = expires - 1;
     assert!(case.check().is_ok());
     case.now = expires;

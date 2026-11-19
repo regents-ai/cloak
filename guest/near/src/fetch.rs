@@ -1,8 +1,9 @@
-//! The network half: the report from NEAR's gateway, Intel's collateral, and
-//! NVIDIA's verdicts and signing keys, every connection through the caller's
-//! SOCKS5 proxy, with names resolved by the proxy and ordinary certificate
-//! checks against Mozilla's roots. The chat request (`chat.rs`) uses the
-//! same connection and HTTP code.
+//! The network half: the report and Intel Trust Authority's tokens from
+//! NEAR's gateway, Intel's collateral, and the keys Intel Trust Authority
+//! signs with, every connection through the caller's SOCKS5 proxy, with
+//! names resolved by the proxy and ordinary certificate checks against
+//! Mozilla's roots. The chat request (`chat.rs`) uses the same connection
+//! and HTTP code.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -17,20 +18,21 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
-use crate::{Collateral, GpuEvidence, Proxy, QuoteCollateralV3};
+use crate::{Collateral, Proxy, QuoteCollateralV3};
 
 pub(crate) const NEAR: &str = "cloud-api.near.ai";
 const INTEL_API: &str = "api.trustedservices.intel.com";
 const INTEL_CERTS: &str = "certificates.trustedservices.intel.com";
-const NVIDIA: &str = "nras.attestation.nvidia.com";
+/// Intel Trust Authority's portal, which publishes its signing keys. Pinned
+/// here: the `jku` in its tokens and NEAR's `jwks_url` are not followed.
+const ITA_PORTAL: &str = "portal.trustauthority.intel.com";
 /// The largest report taken; live ones are about 245 KB for each of the
 /// model's servers, and three were seen.
 const REPORT_LIMIT: usize = 4 << 20;
-/// The largest answer taken from Intel; theirs are a few KB.
+/// The largest answer taken from Intel, and NEAR's answer of Intel Trust
+/// Authority's tokens. On 19 November Intel's were a few KB, its key list
+/// about 12 KB, and NEAR's tokens on eight GPUs about 36 KB.
 const INTEL_LIMIT: usize = 1 << 20;
-/// The largest answer taken from NVIDIA. On 19 November its verdict on eight
-/// GPUs was about 17 KB and its key list, 208 keys, about 513 KB.
-const NVIDIA_LIMIT: usize = 2 << 20;
 const HEAD_LIMIT: usize = 64 << 10;
 /// Each step through Tor: connecting, the handshake, every read and write.
 const STEP: Duration = Duration::from_secs(60);
@@ -188,54 +190,51 @@ fn family_collateral(proxy: &Proxy, fmspc: String, ca: String) -> Result<Collate
     })
 }
 
-/// Posts one instance's GPU evidence, unchanged, to NVIDIA's attestation
-/// service, version 3 as NEAR's SDK uses, on a connection of its own, with
-/// no account key; NVIDIA's answer as it came.
-pub fn fetch_gpu_verdict(proxy: &Proxy, evidence: &GpuEvidence) -> Result<Vec<u8>, FetchError> {
-    let answer = call(
+/// Asks NEAR's gateway, with no account key and on a connection of its own,
+/// for the tokens Intel Trust Authority signs on the gateway's quote and on
+/// one of `model`'s servers' GPUs, under `nonce`, the report's; NEAR's
+/// answer as it came.
+pub fn fetch_ita_tokens(
+    proxy: &Proxy,
+    model: &str,
+    nonce: &[u8; 32],
+) -> Result<Vec<u8>, FetchError> {
+    let path = format!(
+        "/v1/attestation/ita-token?model={}&signing_algo=ed25519&include_tls_fingerprint=true&nonce={}",
+        percent_encode(model),
+        hex::encode(nonce)
+    );
+    let answer = get(
         proxy,
-        NVIDIA,
-        "POST",
-        "/v3/attest/gpu",
-        &[("Content-Type", "application/json")],
-        Some(evidence.payload.as_bytes()),
-        NVIDIA_LIMIT,
+        NEAR,
+        &path,
+        &[("Accept", "application/json"), ("x-no-aliasing", "true")],
+        INTEL_LIMIT,
     )?;
     Ok(answer.body)
 }
 
-/// The list of keys NVIDIA signs its verdicts with, from its published
-/// address, as it came.
-pub fn fetch_nvidia_keys(proxy: &Proxy) -> Result<Vec<u8>, FetchError> {
-    let answer = call(
-        proxy,
-        NVIDIA,
-        "GET",
-        "/.well-known/jwks.json",
-        &[],
-        None,
-        NVIDIA_LIMIT,
-    )?;
-    Ok(answer.body)
+/// The list of keys Intel Trust Authority signs its tokens with, from its
+/// portal, as it came.
+pub fn fetch_ita_keys(proxy: &Proxy) -> Result<Vec<u8>, FetchError> {
+    Ok(get(proxy, ITA_PORTAL, "/certs", &[], INTEL_LIMIT)?.body)
 }
 
 /// One GET to Intel on a connection of its own.
 fn intel(proxy: &Proxy, host: &'static str, path: &str) -> Result<Answer, FetchError> {
-    call(proxy, host, "GET", path, &[], None, INTEL_LIMIT)
+    get(proxy, host, path, &[], INTEL_LIMIT)
 }
 
-/// One request on a connection of its own, which must be answered 200.
-fn call(
+/// One GET on a connection of its own, which must be answered 200.
+fn get(
     proxy: &Proxy,
     host: &'static str,
-    method: &str,
     path: &str,
     headers: &[(&str, &str)],
-    body: Option<&[u8]>,
     limit: usize,
 ) -> Result<Answer, FetchError> {
     let (mut tls, _) = connect(proxy, host, &mozilla())?;
-    let answer = request(&mut tls, method, host, path, headers, body, limit)?;
+    let answer = request(&mut tls, "GET", host, path, headers, None, limit)?;
     match answer.status {
         200 => Ok(answer),
         code => Err(FetchError::Status {

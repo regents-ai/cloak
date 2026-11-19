@@ -260,12 +260,13 @@ fn proof() -> Proof {
     Proof {
         intel: IntelProof {
             gateway_key: [0; 32],
+            gateway_tls_key: pinned(),
             model_key: model_key().public(),
             instances: 1,
             gateway_tcb: TcbStatus::UpToDate,
             model_tcb: vec![TcbStatus::UpToDate],
         },
-        gpu: GpuProof { gpus: vec![8] },
+        gpu: GpuProof { gpus: 8 },
     }
 }
 

@@ -1,27 +1,28 @@
-//! The guest's check of NEAR AI Cloud's hardware proof, Intel's side and
-//! NVIDIA's, made before anything is sent to it, and the one chat request
-//! that follows a passed check (slices 1 to 3 of the NEAR mode).
+//! The guest's check of NEAR AI Cloud's hardware proof, its Intel quotes
+//! and Intel Trust Authority's verdict on its GPUs, made before anything is
+//! sent to it, and the one chat request that follows a passed check (slices
+//! 1 to 3 of the NEAR mode).
 //!
 //! [`ask`] is the only way to send: in one call it fetches a report under a
 //! fresh nonce, fetches Intel's collateral or reuses what [`Kept`] holds,
-//! checks the Intel side, has NVIDIA's service appraise every instance's GPU
-//! evidence, checks NVIDIA's signed verdicts, and only then sends the chat
-//! request, encrypted to the model key the proof checked, on a new
-//! connection that must show the gateway certificate key the proof is tied
-//! to.
+//! checks the Intel quotes, fetches Intel Trust Authority's tokens on the
+//! GPUs under the same nonce, checks them with Intel's signing keys, and
+//! only then sends the chat request, encrypted to the model key the proof
+//! checked, on a new connection that must show the gateway certificate key
+//! the proof is tied to.
 //!
 //! [`fetch_report`] opens one TLS connection to NEAR's gateway through a
 //! SOCKS5 proxy (the guest's Tor port), records the SHA-256 of the gateway
 //! certificate's public key, and on that connection asks for the attestation
 //! report of one model with a fresh nonce and no account key.
 //! [`fetch_collateral`] fetches the Intel collateral the report's quotes
-//! need, straight from Intel's servers. [`gpu_evidence`] reads each
-//! instance's GPU evidence and checks it was gathered under our nonce;
-//! [`fetch_gpu_verdict`] posts it to NVIDIA's attestation service, and
-//! [`fetch_nvidia_keys`] fetches the keys NVIDIA signs its verdicts with.
+//! need, straight from Intel's servers. [`fetch_ita_tokens`] asks NEAR's
+//! gateway, under the same nonce, for the tokens Intel Trust Authority
+//! signed on the gateway's quote and one model server's GPUs, and
+//! [`fetch_ita_keys`] fetches the keys Intel signs them with, from Intel.
 //! [`verify_intel`] and [`verify_gpu`] are pure: they check what was fetched
 //! against the nonce, the key seen on the connection, the model's name, the
-//! collateral, the pinned measurements, NVIDIA's keys and a time given by
+//! collateral, the pinned measurements, Intel's keys and a time given by
 //! the caller, and answer with an [`IntelProof`] and a [`GpuProof`], or one
 //! [`Refusal`].
 //!
@@ -42,9 +43,9 @@ use serde::{Deserialize, Serialize};
 pub use chat::{ask, Answered, Kept, Stop};
 pub use dcap_qvl::{QuoteCollateralV3, TcbStatus};
 pub use fetch::{
-    fetch_collateral, fetch_gpu_verdict, fetch_nvidia_keys, fetch_report, FetchError, Fetched,
+    fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, FetchError, Fetched,
 };
-pub use gpu::{gpu_evidence, verify_gpu, GpuEvidence, GpuRefusal};
+pub use gpu::{verify_gpu, GpuRefusal};
 pub use verify::{verify_intel, Refusal, Who};
 
 /// `N` bytes from the system's secure random source; None if it fails.
@@ -67,14 +68,13 @@ pub struct Proxy<'a> {
 }
 
 /// The routes [`ask`] takes, each meant to be a Tor circuit of its own:
-/// NEAR's gateway (the report and the chat request), Intel's servers (the
-/// collateral) and NVIDIA's attestation service (the GPU verdicts and the
-/// keys they are signed with).
+/// NEAR's gateway (the report, Intel Trust Authority's tokens and the chat
+/// request), and Intel's servers (the collateral, and the keys Intel Trust
+/// Authority signs its tokens with).
 #[derive(Clone, Copy, Debug)]
 pub struct Routes<'a> {
     pub near: Proxy<'a>,
     pub intel: Proxy<'a>,
-    pub nvidia: Proxy<'a>,
 }
 
 /// Intel's collateral for the quotes of one platform family (one FMSPC and
@@ -139,14 +139,18 @@ pub struct Measurements {
 /// and every listed instance of the model run the pinned images, that the
 /// gateway's report is tied to the TLS key this client saw and to this
 /// client's nonce, and that every instance holds the one encryption key it
-/// names; and NVIDIA's attestation service, in tokens it signed for this
-/// nonce, passes every GPU in each instance's evidence.
+/// names; and Intel Trust Authority, in tokens it signed, passes every GPU
+/// of one model server, evidence made under a nonce Intel issued at most
+/// five minutes before and that a pinned gateway's quote ties to this
+/// client's nonce.
 ///
-/// Not covered: that an instance's GPUs and its Intel quote are in the same
-/// machine (they share only the nonce); the GPUs' firmware and driver
-/// against values of Cloak's own (NVIDIA's service judges them); the model
-/// workload the measured launcher fetches; where the images came from; and
-/// anything about the replies.
+/// Not covered: which model server those GPUs are in, or that they are in
+/// the same machine as any quote checked (the GPU token is tied to the
+/// gateway's quote, not to a model server's, and only by the nonce); the
+/// GPUs of the model's other servers; the GPUs' firmware and driver against
+/// values of Cloak's own (Intel's verifier judges them against NVIDIA's);
+/// the model workload the measured launcher fetches; where the images came
+/// from; and anything about the replies.
 #[derive(Clone, Debug)]
 pub struct Proof {
     pub intel: IntelProof,
@@ -159,6 +163,9 @@ pub struct Proof {
 pub struct IntelProof {
     /// The gateway's Ed25519 key, bound to its quote with the TLS key seen.
     pub gateway_key: [u8; 32],
+    /// SHA-256 of the gateway's TLS key: the one seen on the connection, and
+    /// the one its quote binds.
+    pub gateway_tls_key: [u8; 32],
     /// The model's one Ed25519 encryption key, bound to every instance's
     /// quote.
     pub model_key: [u8; 32],
@@ -170,10 +177,13 @@ pub struct IntelProof {
     pub model_tcb: Vec<TcbStatus>,
 }
 
-/// What the GPU side of a passed check establishes: NVIDIA's verdict on
-/// every GPU of every instance passed. It says nothing about the Intel side.
+/// What the GPU side of a passed check establishes: Intel Trust Authority's
+/// verdict on every GPU of one model server, which NEAR's gateway chose,
+/// passed, tied to this client's nonce through Intel's nonce and the
+/// gateway's quote. It does not say which of the report's instances that
+/// server is.
 #[derive(Clone, Debug)]
 pub struct GpuProof {
-    /// How many GPUs NVIDIA passed for each instance, in the report's order.
-    pub gpus: Vec<usize>,
+    /// How many GPUs Intel passed.
+    pub gpus: usize,
 }

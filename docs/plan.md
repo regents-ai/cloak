@@ -2930,9 +2930,10 @@ candidates, so the split has to be re-declared before any holdout opens.
       service (built the same day and required by `ask`; NVIDIA refused 7
       of 8 Tor circuits with 403, so the mode waits on another way to
       the GPU's verdict: Intel's token service behind NEAR's front
-      server is looked at next; going to NVIDIA outside Tor, retrying
-      circuits, or leaving the GPU out and saying so are Sean's to
-      choose if that fails)
+      server replaced it the same night: tied to our own nonce by
+      checks Cloak makes, but covering one server NEAR picks, not tied
+      to a server whose quote Cloak checked, and said so in the crate's
+      README)
       service; then the guest image and the app. From NEAR's own words,
       to be said on screen: the model's software is not in the
       measurement, a key ties every request to one account, and on 8
