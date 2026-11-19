@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- NEAR mode, first real requests with the GPU check on (19 November,
+  through Tor, Sean's key, "ping"): one of six was answered and opened
+  (`z-ai/glm-5.3-flash`, 3 servers and 8 GPUs checked, 71 s). The other
+  five stopped before anything reached the chat endpoint: four because
+  the Tor exit could not reach Intel's hosts, one on NEAR's own 502 from
+  Intel Trust Authority. Too unreliable and too slow to put in the app
+  as it is; next is keeping a passed proof for a set time, so Intel is
+  asked once and not for every message.
+
 - Checks cut to three things: money, break-outs and proof before sending
   (Sean, 19 November: "I want to delete many tests, the pace of
   development is too slow"). Deleted: `tests/test_llama_worker.py`,
