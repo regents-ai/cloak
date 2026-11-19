@@ -157,7 +157,7 @@ struct DoorTests {
              chat(#"{"role":"user","content":5}"#), chat(hi), chat(hi, answered, hi)],
         ]
         let input = conversations.map { "[" + $0.joined(separator: ",") + "]" }.joined(separator: "\n") + "\n"
-        let output = try DaemonReply.tool("daemon_transcript", input: Data(input.utf8))
+        let output = try Repository.tool("daemon_transcript", input: Data(input.utf8))
         let lines = output.split(separator: UInt8(ascii: "\n")).map { [UInt8]($0) }
         #expect(lines.count == conversations.count)
         var compared = 0

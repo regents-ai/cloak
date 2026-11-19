@@ -113,11 +113,9 @@ public final class ModelDownload {
     @ObservationIgnored private let files: [Manifest.Model.File]
     @ObservationIgnored private let folder: URL
     @ObservationIgnored private let macPasses: Bool
-    @ObservationIgnored private let freeSpace: @Sendable (URL) -> Int?
-    @ObservationIgnored private let network: @Sendable () -> AsyncStream<Bool>
     /// The wait before each try after a failed one; a failure with none
     /// left stops the download.
-    @ObservationIgnored private let waits: [Duration]
+    private static let waits: [Duration] = [.seconds(2), .seconds(4), .seconds(8)]
     @ObservationIgnored private let session: URLSession
     /// The last run, pause or cancel; each waits for the one before it, so
     /// only one ever touches the files.
@@ -126,22 +124,10 @@ public final class ModelDownload {
     @ObservationIgnored private var online = true
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "download")
 
-    public convenience init(manifest: Manifest, layout: Layout) {
-        self.init(
-            manifest: manifest, folder: layout.model(manifest), hardware: .current, freeSpace: Self.freeSpace(at:),
-            network: Self.paths, waits: [.seconds(2), .seconds(4), .seconds(8)])
-    }
-
-    init(
-        manifest: Manifest, folder: URL, hardware: Checks.Hardware, freeSpace: @escaping @Sendable (URL) -> Int?,
-        network: @escaping @Sendable () -> AsyncStream<Bool>, waits: [Duration]
-    ) {
+    public init(manifest: Manifest, layout: Layout) {
         files = manifest.model.files
-        self.folder = folder
-        macPasses = Checks.hardwareCheck(hardware, model: manifest.modelMemory, cloak: manifest.cloakMemory).1 == nil
-        self.freeSpace = freeSpace
-        self.network = network
-        self.waits = waits
+        folder = layout.model(manifest)
+        macPasses = Checks.hardwareCheck(.current, model: manifest.modelMemory, cloak: manifest.cloakMemory).1 == nil
         total = files.reduce(0) { $0 + $1.size }
         hosts = files.compactMap { $0.url.host() }.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         session = Self.session()
@@ -236,7 +222,7 @@ public final class ModelDownload {
         for file in files where !inPlace.contains(file.path) {
             partial[file.path] = Self.size(of: Self.partial(for: file, in: folder))
         }
-        free = freeSpace(folder)
+        free = Self.freeSpace(at: folder)
     }
 
     /// One run: each file not in place, in the manifest's order, until all
@@ -263,13 +249,13 @@ public final class ModelDownload {
                         return
                     }
                     if Self.size(of: Self.partial(for: file, in: folder)) > before { failures = 0 }
-                    guard failures < waits.count else {
+                    guard failures < Self.waits.count else {
                         state = .stopped(.failed(problem))
                         return
                     }
                     state = .retrying(failures: failures + 1)
                     do {
-                        try await Task.sleep(for: waits[failures])
+                        try await Task.sleep(for: Self.waits[failures])
                     } catch {
                         return
                     }
@@ -312,7 +298,7 @@ public final class ModelDownload {
         }
         guard watch == nil else { return }
         watch = Task {
-            for await online in network() {
+            for await online in Self.paths() {
                 networkChanged(online)
             }
         }

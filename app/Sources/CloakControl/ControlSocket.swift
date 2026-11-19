@@ -22,9 +22,9 @@ public enum Places {
 public enum Instance {
     /// Takes the lock and keeps it until this process ends. False when
     /// another app holds it.
-    public static func claim(_ lock: URL = Places.lock) throws(ControlError) -> Bool {
-        let file = open(lock.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard file >= 0 else { throw .failed("cannot open \(lock.path): \(String(cString: strerror(errno)))") }
+    public static func claim() throws(ControlError) -> Bool {
+        let file = open(Places.lock.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard file >= 0 else { throw .failed("cannot open \(Places.lock.path): \(String(cString: strerror(errno)))") }
         if flock(file, LOCK_EX | LOCK_NB) == 0 { return true }
         close(file)
         return false
@@ -46,9 +46,9 @@ public final class ControlServer: Sendable {
     private let path: URL
     private let source: any DispatchSourceRead
 
-    /// Serves `handler` on a socket at `path` for connections from `owner`.
-    /// `path`'s folder must be owner-only already.
-    public init(path: URL, owner: uid_t = getuid(), handler: @escaping Handler) throws(ControlError) {
+    /// Serves `handler` on a socket at `path` for connections from this
+    /// process's user. `path`'s folder must be owner-only already.
+    public init(path: URL, handler: @escaping Handler) throws(ControlError) {
         let listener = socket(AF_UNIX, SOCK_STREAM, 0)
         guard listener >= 0 else { throw .system("socket") }
         _ = fcntl(listener, F_SETFD, FD_CLOEXEC)
@@ -64,7 +64,7 @@ public final class ControlServer: Sendable {
             throw error
         }
         let source = DispatchSource.makeReadSource(fileDescriptor: listener, queue: DispatchQueue(label: "sh.regents.cloak.control"))
-        source.setEventHandler { Self.acceptWaiting(listener, owner: owner, handler: handler) }
+        source.setEventHandler { Self.acceptWaiting(listener, handler: handler) }
         source.setCancelHandler { Darwin.close(listener) }
         source.resume()
         self.path = path
@@ -77,12 +77,12 @@ public final class ControlServer: Sendable {
         unlink(path.path)
     }
 
-    private static func acceptWaiting(_ listener: Int32, owner: uid_t, handler: @escaping Handler) {
+    private static func acceptWaiting(_ listener: Int32, handler: @escaping Handler) {
         while true {
             let connection = accept(listener, nil, nil)
             guard connection >= 0 else { return }
             var uid = uid_t(), gid = gid_t()
-            guard getpeereid(connection, &uid, &gid) == 0, uid == owner else {
+            guard getpeereid(connection, &uid, &gid) == 0, uid == getuid() else {
                 logger.error("refused a control connection from user \(uid)")
                 Darwin.close(connection)
                 continue
@@ -135,15 +135,15 @@ public final class ControlServer: Sendable {
 public enum ControlClient {
     /// Sends one request and returns the app's response, once the command
     /// has settled.
-    public static func send(_ request: Request, to path: URL = Places.socket) throws(ControlError) -> Response {
+    public static func send(_ request: Request) throws(ControlError) -> Response {
         let connection = socket(AF_UNIX, SOCK_STREAM, 0)
         guard connection >= 0 else { throw .system("socket") }
         defer { close(connection) }
         var one: Int32 = 1
         setsockopt(connection, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-        guard withAddress(path.path, { connect(connection, $0, $1) }) == 0 else {
+        guard withAddress(Places.socket.path, { connect(connection, $0, $1) }) == 0 else {
             if errno == ENOENT || errno == ECONNREFUSED { throw .notRunning }
-            throw .system("cannot reach \(path.path)")
+            throw .system("cannot reach \(Places.socket.path)")
         }
         var line = (try? ControlCoding.encoder().encode(request)) ?? Data()
         line.append(0x0a)

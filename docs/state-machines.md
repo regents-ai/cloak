@@ -4,7 +4,10 @@ Every place in Cloak where something moves through stages, what those stages
 are, and how the code holds them. Found in a read of every source file on
 8 November 2026. Where a stage used to be implied by loose flags, timers or
 the order of statements, it is now named in the code; the faults that
-implication hid are listed with the checks that show them fixed.
+implication hid are listed with the checks that show them fixed. Since
+19 November only the gate checks are kept (decision 15 in `docs/plan.md`);
+where a fault's check was an ordinary unit check, it says so, and nothing
+checks that fault now.
 
 ## 1. The worker's one rewrite (`llama-worker/Sources/cloak-rewriter-llama/Worker.swift`, `llama-worker/Sources/CLlama/cloak_llama.cpp`)
 
@@ -136,10 +139,8 @@ run, and tor.
 
 Before (13 November, stage 5): every one of those waits had no limit, and a
 lost worker was waited for under the channel's lock. A worker that ignored
-being stopped hung the host for good, with the relay's queue held. Check:
-`test_a_lost_worker_that_ignores_being_stopped_is_killed_before_its_replacement_starts`
-(`tests/test_worker_stop.py`, with its own stand-in,
-`tests/fake_stuck_worker.py`, which ignores SIGTERM).
+being stopped hung the host for good, with the relay's queue held. No check
+since 19 November.
 
 Before (13 November): becoming lost stopped the worker without waiting, so
 the new worker could load while the old one still held the model's memory.
@@ -196,7 +197,7 @@ never sent. A new worker that cannot start leaves none, as above. A worker
 that exits by itself, idle or not, is a loss and never a rest: the relay
 tells the supervisor of each rest and wake and of every exit it did not
 cause (`Change`). `finish` while resting starts nothing, and while waking
-stops the load at once. Checks: `app/Tests/CloakTests/RestTests.swift`.
+stops the load at once. No check since 19 November.
 
 The app's own requests (`answer(to:)`) take their turn with the
 connections, each as one call:
@@ -209,9 +210,8 @@ waiting, at the worker --its task cancelled--> cancelled
 A details request (decision 13) gives way: the next request to arrive, the
 app's or a connection's, cancels it as its task's cancel would, so a
 rewrite waits behind it no longer than the worker takes to stop (one token,
-or one 512-token chunk of the prompt). A rewrite never gives way. Checks:
-`aDetailsRequestGivesWayToARewrite`, `aRewriteNeverGivesWay`
-(`app/Tests/CloakTests/DetailsTests.swift`).
+or one 512-token chunk of the prompt). A rewrite never gives way. No check
+since 19 November.
 
 Before: the host never replaced a lost worker, so every later rewrite in
 that boot failed; only a new boot recovered. The spec asks that a worker
@@ -506,7 +506,7 @@ and `test_a_prompt_over_the_input_limit_stops_its_task_with_the_length_and_the_l
   a broken download stops work instead of loading. A download cut short
   stops the run and keeps its `.part`; the next run asks for the rest with
   an HTTP Range request, and starts the file again when the server sends it
-  whole (`tests/test_fetch_model.py`). Before (13 November): the next run
+  whole (no check since 19 November). Before (13 November): the next run
   fetched every byte again, and a connection the server closed early left a
   short file that was set aside as `.bad`.
 - **The app's model download** (section 9a): the same `<file>.part` beside
@@ -635,34 +635,9 @@ step that needs the system's approval, and no payment. The reasons are
 `model_changed`, `tor_unavailable`, `tor_stopped`, `worker_unavailable`,
 `worker_stopped`, `guest_failed` and `check_failed`.
 
-Checks (`app/Tests/CloakTests/`): `PhaseTests.swift` (every failure from
-Preparing or Running ends in Needs attention; nothing starts again unless
-asked; sleep pauses; quit from every phase goes through the shutdown;
-commands during a shutdown are refused), `SupervisorTests.swift` (stand-in
-tor and worker processes: a guest, tor or worker failure ends in Needs
-attention with everything stopped and nothing started again, a worker
-that finds the model changed with `model_changed`; a relaunch
-comes back Paused; pausing while tor bootstraps stops it; pausing or
-quitting while the model loads stops the worker at once; a launch after a
-quit while working, as at a logout and the next login, is Paused and
-starts nothing; a launch removes
-the boot files a killed app left, and nothing else; the commands are how
-the last start started tor and the worker), `RestTests.swift`
-(the relay with stand-in workers: a rest only after the time since the
-last answer; a request after a rest answered by a new worker, which rests
-in its turn; never two workers at once; an exit while idle is an exit and
-never a rest; a worker that cannot start on a wake fails its request and
-is not tried again; a request cancelled during the load never sent;
-pausing while resting or during the load),
-`ControlTests.swift` (the JSON for each status; the socket answers only its
-owner's well-formed requests), `MenuHeaderTests.swift` (the header's dot
-and line for every phase, settled and changing, Starting or Stopping while
-changing; the rest shown only with Running; the download offered in one
-place; Show in Finder for a changed model) and `SettingsTests.swift` (the
-settings' defaults, kept and restored; the door's port refused out of
-range or while something listens on it, and kept when free; a shortcut
-needs Command, Option or Control; the quick prompt's text a new chat's
-draft, unsent; the log has this session's lines of Cloak's log only).
+The phase, supervisor, relay rest, control socket, menu header and settings
+checks were deleted on 19 November (decision 15 in `docs/plan.md`); nothing
+checks what they checked now.
 
 ## 9a. The model's download (`app/Sources/CloakSupervisor/ModelDownload.swift`)
 
@@ -732,18 +707,8 @@ Stopped, Downloading, Retrying, Waiting for network --cancel--> Stopped, partial
   with the app; the partial stays, and the next launch opens Stopped and
   fetches nothing until asked.
 
-Checks (`app/Tests/CloakTests/ModelDownloadTests.swift`, against a local
-HTTP server, in temporary folders): a clean download puts every file in
-place and leaves no partial; a file that does not match its pin is deleted
-and never tried again; a partial continues with a Range request from where
-it ends; a partial with other bytes is hashed again and refused; a server
-that will not resume sends the whole file and it starts over; Cancel stops
-and removes the partials; Pause keeps the partial and Continue resumes it;
-a lost network waits without a try and continues when it returns; a
-connection cut short is tried again from where it ended; failures are
-tried a few times, then stop until Continue; and a download certain to
-fail, on a Mac that fails its check or a full disk, is blocked and asks the
-host nothing.
+The download's checks were deleted on 19 November (decision 15 in
+`docs/plan.md`); nothing checks what they checked now.
 
 ## 10. Stages still implied (found 15 November 2026)
 

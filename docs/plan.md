@@ -622,8 +622,8 @@ boot with an empty list laid over the image's, the same one-file archive
 as the cover checks (`tests/cover_list.py`), so they assert what they
 did; the Tor check on the public Tor network thereby still sends only
 what it lists. The checks that list no connections
-(`tests/test_guest_path.py`, `tests/test_task_path.py`,
-`tests/test_worker_stop.py`) boot the image as built, with cover on. One
+(`tests/test_guest_path.py`, `tests/test_task_path.py`) boot the image as
+built, with cover on. One
 more check in `tests/test_cover_path.py` boots the image as built, with
 no list laid over it: cover connections arrive, each for one of the
 list's sites on port 443, at most sixteen sites, on no more than two
@@ -1566,12 +1566,13 @@ other five rewrites dropped something they had to keep: a number
   differs; `sample-size` gives the EVAL02 holdout size at which a candidate
   with the development rates passes with probability at least 80 %, by
   exact sum over the paired outcomes.
-- 35 checks in `tests/test_stage4.py` pass, including: Tango's bound is
-  where the score statistic reaches the critical value and is
-  z²/(n + z²) with no paired failure; a candidate as good as the reference
-  never passes; the sign-flip bound equals the brute-force subset mean; the
-  exact power equals a direct sum; pins, refusals and the blinded review
-  behave as above.
+- 35 checks in `tests/test_stage4.py` passed until they were deleted on
+  19 November (decision 15), including: Tango's bound is where the score
+  statistic reaches the critical value and is z²/(n + z²) with no paired
+  failure; a candidate as good as the reference never passes; the
+  sign-flip bound equals the brute-force subset mean; the exact power
+  equals a direct sum; pins, refusals and the blinded review behave as
+  above. Nothing checks the kit now.
 
 ### Stand-in proof (development only)
 
@@ -1768,8 +1769,9 @@ candidates, so the split has to be re-declared before any holdout opens.
   guest's worker and in turn with the guest's calls; the request is the
   pinned daemon's byte for byte, and a reply counts only under the daemon's
   rules, the 10,000-character cap and the deadline of decision 6.
-  `app/Tests/CloakTests/RewriteTests.swift` proves both against the
-  daemon's own code. Original and Reworded show side by side with the words
+  `app/Tests/CloakTests/RewriteTests.swift` proved both against the
+  daemon's own code until it was deleted on 19 November (decision 15);
+  nothing checks the app's request or its reply rules now. Original and Reworded show side by side with the words
   taken out and put in marked; the newest reworded text can be edited; Send
   is shown but off. Turns are kept as drafts, one sealed file per
   conversation in `conversations/`, with one key in the login keychain,
@@ -2785,9 +2787,10 @@ candidates, so the split has to be re-declared before any holdout opens.
       in the running app (build `365a363`, 18 November): five minutes
       after the startup check the worker's process was gone, Cloak
       stayed Running and its detail said the worker was resting. The
-      wake is covered by the relay's tests and has not been seen in the
-      running app; the supervisor's part is not covered by a test,
-      since a test cannot reach Running.
+      wake was covered by the relay's tests until they were deleted on
+      19 November (decision 15), and has not been seen in the running
+      app; the supervisor's part was never covered by a test, since a
+      test cannot reach Running.
     - Taken, 18 November: the Mac check and a Memory figure. The check
       passes a Mac whose graphics limit, as Metal gives it, holds the
       model (7 GiB stated in `app/release.json`) with 1 GiB spare, and
@@ -2901,6 +2904,46 @@ candidates, so the split has to be re-declared before any holdout opens.
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.
+15. Gate checks only. Decided 19 November 2026. Sean: "Delete all tests
+    from all repos, the code works now and it will work in the future. The
+    tests were built by poor models, and we do not need that much." For
+    Cloak he chose to delete the ordinary unit checks and keep the checks
+    behind the gates ([release.md](release.md), "Gates for stage 2"). No
+    ordinary unit checks are written from now on.
+    - Deleted: in `app/Tests/CloakTests/`, the agent task, agent card,
+      control socket, details, Markdown, memory budget, menu bar icon, menu
+      header, model download, phase, QR code, relay rest, app rewrite,
+      settings, supervisor, startup check and sealed conversation checks;
+      in `tests/`, `test_fetch_model.py`, `test_stage3.py`,
+      `test_stage4.py` and `test_worker_stop.py`, with
+      `fake_stuck_worker.py`, the stand-in only the last used. With them
+      went what only they used: the test target's reach into the app, the
+      openings that let a check give the control channel its own socket,
+      lock and user, and the model download its own folder, hardware,
+      network watch, free-space reading and retry waits.
+    - Kept, by the gate each backs: `tests/test_escape_path.py` (network
+      escape, conversation separation, host and guest);
+      `tests/test_tor_path.py` (network escape); `tests/test_agent_path.py`
+      and `tests/test_task_path.py` (usefulness, network escape);
+      `tests/test_guest_path.py`, `tests/test_llama_worker.py`, and the
+      app's `DoorTests`, `DoorGuestTests` and `StoppedRewriteTests`
+      (rewording; the worker's sandbox and the guest's own door passes also
+      host and guest, each conversation's pass also conversation
+      separation); `tests/test_cover_path.py` (cover traffic);
+      `tests/test_pay_path.py` (payment, host and guest);
+      `guest/pay/check.sh` and the sender's Rust checks (payment,
+      conversation separation); the app's `SendTests` and
+      `WalletPresenceTests` (payment, wallet recovery).
+    - What the deleted checks checked is no longer checked by anything: the
+      app's phases and its supervisor with stand-in tor and worker, the
+      relay's rest and wake, a details request giving way, the control
+      socket and its JSON, the menu header and icon, settings, the QR code,
+      the app's model download, the app's rewrite request and reply rules
+      against the daemon's code, the sealed conversations, the agent's
+      tasks and cards, the startup check, the stage 3 and stage 4 kits'
+      own logic, `scripts/fetch_model.py`'s resume, and a lost worker that
+      ignores being stopped. The stage 3 measurement kit
+      (`scripts/stage3.py`) is unchanged.
 
 ## Gates
 
@@ -2908,13 +2951,13 @@ candidates, so the split has to be re-declared before any holdout opens.
 | --- | --- | --- | --- |
 | A01 | Reference integrity | Open: sources, wrapper (reconstructed), contract and model files pinned; reference inference settings and payment deployment unknown | [baseline](../reference/baseline.md), [contract](../reference/rewriter-contract.md), [models](../reference/models.md) |
 | A02 | Clean Mac installation | Open: only a development build exists (`app/build.sh`, signed ad hoc), which needs the guest, tor and worker built and installed by hand first; no setup, and no run on a clean Mac | `app/build.sh` |
-| A03 | GUI and CLI equivalence | Open: the menu-bar app and `cloak` drive one supervisor, with the same manifest, states and reason codes (development build, stand-in only); no sessions or payment exist yet to be shared | `app/`, `app/Tests/CloakTests/` |
+| A03 | GUI and CLI equivalence | Open: the menu-bar app and `cloak` drive one supervisor, with the same manifest, states and reason codes (development build, stand-in only); no sessions or payment exist yet to be shared; the checks of the shared states and of the control socket were deleted on 19 November (decision 15) | `app/` |
 | A04 | Fidelity | Open: scoring kit built and proven on development data only; no holdout | `scripts/stage4.py`, `scripts/fidelity.py` |
 | A05 | Whole-agent containment | Open | |
 | A06 | Complete routing | Open: the reference wrapper fails it (static program bypass); in Cloak's guest, which has no network device and one relay to tor, the same static probe and a program without torsocks reach nothing (development evidence only, stand-in) | [baseline](../reference/baseline.md#observed-behaviour-of-the-reconstruction), `tests/test_tor_path.py` |
 | A07 | Conversation isolation | Open | |
 | A08 | Cover behaviour | Open: the guest's daemon runs the reference's own cover worker from one list, on since 19 November with a pool of 58 pages Sean approved, sixteen picked at each start; nine checks against the stand-in tor passed on 19 November, and the check of the image as built passed the same day; on the real route only two six-minute runs' totals were measured, so the schedule and lifecycle are not checked against the policy, and the sites have not agreed to automated visits (NET04) | `reference/cover.json`, `tests/test_cover_path.py`, [cover in the guest](#cover-traffic-in-the-guest-built-18-november-2026) |
-| A09 | Failure and pause | Open: in the app, a tor, worker or guest failure stops all work and ends in Needs attention with its reason, with nothing restarted and no other route or model; Pause and Quit stop everything, and a relaunch starts nothing (checks with stand-in processes, and a live run with one worker kill; development build, stand-in only); sleep pauses in the state machine's checks, but no live sleep and wake has been tried; no sessions or payment yet to stop; cover runs in the guest's daemon and ends with the guest, which no check has watched | [state machines](state-machines.md), `app/Tests/CloakTests/` |
+| A09 | Failure and pause | Open: in the app, a tor, worker or guest failure stops all work and ends in Needs attention with its reason, with nothing restarted and no other route or model; Pause and Quit stop everything, and a relaunch starts nothing (shown by checks with stand-in processes until they were deleted on 19 November, decision 15, and by a live run with one worker kill; development build, stand-in only); sleep paused in the state machine's checks, deleted the same day, and no live sleep and wake has been tried; closing the door answers a request under way and sends nothing (`app/Tests/CloakTests/DoorTests.swift`); no sessions or payment yet to stop; cover runs in the guest's daemon and ends with the guest, which no check has watched | [state machines](state-machines.md), `app/Tests/CloakTests/` |
 | A10 | Local authority | Open | |
 | A11 | Actual paid workflow | Open: no qualified deployment exists yet | |
 | A12 | Financial interruption | Open | |

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Gate checks only (decision 15 in `docs/plan.md`, Sean, 19 November):
+  the ordinary unit checks are deleted, seventeen of the app's and four in
+  `tests/` (`test_fetch_model.py`, `test_stage3.py`, `test_stage4.py`,
+  `test_worker_stop.py`), with the stand-in only they used. The checks
+  behind the stage 2 gates stay: the guest checks in `tests/`, the
+  worker's, the app's door, stopped-rewording, send and wallet-presence
+  checks, the payer's (`guest/pay/check.sh`) and the sender's. Nothing
+  checks what the deleted ones did. The control channel no longer takes
+  another socket, lock or user, and the model download no longer takes
+  another folder, network watch, free-space reading or retry waits: only
+  the deleted checks gave them. Nothing the app does changes.
+
 - Payment in the guest begun: `cloak-pay`, the mainnet zkAPI daemon
   built with Cloak's front added and Tor as its only route
   (`guest/pay/`, release plan build steps 1 and 2). It serves the Mac

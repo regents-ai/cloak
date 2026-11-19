@@ -1,6 +1,5 @@
 // Command cloak-daemon-reply judges worker replies with the daemon's own code,
-// for tests/test_llama_worker.py and the app's tests
-// (app/Tests/CloakTests/RewriteTests.swift). It is built inside the pinned
+// for tests/test_llama_worker.py. It is built inside the pinned
 // zkapi-clientd module with go build -overlay, which adds this file, so it
 // can call internal/rewriter as the daemon does: Select builds the daemon's
 // draft for the texts, and Draft.Rewrite sends it to a loopback server that

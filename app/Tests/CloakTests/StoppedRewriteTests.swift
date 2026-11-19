@@ -106,13 +106,13 @@ struct FakeWorker {
     private init() async throws {
         log = URL(filePath: "/tmp").appending(path: "cloak-fake-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: log, withIntermediateDirectories: true)
-        let python = String(decoding: try DaemonReply.run(["uv", "python", "find"], in: log), as: UTF8.self)
+        let python = String(decoding: try Repository.run(["uv", "python", "find"], in: log), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let launcher = log.appending(path: "fake-worker")
         try Data("""
             #!/bin/sh
             export FAKE_WORKER_LOG="\(log.path)" FAKE_WORKER_READ_DELAY=0
-            exec "\(python)" -I "\(DaemonReply.root.appending(path: "tests/fake_worker.py").path)"
+            exec "\(python)" -I "\(Repository.root.appending(path: "tests/fake_worker.py").path)"
             """.utf8).write(to: launcher)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
         relay = Relay(worker: try await WorkerChannel.start(executable: launcher, arguments: [])) { nil }

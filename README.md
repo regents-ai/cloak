@@ -224,12 +224,6 @@ reply grammar (decision 9). Any other model, such as the stand-in
 `standin-gguf-grammar`, gets a record marked development only, which counts
 toward no gate.
 
-Run the kit's own checks:
-
-```bash
-uv run --with pytest==8.4.2 pytest tests/test_stage3.py
-```
-
 ## Stage 4 commands
 
 Stage 4 qualifies the substitution against the fidelity holdout (EVAL02)
@@ -273,13 +267,6 @@ measure run-to-run variation, and `sample-size --from <fidelity score>`
 gives the EVAL02 holdout size from development rates. In a development
 comparison `originals` may stand for an arm; on a holdout every arm is a run
 record and only a candidate may rewrite it.
-
-Run the kit's own checks:
-
-```bash
-uv run --with pytest==8.4.2 --with scikit-learn==1.9.1 --with numpy==2.5.4 \
-    --with scipy==1.18.1 --with tokenizers==0.22.1 pytest tests/test_stage4.py
-```
 
 ## Stage 5 commands
 
@@ -507,11 +494,11 @@ requests and when it was last used are kept, sealed in
 `~/Library/Application Support/Regents Cloak/agents` under the
 conversations' key; no request's text is kept, shown or logged.
 
-Run the supervisor's checks (state changes, stand-in tor and worker
-processes, the control socket and its JSON, the boot files a killed app
-left, the app's rewrite against the pinned daemon's code, which needs Go
-and the daemon's source from the stage 1 commands, and the sealed
-conversations):
+Run the app's gate checks (the door end to end and as the guest's agent
+meets it, with each conversation's turns checked against the pinned
+daemon's own transcript, which needs Go and the daemon's source from the
+stage 1 commands; every way a rewording stops sends nothing; the send path
+with the deposit kept sealed; and whether this Mac holds the wallet):
 
 ```bash
 swift test --package-path app
@@ -523,13 +510,6 @@ guest build uses the pinned Rust image instead):
 
 ```bash
 (cd guest/sender && cargo test)
-```
-
-Check that a lost worker that ignores being stopped is killed 10 seconds
-later, before a new one starts (through the guest, with the stand-in tor):
-
-```bash
-uv run --with pytest==8.4.2 pytest tests/test_worker_stop.py
 ```
 
 ## Progress

@@ -1,75 +1,24 @@
-import CloakControl
 @testable import CloakSupervisor
 import CryptoKit
 import Foundation
 
 /// An installation in a temporary folder, pinned in its own manifest: the
-/// bundle's parts and the Application Support folder's, with shell scripts in
-/// place of tor and the worker that note each start, and placeholder files
-/// for the rest. The guest's kernel is a placeholder, and the test process
-/// has no virtualization entitlement, so a guest never starts here.
+/// bundle's parts and the Application Support folder's, as placeholder files.
+/// Nothing is started from it.
 struct Fixture {
-    /// Notes the start, and says it opened the SOCKS socket it was given
-    /// (--SocksPort "unix:<path> IsolateSOCKSAuth"), as tor does.
-    private static let opened = """
-        echo $$ >> "$(dirname "$0")/starts"
-        while [ "$1" != --SocksPort ]; do shift; done
-        socket=${2#unix:}
-        echo "[notice] Opened Socks listener connection (ready) on ${socket% IsolateSOCKSAuth}"
-        """
-    /// Opens its SOCKS socket and bootstraps at once, then runs until stopped.
-    static let tor = """
-        #!/bin/sh
-        \(opened)
-        echo "[notice] Bootstrapped 100% (done): Done"
-        exec sleep 600
-        """
-    /// Opens its SOCKS socket and never bootstraps.
-    static let slowTor = """
-        #!/bin/sh
-        \(opened)
-        exec sleep 600
-        """
-    /// Exits before its SOCKS socket opens.
-    static let failingTor = """
-        #!/bin/sh
-        echo $$ >> "$(dirname "$0")/starts"
-        exit 1
-        """
-    /// Signals ready, then runs until its input closes.
-    static let worker = """
-        #!/bin/sh
-        echo $$ >> "$(dirname "$0")/starts"
-        printf 'Y\\000\\000\\000\\000'
-        exec cat > /dev/null
-        """
-    /// Never signals ready, as a worker still loading its model, and runs
-    /// until stopped.
-    static let loadingWorker = """
-        #!/bin/sh
-        echo $$ >> "$(dirname "$0")/starts"
-        exec sleep 600
-        """
-    /// Exits before it signals ready.
-    static let failingWorker = """
-        #!/bin/sh
-        echo $$ >> "$(dirname "$0")/starts"
-        exit 1
-        """
-
     let root: URL
     let layout: Layout
     let manifest: Manifest
 
-    init(tor: String = Fixture.tor, worker: String = Fixture.worker) throws {
+    init() throws {
         root = URL(filePath: "/tmp").appending(path: "cloak-fixture-\(UUID().uuidString.prefix(8))")
         layout = Layout(bundle: root.appending(path: "bundle"), support: root.appending(path: "support"))
         let contents: [(Manifest.Part, Manifest.Place, String, String)] = [
             (.kernel, .bundle, "guest/Image", "not a kernel"),
             (.initrd, .bundle, "guest/initrd.gz", "not a root"),
-            (.tor, .bundle, "tor/tor", tor),
+            (.tor, .bundle, "tor/tor", "not tor"),
             (.libevent, .bundle, "tor/libevent-2.1.7.dylib", "not a library"),
-            (.worker, .support, "worker/cloak-rewriter-llama", worker),
+            (.worker, .support, "worker/cloak-rewriter-llama", "not a worker"),
         ]
         var pins = [Manifest.Pin]()
         for (part, place, path, text) in contents {
@@ -95,19 +44,8 @@ struct Fixture {
     /// A supervisor on this installation, on a Mac that meets the manifest,
     /// whose worker never rests.
     @MainActor
-    func supervisor(hardware: Checks.Hardware = .init(appleSilicon: true, memory: 64 << 30, graphicsLimit: 48 << 30)) throws -> Supervisor {
-        try Supervisor(manifest: manifest, layout: layout, hardware: hardware) { nil }
-    }
-
-    func url(_ part: Manifest.Part) -> URL {
-        layout.url(part, in: manifest)
-    }
-
-    /// The process of each start of the script for `part`, in order.
-    func starts(_ part: Manifest.Part) -> [pid_t] {
-        let log = url(part).deletingLastPathComponent().appending(path: "starts")
-        guard let text = try? String(contentsOf: log, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").compactMap { pid_t($0) }
+    func supervisor() throws -> Supervisor {
+        try Supervisor(manifest: manifest, layout: layout, hardware: .init(appleSilicon: true, memory: 64 << 30, graphicsLimit: 48 << 30)) { nil }
     }
 
     func remove() {
@@ -115,6 +53,57 @@ struct Fixture {
     }
 }
 
-func isRunning(_ pid: pid_t) -> Bool {
-    kill(pid, 0) == 0
+/// The repository's own folder, and the commands the checks run from it.
+enum Repository {
+    static let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+
+    /// Runs tests/`name`/main.go on `input`, built inside the pinned daemon
+    /// module (Go's cache makes that quick) in a folder removed afterwards.
+    static func tool(_ name: String, input: Data) throws -> Data {
+        let daemon = root.appending(path: "reference/src/zkapi/zkapi-clientd")
+        let command = "cloak-" + name.replacing("_", with: "-")
+        let out = URL(filePath: NSTemporaryDirectory()).appending(path: "\(command)-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: out) }
+        let overlay = ["Replace": [daemon.appending(path: "cmd/\(command)/main.go").path: root.appending(path: "tests/\(name)/main.go").path]]
+        try JSONEncoder().encode(overlay).write(to: out.appending(path: "overlay.json"))
+        let tool = out.appending(path: command)
+        try run(
+            ["go", "build", "-p", "2", "-trimpath", "-overlay", out.appending(path: "overlay.json").path, "-o", tool.path,
+             "./cmd/\(command)"],
+            in: daemon, environment: ["CGO_ENABLED": "0"])
+        return try run([tool.path], in: root, input: input)
+    }
+
+    /// Runs a command to its end; its output, or a failure with what it said.
+    @discardableResult
+    static func run(_ command: [String], in folder: URL, environment: [String: String] = [:], input: Data = Data()) throws -> Data {
+        let files = URL(filePath: NSTemporaryDirectory()).appending(path: "cloak-run-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: files) }
+        let stdin = files.appending(path: "in"), stdout = files.appending(path: "out"), stderr = files.appending(path: "err")
+        try input.write(to: stdin)
+        FileManager.default.createFile(atPath: stdout.path, contents: nil)
+        FileManager.default.createFile(atPath: stderr.path, contents: nil)
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/env")
+        process.arguments = command
+        process.currentDirectoryURL = folder
+        process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+        process.standardInput = try FileHandle(forReadingFrom: stdin)
+        process.standardOutput = try FileHandle(forWritingTo: stdout)
+        process.standardError = try FileHandle(forWritingTo: stderr)
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw Failed(command: command.joined(separator: " "), said: (try? String(contentsOf: stderr, encoding: .utf8)) ?? "")
+        }
+        return try Data(contentsOf: stdout)
+    }
+
+    struct Failed: Error {
+        let command: String
+        let said: String
+    }
 }
