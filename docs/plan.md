@@ -2927,6 +2927,12 @@ candidates, so the split has to be re-declared before any holdout opens.
       version 3 of the encryption, which also ties the reply key into
       the request; Cloak sends version 2, the documented one, and moves
       to 3 outright once a live test shows it works); then the GPU check through NVIDIA's
+      service (built the same day and required by `ask`; NVIDIA refused 7
+      of 8 Tor circuits with 403, so the mode waits on another way to
+      the GPU's verdict: Intel's token service behind NEAR's front
+      server is looked at next; going to NVIDIA outside Tor, retrying
+      circuits, or leaving the GPU out and saying so are Sean's to
+      choose if that fails)
       service; then the guest image and the app. From NEAR's own words,
       to be said on screen: the model's software is not in the
       measurement, a key ties every request to one account, and on 8

@@ -34,7 +34,7 @@ use sha2::{Digest, Sha512};
 
 use crate::chat::send;
 use crate::e2ee::{ReplyKey, SealKey};
-use crate::{CpuOnlyProof, Proxy, Stop, TcbStatus};
+use crate::{GpuProof, IntelProof, Proof, Proxy, Stop, TcbStatus};
 
 const MODEL: &str = "z-ai/glm-5.3-flash";
 const API_KEY: &str = "sk-stand-in";
@@ -256,13 +256,16 @@ fn model_key() -> ReplyKey {
     ReplyKey([0x42; 32])
 }
 
-fn proof() -> CpuOnlyProof {
-    CpuOnlyProof {
-        gateway_key: [0; 32],
-        model_key: model_key().public(),
-        instances: 1,
-        gateway_tcb: TcbStatus::UpToDate,
-        model_tcb: vec![TcbStatus::UpToDate],
+fn proof() -> Proof {
+    Proof {
+        intel: IntelProof {
+            gateway_key: [0; 32],
+            model_key: model_key().public(),
+            instances: 1,
+            gateway_tcb: TcbStatus::UpToDate,
+            model_tcb: vec![TcbStatus::UpToDate],
+        },
+        gpu: GpuProof { gpus: vec![8] },
     }
 }
 

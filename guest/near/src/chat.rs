@@ -1,12 +1,12 @@
 //! Slice 2: one chat request to NEAR AI Cloud, sent only after the proof
-//! check of the same call passes. Every field that holds the person's words
-//! is sealed for the model key the proof checked (NEAR's encryption, version
-//! 2, with `X-Encrypt-All-Fields`), it goes on a new connection whose gateway
-//! certificate key must be the one the proof is tied to, and the reply's
-//! sealed fields are opened with a key made for this request alone. Nothing
-//! falls back to plain text: a request with a field the encryption does not
-//! cover is refused before anything is fetched, and a reply with a field
-//! that does not open is refused whole.
+//! check of the same call passes, Intel's side and NVIDIA's (slice 3). Every
+//! field that holds the person's words is sealed for the model key the proof
+//! checked (NEAR's encryption, version 2, with `X-Encrypt-All-Fields`), it
+//! goes on a new connection whose gateway certificate key must be the one
+//! the proof is tied to, and the reply's sealed fields are opened with a key
+//! made for this request alone. Nothing falls back to plain text: a request
+//! with a field the encryption does not cover is refused before anything is
+//! fetched, and a reply with a field that does not open is refused whole.
 
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -16,9 +16,10 @@ use serde_json::{json, Map, Value};
 
 use crate::e2ee::{ReplyKey, SealKey};
 use crate::fetch::{connect, families, mozilla, request, NEAR};
+use crate::gpu::keys_cover;
 use crate::{
-    fetch_collateral, fetch_report, verify, Collateral, CpuOnlyProof, FetchError, Pins, Proxy,
-    Refusal,
+    fetch_collateral, fetch_gpu_verdict, fetch_nvidia_keys, fetch_report, gpu_evidence, verify_gpu,
+    verify_intel, Collateral, FetchError, Pins, Proof, Proxy, Refusal, Routes,
 };
 
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -52,7 +53,8 @@ pub enum Stop {
     /// The request cannot go as given, or the system gave no randomness or
     /// time.
     Request(String),
-    /// Fetching the report or Intel's collateral failed.
+    /// Fetching the report, Intel's collateral, NVIDIA's verdicts or
+    /// NVIDIA's keys failed.
     Fetch(FetchError),
     /// The proof was refused.
     Refused(Refusal),
@@ -89,27 +91,34 @@ impl fmt::Display for Stop {
 
 impl std::error::Error for Stop {}
 
-/// Intel's collateral, kept between requests. It is fetched again when it
-/// is older than the age chosen, or does not cover every platform family a
-/// new report's quotes name.
-pub struct KeptCollateral {
+/// Intel's collateral and NVIDIA's signing keys, kept between requests,
+/// each for at most the age chosen. The collateral is fetched again when it
+/// is older, or does not cover every platform family a new report's quotes
+/// name; the keys when they are older, or do not hold every key NVIDIA's
+/// new verdicts name.
+pub struct Kept {
     max_age: u64,
-    fetched_at: u64,
+    collateral_at: u64,
     collateral: Vec<Collateral>,
+    keys_at: u64,
+    /// NVIDIA's key list as it came.
+    keys: Vec<u8>,
 }
 
-impl KeptCollateral {
+impl Kept {
     /// Nothing kept yet; None when `max_age` is over a day.
-    pub fn new(max_age: Duration) -> Option<KeptCollateral> {
-        (max_age <= DAY).then(|| KeptCollateral {
+    pub fn new(max_age: Duration) -> Option<Kept> {
+        (max_age <= DAY).then(|| Kept {
             max_age: max_age.as_secs(),
-            fetched_at: 0,
+            collateral_at: 0,
             collateral: Vec::new(),
+            keys_at: 0,
+            keys: Vec::new(),
         })
     }
 
     /// The collateral for `report`'s quotes at `now`.
-    fn for_report(
+    fn collateral_for(
         &mut self,
         intel: &Proxy,
         report: &[u8],
@@ -123,18 +132,27 @@ impl KeptCollateral {
                     .iter()
                     .any(|c| &c.fmspc == fmspc && &c.ca == ca)
             });
-        if !covered || now.saturating_sub(self.fetched_at) > self.max_age {
+        if !covered || now.saturating_sub(self.collateral_at) > self.max_age {
             self.collateral = fetch_collateral(intel, report).map_err(Stop::Fetch)?;
-            self.fetched_at = now;
+            self.collateral_at = now;
         }
         Ok(&self.collateral)
+    }
+
+    /// NVIDIA's key list for `answers` at `now`.
+    fn keys_for(&mut self, nvidia: &Proxy, answers: &[Vec<u8>], now: u64) -> Result<&[u8], Stop> {
+        if !keys_cover(answers, &self.keys) || now.saturating_sub(self.keys_at) > self.max_age {
+            self.keys = fetch_nvidia_keys(nvidia).map_err(Stop::Fetch)?;
+            self.keys_at = now;
+        }
+        Ok(&self.keys)
     }
 }
 
 /// A reply, and the proof it was sent under.
 #[derive(Debug)]
 pub struct Answered {
-    pub proof: CpuOnlyProof,
+    pub proof: Proof,
     /// The chat completion as NEAR's model gave it, every sealed field
     /// opened.
     pub reply: Value,
@@ -142,31 +160,30 @@ pub struct Answered {
 
 /// Sends one OpenAI-shaped chat request (`body`, not streamed) for `model`
 /// to NEAR AI Cloud with `api_key`, in this order and no other: the request
-/// is checked; a report is fetched under a fresh nonce through `near`;
-/// Intel's collateral is reused from `kept` or fetched through `intel`; the
-/// proof is checked against `pins`; and only then is the request sent. A
-/// failed step returns its [`Stop`], and nothing is sent. The key is used
-/// only in the request's Authorization header: never kept, logged or put in
-/// a [`Stop`].
+/// is checked; a report is fetched under a fresh nonce on the `near` route;
+/// Intel's collateral is reused from `kept` or fetched on the `intel` route;
+/// the Intel side is checked against `pins`; each instance's GPU evidence is
+/// checked to carry the nonce and posted to NVIDIA's service on the `nvidia`
+/// route, whose signing keys are reused from `kept` or fetched there; the
+/// GPU side is checked; and only then, with both proofs, is the request
+/// sent. A failed step returns its [`Stop`], and nothing is sent. The key is
+/// used only in the request's Authorization header: never kept, logged or
+/// put in a [`Stop`].
 pub fn ask(
-    near: &Proxy,
-    intel: &Proxy,
+    routes: &Routes,
     model: &str,
     api_key: &str,
     body: &[u8],
     pins: &Pins,
-    kept: &mut KeptCollateral,
+    kept: &mut Kept,
 ) -> Result<Answered, Stop> {
     // The same check `send` makes, here so that a request that cannot go
     // costs no fetch.
     checked(body, model, api_key)?;
-    let fetched = fetch_report(near, model).map_err(Stop::Fetch)?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| Stop::Request("the clock reads before 1970".into()))?
-        .as_secs();
-    let collateral = kept.for_report(intel, &fetched.report, now)?;
-    let proof = verify(
+    let fetched = fetch_report(&routes.near, model).map_err(Stop::Fetch)?;
+    let now = seconds()?;
+    let collateral = kept.collateral_for(&routes.intel, &fetched.report, now)?;
+    let intel = verify_intel(
         &fetched.report,
         &fetched.nonce,
         &fetched.spki_sha256,
@@ -176,16 +193,37 @@ pub fn ask(
         now,
     )
     .map_err(Stop::Refused)?;
+    let answers = gpu_evidence(&fetched.report, &fetched.nonce)
+        .map_err(Stop::Refused)?
+        .iter()
+        .map(|evidence| fetch_gpu_verdict(&routes.nvidia, evidence))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Stop::Fetch)?;
+    // NVIDIA dates its verdicts by its own clock, so they are checked at a
+    // time read after they came.
+    let now = seconds()?;
+    let keys = kept.keys_for(&routes.nvidia, &answers, now)?;
+    let gpu =
+        verify_gpu(&fetched.report, &fetched.nonce, &answers, keys, now).map_err(Stop::Refused)?;
+    let proof = Proof { intel, gpu };
     let reply = send(
         &proof,
         &fetched.spki_sha256,
-        near,
+        &routes.near,
         &mozilla(),
         model,
         api_key,
         body,
     )?;
     Ok(Answered { proof, reply })
+}
+
+/// Seconds since 1970 by the system clock.
+fn seconds() -> Result<u64, Stop> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| Stop::Request("the clock reads before 1970".into()))?
+        .as_secs())
 }
 
 /// Seals `body`'s words for the model key in `proof`, opens a new
@@ -195,7 +233,7 @@ pub fn ask(
 /// made for this request. Only [`ask`] calls it, with a proof it has just
 /// obtained.
 pub(crate) fn send(
-    proof: &CpuOnlyProof,
+    proof: &Proof,
     pinned: &[u8; 32],
     proxy: &Proxy,
     roots: &RootCertStore,
@@ -204,7 +242,7 @@ pub(crate) fn send(
     body: &[u8],
 ) -> Result<Value, Stop> {
     let mut body = checked(body, model, api_key)?;
-    let model_key = SealKey::from_ed25519(&proof.model_key).ok_or_else(|| {
+    let model_key = SealKey::from_ed25519(&proof.intel.model_key).ok_or_else(|| {
         Stop::Refused(Refusal::Malformed(
             "the model's key is not one that can be encrypted to".into(),
         ))
@@ -228,7 +266,7 @@ pub(crate) fn send(
         .map_err(|e| Stop::Send(e.into()))?;
     let authorization = format!("Bearer {api_key}");
     let client_key = hex::encode(reply_key.public());
-    let model_key = hex::encode(proof.model_key);
+    let model_key = hex::encode(proof.intel.model_key);
     let answer = request(
         &mut tls,
         "POST",

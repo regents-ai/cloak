@@ -1,6 +1,7 @@
-//! The pure half: the checks NEAR documents for its gateway and for every
-//! model instance, against pinned measurements, failing closed on anything
-//! missing, malformed or different. No network and no clock but `now`.
+//! The pure Intel half: the checks NEAR documents for its gateway and for
+//! every model instance's Intel TDX quote, against pinned measurements,
+//! failing closed on anything missing, malformed or different. No network
+//! and no clock but `now`. The GPU half is `gpu.rs`.
 
 use std::fmt;
 
@@ -12,7 +13,7 @@ use dcap_qvl::{QuotePolicy, TcbStatus};
 use serde::Deserialize;
 use sha2::{Digest, Sha256, Sha384};
 
-use crate::{Collateral, CpuOnlyProof, Measurements, Pins};
+use crate::{Collateral, GpuRefusal, IntelProof, Measurements, Pins};
 
 /// Which part of the report a refusal is about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,7 +35,8 @@ impl fmt::Display for Who {
 /// The one reason a report was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// A field is missing or not in the form NEAR documents.
+    /// A field is missing or not in the form NEAR documents, NVIDIA's key
+    /// list is not one, or there is not one NVIDIA answer for each instance.
     Malformed(String),
     /// Signed with something other than Ed25519.
     Algorithm(Who),
@@ -72,6 +74,8 @@ pub enum Refusal {
     SameInstance(Who),
     /// Measurements that equal no accepted set.
     Pin { who: Who, seen: Box<Measurements> },
+    /// The instance's GPU evidence, or NVIDIA's verdict on it, did not pass.
+    Gpu { who: Who, refusal: GpuRefusal },
 }
 
 impl fmt::Display for Refusal {
@@ -101,6 +105,7 @@ impl fmt::Display for Refusal {
                 hex::encode(&seen.mrconfigid),
                 hex::encode(&seen.os_image_hash)
             ),
+            Refusal::Gpu { who, refusal } => write!(f, "{who}: {refusal}"),
         }
     }
 }
@@ -164,10 +169,10 @@ struct Measured {
     instance_id: Vec<u8>,
 }
 
-/// Checks a report fetched under `nonce` on a connection whose gateway
-/// certificate key hashed to `spki_sha256`, for `model`, with Intel's
-/// `collateral`, against `pins`, at `now` (seconds since 1970).
-pub fn verify(
+/// Checks the Intel side of a report fetched under `nonce` on a connection
+/// whose gateway certificate key hashed to `spki_sha256`, for `model`, with
+/// Intel's `collateral`, against `pins`, at `now` (seconds since 1970).
+pub fn verify_intel(
     report: &[u8],
     nonce: &[u8; 32],
     spki_sha256: &[u8; 32],
@@ -175,7 +180,7 @@ pub fn verify(
     collateral: &[Collateral],
     pins: &Pins,
     now: u64,
-) -> Result<CpuOnlyProof, Refusal> {
+) -> Result<IntelProof, Refusal> {
     let report: Report = parse(report)?;
 
     let gateway = &report.gateway_attestation;
@@ -246,7 +251,7 @@ pub fn verify(
         pinned(Who::Model(index), &measured.measurements, &pins.model)?;
     }
 
-    Ok(CpuOnlyProof {
+    Ok(IntelProof {
         gateway_key,
         model_key,
         instances: models.len(),

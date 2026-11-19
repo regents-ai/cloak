@@ -1,13 +1,17 @@
-//! Development only: fetches one model's report from NEAR's gateway and its
-//! Intel collateral through a SOCKS5 proxy, checks it against the pins in
-//! reference/near-pins.json, and says what happened in plain words. No
-//! account key, no chat request: GETs of the report and Intel's collateral.
+//! Development only: fetches one model's report from NEAR's gateway, its
+//! Intel collateral, and NVIDIA's verdict on each instance's GPUs with the
+//! keys NVIDIA signs them with, through a SOCKS5 proxy, checks both sides
+//! against the pins in reference/near-pins.json, and says what happened in
+//! plain words. No account key, no chat request: GETs of the report, Intel's
+//! collateral and NVIDIA's keys, and one POST of each instance's GPU
+//! evidence to NVIDIA.
 //!
 //!     cloak-near-probe --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B [--save DIR]
 //!     cloak-near-probe --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B --key-file FILE
 //!
-//! With --save, the report, nonce, TLS key hash, collateral and fetch time go
-//! into DIR, as the gate check's fixtures are kept.
+//! With --save, the report, nonce, TLS key hash, collateral, NVIDIA's
+//! answers and keys, and the time both checks are made at go into DIR, as
+//! the gate check's fixtures are kept.
 //!
 //! With --key-file, the account key is read from FILE and the probe makes
 //! one chat request through `ask` instead: the proof check, then the message
@@ -20,7 +24,8 @@ use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cloak_near::{
-    ask, fetch_collateral, fetch_report, verify, FetchError, KeptCollateral, Pins, Proxy, Stop,
+    ask, fetch_collateral, fetch_gpu_verdict, fetch_nvidia_keys, fetch_report, gpu_evidence,
+    verify_gpu, verify_intel, FetchError, Kept, Pins, Proxy, Routes, Stop,
 };
 use hex::encode as hex;
 use serde_json::json;
@@ -78,24 +83,17 @@ fn chat(socks: SocketAddr, model: &str, key_file: &Path) -> Result<(), String> {
         .map_err(|e| format!("reading {}: {e}", key_file.display()))?;
     println!("Checking NEAR AI Cloud's proof for {model}, then sending \"ping\", through {socks}");
 
-    let (near_identity, intel_identity) = (fresh_identity()?, fresh_identity()?);
-    let near = Proxy {
-        addr: socks,
-        user: &near_identity,
-        password: "cloak",
+    let identities = [fresh_identity()?, fresh_identity()?, fresh_identity()?];
+    let routes = Routes {
+        near: route(socks, &identities[0]),
+        intel: route(socks, &identities[1]),
+        nvidia: route(socks, &identities[2]),
     };
-    let intel = Proxy {
-        addr: socks,
-        user: &intel_identity,
-        password: "cloak",
-    };
-    let mut kept =
-        KeptCollateral::new(Duration::from_secs(60 * 60)).expect("an hour is within a day");
+    let mut kept = Kept::new(Duration::from_secs(60 * 60)).expect("an hour is within a day");
     let body = json!({"model": model, "messages": [{"role": "user", "content": "ping"}]});
     let started = Instant::now();
     let outcome = ask(
-        &near,
-        &intel,
+        &routes,
         model,
         key.trim(),
         body.to_string().as_bytes(),
@@ -106,9 +104,10 @@ fn chat(socks: SocketAddr, model: &str, key_file: &Path) -> Result<(), String> {
     match outcome {
         Ok(answered) => {
             println!(
-                "The proof passed for {} model instance(s), model encryption key {}",
-                answered.proof.instances,
-                hex(answered.proof.model_key)
+                "The proof passed for {} model instance(s) and their GPUs ({}), model encryption key {}",
+                answered.proof.intel.instances,
+                gpu_counts(&answered.proof.gpu.gpus),
+                hex(answered.proof.intel.model_key)
             );
             println!("NEAR answered 200 in {took:.1} s; the reply, every encrypted field opened:");
             println!(
@@ -136,12 +135,8 @@ fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), Stri
     let pins: Pins = serde_json::from_str(PINS).map_err(|e| format!("the pins file: {e}"))?;
     println!("Checking NEAR AI Cloud's proof for {model}, through {socks}");
 
-    let report_identity = fresh_identity()?;
-    let report_proxy = Proxy {
-        addr: socks,
-        user: &report_identity,
-        password: "cloak",
-    };
+    let identities = [fresh_identity()?, fresh_identity()?, fresh_identity()?];
+    let report_proxy = route(socks, &identities[0]);
     let mut busy = 0;
     let fetched = loop {
         let started = Instant::now();
@@ -164,17 +159,11 @@ fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), Stri
             Err(error) => return Err(format!("fetching the report: {error}")),
         }
     };
-    let fetched_at = seconds_now()?;
     if busy > 0 {
         println!("Busy answers before the report: {busy}");
     }
 
-    let collateral_identity = fresh_identity()?;
-    let collateral_proxy = Proxy {
-        addr: socks,
-        user: &collateral_identity,
-        password: "cloak",
-    };
+    let collateral_proxy = route(socks, &identities[1]);
     let started = Instant::now();
     let collateral = fetch_collateral(&collateral_proxy, &fetched.report)
         .map_err(|e| format!("fetching Intel's collateral: {e}"))?;
@@ -191,41 +180,34 @@ fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), Stri
         started.elapsed().as_secs_f64()
     );
 
-    if let Some(dir) = &save {
-        let write = |name: &str, bytes: &[u8]| {
-            std::fs::write(dir.join(name), bytes).map_err(|e| format!("saving {name}: {e}"))
-        };
-        std::fs::create_dir_all(dir).map_err(|e| format!("making {}: {e}", dir.display()))?;
-        write("report.json", &fetched.report)?;
-        write("nonce.hex", hex(fetched.nonce).as_bytes())?;
-        write("spki.hex", hex(fetched.spki_sha256).as_bytes())?;
-        write("fetched-at.txt", fetched_at.to_string().as_bytes())?;
-        write("model.txt", model.as_bytes())?;
-        write(
-            "collateral.json",
-            &serde_json::to_vec(&collateral)
-                .map_err(|e| format!("encoding the collateral: {e}"))?,
-        )?;
-        println!(
-            "Saved the report, nonce, TLS key hash, collateral and time in {}",
-            dir.display()
-        );
-    }
+    let write = |name: &str, bytes: &[u8]| match &save {
+        Some(dir) => std::fs::create_dir_all(dir)
+            .and_then(|()| std::fs::write(dir.join(name), bytes))
+            .map_err(|e| format!("saving {name} in {}: {e}", dir.display())),
+        None => Ok(()),
+    };
+    write("report.json", &fetched.report)?;
+    write("nonce.hex", hex(fetched.nonce).as_bytes())?;
+    write("spki.hex", hex(fetched.spki_sha256).as_bytes())?;
+    write("model.txt", model.as_bytes())?;
+    write(
+        "collateral.json",
+        &serde_json::to_vec(&collateral).map_err(|e| format!("encoding the collateral: {e}"))?,
+    )?;
 
-    let now = seconds_now()?;
-    let proof = verify(
+    let proof = verify_intel(
         &fetched.report,
         &fetched.nonce,
         &fetched.spki_sha256,
         model,
         &collateral,
         &pins,
-        now,
+        seconds_now()?,
     )
     .map_err(|refusal| format!("refused: {refusal}"))?;
 
     println!(
-        "Every check passed, for the gateway and each of {} model instance(s):",
+        "Intel's side passed, for the gateway and each of {} model instance(s):",
         proof.instances
     );
     for line in [
@@ -253,10 +235,88 @@ fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), Stri
             .collect::<Vec<_>>()
             .join(", ")
     );
+
+    // Only evidence gathered under our nonce is posted.
+    let evidence = gpu_evidence(&fetched.report, &fetched.nonce)
+        .map_err(|refusal| format!("refused before posting to NVIDIA: {refusal}"))?;
+    let nvidia_proxy = route(socks, &identities[2]);
+    let mut answers = Vec::new();
+    for (index, evidence) in evidence.iter().enumerate() {
+        let started = Instant::now();
+        let answer = fetch_gpu_verdict(&nvidia_proxy, evidence).map_err(|e| {
+            format!(
+                "posting model instance {}'s GPU evidence to NVIDIA ({:.1} s): {e}",
+                index + 1,
+                started.elapsed().as_secs_f64()
+            )
+        })?;
+        println!(
+            "NVIDIA: model instance {}'s evidence for {} GPUs answered 200 in {:.1} s ({} bytes)",
+            index + 1,
+            evidence.gpus,
+            started.elapsed().as_secs_f64(),
+            answer.len()
+        );
+        answers.push(answer);
+    }
+    let started = Instant::now();
+    let keys =
+        fetch_nvidia_keys(&nvidia_proxy).map_err(|e| format!("fetching NVIDIA's keys: {e}"))?;
     println!(
-        "Not checked: the GPU, the model workload, where the images came from, and the replies."
+        "NVIDIA's signing keys: {} bytes in {:.1} s",
+        keys.len(),
+        started.elapsed().as_secs_f64()
+    );
+    // NVIDIA dates its verdicts by its own clock: checked at a time read
+    // after they came, which is also the time the saved set is checked at.
+    let checked_at = seconds_now()?;
+    let answers_json = [b"[".as_slice(), &answers.join(b",".as_slice()), b"]"].concat();
+    write("nvidia.json", &answers_json)?;
+    write("nvidia-keys.json", &keys)?;
+    write("fetched-at.txt", checked_at.to_string().as_bytes())?;
+    if let Some(dir) = &save {
+        println!(
+            "Saved the report, nonce, TLS key hash, collateral, NVIDIA's answers and keys, and the time in {}",
+            dir.display()
+        );
+    }
+
+    let gpu = verify_gpu(&fetched.report, &fetched.nonce, &answers, &keys, checked_at)
+        .map_err(|refusal| format!("refused: {refusal}"))?;
+    println!(
+        "NVIDIA's side passed, for every GPU of each instance ({}):",
+        gpu_counts(&gpu.gpus)
+    );
+    for line in [
+        "every instance's GPU evidence was gathered under our nonce, and was posted to NVIDIA unchanged",
+        "NVIDIA's overall token for each instance is ES384-signed by a key NVIDIA publishes, from NVIDIA's service, in date and for our nonce",
+        "its claims version is 2.0 and its overall result is true",
+        "each instance has one NVIDIA token for each GPU in its evidence, each checked the same way",
+        "every GPU's token has NVIDIA's policy claims true, measres success, secure boot on and debugging disabled",
+    ] {
+        println!("  passed: {line}");
+    }
+    println!(
+        "Not checked: that each instance's GPUs and Intel quote are in one machine, the model workload, where the images came from, and the replies."
     );
     Ok(())
+}
+
+/// A route through the proxy with a SOCKS user name of its own.
+fn route<'a>(socks: SocketAddr, identity: &'a str) -> Proxy<'a> {
+    Proxy {
+        addr: socks,
+        user: identity,
+        password: "cloak",
+    }
+}
+
+/// GPUs passed for each instance, in words.
+fn gpu_counts(gpus: &[usize]) -> String {
+    gpus.iter()
+        .map(|n| format!("{n} GPUs"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A SOCKS user name of its own, so Tor gives these connections a circuit

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- NEAR mode: the GPU check, built, and stopped by NVIDIA most of the
+  time (`guest/near`, `gpu.rs`). Each server's NVIDIA evidence must name
+  our nonce before it is posted to NVIDIA's service; the tokens that
+  come back, the overall one and one for every GPU, are checked on this
+  side: ES384 under a key NVIDIA lists, issuer, times, our nonce, the
+  overall result, and each GPU's measurement, secure boot and debug
+  claims. `ask` now needs both proofs before it sends, with no way
+  around the GPU (`Proof { intel, gpu }`; `CpuOnlyProof` is gone). Eight
+  more gate checks against a real set. Live through Tor on 19 November
+  NVIDIA answered 403 on 7 of 8 circuits, before it looked at anything,
+  so as built a request stops at NVIDIA most of the time; the one
+  circuit let through passed every check, 8 GPUs, in about 2 seconds.
+  Nothing retries or goes around Tor. The fixture's list of NVIDIA's
+  public keys was fetched directly, not through Tor. The first real
+  requests the same evening were made with the build before this one.
+
 - NEAR mode, first real requests (19 November, with Sean's own key,
   handed over through the secure prompt and read only by the probe):
   through Tor, the proof passed and the encrypted word "ping" was

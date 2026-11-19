@@ -1,7 +1,8 @@
-//! The network half: the report from NEAR's gateway and Intel's collateral,
-//! every connection through the caller's SOCKS5 proxy, with names resolved
-//! by the proxy and ordinary certificate checks against Mozilla's roots. The
-//! chat request (`chat.rs`) uses the same connection and HTTP code.
+//! The network half: the report from NEAR's gateway, Intel's collateral, and
+//! NVIDIA's verdicts and signing keys, every connection through the caller's
+//! SOCKS5 proxy, with names resolved by the proxy and ordinary certificate
+//! checks against Mozilla's roots. The chat request (`chat.rs`) uses the
+//! same connection and HTTP code.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -16,16 +17,20 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
-use crate::{Collateral, Proxy, QuoteCollateralV3};
+use crate::{Collateral, GpuEvidence, Proxy, QuoteCollateralV3};
 
 pub(crate) const NEAR: &str = "cloud-api.near.ai";
 const INTEL_API: &str = "api.trustedservices.intel.com";
 const INTEL_CERTS: &str = "certificates.trustedservices.intel.com";
+const NVIDIA: &str = "nras.attestation.nvidia.com";
 /// The largest report taken; live ones are about 245 KB for each of the
 /// model's servers, and three were seen.
 const REPORT_LIMIT: usize = 4 << 20;
 /// The largest answer taken from Intel; theirs are a few KB.
 const INTEL_LIMIT: usize = 1 << 20;
+/// The largest answer taken from NVIDIA. On 19 November its verdict on eight
+/// GPUs was about 17 KB and its key list, 208 keys, about 513 KB.
+const NVIDIA_LIMIT: usize = 2 << 20;
 const HEAD_LIMIT: usize = 64 << 10;
 /// Each step through Tor: connecting, the handshake, every read and write.
 const STEP: Duration = Duration::from_secs(60);
@@ -183,10 +188,54 @@ fn family_collateral(proxy: &Proxy, fmspc: String, ca: String) -> Result<Collate
     })
 }
 
+/// Posts one instance's GPU evidence, unchanged, to NVIDIA's attestation
+/// service, version 3 as NEAR's SDK uses, on a connection of its own, with
+/// no account key; NVIDIA's answer as it came.
+pub fn fetch_gpu_verdict(proxy: &Proxy, evidence: &GpuEvidence) -> Result<Vec<u8>, FetchError> {
+    let answer = call(
+        proxy,
+        NVIDIA,
+        "POST",
+        "/v3/attest/gpu",
+        &[("Content-Type", "application/json")],
+        Some(evidence.payload.as_bytes()),
+        NVIDIA_LIMIT,
+    )?;
+    Ok(answer.body)
+}
+
+/// The list of keys NVIDIA signs its verdicts with, from its published
+/// address, as it came.
+pub fn fetch_nvidia_keys(proxy: &Proxy) -> Result<Vec<u8>, FetchError> {
+    let answer = call(
+        proxy,
+        NVIDIA,
+        "GET",
+        "/.well-known/jwks.json",
+        &[],
+        None,
+        NVIDIA_LIMIT,
+    )?;
+    Ok(answer.body)
+}
+
 /// One GET to Intel on a connection of its own.
 fn intel(proxy: &Proxy, host: &'static str, path: &str) -> Result<Answer, FetchError> {
+    call(proxy, host, "GET", path, &[], None, INTEL_LIMIT)
+}
+
+/// One request on a connection of its own, which must be answered 200.
+fn call(
+    proxy: &Proxy,
+    host: &'static str,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Option<&[u8]>,
+    limit: usize,
+) -> Result<Answer, FetchError> {
     let (mut tls, _) = connect(proxy, host, &mozilla())?;
-    let answer = request(&mut tls, "GET", host, path, &[], None, INTEL_LIMIT)?;
+    let answer = request(&mut tls, method, host, path, headers, body, limit)?;
     match answer.status {
         200 => Ok(answer),
         code => Err(FetchError::Status {
