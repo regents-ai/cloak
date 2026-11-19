@@ -2693,6 +2693,27 @@ candidates, so the split has to be re-declared before any holdout opens.
       Cloak works as expected, then connect more local AI apps to it. The
       chief's question to him that day wrongly said only Cloak's own
       windows could use it.
+    - Trace Commons (the "Near AI Gateway" Mac app,
+      github.com/TraceCommons/trace-commons), read on 19 November at
+      Sean's request. His answers that day: (1) NEAR AI Cloud's enclave
+      models become a second, named mode after zkAPI is in the guest:
+      NEAR-hosted open models only, the hardware proof checked before
+      anything is sent, never a fallback; account and credit are his.
+      (2) Five small things are taken as work passes them: a state shown
+      as working only when proven; no Sparkle when Homebrew installed the
+      app; a keychain item by team group, so no prompt after each update;
+      a release script that refuses a half-built app; a quit that waits
+      for a confirmed stop. Not taken: trace collection or upload, its
+      local proxy and fallback ladder, a proof label shown after the
+      reply, pins fetched unsigned.
+    - NEAR without an account, through real Tor, 19 November: the model
+      list (63 models) and the attestation report both answered 200 to a
+      Tor visitor with no key. The report holds the gateway's Intel
+      quote, event log, report data and request nonce, and a key
+      configuration for oblivious HTTP with its own signature, so a check
+      before sending and a request sealed to the enclave look possible.
+      Not done: verifying the quote, asking for one model's report (the
+      form tried was refused, 400), sign-up, payment, or any request.
     - Seen in the running app, build `7cdc1d2`, 18 November: the menu
       (header, dot, footer), the Details window and the Settings
       window's General pane. Measured there just after the startup
