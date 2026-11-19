@@ -41,7 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let download = ModelDownload(manifest: Launch.manifest, layout: Launch.layout)
     /// Made at its window's first show or the quick prompt's first Return.
     private lazy var conversations = Chat(
-        supervisor: supervisor, folder: Launch.layout.conversations, wallet: Launch.layout.wallet, door: door)
+        supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
+        door: door)
     private lazy var chat = AppWindow { [unowned self] in
         ChatView.window(conversations, showDetails: { self.showDetails() })
     }

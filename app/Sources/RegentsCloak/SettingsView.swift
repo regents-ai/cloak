@@ -5,12 +5,12 @@ import CloakSupervisor
 import OSLog
 import SwiftUI
 
-/// The Settings window, the one place a setting changes (`AppSettings`):
-/// General (whether the app opens at login, how long the model may go
-/// unused before it leaves memory, and, when the app has an updater,
-/// whether it checks for updates by itself), Shortcut (the quick prompt's),
-/// Door (its port on 127.0.0.1) and Advanced (how Cloak started its parts,
-/// this session's log, and Restore Defaults).
+/// The Settings window, where every setting changes (`AppSettings`):
+/// General (whether the app opens at login, whether Chat never rewords, how
+/// long the model may go unused before it leaves memory, and, when the app
+/// has an updater, whether it checks for updates by itself), Shortcut (the
+/// quick prompt's), Door (its port on 127.0.0.1) and Advanced (how Cloak
+/// started its parts, this session's log, and Restore Defaults).
 struct SettingsView: View {
     let settings: AppSettings
     let prompt: QuickPrompt
@@ -96,6 +96,11 @@ private struct GeneralPane: View {
                 Toggle("Launch at login", isOn: Binding(get: { login }, set: { login = LoginItem.set($0) }))
             } footer: {
                 Footnote("Cloak opens paused, so nothing runs until you press Start.")
+            }
+            Section {
+                NeverReword(settings: settings)
+            } footer: {
+                Footnote("Chat then sends each message as you wrote it. Tasks, and what other apps send through the door, are always reworded.")
             }
             Section {
                 Picker("Free memory", selection: $settings.freeMemory) {
@@ -335,6 +340,7 @@ private struct AdvancedPane: View {
     private var restored: String {
         """
         \(updates == nil ? "Launch at login turns" : "Launch at login and Updates turn") off, \
+        rewording turns back on, \
         Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
         the quick prompt loses its shortcut, and the door goes back to port \(AppSettings.defaultDoorPort).
         """
@@ -380,6 +386,17 @@ enum SessionLog {
         return try store.getEntries(matching: NSPredicate(format: "subsystem == %@", "sh.regents.cloak.app"))
             .compactMap { $0 as? OSLogEntryLog }
             .map { "\($0.date.formatted(.dateTime.hour().minute().second())) \($0.category) \($0.composedMessage)" }
+    }
+}
+
+/// Never reword's one control, in General and in Chat's review area: off,
+/// each Chat message is reworded and shown before it goes; on, it goes as
+/// written (decision 11 in docs/plan.md).
+struct NeverReword: View {
+    @Bindable var settings: AppSettings
+
+    var body: some View {
+        Toggle("Never reword text. Reduces your privacy.", isOn: $settings.neverReword)
     }
 }
 

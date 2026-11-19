@@ -177,8 +177,12 @@ private struct Turns: View {
                             } else {
                                 Text("New chat")
                                     .font(.title3.weight(.semibold))
-                                Text("Each message is reworded on this Mac first. You see both, can edit the reworded one, and send it.")
-                                    .foregroundStyle(.secondary)
+                                Text(
+                                    chat.settings.neverReword
+                                        ? "Rewording is off, so each message is sent as you wrote it."
+                                        : "Each message is reworded on this Mac first. You see both, can edit the reworded one, and send it."
+                                )
+                                .foregroundStyle(.secondary)
                             }
                         }
                         .padding(.top, 8)
@@ -227,8 +231,10 @@ private struct Turns: View {
 /// marked in one, the words put in marked in the other, then its answer; a
 /// message going as written shows its Original alone. The open one has the
 /// lights and Send: nothing is sent unless Cloak routes it through Tor and,
-/// unless its owner chose Send Original, it is reworded. Unlinked is never
-/// good in Development mode. Another unsent one is shrunk, says so, and
+/// unless its owner chose to send it as written, it is reworded. Unlinked
+/// is never good in Development mode. While it has a reworded text, Send
+/// Original Text beside Send sends it as written instead, with Never
+/// reword's checkbox under them. Another unsent one is shrunk, says so, and
 /// opens when pressed anywhere.
 private struct TurnCard: View {
     let chat: Chat
@@ -285,15 +291,28 @@ private struct TurnCard: View {
                     }
                     Spacer()
                     let block = chat.sendBlock(turn)
-                    if let block {
-                        Text(block)
+                    let originalBlock = turn.reworded == nil ? nil : chat.originalBlock
+                    if let words = originalBlock ?? block {
+                        Text(words)
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
-                    // Each press sends, one under way or not.
+                    // Each press of either sends, one under way or not.
+                    if turn.reworded != nil {
+                        Button("Send Original Text") { chat.sendOriginal(turn.id, in: conversation) }
+                            .disabled(originalBlock != nil)
+                    }
                     Button("Send") { chat.send(turn.id, in: conversation) }
                         .buttonStyle(.borderedProminent)
                         .disabled(block != nil)
+                }
+                if turn.reworded != nil {
+                    HStack {
+                        Spacer()
+                        NeverReword(settings: chat.settings)
+                            .toggleStyle(.checkbox)
+                    }
+                    .font(.callout)
                 }
             } else if let sending {
                 SendingProgress(started: sending.started)
@@ -639,9 +658,10 @@ extension View {
     }
 }
 
-/// The box for the next message, with Send Original under it, what stopped
-/// the last rewording, and, unless Cloak is running, why rewording waits and
-/// a Start button. In the agent's conversation, the box for the next task,
+/// The box for the next message, with a line under it while Never reword is
+/// ticked, what stopped the last rewording, and, unless Cloak is running,
+/// why rewording or sending waits and a Start button. In the agent's
+/// conversation, the box for the next task,
 /// with Run, or Stop while a task runs there, and a note when the agent
 /// starts without the earlier tasks. While the conversation is empty, what
 /// it is to be: a chat or the agent's. Above either box, its details.
@@ -654,6 +674,7 @@ private struct Compose: View {
         let conversation = chat.selected
         let agent = conversation.map(chat.isAgent) ?? false
         let running = conversation.flatMap { chat.agent.runs[$0.id] } != nil
+        let neverReword = !agent && chat.settings.neverReword
         let label = agent ? "Task" : "Message"
         VStack(alignment: .leading, spacing: 10) {
             if let stop = chat.stop {
@@ -667,7 +688,7 @@ private struct Compose: View {
                 }
             }
             if chat.supervisor.phase != .running {
-                Waiting(supervisor: chat.supervisor, agent: agent, showDetails: showDetails)
+                Waiting(supervisor: chat.supervisor, to: agent ? "run" : neverReword ? "send" : "reword", showDetails: showDetails)
             }
             DetailsRow(chat: chat)
             HStack(alignment: .bottom, spacing: 10) {
@@ -697,7 +718,7 @@ private struct Compose: View {
                         .keyboardShortcut(".", modifiers: .command)
                         .padding(.bottom, 4)
                 } else {
-                    let title: LocalizedStringKey = agent ? "Run" : chat.sendOriginal ? "Send" : "Reword"
+                    let title: LocalizedStringKey = agent ? "Run" : neverReword ? "Send" : "Reword"
                     Button(title, systemImage: "arrow.up") { chat.submit() }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderedProminent)
@@ -719,10 +740,15 @@ private struct Compose: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                if !agent {
-                    Toggle("Send Original", isOn: $chat.sendOriginal)
-                        .toggleStyle(.checkbox)
-                } else if let conversation, chat.supervisor.phase == .running, chat.startsFresh(conversation) {
+                if neverReword {
+                    // Constant while ticked, since no reworded text is shown.
+                    Label {
+                        Text("Rewording is off. Messages go as you wrote them.")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                } else if agent, let conversation, chat.supervisor.phase == .running, chat.startsFresh(conversation) {
                     Label("The agent won't remember the earlier tasks here.", systemImage: "info.circle")
                         .foregroundStyle(.secondary)
                 }
@@ -740,11 +766,13 @@ private struct Compose: View {
     }
 }
 
-/// Why rewording, or the agent, waits while Cloak is not running. Without
-/// the model, the way to its download in Details takes the place of Start.
+/// Why rewording, sending as written or the agent waits while Cloak is not
+/// running. Without the model, the way to its download in Details takes the
+/// place of Start.
 private struct Waiting: View {
     let supervisor: Supervisor
-    let agent: Bool
+    /// What waits, as the verb ending each sentence: reword, send or run.
+    let to: String
     let showDetails: () -> Void
 
     var body: some View {
@@ -771,18 +799,14 @@ private struct Waiting: View {
     }
 
     private func text(_ phase: Phase) -> String {
-        switch (phase, agent) {
-        case (.paused, false): "Cloak is paused. Start it to reword."
-        case (.paused, true): "Cloak is paused. Start it to run."
-        case (.ready, false): "Cloak isn't running. Start it to reword."
-        case (.ready, true): "Cloak isn't running. Start it to run."
-        case (.preparing, _): "Cloak is starting."
-        case (.stopping, _): "Cloak is stopping."
-        case (.needsAttention(.modelMissing), false): "The model isn't installed. Download it to reword."
-        case (.needsAttention(.modelMissing), true): "The model isn't installed. Download it to run."
-        case (.needsAttention(let reason), false): "\(reason.title) Start it again to reword."
-        case (.needsAttention(let reason), true): "\(reason.title) Start it again to run."
-        case (.running, _): "Cloak is running."
+        switch phase {
+        case .paused: "Cloak is paused. Start it to \(to)."
+        case .ready: "Cloak isn't running. Start it to \(to)."
+        case .preparing: "Cloak is starting."
+        case .stopping: "Cloak is stopping."
+        case .needsAttention(.modelMissing): "The model isn't installed. Download it to \(to)."
+        case .needsAttention(let reason): "\(reason.title) Start it again to \(to)."
+        case .running: "Cloak is running."
         }
     }
 }

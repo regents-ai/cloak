@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Chat: Send Original moves to the review area (decision 11 in
+  `docs/plan.md`, Sean, 19 November). The tick under the message box is
+  gone. Beside Send, where a reworded text waits, "Send Original Text"
+  sends that message as written instead, and the turn is kept as one sent
+  as written; Send stays the prominent button, and the new one is off
+  only where sending is certain to stop, with the same words. Under them,
+  and in Settings, General, a checkbox: "Never reword text. Reduces your
+  privacy." Ticked, each Chat message is sent as written at once on Send,
+  with no rewording and no review, and "Rewording is off. Messages go as
+  you wrote them." stays under the message box; the waiting notice says
+  "Start it to send" in place of "to reword". It is kept in the app's
+  settings, off until ticked, and Restore Defaults turns it off. With it
+  ticked Cloak departs from the post's "all prompts are locally
+  rewritten" for Chat's own messages; the agent's tasks and what other
+  apps send through the door are always reworded. The send checks are
+  unchanged: what they build is the same.
+
 - Gate checks only (decision 15 in `docs/plan.md`, Sean, 19 November):
   the ordinary unit checks are deleted, seventeen of the app's and four in
   `tests/` (`test_fetch_model.py`, `test_stage3.py`, `test_stage4.py`,

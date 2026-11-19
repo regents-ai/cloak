@@ -2738,6 +2738,27 @@ candidates, so the split has to be re-declared before any holdout opens.
     owner's other apps (Agents) is unchanged and rewords every user message.
     This is the one exception to decision 10's "nothing is sent unless
     Reworded and Routed are good".
+    - Changed, 19 November 2026 (Sean: "it should be in the message review
+      area, a button that says 'Send Original Text', and a checkmark people
+      can set that says 'Never reword text. Reduces your privacy.'"). The
+      tick under the message box is gone, with no second way to it. Where
+      a reworded text waits for Send, a second button, Send Original Text,
+      sends that message as written instead: the turn keeps no reworded
+      text, so it shows, and is sent again later, as a message sent as
+      written. Send stays the prominent button; Send Original Text is off
+      only where sending is certain to stop, with the same words as Send.
+      Under them, a checkbox, "Never reword text. Reduces your privacy.",
+      also in Settings, General, under the same words. It is a setting
+      kept in the app's defaults: off until ticked, kept across launches,
+      turned off by Restore Defaults, and set from nowhere else. Ticked, a
+      message written in Chat is sent as written at once on Send, with no
+      rewording and no review, and the model on this Mac is not asked to
+      reword it; while it stays ticked, the line "Rewording is off.
+      Messages go as you wrote them." sits under the message box. With the
+      box ticked Cloak departs from the post's "all prompts are locally
+      rewritten", for Chat's own messages only: the agent's tasks and what
+      other apps send through the door are always reworded. A rewording
+      that fails still sends nothing in its place.
 12. The agent runs in the guest. Decided 14 November 2026 (Sean, "1. a and
     then b", choosing it first of the three parts of the post Cloak lacked;
     the design is the chief's). The post: "My agent harness is wrapped with

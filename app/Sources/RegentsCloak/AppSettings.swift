@@ -7,7 +7,8 @@ import ServiceManagement
 
 /// Cloak's settings, kept in the app's defaults: every key and its default
 /// is named here, once, and read and written only here. Only the Settings
-/// window sets them. No setting can be set from a link, from the door, from
+/// window sets them, and Never reword also Chat's review area, beside Send
+/// Original Text. No setting can be set from a link, from the door, from
 /// AppleScript or from the guest: none of those reaches this type. Whether
 /// the app opens at login is the system's login item (`LoginItem`), and
 /// whether it checks for updates by itself is Sparkle's own setting
@@ -22,10 +23,11 @@ final class AppSettings {
         case freeMemory
         case shortcut
         case doorPort
+        case neverReword
     }
 
     /// Each setting until it is chosen, and again after Restore Defaults.
-    /// The quick prompt's shortcut has none.
+    /// The quick prompt's shortcut has none; Never reword is off.
     nonisolated static let defaultFreeMemory = FreeMemory.fiveMinutes
     nonisolated static let defaultDoorPort: UInt16 = 8742
     /// The ports the door may take: none the system keeps for itself.
@@ -73,6 +75,20 @@ final class AppSettings {
     var doorPort: UInt16 {
         access(keyPath: \.doorPort)
         return (defaults.object(forKey: Key.doorPort.rawValue) as? Int).flatMap(UInt16.init(exactly:)) ?? Self.defaultDoorPort
+    }
+
+    /// Whether Chat sends each message as written, at once, with no
+    /// rewording and no review (decision 11 in docs/plan.md). Chat's own
+    /// messages only: the door rewords whatever other apps and the agent
+    /// send.
+    var neverReword: Bool {
+        get {
+            access(keyPath: \.neverReword)
+            return defaults.bool(forKey: Key.neverReword.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.neverReword) { defaults.set(newValue, forKey: Key.neverReword.rawValue) }
+        }
     }
 
     /// Why a port can't be the door's.
@@ -123,7 +139,9 @@ final class AppSettings {
         withMutation(keyPath: \.freeMemory) {
             withMutation(keyPath: \.shortcut) {
                 withMutation(keyPath: \.doorPort) {
-                    for key in Key.allCases { defaults.removeObject(forKey: key.rawValue) }
+                    withMutation(keyPath: \.neverReword) {
+                        for key in Key.allCases { defaults.removeObject(forKey: key.rawValue) }
+                    }
                 }
             }
         }

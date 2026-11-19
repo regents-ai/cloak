@@ -724,7 +724,14 @@ its stages first.
   `Turn.answer`, `Chat.rewording`, `Chat.sending[turn]` (with a count of
   presses), `Chat.opened` and `Chat.stop`. Each press of Send is sent
   (the Chat rule), so two presses pay twice and the second answer takes
-  the first one's place.
+  the first one's place. A message goes as written by one of two paths
+  (decision 11): with Never reword ticked (`AppSettings.neverReword`), a
+  written message is added without a reworded text and sent at once,
+  never passing through being reworded; or Send Original Text on a
+  reworded, open card drops its reworded text and sends it. Either way
+  `Turn.reworded` is nil from then on. Send Original Text is sent on each
+  press as Send is, so a press of it while the reworded text is still
+  sending pays twice, and the turn is kept as sent as written.
 - **One task card** (`app/Sources/CloakChat/Agent.swift`,
   `app/Sources/RegentsCloak/ChatView.swift`). Running, reworded, stepping,
   answered, ended: read off `Agent.runs[conversation]`, `Agent.ran`,

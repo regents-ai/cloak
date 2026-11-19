@@ -4,9 +4,9 @@ import Foundation
 import Security
 
 // Development mode (decision 10 in docs/plan.md): a turn's reworded text, or
-// its original when its owner chose Send Original (decision 11), goes through
-// the guest's sender (guest/sender), through Tor, to a remote model, paid
-// from one wallet. Never part of a release.
+// its original when its owner chose to send it as written (decision 11),
+// goes through the guest's sender (guest/sender), through Tor, to a remote
+// model, paid from one wallet. Never part of a release.
 
 /// The wallet's key, made by the guest's sender with the payment toolkit's
 /// own key code and kept only here: a generic password in the login
@@ -347,7 +347,7 @@ public enum Remote {
 
     /// The messages for `turn`: each earlier turn that was answered, as sent
     /// and as answered, then `turn`'s text as sent: reworded, or as written
-    /// when its owner chose Send Original. Nothing else: no instruction, and
+    /// when its owner chose so. Nothing else: no instruction, and
     /// no original of a reworded turn.
     static func messages(for turn: UUID, in conversation: Conversation) -> [[String: String]]? {
         guard let index = conversation.turns.firstIndex(where: { $0.id == turn }) else { return nil }

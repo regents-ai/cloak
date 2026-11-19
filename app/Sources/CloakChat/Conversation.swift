@@ -34,7 +34,8 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
 public struct Turn: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let original: String
-    /// Nil when the message goes as written: its owner ticked Send Original.
+    /// Nil when the message goes as written: its owner pressed Send Original
+    /// Text on it, or wrote it with Never reword ticked.
     /// For a task, nil until the agent's first model request has gone
     /// through the door, which rewords it.
     public var reworded: String?

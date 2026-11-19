@@ -332,9 +332,11 @@ It talks to the app over a socket only the same user can reach, in
 files, which hold its keys while it starts, are in `control/boot/`; each
 launch first removes any that a killed app left there.
 
-"Settings…" in the menu (Command-comma) is the one place the app's
-settings change; no link, script, app or agent can set one. General has
-Launch at login (off until turned on; the app still opens Paused), Free
+"Settings…" in the menu (Command-comma) is where the app's settings
+change, and the one place but for Never reword, which Chat's review area
+also has; no link, script, app or agent can set one. General has Launch
+at login (off until turned on; the app still opens Paused), "Never reword
+text. Reduces your privacy." (off until ticked; see Chat, below), Free
 memory and, in a build with an update feed, Updates (below). Shortcut sets the quick prompt's keys, none until chosen; keys
 without Command, Option or Control are refused, as is a shortcut macOS
 won't take. Door sets the port Agents answer on (below), 8742 until
@@ -414,10 +416,15 @@ marked as such at the top of Chat, and never part of a release: the
 reworded text, after the conversation's earlier sent and answered turns,
 goes from the guest's sender through Tor to a remote model at Boundless,
 paid through MPP on Tempo from one wallet, so the provider can link every
-chat. A tick in "Send Original", under the message box, sends that message
-as written, with no rewording, still through Tor, and its Reworded light is
-off; the tick is off at each launch, and apps sending through Agents
-(below) are always reworded. Wallet, in Chat's toolbar, makes the wallet
+chat. Beside Send, "Send Original Text" sends that message as written
+instead, still through Tor; its card then shows the Original alone and its
+Reworded light is off. Under them, "Never reword text. Reduces your
+privacy." (also in Settings, General) makes every Chat message go as
+written at once on Send, with no rewording and no review; while it is
+ticked, Chat says "Rewording is off" under the message box. It stays
+ticked across launches until unticked or Restore Defaults. The agent's
+tasks and apps sending through Agents (below) are always reworded. Wallet,
+in Chat's toolbar, makes the wallet
 when Create is pressed: its key is made in the guest and kept only in the
 login keychain, this Mac only; the address to fund takes USDC.e on Tempo,
 and the QR button beside Copy shows it as a code for a phone's wallet.

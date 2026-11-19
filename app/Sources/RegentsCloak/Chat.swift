@@ -8,8 +8,9 @@ import os
 /// What the Chat window holds: the saved conversations, the one shown, the
 /// message being written, the one rewording at a time, and the turns being
 /// sent. A turn leaves this Mac as reworded, or as written when its owner
-/// ticks Send Original for that message (decision 11 in docs/plan.md), and
-/// only when its owner presses Send: in Development mode (decision 10)
+/// presses Send Original Text on it or has Never reword ticked (decision 11
+/// in docs/plan.md), and only when its owner presses a Send: in
+/// Development mode (decision 10)
 /// through the guest's sender and Tor to a remote model, paid from the one
 /// wallet. A conversation whose first message is a task is the agent's
 /// (decision 12): each task runs when its owner presses Run, its model
@@ -76,6 +77,8 @@ final class Chat {
     }
 
     let supervisor: Supervisor
+    /// Read here for Never reword, which only `NeverReword` sets.
+    let settings: AppSettings
     let agent: Agent
     let folder: URL
     let wallet: Wallet
@@ -107,9 +110,6 @@ final class Chat {
     /// The details of the draft are being asked for.
     private(set) var askingDetails = false
     @ObservationIgnored private var detailsAsk: Task<Void, Never>?
-    /// The next message goes as written, without rewording. In memory only:
-    /// off at each launch.
-    var sendOriginal = false
     /// What the empty conversation's first message makes it. In memory only:
     /// a chat at each launch.
     var kind = Kind.chat
@@ -128,8 +128,9 @@ final class Chat {
     @ObservationIgnored private var identities: [UUID: String] = [:]
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "chat")
 
-    init(supervisor: Supervisor, folder: URL, wallet: URL, door: Door) {
+    init(supervisor: Supervisor, settings: AppSettings, folder: URL, wallet: URL, door: Door) {
         self.supervisor = supervisor
+        self.settings = settings
         self.folder = folder
         self.wallet = Wallet(supervisor: supervisor, folder: wallet)
         let agent = Agent(parts: Agent.Parts(
@@ -162,13 +163,13 @@ final class Chat {
         canCompose && supervisor.phase == .running
     }
 
-    /// A message going as written is added without Cloak running; its card
-    /// then says why Send is off. A task runs unless running it is certain
-    /// to stop, or one runs in its conversation already.
+    /// With Never reword ticked, a message is added without Cloak running;
+    /// its card then says why Send is off. A task runs unless running it is
+    /// certain to stop, or one runs in its conversation already.
     var canSubmit: Bool {
         guard let selected, !Self.isBlank(draft) else { return false }
         if isAgent(selected) { return isOpen && runBlock == nil && agent.runs[selected.id] == nil }
-        return sendOriginal ? canCompose : canReword
+        return settings.neverReword ? canCompose : canReword
     }
 
     /// Whether `conversation` is the agent's: as its first turn is, or, while
@@ -200,7 +201,13 @@ final class Chat {
     /// turns it off.
     func sendBlock(_ turn: Turn) -> String? {
         if let reworded = turn.reworded, Self.isBlank(reworded) { return "Reword it to send." }
-        return switch block {
+        return originalBlock
+    }
+
+    /// Why Send Original Text is off now, or nil when it is on: Send's
+    /// reasons but a blank reworded text, which it does not send.
+    var originalBlock: String? {
+        switch block {
         case .notRunning?: "Start Cloak to send."
         case .noWallet?: "Create a wallet to send."
         case .noFunds?: "Add funds to send."
@@ -304,9 +311,10 @@ final class Chat {
     }
 
     /// Rewords the message written, as a new turn of the conversation shown;
-    /// or, with Send Original ticked, adds it as written and sends it; or, in
-    /// the agent's conversation, runs it as its next task.
-    /// The message goes with a line for each detail picked.
+    /// or, with Never reword ticked, adds it as written and sends it, the
+    /// model on this Mac not asked; or, in the agent's conversation, runs it
+    /// as its next task. The message goes with a line for each detail
+    /// picked.
     func submit() {
         let (written, picked) = (draft, picks)
         let original = picked.message(written.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -314,7 +322,7 @@ final class Chat {
         draft = ""
         if isAgent(conversation) {
             run(original, in: conversation.id)
-        } else if sendOriginal {
+        } else if settings.neverReword {
             let turn = Turn(original: original, reworded: nil)
             conversation.turns.append(turn)
             opened = turn.id
@@ -372,6 +380,19 @@ final class Chat {
         else { return }
         conversation.turns[index].reworded = text
         update(conversation)
+    }
+
+    /// Sends the turn as written, in place of its reworded text, which is
+    /// dropped: from then on it is a turn that goes as written, shown with
+    /// its Original alone, and sent so again after it is answered (decision
+    /// 11). Each press is sent, as for Send.
+    func sendOriginal(_ turn: UUID, in id: UUID) {
+        guard originalBlock == nil, var conversation = conversations.first(where: { $0.id == id }),
+            let index = conversation.turns.firstIndex(where: { $0.id == turn }), conversation.turns[index].answer == nil
+        else { return }
+        conversation.turns[index].reworded = nil
+        update(conversation)
+        send(turn, in: id)
     }
 
     /// Sends the turn, reworded or as written, after the conversation's
