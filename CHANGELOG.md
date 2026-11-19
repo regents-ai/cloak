@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Agents: an Activity section (Sean, 19 November: "show what local apps
+  are putting in"). The last 24 hours' count of chat requests and the
+  share answered, then the latest 20: who sent each (an app, or Cloak's
+  own agent), the model, how many messages went reworded, whether it is
+  rewording, sending, answered or stopped and why, and how long it took.
+  Up to 200 are held in memory until Cloak quits, never on disk or in the
+  log, and never a message's text. What the door accepts, sends and
+  answers is unchanged. Seen on screen empty only; no check was added.
+  The release plan records his other answers of the day: zkAPI's live
+  vault as it is, his Chat message ahead of a task's requests, no
+  Anthropic-shaped address for now, and NEAR's enclave models built now.
+
 - Chat: Send Original moves to the review area (decision 11 in
   `docs/plan.md`, Sean, 19 November). The tick under the message box is
   gone. Beside Send, where a reworded text waits, "Send Original Text"

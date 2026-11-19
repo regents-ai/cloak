@@ -2891,6 +2891,21 @@ candidates, so the split has to be re-declared before any holdout opens.
       for a confirmed stop. Not taken: trace collection or upload, its
       local proxy and fallback ladder, a proof label shown after the
       reply, pins fetched unsigned.
+    - Agents shows activity, 19 November, at Sean's word ("show what
+      local apps are putting in", with two pictures of a proxy app's
+      counts and live requests): each chat request's sender, model, stage
+      and time, in memory only, never its text. Seen on screen empty.
+    - NEAR is built now, not after zkAPI is in the guest (Sean, 19
+      November: "keep implementing the 'NEAR AI Gateway' tab / or mode of
+      using it"). Through Tor with no account that day: NEAR's own list
+      (`/v1/model/list`) marks 17 of 63 models verifiable, 12 of them on
+      its own servers (`providerType` `vllm`), the rest of the 17 on
+      Chutes, Tinfoil or outside; one model's report
+      (`/v1/attestation/report?model=Qwen%2FQwen3.8-27B&signing_algo=ed25519&nonce=`)
+      answered 200 with the gateway's and the model's Intel quotes, an
+      NVIDIA payload, event logs, and a signed key configuration for
+      oblivious HTTP each. The earlier 400 was a model name NEAR does not
+      have. Nothing verified yet.
     - NEAR without an account, through real Tor, 19 November: the model
       list (63 models) and the attestation report both answered 200 to a
       Tor visitor with no key. The report holds the gateway's Intel

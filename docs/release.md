@@ -121,6 +121,26 @@ Sean's answers, 19 November:
 - The trial address's remainder stays where it is.
 - Open: whether Chat's message goes ahead of a running task's requests.
 
+Later the same day he settled these:
+
+- The contract: "ok nvm, use zkAPI as normal. forget what I said. but the
+  protocol should never take customer deposits, it shoul remain claimable
+  / withdrawable by them". So Cloak uses the live vault and operator as
+  they are, and no vault or operator of Regents' own is planned. The
+  30-day `claimExpired` is still in that vault, so his wish is not met by
+  it: until upstream changes it, Cloak's part is to show the day a
+  deposit can be taken, to warn well ahead of it, and to keep Withdraw one
+  press away (build step 6). Asking upstream to remove the expiry is a
+  post under his name and waits for his own decision. The recovery
+  address or ENS name is dropped with "forget what I said".
+- The owner's Chat message goes ahead of a running task's requests in the
+  one payment queue.
+- No Anthropic-shaped address for now; again after private payment works.
+- The Agents window shows what local apps send: each request's sender,
+  model, stage and time, never its text.
+- NEAR's enclave models are built now as a second, named mode, not after
+  zkAPI is in the guest (decision 14 in [plan.md](plan.md)).
+
 ## Gates for stage 2
 
 Each is a check that runs, not a statement.

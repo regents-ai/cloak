@@ -18,6 +18,43 @@ public struct AgentApp: Codable, Sendable, Identifiable, Equatable {
     public internal(set) var lastUsed: Date?
 }
 
+/// One chat request at the door, for the Agents window: who sent it, the
+/// model, how many user messages went reworded, where it is now and how
+/// long it took. Never a message's text.
+public struct AgentRequest: Identifiable, Sendable {
+    public enum Sender: Equatable, Sendable {
+        /// An app on this Mac, by its id.
+        case app(UUID)
+        /// The owner's agent in the guest.
+        case agent
+    }
+
+    public enum Stage: Equatable, Sendable {
+        case rewording
+        case sending
+        case answered
+        /// In the plain words the request was answered with.
+        case stopped(String)
+    }
+
+    public let id = UUID()
+    public let sender: Sender
+    public let started = Date.now
+    private let clock = ContinuousClock.now
+    /// Once the request has been read.
+    public internal(set) var model: String?
+    /// The user messages that went reworded, once every one has.
+    public internal(set) var reworded: Int?
+    public internal(set) var stage = Stage.rewording
+    /// Once it is answered or stopped.
+    public internal(set) var took: Duration?
+
+    mutating func end(_ stage: Stage) {
+        self.stage = stage
+        took = clock.duration(to: .now)
+    }
+}
+
 /// The apps, sealed in one owner-only file with ChaChaPoly under the
 /// conversations' key, as `DepositStore` keeps the deposit.
 struct AgentStore {
@@ -60,7 +97,8 @@ enum Pass {
 /// guest sends its requests the same way, from the guest's door port, each
 /// conversation with a box pass of its own (`pass(for:)`, decision 12).
 /// Open only while Cloak is Running. No message's text is kept, shown or
-/// logged: an app's requests are counted, and its last one timed.
+/// logged: an app's requests are counted, and its last one timed, and the
+/// latest chat requests are listed with their counts and times.
 @MainActor
 @Observable
 public final class Door {
@@ -100,6 +138,9 @@ public final class Door {
     public private(set) var apps: [AgentApp] = []
     /// The apps could not be read, or a change to them not kept.
     public private(set) var problem: String?
+    /// The latest chat requests, newest first, at most 200. In memory only,
+    /// never on disk or in the log, and kept until Cloak quits.
+    public private(set) var requests: [AgentRequest] = []
     /// The port taken at the last open, until the door closes.
     private var opened: UInt16?
 
@@ -369,7 +410,7 @@ public final class Door {
             let app = try admit(request, from: side)
             let body = try await request.body(after: after, from: connection)
             limit.cancel()
-            response = await route(request, body: body, for: app)
+            response = await route(request, body: body, for: app, from: side)
         } catch let failure as Failure {
             limit.cancel()
             response = failure.response
@@ -412,7 +453,9 @@ public final class Door {
         return apps[found].id
     }
 
-    private func route(_ request: HTTPRequest, body: [UInt8], for app: UUID) async -> HTTPResponse {
+    /// Answers one request. A chat request is listed in `requests` from here
+    /// until it is answered or stopped.
+    private func route(_ request: HTTPRequest, body: [UInt8], for app: UUID, from side: Side) async -> HTTPResponse {
         do throws(Failure) {
             switch (request.method, request.target) {
             case ("GET", "/v1/models"):
@@ -420,7 +463,17 @@ public final class Door {
                 guard (try? GoJSON.read([UInt8](list)))?.members != nil else { throw Self.unreadable }
                 return HTTPResponse(status: 200, body: list)
             case ("POST", "/v1/chat/completions"):
-                return try await complete(request, body: body, for: app)
+                let listed = AgentRequest(sender: side == .mac ? .app(app) : .agent)
+                requests.insert(listed, at: 0)
+                if requests.count > 200 { requests.removeLast() }
+                do throws(Failure) {
+                    let response = try await complete(request, body: body, for: app, listed: listed.id)
+                    note(listed.id) { $0.end(.answered) }
+                    return response
+                } catch {
+                    note(listed.id) { $0.end(.stopped(error.message)) }
+                    throw error
+                }
             case (_, "/v1/models"), (_, "/v1/chat/completions"):
                 throw Failure(405, "method_not_allowed", "Method not allowed.")
             default:
@@ -445,9 +498,12 @@ public final class Door {
     /// Checks the request, then the model against the provider's list, then
     /// rewords each user message on this Mac, then sends it from the wallet.
     /// Nothing leaves this Mac before every user message is reworded.
-    private func complete(_ request: HTTPRequest, body: [UInt8], for app: UUID) async throws(Failure) -> HTTPResponse {
+    private func complete(
+        _ request: HTTPRequest, body: [UInt8], for app: UUID, listed: AgentRequest.ID
+    ) async throws(Failure) -> HTTPResponse {
         try Asked.check(type: request.headers["content-type"])
         let asked = try await Asked.read(body)
+        note(listed) { $0.model = asked.model }
         guard let ids = Self.ids(try await models()) else { throw Self.unreadable }
         guard ids.contains(asked.model) else {
             throw Failure(404, "model_not_found", "The provider has no model \(asked.model).")
@@ -457,6 +513,10 @@ public final class Door {
         memories[app] = memory
         let (messages, transcript) = try await memory.rewrite(asked, reword: parts.reword)
         memories[app]?.transcript = transcript
+        note(listed) { entry in
+            entry.reworded = asked.messages.count { $0.draft != nil }
+            entry.stage = .sending
+        }
         let key = try await sealing()
         do {
             guard try await parts.wallet() != nil else {
@@ -479,6 +539,12 @@ public final class Door {
             throw Failure(error)
         }
         return try Asked.answer(completion, streaming: asked.streaming)
+    }
+
+    /// Changes a listed request, while it is still in the list.
+    private func note(_ id: AgentRequest.ID, _ change: (inout AgentRequest) -> Void) {
+        guard let index = requests.firstIndex(where: { $0.id == id }) else { return }
+        change(&requests[index])
     }
 
     /// The conversations' key, which seals the deposit as it seals the apps:

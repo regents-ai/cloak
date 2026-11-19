@@ -761,7 +761,14 @@ its stages first.
   open, refused) beside `listener`, `access`, `boxes` and `serving`; there
   is no "opening". The app opens and closes it from one loop, in turn, so
   the two do not cross. A listener that fails after opening leaves the box
-  passes in place until the next close.
+  passes in place until the next close. Each chat request it takes past
+  the pass is listed (`requests`, newest first, at most 200, in memory
+  only until Cloak quits) with one named stage: rewording, sending,
+  answered, or stopped with the words it was answered with. `route` lists
+  it and ends it; `complete` notes the model once the request is read and
+  moves it to sending once every user message is reworded, so it shows as
+  rewording while the provider's list of models is asked for too. One that
+  falls off the end of the list while under way is no longer updated.
 - **What the door remembers of one app** (`app/Sources/CloakDoor/Asked.swift`).
   The identity and digests are kept before the rewording and the
   transcript after it, so a rewording that stops, or two requests from one

@@ -3,8 +3,9 @@ import CloakDoor
 import SwiftUI
 
 /// The owner's other apps that send through Cloak: the address to point
-/// them at, and each app with a pass of its own, shown once when it is
-/// added. Counts and times only; never what an app sent.
+/// them at, each app with a pass of its own, shown once when it is added,
+/// and the latest chat requests. Counts and times only; never what an app
+/// sent.
 struct AgentsView: View {
     static func window(_ door: Door) -> NSWindow {
         let window = ClosingWindow(
@@ -59,6 +60,29 @@ struct AgentsView: View {
                         AppRow(app: app) { removing = app }
                     }
                 }
+                Section {
+                    if door.requests.isEmpty {
+                        Text("Nothing sent yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        // Drawn again each minute, so the last 24 hours stay true.
+                        TimelineView(.everyMinute) { context in
+                            let summary = summary(at: context.date)
+                            LabeledContent("24 hours") {
+                                Text(summary.joined(separator: " · "))
+                                    .accessibilityLabel(summary.joined(separator: ", "))
+                            }
+                        }
+                        ForEach(door.requests.prefix(20)) { request in
+                            RequestRow(request: request, sender: sender(of: request))
+                        }
+                    }
+                } header: {
+                    Text("Activity")
+                } footer: {
+                    Text("Counts and times only. Cloak never keeps what an app sent.")
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
             HStack {
@@ -83,6 +107,109 @@ struct AgentsView: View {
         } message: { _ in
             Text("Its pass stops working at once.")
         }
+    }
+
+    /// The requests listed in the 24 hours to `now`, and the share of those
+    /// finished that were answered, rounded down so a stop never shows as
+    /// 100%.
+    private func summary(at now: Date) -> [String] {
+        let recent = door.requests.filter { now.timeIntervalSince($0.started) < 24 * 60 * 60 }
+        guard !recent.isEmpty else { return ["None"] }
+        let count = recent.count == 1 ? "1 request" : "\(recent.count.formatted()) requests"
+        let finished = recent.filter { $0.stage != .rewording && $0.stage != .sending }
+        guard !finished.isEmpty else { return [count] }
+        let answered = Double(finished.count { $0.stage == .answered }) / Double(finished.count)
+        return [count, "\(answered.formatted(.percent.precision(.fractionLength(0)).rounded(rule: .down))) answered"]
+    }
+
+    private func sender(of request: AgentRequest) -> String {
+        switch request.sender {
+        case .app(let id): door.apps.first { $0.id == id }?.name ?? "Removed app"
+        case .agent: "Cloak agent"
+        }
+    }
+}
+
+/// One chat request: who sent it, its model, how many messages went
+/// reworded and how long it took, and where it is now.
+private struct RequestRow: View {
+    let request: AgentRequest
+    let sender: String
+
+    var body: some View {
+        // Drawn again each minute, so "2 minutes ago" stays true.
+        TimelineView(.everyMinute) { _ in
+            let when = request.started.formatted(.relative(presentation: .named))
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(sender)
+                        .fontWeight(.medium)
+                    if !details.isEmpty {
+                        Text(details.joined(separator: " · "))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    stage
+                    Text(when)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(sender)
+            .accessibilityValue(([stageWords] + details + [when]).joined(separator: ", "))
+        }
+    }
+
+    @ViewBuilder
+    private var stage: some View {
+        switch request.stage {
+        case .rewording, .sending:
+            HStack(spacing: 4) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text(stageWords)
+            }
+        case .answered:
+            Text(stageWords)
+        case .stopped(let words):
+            Label {
+                Text("Stopped")
+            } icon: {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.orange)
+            }
+            .help(words)
+        }
+    }
+
+    private var stageWords: String {
+        switch request.stage {
+        case .rewording: "Rewording"
+        case .sending: "Sending"
+        case .answered: "Answered"
+        case .stopped(let words): "Stopped: \(words)"
+        }
+    }
+
+    /// The model once read, the messages reworded once all are, and the time
+    /// taken once finished.
+    private var details: [String] {
+        var details = [String]()
+        if let model = request.model { details.append(model) }
+        switch request.reworded {
+        case nil: break
+        case 0: details.append("nothing reworded")
+        case 1: details.append("1 message reworded")
+        case let count?: details.append("\(count.formatted()) messages reworded")
+        }
+        if let took = request.took {
+            details.append(took.formatted(.units(allowed: [.minutes, .seconds], width: .wide, fractionalPart: .show(length: 1))))
+        }
+        return details
     }
 }
 
