@@ -57,6 +57,50 @@ checked: rewording; the conversation's Tor identity; leave to spend;
 the provider's temporary key; the request that leaves. The risk is not
 two daemons. It is a path between them that skips rewording or Tor.
 
+**Settled 19 November (the chief's design; nothing built yet).** The Mac
+keeps rewording and the conversation's Tor identity, as today. The
+guest's sender is replaced by `cloak-pay`: the mainnet daemon with one
+overlay file, as a guest user of its own, starting its companion as
+upstream does. The post's daemon stays for cover traffic and the startup
+check, and takes no part in a request.
+
+| Item | One owner | Never holds | The check |
+|---|---|---|---|
+| Rewording | The Mac app (`Rewrite.swift` and the worker), called by Chat and the door | — | A stopped rewording sends nothing to `cloak-pay` |
+| The conversation's Tor identity | The Mac app, passed with each request | — | The stand-in tor sees two conversations under two identities, and no payment traffic under either |
+| Leave to spend | The Mac app: one queue; a deposit or withdrawal only on the owner's press | The provider's key | The agent, from its sandbox, gets no request served by any guest port |
+| The provider's temporary key | `cloak-pay`, in memory only, a new key for every request | Text as written | Two requests carry two keys; none reaches the Mac |
+| The request that leaves | `cloak-pay`, through the guest's tor port | — | The escape checks, and the identity check above |
+
+Three things the mainnet daemon does not do, which the overlay and one
+patch must: it answers any program on the guest's loopback with no pass
+(so `cloak-pay` listens to the host only, over vsock); it sends every
+stream, payment and chat alike, with no Tor identity (so the post's
+identity code is carried over, the conversation's identity on the
+request only and a fresh one for each payment connection); and a request
+made while an earlier one settles can fail (so the Mac gives a turn only
+when nothing is pending, and waits).
+
+Kept safely, spelled out: the payment files live in one image file on
+the Mac, attached to the guest as its only disk and opened there under a
+key from the keychain, so they are encrypted at rest and written before
+a request leaves, as upstream already journals. The signing key and the
+note secret are in the guest, as the `cloak-pay` user; the agent's
+sandbox cannot reach them, and what bounds a break of the guest is the
+size of the deposit. The guest then has a disk, and the escape checks
+are restated for it. Shapes not taken: the post's daemon in front of the
+mainnet one (a new hop between two daemons, and text as written inside
+the guest), and both programs on the Mac (untrusted code on the Mac with
+a network).
+
+Build order, each step ending in a running check, with stand-ins until
+step 7: the overlay's front over vsock; the identity patch; holding
+during settlement; the encrypted disk; the real companion and proving
+keys with no network; the Mac side (a payer in place of the Tempo parts,
+a new wallet sheet); the real service with no money; the first deposit
+(Sean's own decision); the cutover, which deletes the sender, its host
+half, the Tempo wallet parts and Development mode.
+
 ## Gates for stage 2
 
 Each is a check that runs, not a statement.
