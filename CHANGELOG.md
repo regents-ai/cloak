@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- NEAR mode, first real requests (19 November, with Sean's own key,
+  handed over through the secure prompt and read only by the probe):
+  through Tor, the proof passed and the encrypted word "ping" was
+  answered 200 and every encrypted field of the reply opened, for
+  `z-ai/glm-5.3-flash` (three servers, 32 seconds in all) and
+  `Qwen/Qwen3.8-27B` (one server, 24 seconds, twice). So NEAR takes the
+  version 2 encryption in all-fields mode for both, and a real reply
+  opens. Three requests of a few hundred tokens were spent.
+
 - NEAR mode: the request (`guest/near`, `ask`). One call, in one order:
   the request is checked, the proof fetched under a fresh nonce and
   verified, and only then the request sent, on a new connection taken

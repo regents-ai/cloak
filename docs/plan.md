@@ -2921,7 +2921,9 @@ candidates, so the split has to be re-declared before any holdout opens.
       to 16, no refusals for rate. Next: the request itself, encrypted to
       the checked key (built the same day, `ask`; proven with a
       stand-in and NEAR's vectors, and live as far as NEAR's 401 to an
-      invalid key; a real reply waits for his key. NEAR's own SDK sends
+      invalid key; then, with his key the same evening, real replies
+      from both models opened, 24 to 32 seconds a request with the
+      proof. NEAR's own SDK sends
       version 3 of the encryption, which also ties the reply key into
       the request; Cloak sends version 2, the documented one, and moves
       to 3 outright once a live test shows it works); then the GPU check through NVIDIA's
