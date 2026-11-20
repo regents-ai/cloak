@@ -1,3 +1,9 @@
-Regents Cloak now has an icon, and the download opens as a window where you drag the app to Applications.
+Cloak no longer quits by itself shortly after Start.
 
-This is an early test build for invited testers. Things may break or change from one build to the next. When something goes wrong, tell us what happened and what you were doing at the time.
+The chat modes are now called Anon, NEAR Private AI and Local Llama. The small info button beside them says where each one comes from.
+
+Settings ends with Feedback and Help: where to tell us what broke, and words you can hand to your agent so it posts for you.
+
+The Cover, Tor and zkAPI buttons under the message box respond when pressed, and each says what it controls when you rest the pointer on it. Tor and zkAPI can't be changed yet.
+
+This is an early test build for invited testers. Things may break or change from one build to the next.

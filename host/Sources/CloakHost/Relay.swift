@@ -6,7 +6,7 @@ import Synchronization
 /// goes to the worker as an `R` frame and nothing else. The answer goes back
 /// as an `A` frame and the connection closes. Connections, and the app's own
 /// requests (`answer(to:as:yielding:)`), are served one at a time, in order.
-/// Only the app's own requests can be a Llama Normal conversation (`L`). A
+/// Only the app's own requests can be a Local Llama conversation (`L`). A
 /// guest that closes its end once it has sent its request cancels the
 /// rewrite, including while the request is still being handed to the worker.
 /// An app's request may give way (decision 13 in docs/plan.md): the next
@@ -144,7 +144,7 @@ public final class Relay: Sendable {
 
     /// A relay that starts as if its worker had rested: no worker runs until
     /// the first request, which wakes one with `resting.start`, and from then
-    /// on it rests and wakes as `resting` says. The app's Llama Normal chats
+    /// on it rests and wakes as `resting` says. The app's Local Llama chats
     /// use one while no run is up. A lost worker is followed by none.
     public init(resting: Resting) {
         state = Mutex(State(slot: .resting(Task {})))

@@ -9,7 +9,7 @@ import os
 // directory holds exactly the pinned files, loads the pinned GGUF file with
 // llama.cpp and the pinned chat template, checks the pinned grammar against
 // the one built in, signals ready, then answers one request at a time (a
-// rewrite, a draft's details or a Llama Normal chat's next answer) until the
+// rewrite, a draft's details or a Local Llama chat's next answer) until the
 // supervisor closes standard input or breaks the protocol. It then stops the
 // request in progress, as a cancel does, and exits once that request's
 // answer is written: with status 0 at the end of the channel, 2

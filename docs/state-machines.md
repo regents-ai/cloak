@@ -14,7 +14,7 @@ checks that fault now.
 The worker (llama.cpp, decision 8) holds two states, `idle` and
 `answering`, in one enum under one lock. A request is a rewrite or a
 draft's details (an `R` frame), whose steps are the order of
-`cloak_engine_rewrite`, or a Llama Normal chat's next answer (an `L`
+`cloak_engine_rewrite`, or a Local Llama chat's next answer (an `L`
 frame, section 4), whose steps are the order of `cloak_engine_answer`;
 each returns how it ended.
 
@@ -228,7 +228,7 @@ tells the supervisor of each rest and wake and of every exit it did not
 cause (`Change`). `finish` while resting starts nothing, and while waking
 stops the load at once. A relay made with `Relay(resting:)` starts as if
 its worker had rested: no worker runs until the first request wakes one.
-The app's supervisor uses one for Llama Normal chats while no run is up
+The app's supervisor uses one for Local Llama chats while no run is up
 (section 9). No check since 19 November.
 
 The app's own requests (`answer(to:as:yielding:)`) take their turn with
@@ -243,10 +243,10 @@ A details request (decision 13) gives way: the next request to arrive, the
 app's or a connection's, cancels it as its task's cancel would, so a
 rewrite waits behind it no longer than the worker takes to stop (one token,
 or one 512-token chunk of the prompt). A rewrite never gives way, and nor
-does a Llama Normal request, which waits its turn as a rewrite does: a
+does a Local Llama request, which waits its turn as a rewrite does: a
 rewrite behind it waits for its whole answer and never cancels it.
 
-Only the app's own requests can be a Llama Normal conversation (`L`). A
+Only the app's own requests can be a Local Llama conversation (`L`). A
 guest connection's request is read only when its header is `R`, and it goes
 to the worker as `R` and nothing else, so nothing a guest sends reaches the
 worker as `L`. No check since 19 November.
@@ -278,7 +278,7 @@ worker: Y once, then for each request: R or L in, A out; C may come in
         worker, after the A it owes
 ```
 
-- `R` carries a rewrite or a draft's details; `L` carries a Llama Normal
+- `R` carries a rewrite or a draft's details; `L` carries a Local Llama
   chat's conversation (section 1). Only the app sends `L`; the relay
   forwards a guest's request only as `R` (section 3).
 
@@ -578,7 +578,7 @@ any --quit--> Stopping (to quit) --stopped--> the app ends
 Stopping (to Paused, Ready or Needs attention) --stopped--> that state
 ```
 
-- **Preparing** first ends the worker up for Llama Normal chats, if any,
+- **Preparing** first ends the worker up for Local Llama chats, if any,
   and waits for it to exit (below). It then takes each step only once the
   one before it is up: the checks (the Mac: Apple silicon, the model's memory within Metal's graphics
   limit less 1 GiB, and all of Cloak's within the memory less 4 GiB for
@@ -619,7 +619,7 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   the run's parts, nil otherwise; the technical detail says which while
   Running. A change while
   a guest is up waits for the next Start, and Chat says so under its
-  message box ("Cover changes at the next Start.") while the two differ.
+  message box ("Cover changes after Pause, then Start.") while the two differ.
   Nothing else in the run depends on it.
 - **Watches**: from its start until the run ends, tor exiting raises
   `tor_stopped`, and every worker exit the relay did not cause raises
@@ -627,7 +627,7 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   (section 3): a worker the relay loses is stopped, and its exit is the
   failure.
 - **Stopping** is the one shutdown, for every destination: it cancels the
-  preparation and the watches, ends the worker for Llama Normal chats,
+  preparation and the watches, ends the worker for Local Llama chats,
   waits for the preparation and that worker to end, then stops the guest,
   the worker and tor, in that order, each within its limit
   (section 2); a worker that rested is already gone, and one loading after a
@@ -643,7 +643,7 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   model is tried (REF04).
 - **Refused**: any command while Stopping (`busy`), and `resume` anywhere but
   Paused (`not_paused`). A refused command changes nothing.
-- **Sleep** pauses, so a wake finds no run; a worker up for Llama Normal
+- **Sleep** pauses, so a wake finds no run; a worker up for Local Llama
   chats stays, and rests as ever. A relaunch starts
   Paused, having started nothing, the one after an update included
   (Sparkle installs it once the app has quit through its shutdown). So does the launch at login, which is
@@ -676,8 +676,8 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   rest. The menu is rebuilt each time it opens, and while it is open
   whenever the phase, the rest or the download changes.
 
-- **Llama Normal** (`Supervisor.answer`, `LlamaNormal`) is no phase. A
-  Llama Normal chat's message goes to the model on this Mac in an `L`
+- **Local Llama** (`Supervisor.answer`, `LocalLlama`) is no phase. A
+  Local Llama chat's message goes to the model on this Mac in an `L`
   frame (section 1). While Running, it takes its turn at the run's relay,
   in order with rewording, and never gives way (section 3); a worker
   failure then is the run's, as for any request. In every other settled
@@ -699,7 +699,7 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   worker to exit before anything else starts, so two workers never hold
   the model; a message it had stops as interrupted, and the chat says to
   ask again. While its worker is up or loading, the technical detail says
-  so (`worker: process N, for Llama Normal chats`), the Paused, Ready and
+  so (`worker: process N, for Local Llama chats`), the Paused, Ready and
   Needs attention lines say only that worker runs, and the Memory row
   counts it, since it is one of the app's own processes. Nothing on this
   path makes a network request or touches the wallet, the door, NEAR or
@@ -805,8 +805,8 @@ to NEAR AI Cloud through `cloak-near`, the helper in the app's bundle
 (`guest/near/README.md`, "The helper"). It never goes to the wallet's
 provider, and a Cloak conversation never goes to NEAR. What a new
 conversation is, is the mode picked under the message box (`Chat.kind`, in
-memory only, Anon V at each launch): Anon V (a Cloak conversation), NEAR
-Privacy (this one), Llama Normal (section 9c) or Agent.
+memory only, Anon at each launch): Anon (a Cloak conversation), NEAR
+Private AI (this one), Local Llama (section 9c) or Agent.
 
 The helper's life is owned by the `Near` actor, which runs on a serial
 queue of its own and blocks on the helper's pipes with no suspension
@@ -855,7 +855,7 @@ exactly the freshness chosen, in seconds, and the route chosen, against a
 stand-in helper pinned as the real one is. Nothing else here is under
 test.
 
-## 9c. A Llama Normal chat (`app/Sources/RegentsCloak/Chat.swift`, `app/Sources/CloakSupervisor/Supervisor.swift`)
+## 9c. A Local Llama chat (`app/Sources/RegentsCloak/Chat.swift`, `app/Sources/CloakSupervisor/Supervisor.swift`)
 
 A conversation whose first message went to the model on this Mac
 (`Conversation.llama`, true from that message on and absent otherwise, so

@@ -1,6 +1,6 @@
 import Foundation
 
-/// A Llama Normal chat's request, sent only by the app in an `L` frame, and
+/// A Local Llama chat's request, sent only by the app in an `L` frame, and
 /// nothing else: exactly `{"messages":[{"role":"user","content":"..."},...]}`,
 /// the messages alternating user and assistant, the first and the last from
 /// the user. No model, system message or setting: the worker answers with
@@ -23,7 +23,7 @@ public struct Conversation: Decodable, Sendable {
         guard messages.count % 2 == 1,
             messages.enumerated().allSatisfy({ $0.element.role == ($0.offset.isMultiple(of: 2) ? "user" : "assistant") })
         else {
-            throw WorkerError("request is not a Llama Normal conversation")
+            throw WorkerError("request is not a Local Llama conversation")
         }
         self.messages = messages.map { Message(role: $0.role, content: $0.content) }
     }

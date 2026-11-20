@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- The app no longer ends by itself (20 November 2026). At 11:18:41 on
+  Sean's Mac the published 0.5.2 was ended by macOS with SIGPIPE, forty
+  seconds after a Start and with no crash report: the app writes to its
+  worker's pipe and to the guest's connections with code that expects a
+  write to a gone peer to fail, as `cloak-host` and the worker arrange
+  by ignoring that signal, and the app never did. It now ignores it at
+  launch. Tried: Start, two minutes Running, Pause, the same process
+  throughout.
+- The modes renamed, and a Modes button (decision 19, Sean's "13" of 20
+  November 2026): Anon, NEAR Private AI, Local Llama and Agent. The
+  button beside the switch opens on a press or a rest of the pointer and
+  says where the first three come from, with links to Vitalik's, NEAR's
+  and llama.cpp's posts on X. `LlamaNormal.swift` is `LocalLlama.swift`.
+  What chats and the worker's frames hold is unchanged.
+- Settings, General ends with Feedback and Help: a link to
+  https://patchbay.help/regents.sh, and words to copy for an agent that
+  posts there, naming the release.
+- Chat's Cover, Tor and zkAPI pills are all buttons now, the dot changes
+  with a short animation, and a pointer resting on one for a second
+  shows what it controls (the app sets macOS's help delay to one
+  second). Tor and zkAPI still cannot change; a press shows "Tor stays
+  on in Anon chats for now." or "zkAPI payment isn't in this build yet."
+  Cover's words say a change comes "after Pause, then Start", since
+  "the next Start" read as reopening the app. Release 0.5.3.
 - Release 0.5.2 (170) published for invited testers, 20 November 2026,
   with the icon and the install window; the image was opened on Sean's
   Mac and shows the app, the arrow and Applications (docs/release.md,

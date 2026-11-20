@@ -4,7 +4,7 @@ import Foundation
 import RewriterKit
 
 /// One loaded GGUF model and its pinned chat template (cloak_llama.h). The
-/// worker runs one request at a time on it, a rewrite or a Llama Normal
+/// worker runs one request at a time on it, a rewrite or a Local Llama
 /// answer; `cancel` is safe from any thread.
 public final class Engine: @unchecked Sendable {
     /// How one rewrite or answer ended, with llama.cpp's counts and timings.
@@ -107,7 +107,7 @@ public final class Engine: @unchecked Sendable {
         await run { cloak_engine_rewrite(self.engine, request.system, request.user, Int32(request.maxTokens), grammar) }
     }
 
-    /// A Llama Normal answer to `conversation`: at most `maxTokens` tokens,
+    /// A Local Llama answer to `conversation`: at most `maxTokens` tokens,
     /// and `tooLong` when the conversation plus `maxTokens` exceeds
     /// `maxContext` tokens.
     public func answer(_ conversation: Conversation, maxTokens: Int32, maxContext: UInt32) async -> Rewrite {

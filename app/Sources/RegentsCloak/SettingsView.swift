@@ -103,7 +103,7 @@ private struct GeneralPane: View {
             Section {
                 Toggle("Launch at login", isOn: Binding(get: { login }, set: { login = LoginItem.set($0) }))
             } footer: {
-                Footnote("Cloak opens paused, so nothing runs until you press Start or ask something in a Llama Normal chat.")
+                Footnote("Cloak opens paused, so nothing runs until you press Start or ask something in a Local Llama chat.")
             }
             Section {
                 NeverReword(settings: settings)
@@ -124,7 +124,7 @@ private struct GeneralPane: View {
             Section {
                 Toggle("Cover traffic", isOn: $settings.cover)
             } footer: {
-                Footnote("Cloak visits ordinary public pages in the background, so your real requests stand out less. It uses some bandwidth, and a change applies at the next Start.")
+                Footnote("Cloak visits ordinary public pages in the background, so your real requests stand out less. It uses some bandwidth. A change applies after Pause, then Start; Cloak itself stays open.")
             }
             Section {
                 Picker("Free memory", selection: $settings.freeMemory) {
@@ -134,6 +134,7 @@ private struct GeneralPane: View {
                 Footnote("The model leaves memory once it has had nothing to do for that long, and the next message takes a few seconds longer.")
             }
             UpdatesSection(updates: updates)
+            FeedbackSection()
         }
         // The login item can change in System Settings while the window is
         // away, so it is read again each time the window comes back.
@@ -164,6 +165,45 @@ private struct UpdatesSection: View {
         // window is away, so the setting is read again when it comes back.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             checks = updates.checksAutomatically
+        }
+    }
+}
+
+/// Where to say what broke or ask for help: Patchbay's board for regents.sh,
+/// and words to give an agent that posts there for you.
+private struct FeedbackSection: View {
+    /// The release, which `build.sh` writes into the app.
+    private static let release = Bundle.main.infoDictionary!["CFBundleShortVersionString"] as! String
+    private static let words = """
+        Post my feedback about the Regents Cloak Mac app, version \(release), on Patchbay's board for regents.sh. \
+        First read https://patchbay.help/regents.sh as Markdown and follow its Ask section: call ask_question with the site regents.sh. \
+        Ask me what I was doing, what happened and what I expected, and post exactly that. \
+        Leave out anything private: keys, passwords, wallet addresses and what my chats said.
+        """
+
+    var body: some View {
+        Section {
+            Text("Something broke, or you have a question? Post it at [patchbay.help/regents.sh](https://patchbay.help/regents.sh).")
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Or give these words to your agent:")
+                Text(Self.words)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Spacer()
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(Self.words, forType: .string)
+                    }
+                    .accessibilityLabel("Copy Words")
+                }
+            }
+        } header: {
+            Text("Feedback and Help")
+        } footer: {
+            Footnote("Posts there are public. Your agent needs pairing on patchbay.help once before it can post.")
         }
     }
 }
@@ -207,12 +247,12 @@ private struct NearPane: View {
                     }
                 }
             } footer: {
-                Footnote("Your API key from NEAR AI Cloud. You can create one at cloud.near.ai. It pays for the messages you send in NEAR Privacy chats, so NEAR can connect those messages to your account. Cloak keeps it in this Mac's keychain, and it can't be viewed here after you save it.")
+                Footnote("Your API key from NEAR AI Cloud. You can create one at cloud.near.ai. It pays for the messages you send in NEAR Private AI chats, so NEAR can connect those messages to your account. Cloak keeps it in this Mac's keychain, and it can't be viewed here after you save it.")
             }
             Section {
                 Toggle("Tor", isOn: $settings.nearTor)
             } footer: {
-                Footnote("Sends your NEAR Privacy chats through the Tor network, so NEAR and Intel see a Tor address instead of your internet address. It's slower: checking NEAR's servers takes about half a minute, and Cloak needs to be started first.")
+                Footnote("Sends your NEAR Private AI chats through the Tor network, so NEAR and Intel see a Tor address instead of your internet address. It's slower: checking NEAR's servers takes about half a minute, and Cloak needs to be started first.")
             }
             Section {
                 Picker("Freshness", selection: $settings.proofFreshness) {
@@ -224,7 +264,7 @@ private struct NearPane: View {
             Section {
                 LabeledContent("Model", value: "Qwen3.8-27B")
             } footer: {
-                Footnote("The model that answers your NEAR Privacy chats. Cloak's check covers the servers it runs on, not the model software itself.")
+                Footnote("The model that answers your NEAR Private AI chats. Cloak's check covers the servers it runs on, not the model software itself.")
             }
         }
         .task { await mode.find() }

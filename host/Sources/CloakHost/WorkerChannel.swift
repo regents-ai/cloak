@@ -14,7 +14,7 @@ public final class WorkerChannel: Sendable {
     static let maxAnswer = 16 << 20
 
     /// What a request is, by the frame it goes in: a rewrite or a draft's
-    /// details (`R`), or a Llama Normal chat's conversation (`L`), which only
+    /// details (`R`), or a Local Llama chat's conversation (`L`), which only
     /// the app sends (`Relay.answer(to:as:yielding:)`).
     public enum Kind: UInt8, Sendable {
         case request = 0x52

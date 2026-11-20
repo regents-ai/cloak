@@ -83,6 +83,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "app")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A write to a worker or a guest connection that has gone must fail
+        // (the callers handle that), not end Cloak, as the signal's default
+        // would. `cloak-host` and the worker do the same.
+        signal(SIGPIPE, SIG_IGN)
+        // Help shows after a second's rest on a control, not the system's two.
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 1000])
         Self.current = self
         menu = StatusMenu(
             supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest), showChat: showChat,
@@ -107,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         // Sleep pauses a run, so a wake finds none running and starts
-        // nothing. A worker up for Llama Normal chats stays, and rests as
+        // nothing. A worker up for Local Llama chats stays, and rests as
         // ever.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main

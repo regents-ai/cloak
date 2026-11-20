@@ -27,7 +27,7 @@ import Synchronization
 /// they lay a list with no URLs over that one, and no cover worker starts
 /// in that run.
 ///
-/// A Llama Normal chat's message (`answer`) goes straight to the model on
+/// A Local Llama chat's message (`answer`) goes straight to the model on
 /// this Mac, and is no phase. While a run is up it takes its turn at the
 /// run's worker. While none is, it goes to a relay of the app's own
 /// (`Local`): the first message starts its worker, after the checks of the
@@ -55,7 +55,7 @@ public final class Supervisor {
     /// started, as each came up. Kept once the run has ended; the next start
     /// begins them again. Every worker of a run starts the same way.
     public private(set) var commands: [[String]] = []
-    /// The worker for Llama Normal chats while no run is up.
+    /// The worker for Local Llama chats while no run is up.
     private var localWorker = LocalWorker.none
     public let manifest: Manifest
     /// Takes each connection the guest's agent opens to the door port, as a
@@ -94,7 +94,7 @@ public final class Supervisor {
         var tasks = AgentTasks()
     }
 
-    /// The relay for Llama Normal chats while no run is up, made with the
+    /// The relay for Local Llama chats while no run is up, made with the
     /// first message after the last one ended, and what follows its changes.
     private struct Local {
         let relay: Relay
@@ -250,15 +250,15 @@ public final class Supervisor {
         }
     }
 
-    /// The model's answer to the last of `messages`, a Llama Normal chat's
-    /// conversation so far (`LlamaNormal`). While a run is up it takes its
+    /// The model's answer to the last of `messages`, a Local Llama chat's
+    /// conversation so far (`LocalLlama`). While a run is up it takes its
     /// turn at the run's worker, in order with rewording, and never gives
     /// way; while none is, it goes to the local relay, whose worker it starts
     /// when none is up. It waits while Cloak prepares or stops. Cancelling
     /// the task stops it. The log has how it ended and how long it took,
     /// never the text.
     public func answer(_ messages: [String]) async throws(AnswerStop) -> String {
-        guard let request = LlamaNormal.request(messages) else { throw .tooLong }
+        guard let request = LocalLlama.request(messages) else { throw .tooLong }
         _ = await settled()
         guard !Task.isCancelled else { throw .stopped }
         // A run has its relay from before it is Running until it stops.
@@ -267,25 +267,25 @@ public final class Supervisor {
         let answer = await relay.answer(to: request, as: .conversation)
         do {
             let text = try Self.text(of: answer, cancelled: Task.isCancelled, ending: ending)
-            logger.info("Llama Normal answered in \(started.duration(to: .now), privacy: .public)")
+            logger.info("Local Llama answered in \(started.duration(to: .now), privacy: .public)")
             return text
         } catch {
-            logger.info("Llama Normal \(String(describing: error), privacy: .public) after \(started.duration(to: .now), privacy: .public)")
+            logger.info("Local Llama \(String(describing: error), privacy: .public) after \(started.duration(to: .now), privacy: .public)")
             throw error
         }
     }
 
-    /// The text of a Llama Normal answer, or why there is none. `ending` is
+    /// The text of a Local Llama answer, or why there is none. `ending` is
     /// the local relay's, nil for the run's.
     private static func text(of answer: Data?, cancelled: Bool, ending: Ending?) throws(AnswerStop) -> String {
-        if let answer, answer.prefix(2) == Data([0, 200]), let text = LlamaNormal.answer(answer.dropFirst(2)) {
+        if let answer, answer.prefix(2) == Data([0, 200]), let text = LocalLlama.answer(answer.dropFirst(2)) {
             return text
         }
         if cancelled { throw .stopped }
         if let stop = ending?.recorded { throw stop }
         guard let answer else { throw ending == nil ? .interrupted : .failed(.workerStopped) }
         switch UInt16(answer[answer.startIndex]) << 8 | UInt16(answer[answer.startIndex + 1]) {
-        case LlamaNormal.tooLongStatus: throw .tooLong
+        case LocalLlama.tooLongStatus: throw .tooLong
         case Rewrite.cancelledStatus: throw .interrupted
         default: throw .failed(.workerStopped)
         }
@@ -322,7 +322,7 @@ public final class Supervisor {
                     throw Self.cannotStart(error)
                 }
             } catch let failure as Failure {
-                logger.error("Llama Normal: \(failure.reason.rawValue, privacy: .public): \(failure.detail, privacy: .public)")
+                logger.error("Local Llama: \(failure.reason.rawValue, privacy: .public): \(failure.detail, privacy: .public)")
                 ending.record(.failed(failure.reason))
                 throw failure
             }
@@ -346,15 +346,15 @@ public final class Supervisor {
         case .loading:
             localWorker = .loading
         case .relay(.woke(let worker)):
-            logger.info("a worker is ready for Llama Normal chats")
+            logger.info("a worker is ready for Local Llama chats")
             localWorker = .up(worker.processIdentifier)
         case .relay(.rested):
-            logger.info("the worker for Llama Normal chats rested")
+            logger.info("the worker for Local Llama chats rested")
             localWorker = .none
         case .relay(.cannotWake):
             endLocal()
         case .relay(.exited(let end)):
-            logger.error("the worker for Llama Normal chats ended (\(String(describing: end), privacy: .public))")
+            logger.error("the worker for Local Llama chats ended (\(String(describing: end), privacy: .public))")
             endLocal()
         }
     }
@@ -432,12 +432,12 @@ public final class Supervisor {
             lines.append(
                 localWorker == .none
                     ? "Ready: the startup check passed and everything has stopped again."
-                    : "Ready: the startup check passed and everything has stopped again, but for the worker, which runs for Llama Normal chats.")
+                    : "Ready: the startup check passed and everything has stopped again, but for the worker, which runs for Local Llama chats.")
         case .paused:
             lines.append(
                 localWorker == .none
                     ? "Paused: nothing is running, and nothing starts by itself."
-                    : "Paused: only the worker is running, for Llama Normal chats, and nothing else starts by itself.")
+                    : "Paused: only the worker is running, for Local Llama chats, and nothing else starts by itself.")
         case .preparing:
             lines.append("Preparing: checking the parts, then starting tor, the worker and the guest, which runs the startup check and then the sender.")
         case .stopping:
@@ -446,7 +446,7 @@ public final class Supervisor {
             lines.append(
                 localWorker == .none
                     ? "Needs attention (\(reason.rawValue)): everything has stopped, and nothing is tried again until Start."
-                    : "Needs attention (\(reason.rawValue)): everything has stopped but the worker, which runs for Llama Normal chats, and nothing is tried again until Start.")
+                    : "Needs attention (\(reason.rawValue)): everything has stopped but the worker, which runs for Local Llama chats, and nothing is tried again until Start.")
         }
         if let problem { lines.append(problem) }
         if let check { lines.append("Last check \(check.passed ? "passed" : "failed"): \(check.detail)") }
@@ -458,8 +458,8 @@ public final class Supervisor {
         }
         switch localWorker {
         case .none: break
-        case .loading: lines.append("worker: loading the model for a Llama Normal chat")
-        case .up(let process): lines.append("worker: process \(process), for Llama Normal chats; it rests as a run's does")
+        case .loading: lines.append("worker: loading the model for a Local Llama chat")
+        case .up(let process): lines.append("worker: process \(process), for Local Llama chats; it rests as a run's does")
         }
         lines.append(memory().detail)
         lines.append("release \(manifest.release), build \(manifest.build)")
@@ -467,7 +467,7 @@ public final class Supervisor {
         return lines.joined(separator: "\n")
     }
 
-    /// Ends the worker for Llama Normal chats, then checks, puts the pinned
+    /// Ends the worker for Local Llama chats, then checks, puts the pinned
     /// worker where it runs, and starts tor, the worker and the check guest,
     /// each only once the one before it is up. Ends in `prepared`, or in the
     /// first failure; a cancelled preparation starts nothing more.
@@ -592,7 +592,7 @@ public final class Supervisor {
     /// (llama-worker/Sources/cloak-rewriter-llama/main.swift).
     nonisolated static let modelChanged = Termination(status: 3, signalled: false)
 
-    /// Why a worker did not start, at Start, on a wake or for a Llama Normal
+    /// Why a worker did not start, at Start, on a wake or for a Local Llama
     /// chat: the model's files differ from their pins, or anything else.
     private nonisolated static func cannotStart(_ error: any Error) -> Failure {
         if let error = error as? WorkerChannel.NotReady, error.ended == modelChanged {
@@ -640,7 +640,7 @@ public final class Supervisor {
     }
 
     /// The one shutdown: ends the preparation, the agent's tasks under way
-    /// and the worker for Llama Normal chats, then stops the guest, the
+    /// and the worker for Local Llama chats, then stops the guest, the
     /// worker and tor, in that order, each within its limit.
     private func shutDown() {
         let preparation = self.preparation

@@ -1,7 +1,7 @@
 import CloakControl
 import Foundation
 
-/// Why a Llama Normal chat's message has no answer.
+/// Why a Local Llama chat's message has no answer.
 public enum AnswerStop: Error, Sendable, Equatable {
     /// Its task was cancelled: the owner pressed Stop.
     case stopped
@@ -14,12 +14,12 @@ public enum AnswerStop: Error, Sendable, Equatable {
     case failed(Reason)
 }
 
-/// A Llama Normal chat's request to the worker (an `L` frame) and its reply:
+/// A Local Llama chat's request to the worker (an `L` frame) and its reply:
 /// the conversation so far, each message as written and each answer as
 /// given, alternating and ending with the message to answer. The worker
 /// puts it through the model's own chat template with no system message,
 /// no grammar and llama.cpp's default sampling.
-enum LlamaNormal {
+enum LocalLlama {
     /// The largest request a frame carries (`Frames.maxPayload`).
     static let maxRequest = 1 << 20
     /// The worker's status when the conversation and an answer do not fit.

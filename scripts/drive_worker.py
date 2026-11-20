@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # ///
 """Run the native worker directly and send it the daemon's rewrite request, or
-a Llama Normal conversation.
+a Local Llama conversation.
 
 A development check of the worker on its own, before the guest and daemon are
 in the path. The rewrite request is built the way the daemon builds it: the
@@ -11,7 +11,7 @@ recorded sha256, and the user message is Go-style JSON.
 
     uv run scripts/drive_worker.py --name standin-gguf-grammar "text one" "text two"
 
-With --chat, each text is a message of one Llama Normal chat, sent as the app
+With --chat, each text is a message of one Local Llama chat, sent as the app
 sends it: the conversation so far, each earlier answer included, in an L
 frame. --stop-after stops the first answer that many seconds after it is
 asked, as Stop does, then asks it again. --worker runs another build of the
@@ -72,7 +72,7 @@ def request_body(name: str, texts: list[str], max_tokens: int = 16384) -> bytes:
 
 
 def conversation_body(messages: list[str]) -> bytes:
-    """A Llama Normal chat's request: the messages alternate user and
+    """A Local Llama chat's request: the messages alternate user and
     assistant, the first and last from the user."""
     roles = ["user", "assistant"]
     return json.dumps(
@@ -124,7 +124,7 @@ def ask(worker: subprocess.Popen, kind: bytes, body: bytes, stop_after: float | 
 
 
 def chat(worker: subprocess.Popen, messages: list[str], stop_after: float | None) -> None:
-    """One Llama Normal chat: each message asked with the conversation so far."""
+    """One Local Llama chat: each message asked with the conversation so far."""
     conversation: list[str] = []
     for number, message in enumerate(messages, start=1):
         conversation.append(message)
@@ -146,7 +146,7 @@ def main() -> None:
     parser.add_argument("--name", required=True)
     parser.add_argument("--worker", type=Path, default=WORKER)
     parser.add_argument("--max-tokens", type=int, default=16384)
-    parser.add_argument("--chat", action="store_true", help="send the texts as the messages of one Llama Normal chat")
+    parser.add_argument("--chat", action="store_true", help="send the texts as the messages of one Local Llama chat")
     parser.add_argument("--stop-after", type=float, help="with --chat, stop the first answer after this many seconds")
     parser.add_argument("texts", nargs="+")
     args = parser.parse_args()

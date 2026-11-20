@@ -5,7 +5,7 @@ import Synchronization
 import os
 
 /// Runs one request at a time (spec MAC03): a rewrite or a draft's details
-/// (`R`), or a Llama Normal answer (`L`). A second request while one runs is
+/// (`R`), or a Local Llama answer (`L`). A second request while one runs is
 /// a protocol fault and stops the worker, once that request has stopped.
 final class Worker: Sendable {
     /// The one request at a time:
@@ -21,14 +21,14 @@ final class Worker: Sendable {
         case answering(Task<Void, Never>)
     }
 
-    /// A Llama Normal request's cap, conversation plus answer, in tokens: the
+    /// A Local Llama request's cap, conversation plus answer, in tokens: the
     /// largest context a rewrite has been measured to take (a 10,000-character
     /// message, decision 6's limit: 2,849 prompt tokens plus the daemon's
     /// 16,384, which llama.cpp rounds up to 19,456; evidence/stage3/
     /// small-lead-gguf-grammar/feasibility-20261114T052945Z.json), so a chat
     /// never holds more memory than a rewrite has been measured to hold.
     static let chatContext: UInt32 = 19_456
-    /// The most tokens one Llama Normal answer takes, leaving 15,360 tokens
+    /// The most tokens one Local Llama answer takes, leaving 15,360 tokens
     /// of the cap for the conversation.
     static let answerTokens: Int32 = 4_096
 
@@ -104,7 +104,7 @@ final class Worker: Sendable {
         switch rewrite.finish {
         case .stop: finishReason = "stop"
         case .length: finishReason = "length"
-        case .tooLong: preconditionFailure("only a Llama Normal answer has a cap")
+        case .tooLong: preconditionFailure("only a Local Llama answer has a cap")
         case .cancelled:
             log.info("\(name, privacy: .public) cancelled")
             return (499, Reply.error("cancelled"))
@@ -123,7 +123,7 @@ final class Worker: Sendable {
         )
     }
 
-    /// A Llama Normal chat's next answer: the conversation as written through
+    /// A Local Llama chat's next answer: the conversation as written through
     /// the model's chat template, no system message and no grammar, then
     /// llama.cpp's default sampling. Whatever the messages say, they are only
     /// ever a conversation: an `L` frame never takes the rewrite or details
@@ -131,7 +131,7 @@ final class Worker: Sendable {
     /// inside the cap; nothing is trimmed.
     private func respond(toConversation body: Data) async -> (UInt16, Data) {
         guard let conversation = try? JSONDecoder().decode(Conversation.self, from: body) else {
-            log.info("rejected a conversation that is not a Llama Normal chat")
+            log.info("rejected a conversation that is not a Local Llama chat")
             return (400, Reply.error("invalid request"))
         }
         let answer = await engine.answer(conversation, maxTokens: Self.answerTokens, maxContext: Self.chatContext)

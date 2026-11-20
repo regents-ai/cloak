@@ -16,7 +16,7 @@ or inconclusive check is not a pass. Progress lives here.
 | 2. Build the local path | Minimal guest adapter and native worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
 | 3. Check feasibility early | Runs of each of the two candidates (decision 7's small pair, as GGUF files on llama.cpp under the reply grammar: decisions 8 and 9) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the small lead has two feasibility runs and two EVAL01 screens, the small challenger none |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner of the two candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split is to be settled before any holdout opens (decisions 7 to 9) |
-| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead, with Chat sending in a Development mode only (decision 10; "Stage 5 so far"), and the daemon's own cover traffic in its guest (on since 19 November); a signed, notarized technical-preview build with updates, 0.5.0 (164), is published for invited testers since 19 November, and 0.5.1 (168), with Llama Normal chats, and 0.5.2 (170), with the icon and the install window, since 20 November ([release.md](release.md), stage 1 and item 7), all tried on the Mac that built them only, where the update from the first to the second worked; no setup, recovery, sessions or the daemon's own payment |
+| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead, with Chat sending in a Development mode only (decision 10; "Stage 5 so far"), and the daemon's own cover traffic in its guest (on since 19 November); a signed, notarized technical-preview build with updates, 0.5.0 (164), is published for invited testers since 19 November, and 0.5.1 (168), with Llama Normal chats, and 0.5.2 (170), with the icon and the install window, and 0.5.3, with the modes' new names and a fix for the app ending by itself, since 20 November ([release.md](release.md), stage 1 and item 7), all tried on the Mac that built them only, where the update from the first to the second worked; no setup, recovery, sessions or the daemon's own payment |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
 Stage 2 builds and tests the path with a small model labelled as a
@@ -3134,6 +3134,21 @@ candidates, so the split has to be re-declared before any holdout opens.
     arrow, Applications, with no toolbar or sidebar
     (`app/install-window.py` over `app/install-window.tiff`). Both
     pictures are committed and redrawn only by `app/art.sh`.
+19. The modes' names again, and where they come from. Decided 20 November
+    2026 (Sean, "13. in the app have: 'Anon' , 'NEAR Private AI' , 'Local
+    Llama' , and have an info onhover + clickable , that has links to the
+    vitalik x post, the Near X post ... and the llama x post ... for NEAR
+    and Llama, say we are an alternate client to their own official
+    clients."). Anon V is Anon, NEAR Privacy is NEAR Private AI, Llama
+    Normal is Local Llama; Agent stays. "Private" in NEAR's name is his
+    own word for the mode, used there and nowhere else. Beside the
+    switch, a Modes button opens on a press, or after the pointer rests
+    on it: Anon, "Inspired by Vitalik's X post about his preferred AI
+    usage."; NEAR Private AI and Local Llama, each "Cloak is an alternate
+    client to" NEAR's or llama.cpp's "own official one", with a link to
+    their post. The links carry no share-tracking parts. What a saved
+    chat holds and what the worker is sent keep their names (`near`,
+    `llama`, the `L` frame), so chats already saved open as before.
 
 ## Gates
 

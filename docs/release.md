@@ -165,6 +165,20 @@ Sean's answers, 20 November:
   is frequent; a list Regent signs and publishes, or accepting what NEAR
   itself signs, were the choices not taken.
 
+- The modes are named Anon, NEAR Private AI and Local Llama, with a
+  Modes button saying where each comes from (decision 19 in
+  [plan.md](plan.md)).
+- Settings ends with Feedback and Help: "add an 'Feedback and Help'
+  section to the bottom of settings , which directs them to go to
+  https://patchbay.help/regents.sh , and also provide a copy pastable
+  string of text that tells an agent to post there".
+- The Tor and zkAPI pills: "they should be animated buttons that react
+  to clicks", and "a 1 second onhover should show a tooltip describing
+  what that button controls". All three pills are buttons and say what
+  they control after a second. Tor off in an Anon chat and zkAPI on are
+  not built, so a press on either says so; whether Tor gets an off
+  switch before payment is his open decision.
+
 ## Gates for stage 2
 
 Each is a check that runs, not a statement.

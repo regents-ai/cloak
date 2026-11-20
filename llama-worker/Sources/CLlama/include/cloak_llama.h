@@ -2,7 +2,7 @@
 // every setting pinned, turn messages into the model's prompt tokens with
 // llama.cpp's own chat template machinery (common/chat), and run one request
 // at a time: a greedy rewrite under the reply grammar, or an answer to a
-// Llama Normal chat with llama.cpp's default sampling.
+// Local Llama chat with llama.cpp's default sampling.
 // cloak_llama.cpp says what each setting is and why.
 
 #ifndef CLOAK_LLAMA_H
@@ -70,7 +70,7 @@ void cloak_engine_cancel(cloak_engine * engine);
 cloak_result cloak_engine_rewrite(cloak_engine * engine, const char * system, const char * user, int32_t max_tokens,
                                   const char * grammar);
 
-/// One answer to a Llama Normal chat: `count` messages, `roles[i]` "user" or
+/// One answer to a Local Llama chat: `count` messages, `roles[i]` "user" or
 /// "assistant" and `contents[i]` its text, with no system message, through
 /// the model's chat template; then llama.cpp's own sampling with its default
 /// parameters (common_sampler from a default common_params_sampling, as

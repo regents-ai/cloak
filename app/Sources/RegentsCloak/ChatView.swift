@@ -9,10 +9,10 @@ import SwiftUI
 /// as written alone when it goes so), and its answer once sent, with the box
 /// to write the next one at the bottom. In the agent's conversations, each
 /// task in place of a message, with the steps the agent took. In NEAR
-/// Privacy's conversations, each message as written and its answer; in
-/// Llama Normal's, each message as written and the answer of the model on
+/// Private AI's conversations, each message as written and its answer; in
+/// Local Llama's, each message as written and the answer of the model on
 /// this Mac. Development mode's mark is at the top, or the mode's own in a
-/// NEAR Privacy or Llama Normal conversation.
+/// NEAR Private AI or Local Llama conversation.
 struct ChatView: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
@@ -78,13 +78,13 @@ private struct Sidebar: View {
                         Image(systemName: "cpu")
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
-                            .accessibilityLabel("NEAR Privacy")
+                            .accessibilityLabel("NEAR Private AI")
                     }
                     if llama {
                         Image(systemName: "laptopcomputer")
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
-                            .accessibilityLabel("Llama Normal")
+                            .accessibilityLabel("Local Llama")
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -528,7 +528,7 @@ private struct TaskCard: View {
     }
 }
 
-/// One Llama Normal message: as written, then the answer of the model on
+/// One Local Llama message: as written, then the answer of the model on
 /// this Mac. While the model answers, how long it has worked, and Stop. One
 /// without an answer says why and, as the newest, can be asked again,
 /// unless the chat has grown too long for the model.
@@ -611,7 +611,7 @@ private struct StepList: View {
     }
 }
 
-/// Why a task, or a Llama Normal message, ended without an answer.
+/// Why a task, or a Local Llama message, ended without an answer.
 private struct EndRow: View {
     let title: String
     let words: String?
@@ -783,14 +783,15 @@ extension View {
 /// Review off. In the agent's conversation, the box for the next task,
 /// with Run, or Stop while a task runs there, and a note when the agent
 /// starts without the earlier tasks. While the conversation is empty, what
-/// it is to be: Anon V (Cloak's), NEAR Privacy, Llama Normal or the
-/// agent's. Above either box, its details; at the foot, the Cover, Tor and
-/// zkAPI switches. In a NEAR Privacy conversation, the box's button sends
-/// each message as written, with no details, and at the foot NEAR's Tor
-/// switch and what its hardware check last found. In a Llama Normal
-/// conversation, it asks the model on this Mac, with Stop while the model
-/// answers, no details and no switches, and Cloak need not be running;
-/// without the model, the way to its download.
+/// it is to be: Anon (Cloak's), NEAR Private AI, Local Llama or the
+/// agent's, and beside it Modes, where the first three come from. Above
+/// either box, its details; at the foot, the Cover, Tor and zkAPI switches.
+/// In a NEAR Private AI conversation, the box's button sends each message
+/// as written, with no details, and at the foot NEAR's Tor switch and what
+/// its hardware check last found. In a Local Llama conversation, it asks
+/// the model on this Mac, with Stop while the model answers, no details and
+/// no switches, and Cloak need not be running; without the model, the way
+/// to its download.
 private struct Compose: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
@@ -818,7 +819,7 @@ private struct Compose: View {
                 }
             }
             // NEAR's status line and Send say what Cloak not running stops;
-            // Llama Normal needs only the model.
+            // Local Llama needs only the model.
             if llama {
                 if chat.llamaBlock != nil {
                     ModelMissing(download: chat.download, showDetails: showDetails)
@@ -872,15 +873,18 @@ private struct Compose: View {
             }
             HStack(spacing: 16) {
                 if let conversation, conversation.turns.isEmpty, chat.rewording?.conversation != conversation.id {
-                    Picker("Mode", selection: $chat.kind) {
-                        Text("Anon V").tag(Chat.Kind.chat)
-                        Text("NEAR Privacy").tag(Chat.Kind.near)
-                        Text("Llama Normal").tag(Chat.Kind.llama)
-                        Text("Agent").tag(Chat.Kind.agent)
+                    HStack(spacing: 6) {
+                        Picker("Mode", selection: $chat.kind) {
+                            Text("Anon").tag(Chat.Kind.chat)
+                            Text("NEAR Private AI").tag(Chat.Kind.near)
+                            Text("Local Llama").tag(Chat.Kind.llama)
+                            Text("Agent").tag(Chat.Kind.agent)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                        ModesButton()
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
                 }
                 if neverReword {
                     // Constant while ticked, since no reworded text is shown.
@@ -926,7 +930,7 @@ private struct Compose: View {
 /// guest takes at Start, so while Cloak runs with the other value a few
 /// words beside the pills say when it changes. Tor is always on, and zkAPI
 /// is off, since one wallet pays for everything (the Development bar);
-/// neither changes here yet.
+/// neither changes here yet, and a press on either says so.
 private struct Switches: View {
     @Bindable var settings: AppSettings
     let supervisor: Supervisor
@@ -934,12 +938,20 @@ private struct Switches: View {
     var body: some View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
-                SwitchPill(title: "Cover", isOn: $settings.cover, help: "Background visits to ordinary public pages.")
-                SwitchPill(title: "Tor", isOn: .constant(true), help: "Always on for now.", fixed: true)
-                SwitchPill(title: "zkAPI", isOn: .constant(false), help: "Not available yet.", fixed: true)
+                SwitchPill(
+                    title: "Cover", isOn: $settings.cover,
+                    help: "Cover traffic: Cloak visits ordinary public pages in the background, so your real requests stand out less.")
+                SwitchPill(
+                    title: "Tor", isOn: .constant(true),
+                    help: "Tor: your messages reach the AI service from a Tor address, not this Mac's.",
+                    fixed: "Tor stays on in Anon chats for now.")
+                SwitchPill(
+                    title: "zkAPI", isOn: .constant(false),
+                    help: "zkAPI: a way to pay that doesn't link your chats to one wallet.",
+                    fixed: "zkAPI payment isn't in this build yet.")
             }
             if let started = supervisor.cover, started != settings.cover {
-                Text("Cover changes at the next Start.")
+                Text("Cover changes after Pause, then Start.")
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
@@ -1024,7 +1036,7 @@ private struct NearStatus: View {
     }
 }
 
-/// NEAR Privacy's mark, in place of Development mode's: what goes and who
+/// NEAR Private AI's mark, in place of Development mode's: what goes and who
 /// pays, and Limits, what NEAR's hardware check does not cover.
 private struct NearBar: View {
     let settings: AppSettings
@@ -1033,7 +1045,7 @@ private struct NearBar: View {
     var body: some View {
         HStack(spacing: 10) {
             HStack(spacing: 10) {
-                Text("NEAR Privacy")
+                Text("NEAR Private AI")
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
@@ -1056,12 +1068,12 @@ private struct NearBar: View {
     }
 }
 
-/// Llama Normal's mark, in place of Development mode's: where the answer
+/// Local Llama's mark, in place of Development mode's: where the answer
 /// comes from, and what it needs.
 private struct LlamaBar: View {
     var body: some View {
         HStack(spacing: 10) {
-            Text("Llama Normal")
+            Text("Local Llama")
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
@@ -1117,6 +1129,64 @@ private struct Limits: View {
     }
 }
 
+/// The info button beside the mode switch. Modes opens when the pointer
+/// rests on it for a moment, or on a click or from the keyboard, and closes
+/// as any popover does. Leaving the button doesn't close it, so the pointer
+/// can reach the links.
+private struct ModesButton: View {
+    @State private var showing = false
+    @State private var opening: Task<Void, any Error>?
+
+    var body: some View {
+        Button("Modes", systemImage: "info.circle") { showing = true }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("Modes")
+            .onHover { inside in
+                opening?.cancel()
+                guard inside else { return }
+                // Sleeping throws once cancelled, so a pointer that leaves
+                // first never opens it.
+                opening = Task {
+                    try await Task.sleep(for: .milliseconds(400))
+                    showing = true
+                }
+            }
+            .popover(isPresented: $showing, arrowEdge: .top) {
+                Modes()
+            }
+    }
+}
+
+/// Where Anon, NEAR Private AI and Local Llama come from, each with a link
+/// to its X post.
+private struct Modes: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Modes")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            row("Anon", "Inspired by Vitalik's [X post](https://x.com/VitalikButerin/status/2111046730959433793) about his preferred AI usage.")
+            row("NEAR Private AI", "Cloak is an alternate client to NEAR's own official one. [X post](https://x.com/NEARProtocol/status/2121041723992216043)")
+            row("Local Llama", "Cloak is an alternate client to llama.cpp's own official one. [X post](https://x.com/ggerganov/status/2121246103312212124)")
+        }
+        .font(.callout)
+        .padding(16)
+        .frame(width: 340, alignment: .leading)
+    }
+
+    private func row(_ name: String, _ about: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(name)
+                .fontWeight(.semibold)
+            Text(about)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 /// Why a NEAR message stopped, in plain words, and whether it may have
 /// reached NEAR.
 private struct NearStopRow: View {
@@ -1147,39 +1217,45 @@ private struct NearStopRow: View {
 
 /// One switch, as a small glass pill: a dot, filled while on and hollow
 /// while off, then its name; read by VoiceOver as a switch with its state.
-/// One `fixed` is shown but can't be changed here yet: not a button, its
-/// name dimmed, and its help says why.
+/// Its help says what the switch controls. One with `fixed` can't be changed
+/// here yet: its name is dimmed, and a press shows those words, why.
 private struct SwitchPill: View {
     let title: String
     @Binding var isOn: Bool
     let help: String
-    var fixed = false
+    var fixed: String?
+    @State private var explaining = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let pill = HStack(spacing: 5) {
-            Image(systemName: isOn ? "circle.fill" : "circle")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(isOn ? Color.green : Color.secondary)
-            Text(title)
-                .foregroundStyle(fixed ? HierarchicalShapeStyle.secondary : .primary)
-        }
-        .padding(.horizontal, 10)
-        .frame(minHeight: 24)
-        .contentShape(.capsule)
-        Group {
-            if fixed {
-                pill
-                    .glassEffect(.regular, in: .capsule)
-            } else {
-                Button { isOn.toggle() } label: { pill }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: .capsule)
+        Button {
+            if fixed == nil { isOn.toggle() } else { explaining = true }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: isOn ? "circle.fill" : "circle")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(isOn ? Color.green : Color.secondary)
+                    .contentTransition(.symbolEffect(.replace))
+                Text(title)
+                    .foregroundStyle(fixed == nil ? HierarchicalShapeStyle.primary : .secondary)
             }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 24)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: isOn)
+        .popover(isPresented: $explaining, arrowEdge: .top) {
+            Text(fixed ?? "")
+                .font(.callout)
+                .padding(12)
         }
         .accessibilityRepresentation {
             Toggle(title, isOn: $isOn)
                 .toggleStyle(.switch)
-                .disabled(fixed)
+                .disabled(fixed != nil)
+                .accessibilityHint(fixed ?? "")
         }
         .help(help)
     }
@@ -1230,7 +1306,7 @@ private struct Waiting: View {
     }
 }
 
-/// Why a Llama Normal chat can't ask: the model is not on this Mac yet. Its
+/// Why a Local Llama chat can't ask: the model is not on this Mac yet. Its
 /// download, in Details, is the way on.
 private struct ModelMissing: View {
     let download: ModelDownload

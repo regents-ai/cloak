@@ -4,8 +4,8 @@ import Foundation
 /// standard input and output: one kind byte, a 4-byte big-endian length, then
 /// the payload.
 ///
-/// In: `R` a request body (a rewrite or a draft's details), `L` a Llama
-/// Normal chat's conversation (`Conversation`), `C` cancel the request in
+/// In: `R` a request body (a rewrite or a draft's details), `L` a Local
+/// Llama chat's conversation (`Conversation`), `C` cancel the request in
 /// progress. Only the app sends `L`: the host's relay forwards a guest's
 /// request as `R` and nothing else, so what a guest sends is never read as a
 /// conversation, and a chat message is never read as a rewrite.
