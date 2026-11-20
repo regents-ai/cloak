@@ -109,8 +109,8 @@ public enum Reason: String, Codable, Sendable, CaseIterable {
     public var title: String {
         switch self {
         case .unsupportedHardware: "This Mac isn't supported."
-        case .partMissing: "Part of Regents Cloak is missing."
-        case .partChanged: "Part of Regents Cloak has changed."
+        case .partMissing: "Part of Cloak is missing."
+        case .partChanged: "Part of Cloak has changed."
         case .modelMissing: "The model isn't installed."
         case .modelChanged: "The model has changed."
         case .torUnavailable: "Couldn't connect to Tor."
@@ -128,8 +128,8 @@ public enum Reason: String, Codable, Sendable, CaseIterable {
         switch self {
         case .unsupportedHardware:
             "It likely lacks Apple silicon or enough memory for the model. Use a Mac with Apple silicon and more memory."
-        case .partMissing: "A file Cloak needs may have been moved or deleted. Reinstall Regents Cloak."
-        case .partChanged: "A file Cloak needs may have been edited or replaced. Reinstall Regents Cloak."
+        case .partMissing: "A file Cloak needs may have been moved or deleted. Reinstall Cloak."
+        case .partChanged: "A file Cloak needs may have been edited or replaced. Reinstall Cloak."
         case .modelMissing: "Its download may not have finished. Download the model, then start again."
         case .modelChanged:
             "A file in its folder may have been added or edited. Delete the model's folder, download it again, then start again."

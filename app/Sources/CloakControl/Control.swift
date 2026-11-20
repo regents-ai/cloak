@@ -46,8 +46,8 @@ public enum Refusal: String, Codable, Sendable, CaseIterable {
 
     public var title: String {
         switch self {
-        case .busy: "Regents Cloak is busy. Try again in a moment."
-        case .notPaused: "Regents Cloak isn't paused."
+        case .busy: "Cloak is busy. Try again in a moment."
+        case .notPaused: "Cloak isn't paused."
         }
     }
 }

@@ -44,6 +44,20 @@
   Agent pill and toolbar Cover; Settings, General; Agents; Details. Not
   yet seen: a card's symbols, the Wallet sheet, NEAR and Local Llama
   chats, the Modes note, the menu, Welcome, the Cover clock.
+- The app is named "Cloak" on the Mac (Sean, 20 November 2026: "the
+  name of the app should be 'Cloak', and the minimized app should say
+  'Cloak - [view]'"). The bundle is `Cloak.app` and its menus, launch
+  stops, status lines, `cloak` command and AppleScript dictionary say
+  "Cloak". A minimized window reads "Cloak - Chat", "Cloak - Agents",
+  "Cloak - Details" or "Cloak - Settings"; Agents, Details and Settings
+  can now be minimized. Unchanged on purpose: the bundle identifier,
+  the executable, the support folder "Regents Cloak", every keychain
+  item, the download's file name, the update feed and its key. In code
+  only: it compiles and its 14 checks pass, but no app has been built
+  from it and none of it has been seen on screen. A tester who drags
+  the new `Cloak.app` into Applications gets it beside the old
+  "Regents Cloak.app"; a copy that updates itself keeps its old file
+  name with "Cloak" in its menus. The next release notes must say so.
 - Details says what Running and Paused each mean, under Status (Sean,
   20 November 2026: "its pretty unclear what the difference is between
   the app being paused vs running", then "can it be a short phrase for

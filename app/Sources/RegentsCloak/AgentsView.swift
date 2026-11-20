@@ -12,7 +12,7 @@ struct AgentsView: View {
     static func window(_ door: Door) -> NSWindow {
         let window = ClosingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
-            styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Agents"
         window.contentViewController = NSHostingController(rootView: AgentsView(door: door))
         return window

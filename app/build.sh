@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the app, app/build/Regents Cloak.app: the menu-bar app and `cloak`
+# Builds the app, app/build/Cloak.app: the menu-bar app and `cloak`
 # (SwiftPM, release, two jobs, low priority, and one build at a time on
 # this Mac through /tmp/cloak-build.lock), Sparkle.framework, the app's
 # AppleScript dictionary (app/RegentsCloak.sdef), its icon (app/AppIcon.icns,
@@ -33,7 +33,7 @@ ls guest/build/Image guest/build/initrd.gz host/.build/tor/tor host/.build/tor/l
 lockf /tmp/cloak-build.lock nice -n 10 swift build --package-path app -c release -j 2
 bin=$(swift build --package-path app -c release --show-bin-path)
 
-app="app/build/Regents Cloak.app"
+app="app/build/Cloak.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources/guest" "$app/Contents/Resources/tor" \
 	"$app/Contents/Resources/near" "$app/Contents/Resources/worker"

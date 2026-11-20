@@ -2,12 +2,12 @@
 <!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
 <!-- Regents Cloak's AppleScript commands (app/Sources/RegentsCloak/Scripting.swift).
      None takes text or changes a setting; none sends, spends or touches the wallet. -->
-<dictionary title="Regents Cloak Terminology">
-    <suite name="Regents Cloak Suite" code="RCLK" description="Start or pause Regents Cloak, and show its windows.">
-        <command name="start" code="RCLKstrt" description="Start Regents Cloak, as the menu's Start does.">
+<dictionary title="Cloak Terminology">
+    <suite name="Cloak Suite" code="RCLK" description="Start or pause Cloak, and show its windows.">
+        <command name="start" code="RCLKstrt" description="Start Cloak, as the menu's Start does.">
             <cocoa class="CloakStartCommand"/>
         </command>
-        <command name="pause" code="RCLKpaus" description="Pause Regents Cloak, as the menu's Pause does.">
+        <command name="pause" code="RCLKpaus" description="Pause Cloak, as the menu's Pause does.">
             <cocoa class="CloakPauseCommand"/>
         </command>
         <command name="show chat" code="RCLKshch" description="Show the Chat window.">

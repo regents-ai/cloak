@@ -36,7 +36,7 @@ struct SettingsView: View {
         selection: Selection
     ) -> NSWindow {
         let window = ClosingWindow(
-            contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+            contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Settings"
         let content = NSHostingController(
             rootView: SettingsView(

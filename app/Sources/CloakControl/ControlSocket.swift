@@ -178,8 +178,8 @@ public enum ControlError: Error, Equatable, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .notRunning: "Regents Cloak isn't open."
-        case .refused: "Regents Cloak refused the request."
+        case .notRunning: "Cloak isn't open."
+        case .refused: "Cloak refused the request."
         case .failed(let detail): detail
         }
     }

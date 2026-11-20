@@ -18,7 +18,7 @@ struct DetailsView: View {
     static func window(_ supervisor: Supervisor, _ download: ModelDownload) -> NSWindow {
         let window = ClosingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
-            styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Details"
         window.contentViewController = NSHostingController(
             rootView: DetailsView(supervisor: supervisor, download: download, memory: MemoryWatch(supervisor, window: window)))

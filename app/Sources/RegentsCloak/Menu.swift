@@ -213,7 +213,7 @@ struct MenuHeader: Equatable {
     }
 }
 
-/// The header's view: "Regents Cloak" at 13 points semibold with the
+/// The header's view: "Cloak" at 13 points semibold with the
 /// state's 6-point dot, over one line at 11 points, as the Mac's own
 /// Battery and Wi-Fi menus have it, or over a failure, its fix beside it,
 /// and its remedy. Its words start where the menu's items start theirs.
@@ -234,7 +234,7 @@ final class MenuHeaderView: NSView {
     private var fix: MenuHeader.Fix?
 
     init() {
-        let title = NSTextField(labelWithString: "Regents Cloak")
+        let title = NSTextField(labelWithString: "Cloak")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         let name = NSStackView(views: [title, dot])
         // The dot sits on the title's baseline, its middle near half the
@@ -426,7 +426,7 @@ enum MenuBarIcon {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "Regents Cloak, \(phase.state.title)"
+        image.accessibilityDescription = "Cloak, \(phase.state.title)"
         return image
     }
 }

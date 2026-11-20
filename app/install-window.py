@@ -23,7 +23,7 @@ from mac_alias import Alias, Bookmark
 # In points, as app/art.swift draws the picture: 640 by 400, the icons'
 # centres 180 down.
 WIDTH, HEIGHT, TITLE_BAR = 640, 400, 28
-PLACES = {"Regents Cloak.app": (170, 180), "Applications": (470, 180)}
+PLACES = {"Cloak.app": (170, 180), "Applications": (470, 180)}
 
 volume = Path(sys.argv[1])
 picture = volume / ".background" / "install-window.tiff"

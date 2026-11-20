@@ -28,7 +28,7 @@ if git status --porcelain | grep -qvx '?? app/.DS_Store'; then
 fi
 
 app/build.sh
-app="app/build/Regents Cloak.app"
+app="app/build/Cloak.app"
 release=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")
 build=$(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist")
 tag="$release-$build"
@@ -57,18 +57,18 @@ notarize() {
 	fi
 }
 
-ditto -c -k --keepParent "$app" "$work/Regents Cloak.zip"
-notarize "$work/Regents Cloak.zip"
+ditto -c -k --keepParent "$app" "$work/Cloak.zip"
+notarize "$work/Cloak.zip"
 xcrun stapler staple "$app"
 xcrun stapler validate "$app"
 
 # A writable image first, mounted where Finder does not show it: the
 # window's layout names its picture by an alias that is only right when
 # made on the volume itself. Then the compressed, read-only image from it.
-diskutil image create blank --size "$(($(du -sm "$app" | cut -f1) + 60))m" --volumeName "Regents Cloak" --fs APFS "$work/image.dmg"
+diskutil image create blank --size "$(($(du -sm "$app" | cut -f1) + 60))m" --volumeName Cloak --fs APFS "$work/image.dmg"
 diskutil image attach --nobrowse --mountPoint "$work/volume" "$work/image.dmg"
 trap 'diskutil eject "$work/volume"' EXIT
-ditto "$app" "$work/volume/Regents Cloak.app"
+ditto "$app" "$work/volume/Cloak.app"
 ln -s /Applications "$work/volume/Applications"
 mkdir "$work/volume/.background"
 cp app/install-window.tiff "$work/volume/.background/"

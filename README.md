@@ -278,7 +278,7 @@ says what the two states mean: "Running: Tor is connected. V chats can
 send." and "Paused: Tor is off. V chats wait."
 
 With the guest, the host's tor and the worker built (stage 2 commands),
-build `app/build/Regents Cloak.app`, with Sparkle.framework inside, signed
+build `app/build/Cloak.app`, with Sparkle.framework inside, signed
 inside out with the Developer ID that `app/release.json` names, under the
 hardened runtime (every build on this Mac is signed as a release is, since
 20 November), the app with the virtualization entitlement, with
@@ -310,11 +310,12 @@ menu's top shows the state, as a coloured dot and in words, Starting or
 Stopping while it changes; when Cloak needs attention, it says what went
 wrong and what to do, with a button for the fix, or the way to it, when
 the app has one. Each menu item has its symbol before its words. The
-release and build are at the menu's foot. `cloak` is inside the app; `cloak start`
+release and build are at the menu's foot. A window minimized to the Dock
+is labelled Cloak and its name, as in Cloak - Chat. `cloak` is inside the app; `cloak start`
 opens the app if it isn't open:
 
 ```bash
-cloak="app/build/Regents Cloak.app/Contents/MacOS/cloak"
+cloak="app/build/Cloak.app/Contents/MacOS/cloak"
 "$cloak" start
 "$cloak" status --json
 "$cloak" pause
@@ -386,7 +387,7 @@ else: no command takes text, changes a setting, sends, spends or touches
 the wallet.
 
 ```bash
-osascript -e 'tell application "Regents Cloak" to show chat'
+osascript -e 'tell application "Cloak" to show chat'
 ```
 
 The commands are `start`, `pause`, `show chat`, `show agents`, `show

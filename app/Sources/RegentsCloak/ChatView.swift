@@ -1578,7 +1578,7 @@ extension NearStop {
             default: "NEAR answered with error \(code ?? 0)."
             }
         case .reply: "NEAR's answer didn't open, so it isn't shown."
-        case .helper: "Reinstall Regents Cloak."
+        case .helper: "Reinstall Cloak."
         case .ended: "The part of Cloak that talks to NEAR quit."
         case .key: "The keychain didn't give Cloak your NEAR key."
         }

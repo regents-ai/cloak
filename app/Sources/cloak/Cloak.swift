@@ -9,7 +9,7 @@ import Foundation
 struct Cloak: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cloak",
-        abstract: "Control Regents Cloak.",
+        abstract: "Control Cloak.",
         subcommands: [StatusCommand.self, Start.self, Pause.self, Resume.self, Stop.self, Verify.self, Doctor.self])
 }
 
@@ -25,7 +25,7 @@ struct StatusCommand: ParsableCommand {
 }
 
 struct Start: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Start, opening Regents Cloak if it isn't open, and wait until it runs.")
+    static let configuration = CommandConfiguration(abstract: "Start, opening Cloak if it isn't open, and wait until it runs.")
     @OptionGroup var output: Output
     func run() throws { try perform(.start, output) }
 }
@@ -162,7 +162,7 @@ enum AppLauncher {
         }
         opener.waitUntilExit()
         guard published.wait(timeout: .now() + .seconds(limit)) == .success else {
-            throw .failed("Regents Cloak did not open within \(limit) seconds")
+            throw .failed("Cloak did not open within \(limit) seconds")
         }
     }
 

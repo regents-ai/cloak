@@ -2610,6 +2610,64 @@ candidates, so the split has to be re-declared before any holdout opens.
   - Not proven: the running app; VoiceOver (the headings, lists, code,
     quotes and tables are marked for it); the scroll wheel over a code
     block passing up and down to the chat.
+- The app is named "Cloak" on the Mac (Sean, 20 November 2026). In code
+  and committed; not yet built into an app or seen. See CHANGELOG.md.
+  - Not proven: that the Dock shows the minimized label; that the app
+    menu reads About, Hide and Quit Cloak; `tell application "Cloak"`;
+    telling the Settings window from the others at run time;
+    `app/release.sh` under its new names. The renamed app may raise the
+    Mac's keychain question once; only Sean can answer it.
+  - To do first: rebuild Sean's copy as `app/build/Cloak.app` when the
+    Mac rests and Cloak is idle, restore Running, check the two labels.
+- Local Llama's model list (decision 21): the design, not built.
+  - The chosen answer model runs in a second process of the same worker
+    binary, through the relay Local Llama already uses while paused. No
+    change to frames, the host package, the guest or entitlements.
+  - `reference/models.json`: an entry that can answer gains `"answers":
+    {"label", "memory_gib", "context_tokens"}`; today's model gets one;
+    a new model is a `-base` entry plus a GGUF entry with `only`,
+    `vendor_files`, `chat_template_context`, `answers` and no `grammar`.
+    `scripts/pin_models.py` keeps `"answers"`.
+  - `ModelPin`: `grammar` optional, `answers` added, a pin needs
+    `chat_template_context` and one of the two. The worker checks the
+    grammar only when the pin has one, takes its context from the pin
+    (`Worker.chatContext` goes), and refuses a pin without `answers`.
+  - `app/release.json` and `app/manifest.py`: `model_label` and
+    `model_memory_gib` go; the manifest carries `model` and
+    `answer_models` (every entry with `answers`, smallest first); the
+    build fails if `model` is not among them.
+  - App: `Manifest.answerCheck(_:hardware:)` (the rewording model:
+    today's check; any other: both models' memory counted). "Best for
+    this Mac" is the last in the list that fits. One `ModelDownload` per
+    answer model, with `remove()`. `Supervisor.answer(_:with:)` uses the
+    run's relay only when Running and the model is the rewording one,
+    else its own local relay for that model. `AppSettings.answerModel`
+    (nil means the rewording model). A new Settings pane, "Local Llama":
+    one row per model with its size, a "Best for this Mac" caption, rows
+    that don't fit dimmed with a tooltip, download and remove symbols.
+  - No fallback: a chosen model that is missing or changed stops the
+    chat ("Choose a model in Settings." / "This Mac can't run the chosen
+    model." / "Download the model to ask.").
+  - Still mine to settle: both models in memory, or unload the rewording
+    one (with both, 24 GB leaves about 10 GiB for an answer model, 32
+    leaves 18, 64 leaves 50); measuring the large model's memory on a
+    48 GB Mac with about 41 GB of disk free; the wait to load 20 to 40
+    GB after each rest; single-file GGUF only; thinking text in answers;
+    one download at a time; whether picking a model blocks the chat
+    until it arrives; recording which model answered a turn; Restore
+    Defaults.
+  - Words to change with it: AGENTS.md's one-model rule, README.md's
+    model passages, decision A25, `docs/state-machines.md` 9a and 9c.
+  - The list itself is not chosen. The research was stopped part-way on
+    20 November; its scratch is under `/tmp/cloak-build/models-research/`
+    and may not survive a restart. Inkling 2 Mini is unchecked against
+    the pinned llama.cpp.
+- Where this stopped, 20 November 2026 (Sean: "please reach a stopping
+  point"): Sean's running copy is 0.5.4 built that afternoon, with the
+  symbols, V, the Agent switch and the toolbar Cover, still named
+  "Regents Cloak". Next, in order: the rebuild above; pictures of the
+  views not yet seen and a VoiceOver pass; the model list; then a
+  release to testers whose notes name the `Cloak.app` change.
 
 ## Decisions
 

@@ -110,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } catch {
             logger.error("cannot serve the control channel: \(String(describing: error), privacy: .public)")
-            Launch.stop("Regents Cloak can't open.", "Quit Regents Cloak, then open it again.")
+            Launch.stop("Cloak can't open.", "Quit Cloak, then open it again.")
         }
         // The door is open only while Cloak is Running.
         Task { [supervisor, door] in
@@ -125,6 +125,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { [supervisor] _ in
             MainActor.assumeIsolated { _ = supervisor.send(.sleep) }
+        }
+        // A minimized window reads "Cloak - Chat" and so on in the Dock;
+        // Settings reads "Cloak - Settings" whatever pane it shows. Set as it
+        // minimizes, since every change of title resets it.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willMiniaturizeNotification, object: nil, queue: .main
+        ) { notification in
+            guard let window = notification.object as? ClosingWindow else { return }
+            MainActor.assumeIsolated {
+                let name = window.contentViewController is NSHostingController<SettingsView> ? "Settings" : window.title
+                window.miniwindowTitle = "Cloak - \(name)"
+            }
         }
         // Once, on the first launch; it starts nothing.
         if !UserDefaults.standard.bool(forKey: WelcomeView.key) {
@@ -184,7 +196,7 @@ enum Launch {
             return try Manifest.bundled()
         } catch {
             Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot open: \(String(describing: error), privacy: .public)")
-            stop("Regents Cloak is damaged.", "Reinstall Regents Cloak.")
+            stop("Cloak is damaged.", "Reinstall Cloak.")
         }
     }()
 
@@ -197,7 +209,7 @@ enum Launch {
             }
         } catch {
             Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot clear the boot files: \(String(describing: error), privacy: .public)")
-            stop("Regents Cloak can't open.", "Quit Regents Cloak, then open it again.")
+            stop("Cloak can't open.", "Quit Cloak, then open it again.")
         }
     }()
 
