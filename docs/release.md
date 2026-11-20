@@ -377,7 +377,10 @@ Releases so far:
 - Seen on Sean's Mac only: macOS asked once whether to open the worker,
   as "(null)", because its sandbox folder there was made by ad hoc
   builds and the worker is now signed by a team. A Mac that only ever
-  had released builds has no such folder and is not asked.
+  had released builds has no such folder and is not asked. Since
+  20 November every build on Sean's Mac is signed with the same
+  Developer ID (decision 16 in [plan.md](plan.md)), so it is not asked
+  there again.
 
 **8. Memory and speed, measured.** One table: the model and its
 quantization; peak memory with the guest, tor, Pi, payment and the model

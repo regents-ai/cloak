@@ -1,6 +1,6 @@
 #!/bin/sh
 # Makes a release of Regents Cloak on this Mac; the chief alone runs it.
-# Builds the app signed with the Developer ID (app/build.sh), has Apple
+# Builds the app (app/build.sh, signed with the Developer ID), has Apple
 # notarize it and staples the ticket to it, packs it in a disk image that
 # is signed, notarized and stapled the same way, and checks that
 # Gatekeeper accepts both. Then writes the update feed with Sparkle's
@@ -16,7 +16,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-identity="Developer ID Application: Sean Brennan (367G3Z7G3J)"
+identity=$(plutil -extract identity raw app/release.json)
 downloads=https://github.com/regents-ai/cloak-releases/releases/download
 
 if git status --porcelain | grep -qvx '?? app/.DS_Store'; then
@@ -25,7 +25,7 @@ if git status --porcelain | grep -qvx '?? app/.DS_Store'; then
 	exit 1
 fi
 
-app/build.sh "$identity"
+app/build.sh
 app="app/build/Regents Cloak.app"
 release=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")
 build=$(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist")

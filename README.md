@@ -268,7 +268,9 @@ figure.
 
 With the guest, the host's tor and the worker built (stage 2 commands),
 build `app/build/Regents Cloak.app`, with Sparkle.framework inside, signed
-ad hoc and inside out, the app with the virtualization entitlement, with
+inside out with the Developer ID that `app/release.json` names, under the
+hardened runtime (every build on this Mac is signed as a release is, since
+20 November), the app with the virtualization entitlement, with
 NEAR mode's helper `cloak-near`, which it builds from `guest/near` with
 cargo (rustup takes the Rust version that `guest/near/rust-toolchain.toml`
 names), with the worker as `llama-worker/install.sh` built and signed it,

@@ -10,24 +10,18 @@
 # built and signed it, and the manifest that pins them all. The update feed
 # and its public key go from app/release.json into Info.plist.
 #
-# Signed inside out, the app with the virtualization entitlement. With no
-# argument, ad hoc, for development. With one, the name of a signing
-# identity in the keychain (app/release.sh passes the Developer ID): every
-# part is signed with it under the hardened runtime and with a secure
-# timestamp, as notarization requires, tor, libevent and the worker
-# included, the worker into its sandbox. Needs rustup, and guest/build.sh,
+# Signed inside out, the app with the virtualization entitlement, every
+# part with the Developer ID that app/release.json names (in the login
+# keychain), under the hardened runtime and with a secure timestamp, as
+# notarization requires: every build on this Mac is signed as a release is
+# (decision 8a, 20 November 2026). Needs rustup, and guest/build.sh,
 # host/build.sh and llama-worker/install.sh to have run first.
 set -eu
 cd "$(dirname "$0")/.."
 
-identity=${1:--}
-flags=
-if [ "$identity" != - ]; then
-	flags="-o runtime --timestamp"
-fi
+identity=$(plutil -extract identity raw app/release.json)
 sign() {
-	# shellcheck disable=SC2086 # $flags is two options or none.
-	codesign -s "$identity" -f $flags "$@"
+	codesign -s "$identity" -f -o runtime --timestamp "$@"
 }
 
 worker=llama-worker/.xcode/Build/Products/Release/cloak-rewriter-llama
@@ -54,16 +48,11 @@ cp guest/near/target/release/cloak-near "$app/Contents/Resources/near/"
 # its Application Support folder at each Start and runs it from there: the
 # sandbox cannot start a program kept under ~/Documents or ~/Downloads.
 ditto "$worker" "$app/Contents/Resources/worker/cloak-rewriter-llama"
-# Signed before the manifest pins them: signing rewrites the file.
+# Signed before the manifest pins them: signing rewrites the file. The
+# worker is already signed so, into its sandbox, by llama-worker/install.sh.
 sign "$app/Contents/Resources/near/cloak-near"
-if [ "$identity" != - ]; then
-	# host/build.sh and llama-worker/install.sh signed these ad hoc. The
-	# worker's entitlements put it in its sandbox; without them it would
-	# run unconfined.
-	sign "$app/Contents/Resources/tor/libevent-2.1.7.dylib"
-	sign "$app/Contents/Resources/tor/tor"
-	sign --entitlements llama-worker/cloak-rewriter.entitlements "$app/Contents/Resources/worker/cloak-rewriter-llama"
-fi
+sign "$app/Contents/Resources/tor/libevent-2.1.7.dylib"
+sign "$app/Contents/Resources/tor/tor"
 
 build=$(git describe --always --dirty)
 # The bundle's version is the commit count, a number that grows, which is
@@ -77,26 +66,23 @@ PYTHONDONTWRITEBYTECODE=1 uv run app/manifest.py "$app/Contents/Resources" "$bui
 
 # Inside out, as Sparkle's documentation orders it for an app signed
 # outside Xcode: its helpers, the framework, `cloak`, then the app.
-# Sparkle's parts are under the hardened runtime in either build.
 sparkle="$app/Contents/Frameworks/Sparkle.framework"
-sign -o runtime "$sparkle/Versions/B/XPCServices/Installer.xpc"
-sign -o runtime --preserve-metadata=entitlements "$sparkle/Versions/B/XPCServices/Downloader.xpc"
-sign -o runtime "$sparkle/Versions/B/Autoupdate"
-sign -o runtime "$sparkle/Versions/B/Updater.app"
-sign -o runtime "$sparkle"
+sign "$sparkle/Versions/B/XPCServices/Installer.xpc"
+sign --preserve-metadata=entitlements "$sparkle/Versions/B/XPCServices/Downloader.xpc"
+sign "$sparkle/Versions/B/Autoupdate"
+sign "$sparkle/Versions/B/Updater.app"
+sign "$sparkle"
 sign "$app/Contents/MacOS/cloak"
 sign --entitlements app/RegentsCloak.entitlements "$app"
 codesign --verify --deep --strict "$app"
-if [ "$identity" != - ]; then
-	# Apple's notary refuses a bundle with any program in it that lacks the
-	# hardened runtime or a secure timestamp; find one here instead.
-	find "$app" -type f -perm +111 | while IFS= read -r part; do
-		details=$(codesign -dvv "$part" 2>&1)
-		if ! printf '%s\n' "$details" | grep -q '^CodeDirectory .*flags=0x[0-9a-f]*([^)]*runtime' ||
-			! printf '%s\n' "$details" | grep -q '^Timestamp='; then
-			echo "$part: not signed with the hardened runtime and a secure timestamp." >&2
-			exit 1
-		fi
-	done
-fi
+# Apple's notary refuses a bundle with any program in it that lacks the
+# hardened runtime or a secure timestamp; find one here instead.
+find "$app" -type f -perm +111 | while IFS= read -r part; do
+	details=$(codesign -dvv "$part" 2>&1)
+	if ! printf '%s\n' "$details" | grep -q '^CodeDirectory .*flags=0x[0-9a-f]*([^)]*runtime' ||
+		! printf '%s\n' "$details" | grep -q '^Timestamp='; then
+		echo "$part: not signed with the hardened runtime and a secure timestamp." >&2
+		exit 1
+	fi
+done
 echo "$app"

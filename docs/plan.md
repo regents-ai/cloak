@@ -3063,13 +3063,26 @@ candidates, so the split has to be re-declared before any holdout opens.
       own logic, `scripts/fetch_model.py`'s resume, and a lost worker that
       ignores being stopped. The stage 3 measurement kit
       (`scripts/stage3.py`) is unchanged.
+16. Every build on this Mac is signed with the Developer ID. Decided
+    20 November 2026 (Sean, "8. a"). macOS keeps the worker's sandbox
+    folder for the one team that signs it: after the first Developer ID
+    build ran here (19 November), an ad hoc worker would have had macOS
+    ask Sean again, as "(null)", whether to open it. So
+    `llama-worker/install.sh` and `app/build.sh` sign with the identity
+    that `app/release.json` names, under the hardened runtime and with a
+    secure timestamp, and take no other; the ad hoc branch is deleted.
+    Only `app/release.sh` sends a build to Apple, and only
+    `app/publish.sh` puts one where others can get it. A build needs the
+    network, for Apple's timestamp, and the key in the login keychain.
+    Tried the same day: the worker and the app rebuilt and signed so, and
+    `cloak verify` passed with no question from macOS.
 
 ## Gates
 
 | ID | Test | State | Evidence |
 | --- | --- | --- | --- |
 | A01 | Reference integrity | Open: sources, wrapper (reconstructed), contract and model files pinned; reference inference settings and payment deployment unknown | [baseline](../reference/baseline.md), [contract](../reference/rewriter-contract.md), [models](../reference/models.md) |
-| A02 | Clean Mac installation | Open: only a development build exists (`app/build.sh`, signed ad hoc), which needs the guest, tor and worker built and installed by hand first; no setup, and no run on a clean Mac | `app/build.sh` |
+| A02 | Clean Mac installation | Open: a signed, notarized build exists (0.5.0, 19 November) and has run only on the Mac that built it; no run on a clean Mac | `app/build.sh` |
 | A03 | GUI and CLI equivalence | Open: the menu-bar app and `cloak` drive one supervisor, with the same manifest, states and reason codes (development build, stand-in only); no sessions or payment exist yet to be shared; the checks of the shared states and of the control socket were deleted on 19 November (decision 15) | `app/` |
 | A04 | Fidelity | Open: scoring kit built and proven on development data only; no holdout | `scripts/stage4.py`, `scripts/fidelity.py` |
 | A05 | Whole-agent containment | Open | |

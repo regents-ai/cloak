@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Every build on this Mac is signed with the Developer ID (decision 16,
+  Sean's "8. a" of 20 November 2026): `llama-worker/install.sh` signs
+  the worker so, into its sandbox, and `app/build.sh` signs every other
+  part so, both under the hardened runtime and with a secure timestamp,
+  with the identity `app/release.json` now names. `app/build.sh` takes
+  no argument, its ad hoc branch is deleted, and it checks every build
+  for the hardened runtime and a timestamp. macOS keeps the worker's
+  sandbox folder for the team that signs it, so an ad hoc worker here
+  would have had macOS ask again whether to open "(null)".
+
 - The first release, 0.5.0 (164), made with `app/release.sh` and
   published with `app/publish.sh` on 19 November 2026 from commit
   `e19db9e`: Apple accepted the app and the disk image, Gatekeeper
