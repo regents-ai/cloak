@@ -5,7 +5,7 @@ import Foundation
 //            --worker <cloak-rewriter-llama> --name <model> --dir <model directory>
 //            --tor <tor> --tor-data <tor's folder>
 //            [--disk <image> --disk-key <key file> [--new-disk]]
-//            [--serve [--door <socket file>] [--runner <socket file>]]
+//            [--serve [--door <socket file>] [--runner <socket file>] [--pay <socket file>]]
 //
 // Starts the native worker and tor, waits for tor to open its SOCKS port and
 // bootstrap (at most 90 seconds from its start; this process fails if the
@@ -38,11 +38,19 @@ import Foundation
 // {"error": <line>} or, last, {"exited": {"status", "signalled"}}, or else
 // one last {"failed": <why>}. The client's end of the connection ends the
 // task.
+//
+// With --pay, which needs --disk, this process listens on the socket file
+// given for exchanges with the guest's payer (docs/zkapi-mac-side.md,
+// section 1), one per connection: the client writes one line,
+// {"frame": "R", "C" or "V", "payload": <the frame's JSON>}, and reads one
+// line per frame back: each H frame's payload as sent, then, last,
+// {"answer": <the A frame's payload>}, or else one last {"failed": <why>}.
+// The client's end of the connection cancels the exchange.
 
-let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter-llama> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder> [--disk <image> --disk-key <key file> [--new-disk]] [--serve [--door <socket file>] [--runner <socket file>]]"
+let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter-llama> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder> [--disk <image> --disk-key <key file> [--new-disk]] [--serve [--door <socket file>] [--runner <socket file>] [--pay <socket file>]]"
 let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir", "--tor", "--tor-data"]
 let diskFlags = ["--disk", "--disk-key"]
-let servingFlags = ["--door", "--runner"]
+let servingFlags = ["--door", "--runner", "--pay"]
 let (arguments, serving, newDisk) = {
     var parsed = [String: String]()
     var serve = false, newDisk = false
@@ -61,7 +69,7 @@ let (arguments, serving, newDisk) = {
     }
     let disk = diskFlags.allSatisfy { parsed[$0] != nil }
     guard flags.allSatisfy({ parsed[$0] != nil }), serve || servingFlags.allSatisfy({ parsed[$0] == nil }),
-          disk || (diskFlags.allSatisfy({ parsed[$0] == nil }) && !newDisk) else { fail(usage) }
+          disk || (diskFlags.allSatisfy({ parsed[$0] == nil }) && !newDisk && parsed["--pay"] == nil) else { fail(usage) }
     return (parsed, serve, newDisk)
 }()
 func path(_ flag: String) -> URL { URL(filePath: arguments[flag]!) }
@@ -119,6 +127,9 @@ do {
                       door: arguments["--door"].map { door in { guest in carry(guest, to: door) } })
     if let tasks = arguments["--runner"] {
         try serveTasks(at: tasks, on: guest)
+    }
+    if let payments = arguments["--pay"] {
+        try serve(at: payments, on: guest, with: exchange)
     }
 } catch {
     await tor.stop()
@@ -232,19 +243,25 @@ func line(_ object: [String: Any]) -> Data {
 /// Listens on the socket file at `path` for tasks for the guest's runner,
 /// each served on a thread of its own.
 func serveTasks(at path: String, on guest: Guest) throws {
+    try serve(at: path, on: guest, with: runTask)
+}
+
+/// Listens on the socket file at `path`, and serves each client with
+/// `client` on a thread of its own.
+func serve(at path: String, on guest: Guest, with client: @escaping @Sendable (Int32, Guest) -> Void) throws {
     let server = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
     guard server >= 0, try withSocketAddress(path, { Darwin.bind(server, $0, $1) }) == 0, Darwin.listen(server, 16) == 0 else {
         throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
     Thread {
         while true {
-            let client = Darwin.accept(server, nil, nil)
-            if client < 0 {
+            let accepted = Darwin.accept(server, nil, nil)
+            if accepted < 0 {
                 if errno == EINTR { continue }
-                log("cannot take a task: \(String(cString: strerror(errno)))")
+                log("cannot take a client at \(path): \(String(cString: strerror(errno)))")
                 return
             }
-            Thread { runTask(client, on: guest) }.start()
+            Thread { client(accepted, guest) }.start()
         }
     }.start()
 }
@@ -280,6 +297,53 @@ func runTask(_ client: Int32, on guest: Guest) {
         }
     }
     // Nothing more comes from the client: its end ends the task.
+    let watched = DispatchSemaphore(value: 0)
+    Thread {
+        var byte: UInt8 = 0
+        while Darwin.read(client, &byte, 1) > 0 {}
+        work.cancel()
+        watched.signal()
+    }.start()
+    done.wait()
+    Darwin.shutdown(client, SHUT_RDWR)
+    watched.wait()
+    Darwin.close(client)
+}
+
+/// One exchange with the guest's payer: its line, then a line for each
+/// frame back, until the answer or the client's end of the connection,
+/// which cancels it. Takes the client's socket.
+func exchange(_ client: Int32, on guest: Guest) {
+    var request = Data()
+    var byte: UInt8 = 0
+    while Darwin.read(client, &byte, 1) == 1, byte != UInt8(ascii: "\n") {
+        request.append(byte)
+    }
+    guard let object = (try? JSONSerialization.jsonObject(with: request)) as? [String: Any],
+        let letter = object["frame"] as? String, letter.utf8.count == 1, let ask = Pay.Ask(rawValue: letter.utf8.first!),
+        let fields = object["payload"], JSONSerialization.isValidJSONObject(fields),
+        let payload = try? JSONSerialization.data(withJSONObject: fields)
+    else {
+        _ = send(line(["failed": "the request did not read"]), to: client)
+        Darwin.close(client)
+        return
+    }
+    let done = DispatchSemaphore(value: 0)
+    let work = Task {
+        defer { done.signal() }
+        do {
+            let socket = try await guest.connect(to: Pay.port)
+            for try await event in Pay.exchange(socket, ask, payload) {
+                switch event {
+                case .held(let data): _ = send(data + Data("\n".utf8), to: client)
+                case .answer(let data): _ = send(Data(#"{"answer":"#.utf8) + data + Data("}\n".utf8), to: client)
+                }
+            }
+        } catch {
+            _ = send(line(["failed": "\(error)"]), to: client)
+        }
+    }
+    // Nothing more comes from the client: its end cancels the exchange.
     let watched = DispatchSemaphore(value: 0)
     Thread {
         var byte: UInt8 = 0

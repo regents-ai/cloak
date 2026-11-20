@@ -89,28 +89,6 @@ public enum Runner {
         return events
     }
 
-    /// The task's socket: shut only while it is open, and closed once, under
-    /// one lock, so that a shut never reaches a socket number reused since.
-    private final class Connection: Sendable {
-        private let socket: Int32
-        private let open = Mutex(true)
-
-        init(_ socket: Int32) {
-            self.socket = socket
-        }
-
-        func shut() {
-            open.withLock { if $0 { shutdown(socket, SHUT_RDWR) } }
-        }
-
-        func close() {
-            open.withLock {
-                $0 = false
-                Darwin.close(socket)
-            }
-        }
-    }
-
     /// Sends the request, then hands on each event until the exit, which is
     /// handed on and returns nil; returns the stop otherwise. A socket the
     /// runner has closed already takes no option, so a write to it would
@@ -150,5 +128,28 @@ public enum Runner {
         let length = head.dropFirst().reduce(0) { $0 << 8 | Int($1) }
         guard length <= maxFrame, let payload = length == 0 ? Data() : Relay.read(socket, length) else { return nil }
         return (head[head.startIndex], payload)
+    }
+}
+
+/// A guest connection's socket, the runner's or the payer's: shut only while
+/// it is open, and closed once, under one lock, so that a shut never reaches
+/// a socket number reused since.
+final class Connection: Sendable {
+    private let socket: Int32
+    private let open = Mutex(true)
+
+    init(_ socket: Int32) {
+        self.socket = socket
+    }
+
+    func shut() {
+        open.withLock { if $0 { shutdown(socket, SHUT_RDWR) } }
+    }
+
+    func close() {
+        open.withLock {
+            $0 = false
+            Darwin.close(socket)
+        }
     }
 }
