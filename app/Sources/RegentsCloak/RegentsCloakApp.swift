@@ -52,12 +52,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
         door: door, nearMode: nearMode, download: download)
     private lazy var chat = AppWindow { [unowned self] in
-        ChatView.window(conversations, showDetails: { self.showDetails() })
+        ChatView.window(conversations, showDetails: { self.showDetails() }, showNearSettings: { self.showSettings(on: .near) })
     }
     private lazy var details = AppWindow { [supervisor, download] in DetailsView.window(supervisor, download) }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
-    private lazy var settings = AppWindow { [supervisor, prompt, door, updates, nearMode] in
-        SettingsView.window(.standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode)
+    private let settingsSelection = SettingsView.Selection()
+    private lazy var settings = AppWindow { [supervisor, prompt, door, updates, nearMode, settingsSelection] in
+        SettingsView.window(
+            .standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode,
+            selection: settingsSelection)
     }
     private lazy var welcome = AppWindow { WelcomeView.window() }
     private lazy var prompt = QuickPrompt(settings: .standard) { [unowned self] text in
@@ -140,6 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showSettings() {
+        settings.show()
+    }
+
+    /// Settings, on `pane`.
+    func showSettings(on pane: SettingsView.Pane) {
+        settingsSelection.pane = pane
         settings.show()
     }
 

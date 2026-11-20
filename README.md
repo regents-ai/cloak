@@ -459,6 +459,13 @@ in Chat's toolbar, makes the wallet
 when Create is pressed: its key is made in the guest and kept only in the
 login keychain, this Mac only; the address to fund takes USDC.e on Tempo,
 and the QR button beside Copy shows it as a code for a phone's wallet.
+Its balance and deposit are read through the guest, so until Cloak has run
+since it opened they say "Start Cloak to see". The model picker shows each
+model's price per million tokens as "in | out". In a NEAR Private AI
+conversation, Wallet shows instead that your NEAR key pays, with
+cloud.near.ai to sign up and add credit, whether a key is saved and Open
+Settings, which opens Settings on NEAR; in a Local Llama conversation,
+that there is nothing to pay. Neither uses the wallet.
 A small deposit, at the size the provider suggests (1 USDC.e), pays for chats and is topped up by
 that much when it cannot pay for the next one; Close ends it with the
 provider, which

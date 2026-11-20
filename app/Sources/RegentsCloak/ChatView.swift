@@ -16,15 +16,17 @@ import SwiftUI
 struct ChatView: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
+    let showNearSettings: () -> Void
 
-    static func window(_ chat: Chat, showDetails: @escaping () -> Void) -> NSWindow {
+    static func window(_ chat: Chat, showDetails: @escaping () -> Void, showNearSettings: @escaping () -> Void) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "Chat"
         // Escape cancels a rewording here.
         window.closesOnEscape = false
-        let content = NSHostingController(rootView: ChatView(chat: chat, showDetails: showDetails))
+        let content = NSHostingController(
+            rootView: ChatView(chat: chat, showDetails: showDetails, showNearSettings: showNearSettings))
         content.sceneBridgingOptions = [.toolbars]
         content.sizingOptions = [.minSize]
         window.contentViewController = content
@@ -37,7 +39,7 @@ struct ChatView: View {
             Sidebar(chat: chat)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
-            Detail(chat: chat, showDetails: showDetails)
+            Detail(chat: chat, showDetails: showDetails, showNearSettings: showNearSettings)
         }
         .frame(minWidth: 760, minHeight: 460)
         .task { await chat.open() }
@@ -133,7 +135,18 @@ private struct Sidebar: View {
 private struct Detail: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
+    let showNearSettings: () -> Void
     @State private var showingWallet = false
+
+    /// The conversation in front's kind; an Anon chat's while none is, as
+    /// the mark at the top shows.
+    private var kind: Chat.Kind {
+        guard let conversation = chat.selected else { return .chat }
+        if chat.isNear(conversation) { return .near }
+        if chat.isLlama(conversation) { return .llama }
+        if chat.isAgent(conversation) { return .agent }
+        return .chat
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -154,7 +167,9 @@ private struct Detail: View {
                     .disabled(!chat.isOpen)
             }
         }
-        .sheet(isPresented: $showingWallet) { WalletView(wallet: chat.wallet) }
+        .sheet(isPresented: $showingWallet) {
+            WalletView(wallet: chat.wallet, nearMode: chat.nearMode, kind: kind, showNearSettings: showNearSettings)
+        }
         .task(id: chat.supervisor.phase == .running) { await chat.wallet.refresh() }
     }
 

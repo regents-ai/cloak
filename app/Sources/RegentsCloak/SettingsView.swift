@@ -16,28 +16,39 @@ import SwiftUI
 /// quick prompt's), Door (its port on 127.0.0.1) and Advanced (how Cloak
 /// started its parts, this session's log, and Restore Defaults).
 struct SettingsView: View {
+    /// The pane shown, kept with the window, so the app can show it on one.
+    @MainActor
+    @Observable
+    final class Selection {
+        var pane: Pane? = .general
+    }
+
     let settings: AppSettings
     let prompt: QuickPrompt
     let supervisor: Supervisor
     let door: Door
     let updates: Updates
     let near: NearMode
+    @Bindable var selection: Selection
 
     static func window(
-        _ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door, updates: Updates, near: NearMode
+        _ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door, updates: Updates, near: NearMode,
+        selection: Selection
     ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Settings"
         let content = NSHostingController(
-            rootView: SettingsView(settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: near))
+            rootView: SettingsView(
+                settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: near,
+                selection: selection))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
         window.setContentSize(NSSize(width: 680, height: 500))
         return window
     }
 
-    private enum Pane: String, CaseIterable, Identifiable {
+    enum Pane: String, CaseIterable, Identifiable {
         case general, near, shortcut, door, advanced
 
         var id: Self { self }
@@ -63,15 +74,13 @@ struct SettingsView: View {
         }
     }
 
-    @State private var pane: Pane? = .general
-
     var body: some View {
         // The sidebar's list can be left with nothing chosen.
-        let shown = pane ?? .general
+        let shown = selection.pane ?? .general
         NavigationSplitView {
-            List(Pane.allCases, selection: $pane) { row in
+            List(Pane.allCases, selection: $selection.pane) { row in
                 Label(row.title, systemImage: row.symbol)
-                    .sidebarHover(selected: row == pane)
+                    .sidebarHover(selected: row == selection.pane)
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 170, ideal: 180, max: 220)

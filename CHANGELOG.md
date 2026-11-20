@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- The Wallet sheet says how the chat in front is paid for (Sean, 20
+  November 2026: "for the wallet menu, is it applicable at all for the
+  near ai and local modes? ... if local mode is selected , it should
+  show in that menu for user awareness"). An Anon or Agent chat: the
+  wallet, as before. A NEAR Private AI chat: that the owner's NEAR key
+  pays, a link to cloud.near.ai, whether a key is saved, and Open
+  Settings, which shows Settings on its NEAR pane (the pane shown now
+  lives in `SettingsView.Selection`, so the app can choose it). A Local
+  Llama chat: nothing to pay. The wallet is read only when the sheet
+  shows it. A balance or deposit not read says "Start Cloak to see" or
+  "Not read yet" in place of a dash, which read as empty. The model
+  picker's rows are "name: $in | $out" (his words: "these can be
+  simplified to be 'model name: $price-in | $price-out'"); the prices
+  are the provider's own list, read while Cloak runs. Seen on his Mac:
+  the sheet in each of the three modes while Paused, and Open Settings
+  landing on NEAR. Not seen: the picker's rows with prices, which need
+  Cloak running.
 - A hover on what can be clicked (Sean, 20 November 2026: "can you add
   subtle onhover effects to anything that is clickable? like hovering a
   chat thread here, there should be a visual indicator it is

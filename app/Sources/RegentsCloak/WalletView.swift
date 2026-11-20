@@ -3,71 +3,55 @@ import CloakChat
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
+/// How the conversation in front is paid for. In an Anon or Agent chat,
 /// Development mode's wallet: made here on Create, its address to add funds
 /// to, its balance, the deposit chats are paid from, and the model they go
 /// to. A button that reaches the network is off only where its request is
 /// certain to stop: Cloak not running, so nothing reaches the guest; no
 /// deposit, as the network last showed the wallet; or, for Withdraw, the
-/// network's waiting time still running. Never for a press under way.
+/// network's waiting time still running. Never for a press under way. In a
+/// NEAR Private AI chat, the owner's NEAR key, whether one is saved, and the
+/// way to Settings' NEAR pane; in a Local Llama chat, nothing to pay. The
+/// wallet is read each time this opens on a chat it pays for.
 struct WalletView: View {
     @Bindable var wallet: Wallet
+    let nearMode: NearMode
+    /// The conversation in front's.
+    let kind: Chat.Kind
+    let showNearSettings: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let running = wallet.supervisor.phase == .running
+        let paidByWallet = kind == .chat || kind == .agent
         VStack(spacing: 0) {
-            DevelopmentBar()
+            if paidByWallet {
+                DevelopmentBar()
+            }
             Form {
-                if !running {
-                    Section {
-                        Text("Start Cloak to use the wallet.")
-                            .foregroundStyle(.secondary)
+                switch kind {
+                case .chat, .agent:
+                    WalletSections(wallet: wallet, running: running)
+                case .near:
+                    NearPayment(mode: nearMode) {
+                        dismiss()
+                        showNearSettings()
                     }
-                }
-                if let stop = wallet.stop ?? wallet.readStop {
-                    Section {
-                        StopRow(stop: stop) { wallet.dismiss() }
-                    }
-                }
-                switch wallet.presence {
-                case .looking:
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                case .unreadable:
-                    Section {
-                        Text("Cloak couldn't read the wallet.")
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Spacer()
-                            Button("Try Again") { Task { await wallet.find() } }
-                        }
-                    }
-                case .held(let address):
-                    Account(wallet: wallet, address: address)
-                    Holding(wallet: wallet, running: running)
-                    Models(wallet: wallet)
-                case .absent, .creating:
-                    Section {
-                        Text("Cloak makes one wallet on this Mac. You add funds to it, and it pays for each chat you send.")
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Spacer()
-                            Button("Create") { Task { await wallet.create() } }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(wallet.presence == .creating || !running)
-                        }
-                    }
+                case .llama:
+                    LlamaPayment()
                 }
             }
             .formStyle(.grouped)
             HStack(spacing: 10) {
-                if wallet.working > 0 || wallet.presence == .creating {
+                if paidByWallet, wallet.working > 0 || wallet.presence == .creating {
                     ProgressView()
                         .controlSize(.small)
                 }
                 Spacer()
-                Button("Refresh") { Task { await wallet.refresh() } }
-                    .disabled(wallet.presence.address == nil || !running)
+                if paidByWallet {
+                    Button("Refresh") { Task { await wallet.refresh() } }
+                        .disabled(wallet.presence.address == nil || !running)
+                }
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
@@ -79,7 +63,109 @@ struct WalletView: View {
         // the room the Chat window leaves a sheet, the form scrolls.
         .frame(width: 540)
         .frame(maxHeight: 640)
-        .task { await wallet.refresh() }
+        .task { if paidByWallet { await wallet.refresh() } }
+    }
+}
+
+/// The wallet that pays for Anon and Agent chats.
+private struct WalletSections: View {
+    let wallet: Wallet
+    let running: Bool
+
+    var body: some View {
+        if !running {
+            Section {
+                Text("Start Cloak to use the wallet.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        if let stop = wallet.stop ?? wallet.readStop {
+            Section {
+                StopRow(stop: stop) { wallet.dismiss() }
+            }
+        }
+        switch wallet.presence {
+        case .looking:
+            ProgressView()
+                .frame(maxWidth: .infinity)
+        case .unreadable:
+            Section {
+                Text("Cloak couldn't read the wallet.")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Try Again") { Task { await wallet.find() } }
+                }
+            }
+        case .held(let address):
+            Account(wallet: wallet, address: address, running: running)
+            Holding(wallet: wallet, running: running)
+            Models(wallet: wallet)
+        case .absent, .creating:
+            Section {
+                Text("Cloak makes one wallet on this Mac. You add funds to it, and it pays for each chat you send.")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Create") { Task { await wallet.create() } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(wallet.presence == .creating || !running)
+                }
+            }
+        }
+    }
+}
+
+/// In place of an amount the network hasn't shown since Cloak opened: the
+/// wallet is read only while Cloak runs.
+private func unread(running: Bool) -> String {
+    running ? "Not read yet" : "Start Cloak to see"
+}
+
+/// How a NEAR Private AI chat is paid for: the owner's own key from NEAR AI
+/// Cloud, whether one is saved, asked of the keychain as the NEAR pane asks
+/// it (never the key itself), and the way to that pane.
+private struct NearPayment: View {
+    let mode: NearMode
+    let openSettings: () -> Void
+
+    var body: some View {
+        Section {
+            Text("NEAR Private AI chats are paid for with your NEAR key. Sign up and add credit at [cloud.near.ai](https://cloud.near.ai), then save the key in Settings.")
+            LabeledContent("Key", value: key)
+            HStack {
+                Spacer()
+                Button("Open Settings", action: openSettings)
+            }
+        } header: {
+            Text("Payment")
+        } footer: {
+            Text("The wallet on this Mac isn't used for these chats.")
+                .foregroundStyle(.secondary)
+        }
+        .task { await mode.find() }
+    }
+
+    private var key: String {
+        switch mode.hasKey {
+        case true?: "Saved"
+        case false?: "Not saved"
+        case nil: mode.keyFailed ? "Couldn't check" : "Checking…"
+        }
+    }
+}
+
+/// A Local Llama chat costs nothing: the model on this Mac answers it.
+private struct LlamaPayment: View {
+    var body: some View {
+        Section {
+            Text("Nothing to pay. The model on this Mac answers Local Llama chats, and nothing is sent.")
+        } header: {
+            Text("Payment")
+        } footer: {
+            Text("The wallet on this Mac isn't used for these chats.")
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -87,6 +173,7 @@ struct WalletView: View {
 private struct Account: View {
     let wallet: Wallet
     let address: String
+    let running: Bool
 
     var body: some View {
         Section("Wallet") {
@@ -125,7 +212,7 @@ private struct Account: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                LabeledContent("Balance", value: "—")
+                LabeledContent("Balance", value: unread(running: running))
             }
         }
     }
@@ -218,7 +305,7 @@ private struct Holding: View {
                 if let deposit {
                     Text("\(deposit.deposit.text), \(deposit.spent.text) spent")
                 } else {
-                    Text(none ? "None" : "—")
+                    Text(none ? "None" : unread(running: running))
                 }
             }
             HStack {
@@ -261,12 +348,17 @@ private struct Models: View {
                     Text(wallet.model).tag(wallet.model)
                 }
                 ForEach(models) { model in
-                    Text("\(model.id)  \(model.pricing.input.price) in, \(model.pricing.output.price) out").tag(model.id)
+                    let input = model.pricing.input.price, output = model.pricing.output.price
+                    Text("\(model.id): \(input) | \(output)")
+                        // Read aloud, a bar says nothing of which side is which.
+                        .accessibilityLabel("\(model.id), \(input) in, \(output) out")
+                        .tag(model.id)
                 }
             }
         } footer: {
-            Text("Prices are per million tokens.")
+            Text("Prices per million tokens: in | out.")
                 .foregroundStyle(.secondary)
+                .accessibilityLabel("Prices per million tokens, in and out.")
         }
     }
 }
