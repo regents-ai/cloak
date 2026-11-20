@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Release 0.5.2 (170) published for invited testers, 20 November 2026,
+  with the icon and the install window; the image was opened on Sean's
+  Mac and shows the app, the arrow and Applications (docs/release.md,
+  "Releases so far").
 - The app has an icon, and the disk image opens as an install window
   (decision 18, Sean's "11. a" of 20 November 2026). The icon is the
   design system's flat crown on a near-black tile, drawn by

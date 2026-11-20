@@ -387,6 +387,15 @@ Releases so far:
 - Seen in that update: Sparkle's window shows a blank icon, because the
   app has none, and no notes, because the feed carries none (the notes
   are on the release's page only). The icon came with 0.5.2.
+- 0.5.2 (170), 20 November 2026, from commit `dba9a91`: the app's icon
+  and the install window (decision 18 in [plan.md](plan.md)). Apple
+  accepted the app and the image; the image downloaded from the address
+  above is the one built, byte for byte, and Gatekeeper accepts it; the
+  feed keeps the two earlier entries. Opened as a double-click opens
+  it, on Sean's Mac: one window with the app's icon, the arrow and
+  Applications, its labels readable in the dark appearance. Not yet
+  shown: the same window on a Mac in the light appearance, and with
+  Finder's tab bar off.
 - Seen on Sean's Mac only: macOS asked once whether to open the worker,
   as "(null)", because its sandbox folder there was made by ad hoc
   builds and the worker is now signed by a team. A Mac that only ever
