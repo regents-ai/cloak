@@ -2658,10 +2658,22 @@ candidates, so the split has to be re-declared before any holdout opens.
     Defaults.
   - Words to change with it: AGENTS.md's one-model rule, README.md's
     model passages, decision A25, `docs/state-machines.md` 9a and 9c.
-  - The list itself is not chosen. The research was stopped part-way on
-    20 November; its scratch is under `/tmp/cloak-build/models-research/`
-    and may not survive a restart. Inkling 2 Mini is unchecked against
-    the pinned llama.cpp.
+  - The list is proposed, not chosen: a helper's report of 20 November
+    is kept as [local-models-research.md](local-models-research.md),
+    with each file's revision, size and checksum. I have not checked
+    its numbers yet. It proposes: today's Qwen3.5-9B for every Mac and
+    alone up to 24 GB; gemma-4-26B-A4B (Unsloth UD-Q3_K_M, 11.85 GiB)
+    from 32 GB; Qwen3.6-35B-A3B (Unsloth UD-Q5_K_M, 24.64 GiB) from
+    48 GB. Inkling 2 Mini cannot be loaded by the pinned llama.cpp
+    (b12556) nor by any released one; support is in two unmerged
+    llama.cpp changes, #32694 and #32695.
+  - Two findings change the design above. macOS's limit on graphics
+    memory leaves less than the fit table says (about 8.2, 13.3, 27.2
+    and 39 GiB at 24, 32, 48 and 64 GB), and it is not known whether
+    the limit counts both worker processes together. whichllm's speeds
+    read about twice what Cloak measured for today's model (69 against
+    36.5 words a second on an M4 Max), so each model is measured on a
+    real Mac before it is listed.
 - Where this stopped, 20 November 2026 (Sean: "please reach a stopping
   point"): Sean's running copy is 0.5.4 built that afternoon, with the
   symbols, V, the Agent switch and the toolbar Cover, still named
