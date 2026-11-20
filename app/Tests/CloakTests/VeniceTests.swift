@@ -102,7 +102,7 @@ struct VeniceTests {
         let body = try #require(chat.body)
         #expect(
             String(decoding: body, as: UTF8.self)
-                == #"{"messages":[{"content":"first, reworded","role":"user"},{"content":"first answer","role":"assistant"},{"content":"now, reworded","role":"user"}],"model":"llama-3.3-70b","stream":true,"stream_options":{"include_usage":true},"venice_parameters":{"enable_web_search":"off","include_venice_system_prompt":false,"strip_thinking_response":true}}"#
+                == #"{"messages":[{"content":"first, reworded","role":"user"},{"content":"first answer","role":"assistant"},{"content":"now, reworded","role":"user"}],"model":"llama-3.3-70b","stream":true,"venice_parameters":{"enable_web_search":"off","include_venice_system_prompt":false,"strip_thinking_response":true}}"#
         )
     }
 

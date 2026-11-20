@@ -416,18 +416,15 @@ public struct Venice: Sendable {
 
     /// A chat request's body: these fields and no others. Venice adds no
     /// instruction of its own, keeps any thinking out of the answer, and
-    /// searches nothing.
+    /// searches nothing. Every stream ends with its usage unasked. Venice
+    /// ignores a misspelled `venice_parameters` key, so each is spelled as
+    /// its API reference has it.
     static func body(model: String, messages: [[String: String]]) -> Data {
         struct Body: Encodable {
             let model: String
             let messages: [[String: String]]
             let stream = true
-            let stream_options = StreamOptions()
             let venice_parameters = Parameters()
-
-            struct StreamOptions: Encodable {
-                let include_usage = true
-            }
 
             struct Parameters: Encodable {
                 let include_venice_system_prompt = false
