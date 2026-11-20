@@ -3398,8 +3398,18 @@ candidates, so the split has to be re-declared before any holdout opens.
     before and after, and sends the redacted trace to the Trace Commons
     (github.com/TraceCommons/trace-commons), where a trace accepted as
     new and real work earns credit in the person's NEAR AI account. How
-    a Cloak chat could be shared the same way is being read by a helper
-    before anything is built; the checkbox starts off.
+    a Cloak chat could be shared the same way was read by a helper the
+    same day: `docs/near-traces.md`. NEAR AI Cloud itself shares
+    nothing when it answers. The documented way for another app is to
+    write a picked chat as a file into a folder the person adds to
+    the Gateway, which redacts, shows it, asks every time and uploads
+    under the person's NEAR AI account, from the Mac's own address.
+    The chief's choices: build that (a Share traces switch in the
+    NEAR wallet sheet, off at first; Share Trace on a NEAR chat's
+    menu; Cloak uploads nothing) and show each NEAR answer's tokens,
+    both after step 6's Mac half is merged. Unproven until one real
+    try, which is Sean's: whether a plain chat is accepted, and
+    whether it earns anything.
 28. Start opens Chat, and a first-time person sees a Modes page.
     Decided 20 November 2026 (Sean: "clicking 'Start' should
     automatically open Chat, and for a first time user, it can have a
