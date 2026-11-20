@@ -478,6 +478,14 @@ conversations' key. The key never reaches the log, the control socket,
 `cloak status` or `cloak doctor`, and no message text does either; the log
 has only why a request stopped.
 
+For testing on this Mac, `app/log.sh [minutes]` prints what the app wrote
+to the Mac's log (60 minutes if not given) and the crash reports macOS has
+for Cloak and its parts. The app writes "opened" with its release at
+launch, each change of state (Start, Pause, a failure) and "quit" at a
+clean end, so a run with no "quit" was ended some other way. These lines
+carry no message text; the Mac keeps them for days, and the app's timing
+lines only for a short while.
+
 A new conversation can be the agent's (decision 12, Development mode too):
 before its first message, pick Agent under the message box. Each message
 is then a task. The agent, Pi, works on it inside Cloak's sealed guest, in

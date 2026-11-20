@@ -93,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Help shows after a second's rest on a control, not the system's two.
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 1000])
         Self.current = self
+        // With "quit" below, the two ends of a run in the Mac's log: a run
+        // with no "quit" ended some other way (`app/log.sh`).
+        logger.notice("opened \(Launch.manifest.release, privacy: .public) (\(Launch.manifest.build, privacy: .public))")
         menu = StatusMenu(
             supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest), showChat: showChat,
             showAgents: showAgents, showDetails: showDetails, showSettings: showSettings,
@@ -157,10 +160,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// NEAR mode's helper ends at once, a message under way or not.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         near.stop()
-        supervisor.quit { [server, door] in
+        supervisor.quit { [server, door, logger] in
             server?.close()
             Task {
                 await door.close()
+                logger.notice("quit")
                 NSApp.reply(toApplicationShouldTerminate: true)
             }
         }

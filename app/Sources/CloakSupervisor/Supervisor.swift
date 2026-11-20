@@ -162,7 +162,8 @@ public final class Supervisor {
         guard let next = phase.after(event) else { return phase.refusal(of: event) }
         let previous = phase
         phase = next
-        logger.info("\(String(describing: previous), privacy: .public) --\(String(describing: event), privacy: .public)--> \(String(describing: next), privacy: .public)")
+        // A notice, which the Mac's log keeps; `app/log.sh` reads it back.
+        logger.notice("\(String(describing: previous), privacy: .public) --\(String(describing: event), privacy: .public)--> \(String(describing: next), privacy: .public)")
         switch (previous, next) {
         case (.preparing, .preparing), (.stopping, .stopping):
             break

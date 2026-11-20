@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A log for testing on this Mac (Sean, 20 November 2026: "it seems to be
+  crashing, can you add error logs or something?", then "no, just for
+  local testings"; it had not crashed: the chief had closed it four
+  times in twenty minutes to rebuild it). The app's state changes were
+  written at a level the Mac's log drops within the hour; they are now
+  kept, with "opened <release>" at launch and "quit" at a clean end.
+  `app/log.sh [minutes]` prints them and the crash reports macOS has.
 - Release 0.5.4 (179) published for invited testers, 20 November 2026
   (docs/release.md, "Releases so far").
 - zkAPI payment, build order step 3: `cloak-pay` holds a request while
