@@ -57,7 +57,9 @@
   from it and none of it has been seen on screen. A tester who drags
   the new `Cloak.app` into Applications gets it beside the old
   "Regents Cloak.app"; a copy that updates itself keeps its old file
-  name with "Cloak" in its menus. The next release notes must say so.
+  name with "Cloak" in its menus. Nothing is done about either: no one
+  is testing the app yet (Sean, 20 November 2026: "no one is testing
+  the app yet, so dont worry about older versions").
 - Details says what Running and Paused each mean, under Status (Sean,
   20 November 2026: "its pretty unclear what the difference is between
   the app being paused vs running", then "can it be a short phrase for

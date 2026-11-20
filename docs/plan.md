@@ -2667,7 +2667,8 @@ candidates, so the split has to be re-declared before any holdout opens.
   symbols, V, the Agent switch and the toolbar Cover, still named
   "Regents Cloak". Next, in order: the rebuild above; pictures of the
   views not yet seen and a VoiceOver pass; the model list; then a
-  release to testers whose notes name the `Cloak.app` change.
+  release to testers. Earlier releases need no care: no one is testing
+  yet (Sean, the same day).
 
 ## Decisions
 
