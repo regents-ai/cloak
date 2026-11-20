@@ -51,23 +51,26 @@ const PLAIN: &[&str] = &[
     "parallel_tool_calls",
 ];
 
-/// Why a chat request got no reply. Up to and including `Pin`, nothing was
-/// sent to the chat endpoint.
+/// Why a chat request got no reply, or a check no proof. Up to and including
+/// `Pin`, nothing was sent to the chat endpoint ([`Stop::sent`]).
 #[derive(Debug)]
 pub enum Stop {
-    /// The request cannot go as given, or the system gave no randomness or
-    /// time.
+    /// The request cannot go as given, the proof age is over an hour, or
+    /// the system gave no randomness or time.
     Request(String),
     /// Fetching the report, Intel's collateral, Intel Trust Authority's
     /// tokens or Intel's keys for them failed.
     Fetch(FetchError),
     /// The proof was refused.
     Refused(Refusal),
+    /// The proof passed, and the chat request's connection could not be
+    /// made; no byte of the request was written.
+    Connect(FetchError),
     /// The new connection's gateway certificate key is not the one the
     /// proof is tied to.
     Pin,
-    /// The chat request's connection failed, or its answer could not be
-    /// read; the request may have reached NEAR.
+    /// Writing the chat request or reading its answer failed; the request
+    /// may have reached NEAR.
     Send(FetchError),
     /// NEAR answered with a status other than 200: the code and the start
     /// of the body.
@@ -83,6 +86,7 @@ impl fmt::Display for Stop {
             Stop::Request(why) => write!(f, "the request cannot be sent: {why}"),
             Stop::Fetch(error) => write!(f, "fetching the proof: {error}"),
             Stop::Refused(refusal) => write!(f, "the proof was refused: {refusal}"),
+            Stop::Connect(error) => write!(f, "connecting to send the request: {error}"),
             Stop::Pin => write!(
                 f,
                 "the gateway showed a certificate key other than the one its proof is tied to"
@@ -96,6 +100,20 @@ impl fmt::Display for Stop {
 
 impl std::error::Error for Stop {}
 
+impl Stop {
+    /// Whether the chat request may have reached NEAR: false when the stop
+    /// came before any byte of it was written (up to and including
+    /// [`Stop::Pin`]), true once writing it began.
+    pub fn sent(&self) -> bool {
+        match self {
+            Stop::Request(_) | Stop::Fetch(_) | Stop::Refused(_) | Stop::Connect(_) | Stop::Pin => {
+                false
+            }
+            Stop::Send(_) | Stop::Status { .. } | Stop::Reply(_) => true,
+        }
+    }
+}
+
 /// What is kept between requests.
 ///
 /// Intel's collateral and Intel Trust Authority's signing keys, each for at
@@ -103,13 +121,14 @@ impl std::error::Error for Stop {}
 /// not cover every platform family a new report's quotes name; the keys when
 /// they are older, or do not hold every key new tokens name.
 ///
-/// And for each model, the last proof that passed, which holds the gateway
-/// TLS key hash it was checked with, and the second it passed, used again
-/// for at most `proof_age`. A request sent under a kept proof goes on
-/// hardware checked up to that long before, not at the moment of sending.
+/// And for each model, the proof of the last check made for it, when that
+/// check passed under a proof age above zero, with the gateway TLS key hash
+/// it was checked with and the second it passed. A later call uses it when
+/// it passed no longer before than that call's proof age; a request sent
+/// under it goes on hardware checked up to that long before, not at the
+/// moment of sending.
 pub struct Kept {
     max_age: u64,
-    proof_age: u64,
     collateral_at: u64,
     collateral: Vec<Collateral>,
     keys_at: u64,
@@ -119,24 +138,22 @@ pub struct Kept {
     proofs: HashMap<String, Passed>,
 }
 
-/// A proof that passed, as [`Kept`] keeps it.
-#[derive(Clone)]
-struct Passed {
+/// A proof that passed, as [`check`] gives it and [`Kept`] keeps it.
+#[derive(Clone, Debug)]
+pub struct Passed {
     /// Every request sent under it goes on a connection showing the gateway
     /// TLS key it was checked with, `proof.intel.gateway_tls_key`.
-    proof: Proof,
-    /// When the proof passed, in seconds since 1970.
-    at: u64,
+    pub proof: Proof,
+    /// When the proof passed, in seconds since 1970: in this call, or in an
+    /// earlier one when [`Kept`] held it.
+    pub at: u64,
 }
 
 impl Kept {
-    /// Nothing kept yet; None when `max_age` is over a day or `proof_age`
-    /// over an hour. A `proof_age` of zero keeps no proof: every request
-    /// fetches and checks its own.
-    pub fn new(max_age: Duration, proof_age: Duration) -> Option<Kept> {
-        (max_age <= DAY && proof_age <= HOUR).then(|| Kept {
+    /// Nothing kept yet; None when `max_age` is over a day.
+    pub fn new(max_age: Duration) -> Option<Kept> {
+        (max_age <= DAY).then(|| Kept {
             max_age: max_age.as_secs(),
-            proof_age: proof_age.as_secs(),
             collateral_at: 0,
             collateral: Vec::new(),
             keys_at: 0,
@@ -145,20 +162,20 @@ impl Kept {
         })
     }
 
-    /// The proof kept for `model`, if it passed no longer than the proof age
-    /// before `now`. One that passed after `now`, as when the clock went
-    /// back, is taken as too old.
-    fn proof_for(&self, model: &str, now: u64) -> Option<Passed> {
+    /// The proof kept for `model`, if it passed no longer than `proof_age`
+    /// seconds before `now`; none when `proof_age` is zero. One that passed
+    /// after `now`, as when the clock went back, is taken as too old.
+    fn proof_for(&self, model: &str, proof_age: u64, now: u64) -> Option<Passed> {
         self.proofs
             .get(model)
-            .filter(|passed| passed.at <= now && now - passed.at <= self.proof_age)
+            .filter(|passed| proof_age > 0 && passed.at <= now && now - passed.at <= proof_age)
             .cloned()
     }
 
     /// Keeps `passed` as `model`'s proof, in place of the one before it;
     /// nothing when the proof age is zero.
-    fn keep(&mut self, model: &str, passed: &Passed) {
-        if self.proof_age > 0 {
+    pub(crate) fn keep(&mut self, model: &str, passed: &Passed, proof_age: u64) {
+        if proof_age > 0 {
             self.proofs.insert(model.to_owned(), passed.clone());
         }
     }
@@ -210,12 +227,11 @@ pub struct Answered {
 
 /// Sends one OpenAI-shaped chat request (`body`, not streamed) for `model`
 /// to NEAR AI Cloud with `api_key`, in this order and no other: the request
-/// is checked; a proof is taken from `kept` if one passed for `model` no
-/// longer than the proof age ago, or else a new one is fetched and checked
-/// in full, in the order `prove` follows, and kept; and only then, under
-/// that proof, is the request sent, pinned to the gateway TLS key and sealed
-/// for the model key the proof checked. A step that fails before sending
-/// returns its [`Stop`], and nothing is sent.
+/// is checked; [`check`] gives a proof that passed, kept or new, under
+/// `proof_age`; and only then, under that proof, is the request sent,
+/// pinned to the gateway TLS key and sealed for the model key the proof
+/// checked. A step that fails before sending returns its [`Stop`], and
+/// nothing is sent.
 /// When the gateway shows another TLS key ([`Stop::Pin`]) or the reply does
 /// not open ([`Stop::Reply`]), the model's kept proof is forgotten, so the
 /// next call checks afresh; nothing is tried again in this one. The key is
@@ -228,18 +244,12 @@ pub fn ask(
     body: &[u8],
     pins: &Pins,
     kept: &mut Kept,
+    proof_age: Duration,
 ) -> Result<Answered, Stop> {
     // The same check `send` makes, here so that a request that cannot go
     // costs no fetch.
     checked(body, model, api_key)?;
-    let passed = match kept.proof_for(model, seconds()?) {
-        Some(passed) => passed,
-        None => {
-            let passed = prove(routes, model, pins, kept)?;
-            kept.keep(model, &passed);
-            passed
-        }
-    };
+    let passed = check(routes, model, pins, kept, proof_age)?;
     // Only now, holding a proof that passed, is the request sent.
     let reply = send(
         &passed.proof,
@@ -261,6 +271,33 @@ pub fn ask(
         proof_passed_at: passed.at,
         reply,
     })
+}
+
+/// A proof that passed for `model`, and nothing sent to the chat endpoint:
+/// the one `kept` holds for `model` if it passed no longer than `proof_age`
+/// before, or else a new one, fetched and checked in full in the order
+/// `prove` follows. A new check takes the place of the model's kept proof:
+/// by its own proof when it passes and `proof_age` is above zero, otherwise
+/// by nothing. A `proof_age` of zero uses and keeps no proof; one over an
+/// hour is refused before anything is fetched.
+pub fn check(
+    routes: &Routes,
+    model: &str,
+    pins: &Pins,
+    kept: &mut Kept,
+    proof_age: Duration,
+) -> Result<Passed, Stop> {
+    if proof_age > HOUR {
+        return Err(Stop::Request("the proof age is over an hour".into()));
+    }
+    let proof_age = proof_age.as_secs();
+    if let Some(passed) = kept.proof_for(model, proof_age, seconds()?) {
+        return Ok(passed);
+    }
+    kept.proofs.remove(model);
+    let passed = prove(routes, model, pins, kept)?;
+    kept.keep(model, &passed, proof_age);
+    Ok(passed)
 }
 
 /// The full check, in this order: a report is fetched under a fresh nonce on
@@ -338,17 +375,17 @@ pub(crate) fn send(
 
     // `connect` writes no byte of the request: a connection it cannot make
     // is tried again there, before anything of the request goes out.
-    let (mut tls, spki_sha256) = connect(route, NEAR, roots).map_err(Stop::Send)?;
+    let (mut tls, spki_sha256) = connect(route, NEAR, roots).map_err(Stop::Connect)?;
     if spki_sha256 != proof.intel.gateway_tls_key {
         return Err(Stop::Pin);
     }
     tls.sock
         .set_read_timeout(Some(REPLY_WAIT))
-        .map_err(|e| Stop::Send(e.into()))?;
+        .map_err(|e| Stop::Connect(e.into()))?;
     let authorization = format!("Bearer {api_key}");
     let client_key = hex::encode(reply_key.public());
     let model_key = hex::encode(proof.intel.model_key);
-    let answer = request(
+    let mut answer = request(
         &mut tls,
         "POST",
         NEAR,
@@ -369,9 +406,14 @@ pub(crate) fn send(
     )
     .map_err(Stop::Send)?;
     if answer.status != 200 {
+        // The key is replaced before the body is cut to its start, so no
+        // part of it is left where the cut falls.
+        answer.body = String::from_utf8_lossy(&answer.body)
+            .replace(api_key, "[the key]")
+            .into_bytes();
         return Err(Stop::Status {
             code: answer.status,
-            detail: answer.detail().replace(api_key, "[the key]"),
+            detail: answer.detail(),
         });
     }
     let mut reply: Value =
@@ -608,8 +650,8 @@ fn object<'a>(
 /// `Kept` by hand, and `ask` is pointed at a proxy on this machine that
 /// closes every connection at once, so the first thing `ask` does fails and
 /// its `Stop` says what that was: `Stop::Fetch` when it went to fetch a new
-/// report, `Stop::Send` when it went straight to sending under the kept
-/// proof. Nothing leaves this machine.
+/// report, `Stop::Connect` when it went straight to sending under the kept
+/// proof, `Stop::Request` when it went nowhere. Nothing leaves this machine.
 #[cfg(test)]
 mod proof_age {
     use std::net::{SocketAddr, TcpListener};
@@ -618,12 +660,13 @@ mod proof_age {
 
     use serde_json::json;
 
-    use super::{ask, seconds, Kept, Passed, Stop, DAY, HOUR};
+    use super::{ask, seconds, Answered, Kept, Passed, Stop, DAY, HOUR};
     use crate::e2ee::ReplyKey;
-    use crate::{GpuProof, IntelProof, Pins, Proof, Proxy, Route, Routes, TcbStatus};
+    use crate::{GpuProof, IntelProof, Pins, Proof, Proxy, Route, Routes, SocksAddr, TcbStatus};
 
     const MODEL: &str = "z-ai/glm-5.3-flash";
     const OTHER: &str = "Qwen/Qwen3.8-27B";
+    const TEN_MINUTES: Duration = Duration::from_secs(600);
 
     /// A proof that passed at `at`, with a model key that can be sealed for.
     fn passed(at: u64) -> Passed {
@@ -643,11 +686,11 @@ mod proof_age {
         }
     }
 
-    /// Whether `ask` for `model` went straight to sending under a kept
-    /// proof, rather than fetching a new report.
-    fn reuses(kept: &mut Kept, model: &str) -> bool {
+    /// `ask` for `model` under `proof_age`, through a proxy that closes
+    /// every connection.
+    fn attempt(kept: &mut Kept, model: &str, proof_age: Duration) -> Result<Answered, Stop> {
         let route = Route::Tor(Proxy {
-            addr: closing_proxy(),
+            addr: SocksAddr::Tcp(closing_proxy()),
             user: "proof",
             password: "age",
         });
@@ -660,15 +703,22 @@ mod proof_age {
             gateway: Vec::new(),
             model: Vec::new(),
         };
-        match ask(
+        ask(
             &routes,
             model,
             "sk-stand-in",
             body.to_string().as_bytes(),
             &pins,
             kept,
-        ) {
-            Err(Stop::Send(_)) => true,
+            proof_age,
+        )
+    }
+
+    /// Whether `ask` for `model` under `proof_age` went straight to sending
+    /// under a kept proof, rather than fetching a new report.
+    fn reuses(kept: &mut Kept, model: &str, proof_age: Duration) -> bool {
+        match attempt(kept, model, proof_age) {
+            Err(Stop::Connect(_)) => true,
             Err(Stop::Fetch(_)) => false,
             other => panic!("expected a failed connection, got {other:?}"),
         }
@@ -689,35 +739,64 @@ mod proof_age {
     #[test]
     fn a_proof_older_than_the_proof_age_is_not_used() {
         let now = seconds().unwrap();
-        let mut kept = Kept::new(DAY, Duration::from_secs(600)).unwrap();
-        kept.keep(MODEL, &passed(now - 590));
-        assert!(reuses(&mut kept, MODEL));
-        kept.keep(MODEL, &passed(now - 601));
-        assert!(!reuses(&mut kept, MODEL));
+        let mut kept = Kept::new(DAY).unwrap();
+        kept.keep(MODEL, &passed(now - 590), 600);
+        assert!(reuses(&mut kept, MODEL, TEN_MINUTES));
+        // The same proof, for a call with a shorter proof age.
+        assert!(!reuses(&mut kept, MODEL, Duration::from_secs(589)));
+        kept.keep(MODEL, &passed(now - 601), 600);
+        assert!(!reuses(&mut kept, MODEL, TEN_MINUTES));
         // Passed after now, as when the clock went back: too old.
-        kept.keep(MODEL, &passed(now + 60));
-        assert!(!reuses(&mut kept, MODEL));
+        kept.keep(MODEL, &passed(now + 60), 600);
+        assert!(!reuses(&mut kept, MODEL, TEN_MINUTES));
 
         // The last second it is used, and the first it is not.
-        kept.keep(MODEL, &passed(1_000_000));
-        assert!(kept.proof_for(MODEL, 1_000_600).is_some());
-        assert!(kept.proof_for(MODEL, 1_000_601).is_none());
-        assert!(kept.proof_for(MODEL, 999_999).is_none());
+        kept.keep(MODEL, &passed(1_000_000), 600);
+        assert!(kept.proof_for(MODEL, 600, 1_000_600).is_some());
+        assert!(kept.proof_for(MODEL, 600, 1_000_601).is_none());
+        assert!(kept.proof_for(MODEL, 600, 999_999).is_none());
+    }
+
+    #[test]
+    fn a_new_check_that_fails_leaves_no_proof_kept() {
+        let now = seconds().unwrap();
+        let mut kept = Kept::new(DAY).unwrap();
+        kept.keep(MODEL, &passed(now - 590), 600);
+        // Too old for this call: a new check is made, and fails.
+        assert!(!reuses(&mut kept, MODEL, Duration::from_secs(60)));
+        // The proof it did not pass is not used by a call with a longer age.
+        assert!(!reuses(&mut kept, MODEL, HOUR));
     }
 
     #[test]
     fn a_proof_kept_for_one_model_is_never_used_for_another() {
-        let mut kept = Kept::new(DAY, HOUR).unwrap();
-        kept.keep(MODEL, &passed(seconds().unwrap()));
-        assert!(!reuses(&mut kept, OTHER));
-        assert!(reuses(&mut kept, MODEL));
+        let mut kept = Kept::new(DAY).unwrap();
+        kept.keep(MODEL, &passed(seconds().unwrap()), 3600);
+        assert!(!reuses(&mut kept, OTHER, HOUR));
+        assert!(reuses(&mut kept, MODEL, HOUR));
     }
 
     #[test]
-    fn a_proof_age_of_zero_keeps_nothing() {
-        let mut kept = Kept::new(DAY, Duration::ZERO).unwrap();
-        kept.keep(MODEL, &passed(seconds().unwrap()));
+    fn a_proof_age_of_zero_uses_and_keeps_nothing() {
+        let mut kept = Kept::new(DAY).unwrap();
+        kept.keep(MODEL, &passed(seconds().unwrap()), 0);
         assert!(kept.proofs.is_empty());
-        assert!(!reuses(&mut kept, MODEL));
+        // A proof that passed this second is not used under a proof age of
+        // zero, and the new check leaves nothing kept.
+        kept.keep(MODEL, &passed(seconds().unwrap()), 600);
+        assert!(!reuses(&mut kept, MODEL, Duration::ZERO));
+        assert!(kept.proofs.is_empty());
+    }
+
+    #[test]
+    fn a_proof_age_over_an_hour_is_refused_before_anything_is_fetched() {
+        let mut kept = Kept::new(DAY).unwrap();
+        kept.keep(MODEL, &passed(seconds().unwrap()), 3600);
+        let over = HOUR + Duration::from_secs(1);
+        assert!(matches!(
+            attempt(&mut kept, MODEL, over),
+            Err(Stop::Request(_))
+        ));
+        assert!(reuses(&mut kept, MODEL, HOUR));
     }
 }

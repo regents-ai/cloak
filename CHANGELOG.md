@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- NEAR mode: `cloak-near`, the helper the Mac app will start
+  (`guest/near`, `src/bin/cloak-near.rs`, `src/helper.rs`). One request
+  a line on standard input, one answer a line on standard output: a
+  `check` fetches and checks the proof and sends nothing to the chat
+  endpoint, with no account key; an `ask` checks, then sends. Each
+  answer says whether the chat request may have reached NEAR. The route
+  is direct, or tor's SOCKS socket file with an identity for NEAR and
+  one for Intel. The account key comes only inside an `ask` line and is
+  never kept, logged or quoted; NEAR's error text has the key replaced
+  before it is cut short, not after. The proof age is now given with
+  each `ask` and `check`; a new check for a model drops its kept proof
+  first. A chat connection that could not be opened is its own stop,
+  `connect`, with nothing sent. Live with Sean's key, 20 November,
+  `Qwen/Qwen3.8-27B`: direct, a check in 3.5 s and two answers in 11.7
+  and 3.1 s; through a tor on a socket file, a check in 24 s and two
+  answers in 17 and 18 s. 31 offline checks pass. Not yet built into
+  the app or signed.
+
 - NEAR mode (`guest/near`): a direct route beside Tor (`Route::Direct`,
   the probe's `--direct`; NEAR and Intel then see the Mac's internet
   address), by Sean's word that NEAR mode need not use Tor. Through

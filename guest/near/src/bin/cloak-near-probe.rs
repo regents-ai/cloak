@@ -33,7 +33,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cloak_near::{
     ask, fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, verify_gpu,
-    verify_intel, FetchError, Kept, Pins, Proxy, Route, Routes, Stop,
+    verify_intel, FetchError, Kept, Pins, Proxy, Route, Routes, SocksAddr, Stop,
 };
 use hex::encode as hex;
 use serde_json::json;
@@ -136,8 +136,7 @@ fn chat(
     let pins: Pins = serde_json::from_str(PINS).map_err(|e| format!("the pins file: {e}"))?;
     let key = std::fs::read_to_string(key_file)
         .map_err(|e| format!("reading {}: {e}", key_file.display()))?;
-    let mut kept = Kept::new(Duration::from_secs(60 * 60), Duration::from_secs(proof_age))
-        .ok_or("a proof age over an hour is refused")?;
+    let mut kept = Kept::new(Duration::from_secs(60 * 60)).expect("an hour is within a day");
     println!("Checking NEAR AI Cloud's proof for {model}, then sending \"ping\"");
     println!("Proof age {proof_age} s; {repeat} ask(s)");
 
@@ -155,6 +154,7 @@ fn chat(
             body.as_bytes(),
             &pins,
             &mut kept,
+            Duration::from_secs(proof_age),
         ) {
             println!("Stopped: {stop}");
             stopped += 1;
@@ -175,9 +175,10 @@ fn ask_once(
     body: &[u8],
     pins: &Pins,
     kept: &mut Kept,
+    proof_age: Duration,
 ) -> Result<(), String> {
     let started = Instant::now();
-    let outcome = ask(routes, model, key, body, pins, kept);
+    let outcome = ask(routes, model, key, body, pins, kept, proof_age);
     let took = started.elapsed().as_secs_f64();
     match outcome {
         Ok(answered) => {
@@ -201,9 +202,9 @@ fn ask_once(
             );
             Ok(())
         }
-        Err(Stop::Pin) => {
+        Err(stop @ (Stop::Connect(_) | Stop::Pin)) => {
             println!("The proof passed; nothing was sent to the chat endpoint ({took:.1} s).");
-            Err(Stop::Pin.to_string())
+            Err(stop.to_string())
         }
         Err(stop @ (Stop::Send(_) | Stop::Status { .. } | Stop::Reply(_))) => {
             println!("The proof passed; the encrypted request went after it ({took:.1} s in all).");
@@ -394,7 +395,7 @@ fn run(socks: Option<SocketAddr>, model: &str, save: Option<PathBuf>) -> Result<
 fn routes<'a>(socks: Option<SocketAddr>, identities: &'a [String; 2]) -> Routes<'a> {
     let route = |identity: &'a str| match socks {
         Some(addr) => Route::Tor(Proxy {
-            addr,
+            addr: SocksAddr::Tcp(addr),
             user: identity,
             password: "cloak",
         }),

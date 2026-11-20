@@ -13,7 +13,11 @@
 //! same model no longer ago than the proof age the caller chose, at most an
 //! hour, the request goes straight to sending under that proof instead: the
 //! hardware was then checked up to that long before, not at the moment of
-//! sending.
+//! sending. [`check`] is the same check, or the same kept proof, without
+//! the sending: `ask` is `check`, then the request.
+//!
+//! [`respond`] is the line format of `cloak-near`, the helper the Mac app
+//! starts: one request a line in, one answer a line out.
 //!
 //! [`fetch_report`] opens one TLS connection to NEAR's gateway on the
 //! caller's [`Route`] (through Tor, or direct), records the SHA-256 of the
@@ -38,18 +42,21 @@ mod fetch;
 #[cfg(test)]
 mod gate;
 mod gpu;
+mod helper;
 mod verify;
 
 use std::net::SocketAddr;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub use chat::{ask, Answered, Kept, Stop};
+pub use chat::{ask, check, Answered, Kept, Passed, Stop};
 pub use dcap_qvl::{QuoteCollateralV3, TcbStatus};
 pub use fetch::{
     fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, FetchError, Fetched,
 };
 pub use gpu::{verify_gpu, GpuRefusal};
+pub use helper::respond;
 pub use verify::{verify_intel, Refusal, Who};
 
 /// `N` bytes from the system's secure random source; None if it fails.
@@ -68,9 +75,19 @@ fn random<const N: usize>() -> Option<[u8; N]> {
 /// the attempt's number appended.
 #[derive(Clone, Copy, Debug)]
 pub struct Proxy<'a> {
-    pub addr: SocketAddr,
+    pub addr: SocksAddr<'a>,
     pub user: &'a str,
     pub password: &'a str,
+}
+
+/// Where Tor's SOCKS5 port listens. Only the first socket differs; the SOCKS
+/// steps, TLS and HTTP on it are the same.
+#[derive(Clone, Copy, Debug)]
+pub enum SocksAddr<'a> {
+    /// A TCP address, as `127.0.0.1:9050`.
+    Tcp(SocketAddr),
+    /// A Unix socket file, as the Mac app's tor listens on.
+    Unix(&'a Path),
 }
 
 /// How a connection reaches its host. Either way, the same certificate
@@ -84,7 +101,7 @@ pub enum Route<'a> {
     Tor(Proxy<'a>),
 }
 
-/// The routes [`ask`] takes: to NEAR's gateway (the report, Intel Trust
+/// The routes [`ask`] and [`check`] take: to NEAR's gateway (the report, Intel Trust
 /// Authority's tokens and the chat request), and to Intel's servers (the
 /// collateral, and the keys Intel Trust Authority signs its tokens with).
 /// Through Tor, each is meant to be a circuit of its own.

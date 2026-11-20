@@ -4,8 +4,10 @@ Slices 1 to 3 of Cloak's NEAR mode: the check of NEAR AI Cloud's hardware
 proof, its Intel quotes and Intel Trust Authority's verdict on its GPUs,
 made before anything is sent, and the chat requests that follow a passed
 check, encrypted to the model key the check established. It holds
-no account: the caller gives the key for each request. It is not yet part
-of the guest image, the build scripts or the app.
+no account: the caller gives the key for each request. `cloak-near`, the
+helper the Mac app will start for NEAR mode, runs it one line at a time
+(see "The helper"). Neither the crate nor the helper is part of the guest
+image, the build scripts or the app yet.
 
 - `fetch_report` opens one TLS connection to `cloud-api.near.ai` on the
   caller's route (see "Routes"), with ordinary certificate checks against
@@ -31,26 +33,31 @@ of the guest image, the build scripts or the app.
 - `verify_gpu` is pure: NEAR's answer of Intel's tokens, the nonce, the
   model name, the `IntelProof`, Intel's key list, the pins and `now` in; a
   `GpuProof` or one `Refusal` out.
+- `check` gives a proof that passed and sends nothing to the chat
+  endpoint: one taken from `Kept` if it passed for the same model no
+  longer ago than the proof age the caller gives with the call (see "Proof
+  age" below), or else a new one: a report is fetched under a fresh nonce;
+  Intel's collateral is reused from `Kept` or fetched; the Intel quotes
+  are verified; Intel Trust Authority's tokens are fetched from NEAR under
+  the same nonce; Intel's keys are reused from `Kept` or fetched; and the
+  GPU side is verified. There is no way to skip the GPU.
 - `ask` sends one chat request, and is the only way to send one. In one
-  call and in this order: the request is checked; a proof is taken from
-  `Kept` if one passed for the same model no longer ago than the proof age
-  the caller chose (see "Proof age" below), or else a new one is checked:
-  a report is fetched under a fresh nonce; Intel's collateral is reused
-  from `Kept` or fetched; the Intel quotes are verified; Intel Trust
-  Authority's tokens are fetched from NEAR under the same nonce; Intel's
-  keys are reused from `Kept` or fetched; the GPU side is verified; and
-  only then, holding a `Proof` with both halves, is the request sent.
-  There is no way to skip the GPU. A step that fails before sending ends
-  the call with its `Stop` and nothing is sent. NEAR's gateway and Intel's
-  servers each go through a route of the caller's (`Routes`).
+  call and in this order: the request is checked; `check` gives a proof
+  that passed; and only then, holding a `Proof` with both halves, is the
+  request sent. A step that fails before sending ends the call with its
+  `Stop` and nothing is sent; `Stop::sent` says whether the request may
+  have reached NEAR. NEAR's gateway and Intel's servers each go through a
+  route of the caller's (`Routes`).
 
 ## Routes
 
 Each of the two routes, to NEAR's gateway and to Intel's servers, is one
 of:
 
-- **Tor** (`Route::Tor`): through Tor's SOCKS5 port, names resolved by
-  Tor, with a SOCKS user name of the caller's, so that each route has a
+- **Tor** (`Route::Tor`): through Tor's SOCKS5 port, at a TCP address or
+  at a socket file (`SocksAddr`; the Mac app's tor listens on a socket
+  file), names resolved by Tor, with a SOCKS user name of the caller's,
+  so that each route has a
   circuit of its own. NEAR and Intel see a Tor exit's address. When a
   connection cannot be made (the SOCKS step or the TLS handshake fails,
   before any byte of a request is written), it is made again on a new
@@ -215,7 +222,9 @@ missing, malformed or false is refused.
   report that proof was checked on). The comparison is made after the
   handshake and before any byte of the request is written. The request is
   written once; a connection that cannot be made is tried again through
-  Tor before that (see "Routes"), and another certificate key is not.
+  Tor before that (see "Routes"), and another certificate key is not. When
+  it still cannot be made, the request stops (`Stop::Connect`) with no
+  byte of it written.
 - **Kept between requests.** `Kept` holds Intel's collateral and Intel
   Trust Authority's key list. The caller chooses their age, at most a day.
   The collateral is fetched again when older, or when a report names a
@@ -223,21 +232,26 @@ missing, malformed or false is refused.
   token names a key it does not hold (about 12 KB on 19 November). Intel's
   tokens are never kept: each proof check fetches its own, for its own
   nonce.
-- **Proof age.** `Kept` also holds, for each model, the last proof that
-  passed, the gateway TLS key hash it was checked with and the second it
-  passed. The caller chooses the proof age, at most an hour. Zero, the
-  probe's default, keeps no proof: every request fetches and checks its
-  own. Within the proof age, a request for that model fetches and checks
-  nothing and goes straight to sending under the kept proof, pinned to the
-  TLS key it was checked with and sealed for the model key it checked.
-  The limit: with a kept proof, the hardware was checked up to the proof
-  age before, not at the moment of sending. A proof older than the proof
-  age is not used, nor one whose second is after the clock's (the clock
-  went back), and a proof kept for one model is never used for another.
-  When the gateway shows another TLS key, or the reply does not open, the
-  model's proof is forgotten and the next request checks afresh; nothing
-  is tried again within the request. `Answered` says when the proof it was
-  sent under passed.
+- **Proof age.** `Kept` also holds, for each model, the proof of the last
+  check made for it, when that check passed under a proof age above zero,
+  with the gateway TLS key hash it was checked with and the second it
+  passed. The caller gives the proof age with each call to `ask` or
+  `check`, at most an hour; a longer one is refused before anything is
+  fetched. Zero, the probe's default, uses and keeps no proof: every
+  request fetches and checks its own. Within the proof age, a request for
+  that model fetches and checks nothing and goes straight to sending under
+  the kept proof, pinned to the TLS key it was checked with and sealed for
+  the model key it checked. The limit: with a kept proof, the hardware was
+  checked up to the proof age before, not at the moment of sending. A
+  proof older than the call's proof age is not used, nor one whose second
+  is after the clock's (the clock went back), and a proof kept for one
+  model is never used for another. A new check takes the place of the
+  model's kept proof, by its own proof when it passes and by nothing when
+  it fails, so a proof is never used after a later check for the model
+  failed. When the gateway shows another TLS key, or the reply does not
+  open, the model's proof is forgotten and the next request checks afresh;
+  nothing is tried again within the request. `Answered` says when the
+  proof it was sent under passed.
 - **The request.** `POST /v1/chat/completions` with the key as a Bearer
   token, `X-Signing-Algo: ed25519`, `X-Client-Pub-Key`, `X-Model-Pub-Key`
   (the key the proof checked), `X-Encryption-Version: 2`,
@@ -245,8 +259,9 @@ missing, malformed or false is refused.
   `Accept-Encoding: identity`. Replies are not streamed: a request with
   `stream: true` is refused.
 - **The key.** It is used only in the Authorization header. It is never
-  kept or logged, and if NEAR's answer quotes it back, it is replaced before
-  the answer goes into a `Stop`.
+  kept or logged, and if NEAR's answer quotes it back, it is replaced in the
+  whole answer before the answer's start goes into a `Stop`, so no part of
+  it is left where the start is cut.
 - **Reply key.** A new one for every request, never kept.
 
 ## What is encrypted
@@ -405,9 +420,97 @@ pins the compose file without its host's label, so a new server whose
 compose file differs from a pinned one only in the label's digits passes;
 the gateway set pins the whole compose file through MRCONFIGID.
 
+## The helper
+
+`cloak-near` (`src/bin/cloak-near.rs`, its lines in `src/helper.rs`) is
+the helper the Mac app starts for NEAR mode. It runs on the Mac, not in
+the guest, and takes no arguments: the account key never goes on its
+command line. It reads one request a line on standard input, each one JSON
+object, and writes one answer a line on standard output for each, in
+order. It takes one line at a time: the next is read once the last is
+answered, so an `ask` holds the lines after it until NEAR replies (up to
+five minutes) or it stops. It ends when standard input closes. Nothing
+else goes to standard output; standard error gets only a failure to read
+or write those two, never the key, a message or a reply.
+
+One `Kept` lasts as long as the helper: Intel's collateral and keys for an
+hour, and a proof kept by one line can serve a later one (see "Proof
+age"). The pins are compiled in from `reference/near-pins.json`, as the
+probe's are.
+
+### Requests
+
+Every field is required, and any other field is refused.
+
+- `request`: `check` or `ask`.
+- `model`: the model's name on NEAR AI Cloud.
+- `route`: `{"via":"direct"}` or
+  `{"via":"tor","socket":PATH,"near_identity":NAME,"intel_identity":NAME}`.
+  **Direct** is an ordinary connection from the Mac: NEAR and Intel see
+  the Mac's internet address. **Tor** goes through tor's SOCKS port at the
+  socket file PATH, NEAR's connections under the SOCKS user name
+  `near_identity` and Intel's under `intel_identity`, so each has a
+  circuit of its own (the SOCKS password is always `cloak`).
+- `proof_age`: seconds, at most 3600. A proof kept for the model that
+  passed no longer ago than this is used; 0 uses and keeps none.
+- For `ask` only: `key`, the account key, and `body`, the OpenAI-shaped
+  chat request, a JSON object for the same model, not streamed.
+
+A `check` runs `check`: it finds a kept proof within the proof age, or
+fetches and checks a new one, and sends nothing to the chat endpoint. It
+needs no key, so the app can run it before the person types. An `ask`
+runs `ask`: the same check, then the request.
+
+    {"request":"check","model":"Qwen/Qwen3.8-27B","route":{"via":"tor","socket":"/var/folders/xy/abc123/T/cloak-tor.Ab12Cd/socks","near_identity":"5f0c9a1e","intel_identity":"b7d24e60"},"proof_age":600}
+    {"request":"ask","model":"Qwen/Qwen3.8-27B","route":{"via":"direct"},"proof_age":600,"key":"sk-example","body":{"model":"Qwen/Qwen3.8-27B","messages":[{"role":"user","content":"ping"}]}}
+
+### Answers
+
+Every answer has `answer` and `sent`. `sent` says whether the chat request
+may have reached NEAR: false when no byte of it was written (a `check`, or
+a stop before sending), true once writing it began.
+
+- `passed`, for a `check`: `sent` false and `proof`.
+- `replied`, for an `ask`: `sent` true, `proof`, and `reply`, NEAR's chat
+  completion with every encrypted field opened.
+- `stopped`: `sent`, `stop` (the step that stopped, below), and `text`,
+  the plain-English reason (`Stop`'s words); with `stop` `status`, also
+  `code`, NEAR's HTTP status.
+
+`proof` holds `passed_at`, when the proof passed, in seconds since 1970
+(for a kept proof, during an earlier line: the hardware was checked then,
+not when the request went); `model_servers`, how many of the model's
+servers the Intel check covered; `gpus`, how many GPUs of one server Intel
+Trust Authority passed; `model_key`, the model key the request is sealed
+for; and `gateway_tls_key_sha256`, the SHA-256 of the gateway TLS key the
+request's connection must show. Both keys are in hex.
+
+| `stop` | Step | `sent` |
+| --- | --- | --- |
+| `line` | The line is not JSON, or not a request in this format | false |
+| `request` | The request cannot go as given, or the proof age is over an hour | false |
+| `fetch` | Fetching the report, Intel's collateral, Intel Trust Authority's tokens or Intel's keys | false |
+| `refused` | The proof was refused | false |
+| `connect` | The proof passed; the chat request's connection could not be made | false |
+| `pin` | The proof passed; the gateway showed another TLS key | false |
+| `send` | Writing the request or reading NEAR's answer failed: NEAR may have it | true |
+| `status` | NEAR answered with a status other than 200 | true |
+| `reply` | NEAR's reply was refused: a field did not open, or it is not the completion asked for | true |
+
+A `line` stop never quotes the line. No answer holds the key: it goes only
+into the request's Authorization header, and is replaced if NEAR's answer
+quotes it back.
+
+    {"answer":"passed","sent":false,"proof":{"passed_at":1795125440,"model_servers":1,"gpus":8,"model_key":"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff","gateway_tls_key_sha256":"ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"}}
+    {"answer":"replied","sent":true,"proof":{"passed_at":1795125440,"model_servers":1,"gpus":8,"model_key":"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff","gateway_tls_key_sha256":"ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"},"reply":{"id":"chatcmpl-example","object":"chat.completion","created":1795125452,"model":"Qwen/Qwen3.8-27B","choices":[{"index":0,"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":2,"total_tokens":11}}}
+    {"answer":"stopped","sent":false,"stop":"fetch","text":"fetching the proof: could not connect: Connection reset by peer (os error 54)"}
+    {"answer":"stopped","sent":true,"stop":"status","code":401,"text":"NEAR answered 401: invalid key"}
+    {"answer":"stopped","sent":false,"stop":"line","text":"the line is not JSON"}
+
 ## Running it
 
     cargo build --locked
+    cargo build --locked --release --bin cloak-near   # the helper, for the Mac
     cargo test --locked            # the gate checks, offline
     cargo run --locked --bin cloak-near-probe -- --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B
     cargo run --locked --bin cloak-near-probe -- --direct --model Qwen/Qwen3.8-27B
@@ -430,7 +533,7 @@ The gate checks:
   signature forbids are signed again with a key made for these checks alone
   (`tests/fixtures/ita/test-key.der`) and added to the key list; the real
   tokens signed again unchanged that way pass, so each refusal comes from
-  its change. A proof age over an hour is refused.
+  its change.
 - `src/verify.rs`: the host's label, on the real compose file of a pinned
   model server (`gpu23`). The same file with other label digits (`gpu04`,
   `gpu7`, `gpu1234`) gives the same pin; a label with letters or more
@@ -440,9 +543,21 @@ The gate checks:
   `ask` is pointed at a proxy on this machine that closes every
   connection, so its `Stop` shows whether it went to fetch a new report or
   straight to sending. A proof within the age is sent under; one a second
-  older than the age, one whose second is after the clock's, and one kept
-  for another model are not, and a new report is fetched; with a proof age
-  of zero nothing is kept.
+  older than the age, one too old for a call with a shorter age, one whose
+  second is after the clock's, one kept for another model and one whose
+  new check failed are not, and a new report is fetched; under a proof age
+  of zero nothing is used or kept; a proof age over an hour is refused
+  before anything is fetched, with a proof kept or not.
+- `src/helper.rs`: a `check` line with a proof kept for the model passes
+  and opens no connection at all (the route's socket file counts every
+  connection), while an `ask` line with the same kept proof goes to the
+  chat request's connection, which is closed at once, and says nothing
+  was sent.
+- `tests/helper.rs`: the `cloak-near` binary itself, given an `ask` line
+  and then a `check` line, through tor at a socket file whose listener
+  closes every connection: both answers say the line stopped while
+  fetching the proof, with `sent` false, and neither standard output nor
+  standard error holds the key or the message's words.
 - `src/gate.rs`: NEAR's published version 2 vectors open, do not open with
   one byte changed, and what this crate seals for NEAR's key opens with
   NEAR's secret. A stand-in for NEAR's gateway on this machine (a SOCKS5

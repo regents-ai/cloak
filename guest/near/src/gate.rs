@@ -34,7 +34,7 @@ use sha2::{Digest, Sha512};
 
 use crate::chat::send;
 use crate::e2ee::{ReplyKey, SealKey};
-use crate::{GpuProof, IntelProof, Proof, Proxy, Route, Stop, TcbStatus};
+use crate::{GpuProof, IntelProof, Proof, Proxy, Route, SocksAddr, Stop, TcbStatus};
 
 const MODEL: &str = "z-ai/glm-5.3-flash";
 const API_KEY: &str = "sk-stand-in";
@@ -280,7 +280,7 @@ fn pinned() -> [u8; 32] {
 fn run(answer: Option<Answer>, pin: [u8; 32]) -> (Result<Value, Stop>, Seen) {
     let (addr, stand_in) = stand_in(answer);
     let route = Route::Tor(Proxy {
-        addr,
+        addr: SocksAddr::Tcp(addr),
         user: "gate",
         password: "check",
     });

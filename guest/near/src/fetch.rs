@@ -1,14 +1,17 @@
 //! The network half: the report and Intel Trust Authority's tokens from
 //! NEAR's gateway, Intel's collateral, and the keys Intel Trust Authority
 //! signs with, every connection on the caller's route (through Tor's SOCKS5
-//! port, names resolved by Tor, or direct, names looked up by the system)
-//! with ordinary certificate checks against Mozilla's roots. The chat
-//! request (`chat.rs`) uses the same connection and HTTP code.
+//! port, at a TCP address or a socket file, names resolved by Tor; or
+//! direct, names looked up by the system) with ordinary certificate checks
+//! against Mozilla's roots. The chat request (`chat.rs`) uses the same
+//! connection and HTTP code.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,7 +21,7 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
-use crate::{Collateral, Proxy, QuoteCollateralV3, Route};
+use crate::{Collateral, Proxy, QuoteCollateralV3, Route, SocksAddr};
 
 pub(crate) const NEAR: &str = "cloud-api.near.ai";
 const INTEL_API: &str = "api.trustedservices.intel.com";
@@ -271,7 +274,48 @@ fn signed(body: &[u8], key: &str) -> Result<(String, Vec<u8>), FetchError> {
     Ok((object, hex::decode(signature).map_err(|_| malformed())?))
 }
 
-pub(crate) type Tls = StreamOwned<ClientConnection, TcpStream>;
+pub(crate) type Tls = StreamOwned<ClientConnection, Socket>;
+
+/// The socket a TLS connection runs on: TCP, to the host or to Tor's SOCKS
+/// port, or Tor's socket file. Either has `STEP` for every read and write.
+pub(crate) enum Socket {
+    Tcp(TcpStream),
+    Unix(UnixStream),
+}
+
+impl Socket {
+    pub(crate) fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        match self {
+            Socket::Tcp(stream) => stream.set_read_timeout(timeout),
+            Socket::Unix(stream) => stream.set_read_timeout(timeout),
+        }
+    }
+}
+
+impl Read for Socket {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Socket::Tcp(stream) => stream.read(buf),
+            Socket::Unix(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for Socket {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Socket::Tcp(stream) => stream.write(buf),
+            Socket::Unix(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Socket::Tcp(stream) => stream.flush(),
+            Socket::Unix(stream) => stream.flush(),
+        }
+    }
+}
 
 /// Mozilla's roots, which every certificate is checked against.
 pub(crate) fn mozilla() -> RootCertStore {
@@ -295,7 +339,7 @@ pub(crate) fn connect(
     roots: &RootCertStore,
 ) -> Result<(Tls, [u8; 32]), FetchError> {
     let proxy = match route {
-        Route::Direct => return handshake(direct(host)?, host, roots),
+        Route::Direct => return handshake(Socket::Tcp(direct(host)?), host, roots),
         Route::Tor(proxy) => proxy,
     };
     let mut path = 1;
@@ -308,18 +352,18 @@ pub(crate) fn connect(
             user: &user,
             ..*proxy
         };
-        match socks(&circuit, host, 443).and_then(|tcp| handshake(tcp, host, roots)) {
+        match socks(&circuit, host, 443).and_then(|socket| handshake(socket, host, roots)) {
             Err(_) if path < PATHS => path += 1,
             made => return made,
         }
     }
 }
 
-/// TLS on `tcp` to `host`, after ordinary certificate checks against
+/// TLS on `socket` to `host`, after ordinary certificate checks against
 /// `roots`, and the SHA-256 of the leaf certificate's
 /// SubjectPublicKeyInfo.
 fn handshake(
-    tcp: TcpStream,
+    socket: Socket,
     host: &str,
     roots: &RootCertStore,
 ) -> Result<(Tls, [u8; 32]), FetchError> {
@@ -334,7 +378,7 @@ fn handshake(
         ServerName::try_from(host.to_owned()).map_err(|e| FetchError::Connect(e.to_string()))?;
     let connection = ClientConnection::new(Arc::new(config), name)
         .map_err(|e| FetchError::Connect(e.to_string()))?;
-    let mut tls = StreamOwned::new(connection, tcp);
+    let mut tls = StreamOwned::new(connection, socket);
     while tls.conn.is_handshaking() {
         tls.conn.complete_io(&mut tls.sock)?;
     }
@@ -351,15 +395,19 @@ fn handshake(
 
 /// A connection to `host`:`port` through a SOCKS5 proxy (RFC 1928) that
 /// resolves the name itself, signed in with a user name and password
-/// (RFC 1929).
-fn socks(proxy: &Proxy, host: &str, port: u16) -> Result<TcpStream, FetchError> {
+/// (RFC 1929). On a socket file tor answers with an IPv6 address of all
+/// zeros, which is read like any other.
+fn socks(proxy: &Proxy, host: &str, port: u16) -> Result<Socket, FetchError> {
     let refused = |what: &str| FetchError::Connect(format!("the proxy {what}"));
     let (user, password) = (proxy.user.as_bytes(), proxy.password.as_bytes());
     if !(1..=255).contains(&user.len()) || !(1..=255).contains(&password.len()) || host.len() > 255
     {
         return Err(refused("cannot take this user name, password or host"));
     }
-    let mut stream = tcp(&proxy.addr)?;
+    let mut stream = match proxy.addr {
+        SocksAddr::Tcp(addr) => Socket::Tcp(tcp(&addr)?),
+        SocksAddr::Unix(path) => Socket::Unix(unix(path)?),
+    };
     let mut two = [0u8; 2];
     stream.write_all(&[5, 1, 2])?;
     stream.read_exact(&mut two)?;
@@ -418,6 +466,16 @@ fn direct(host: &str) -> Result<TcpStream, FetchError> {
 /// read and write.
 fn tcp(addr: &SocketAddr) -> io::Result<TcpStream> {
     let stream = TcpStream::connect_timeout(addr, STEP)?;
+    stream.set_read_timeout(Some(STEP))?;
+    stream.set_write_timeout(Some(STEP))?;
+    Ok(stream)
+}
+
+/// A connection to the Unix socket file at `path`, with `STEP` for every
+/// read and write. Connecting to a file on this machine does not wait on
+/// the network.
+fn unix(path: &Path) -> io::Result<UnixStream> {
+    let stream = UnixStream::connect(path)?;
     stream.set_read_timeout(Some(STEP))?;
     stream.set_write_timeout(Some(STEP))?;
     Ok(stream)
