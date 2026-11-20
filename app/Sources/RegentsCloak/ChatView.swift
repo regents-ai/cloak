@@ -73,29 +73,35 @@ private struct Sidebar: View {
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("Agent")
+                            .help("Agent chat")
                     }
                     if near {
                         Image(systemName: "cpu")
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("NEAR Private AI")
+                            .help("NEAR Private AI chat")
                     }
                     if llama {
                         Image(systemName: "laptopcomputer")
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("Local Llama")
+                            .help("Local Llama chat")
                     }
                 }
                 .accessibilityElement(children: .combine)
+                .sidebarHover(selected: chat.selection == conversation.id)
                 .tag(conversation.id)
                 .contextMenu {
                     Button("Delete", role: .destructive) { deleting = conversation }
                 }
             }
+            // Choosing one shows why it can't open.
             ForEach(chat.unreadable, id: \.self) { id in
                 Label("Can't open", systemImage: "lock")
                     .foregroundStyle(.secondary)
+                    .sidebarHover(selected: chat.selection == id)
                     .tag(id)
             }
         }
@@ -472,6 +478,7 @@ private struct TaskCard: View {
                             .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
+                        .hover(RoundedRectangle(cornerRadius: 6), outset: 4)
                         .accessibilityValue(showingSteps ? "Expanded" : "Collapsed")
                         if showingSteps {
                             StepList(steps: steps[...])
@@ -721,9 +728,11 @@ private struct Progress: View {
 }
 
 struct Card<Content: View>: View {
-    /// An accent edge in place of the separator's.
+    /// An accent edge over the separator's, fading in and out as a hover
+    /// does (`Hover.swift`).
     var highlighted = false
     @ViewBuilder let content: Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -731,9 +740,14 @@ struct Card<Content: View>: View {
         }
         .padding(16)
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(
+        .overlay {
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(highlighted ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator)))
+                .strokeBorder(.separator)
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.accentColor)
+                .opacity(highlighted ? 1 : 0)
+                .animation(reduceMotion ? nil : .hover, value: highlighted)
+        }
     }
 }
 
@@ -1142,6 +1156,7 @@ private struct ModesButton: View {
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
+            .hover(Circle(), outset: 4)
             .help("Modes")
             .onHover { inside in
                 opening?.cancel()
@@ -1210,6 +1225,7 @@ private struct NearStopRow: View {
             Button("Dismiss", systemImage: "xmark", action: dismiss)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .hover(Circle(), outset: 4)
                 .help("Dismiss")
         }
     }
@@ -1244,6 +1260,8 @@ private struct SwitchPill: View {
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
+        // Before the glass, so the hover lies on it rather than behind it.
+        .hover(Capsule())
         .glassEffect(.regular.interactive(), in: .capsule)
         .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: isOn)
         .popover(isPresented: $explaining, arrowEdge: .top) {
@@ -1348,6 +1366,7 @@ private struct Notice: View {
             Button("Dismiss", systemImage: "xmark", action: dismiss)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .hover(Circle(), outset: 4)
                 .help("Dismiss")
         }
         .padding(12)

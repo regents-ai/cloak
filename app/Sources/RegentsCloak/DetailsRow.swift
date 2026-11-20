@@ -74,10 +74,13 @@ private struct Pill: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 22, height: 24)
                     .contentShape(.rect)
+                    // Kept inside the pill's edge.
+                    .hover(Circle(), outset: -3)
                     .help("Clear")
             }
         }
         .foregroundStyle(value == nil ? .secondary : .primary)
+        .hover(Capsule())
         .background {
             if value == nil {
                 Capsule().strokeBorder(.tertiary, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
@@ -158,6 +161,7 @@ private struct Options: View {
                     .contentShape(.capsule)
                 }
                 .buttonStyle(.plain)
+                .hover(Capsule())
                 .accessibilityLabel(options[index].text)
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
@@ -187,6 +191,7 @@ private struct Colors: View {
                         .contentShape(.circle)
                 }
                 .buttonStyle(.plain)
+                .hover(Circle())
                 .help(swatches[index].name)
                 .accessibilityLabel(swatches[index].name)
                 .accessibilityAddTraits(on ? .isSelected : [])

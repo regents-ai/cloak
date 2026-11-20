@@ -1,9 +1,5 @@
-Cloak no longer quits by itself shortly after Start.
+Things you can click now show it: chat rows, sidebar rows, the small pills and icon buttons light up faintly under the pointer.
 
-The chat modes are now called Anon, NEAR Private AI and Local Llama. The small info button beside them says where each one comes from.
-
-Settings ends with Feedback and Help: where to tell us what broke, and words you can hand to your agent so it posts for you.
-
-The Cover, Tor and zkAPI buttons under the message box respond when pressed, and each says what it controls when you rest the pointer on it. Tor and zkAPI can't be changed yet.
+The small marks beside a chat's name say what they mean when you rest the pointer on them: an Agent chat, a NEAR Private AI chat or a Local Llama chat.
 
 This is an early test build for invited testers. Things may break or change from one build to the next.

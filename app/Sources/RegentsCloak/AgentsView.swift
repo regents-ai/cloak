@@ -158,6 +158,7 @@ private struct RequestRow: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .hover(RoundedRectangle(cornerRadius: 6), outset: 4)
                 .accessibilityLabel(sender)
                 .accessibilityValue(words)
                 .accessibilityHint("Shows what the app wrote and what Cloak sent.")
@@ -357,6 +358,7 @@ private struct AppRow: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.borderless)
+            .hover(Circle())
             .help("Remove")
         }
     }
@@ -456,6 +458,7 @@ private struct Copyable: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.borderless)
+            .hover(Circle())
             .help("Copy")
         }
     }

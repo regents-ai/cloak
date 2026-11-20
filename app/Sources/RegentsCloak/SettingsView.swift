@@ -69,8 +69,9 @@ struct SettingsView: View {
         // The sidebar's list can be left with nothing chosen.
         let shown = pane ?? .general
         NavigationSplitView {
-            List(Pane.allCases, selection: $pane) { pane in
-                Label(pane.title, systemImage: pane.symbol)
+            List(Pane.allCases, selection: $pane) { row in
+                Label(row.title, systemImage: row.symbol)
+                    .sidebarHover(selected: row == pane)
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 170, ideal: 180, max: 220)
@@ -321,6 +322,7 @@ private struct ShortcutRecorder: View {
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
+                        .hover(Circle(), outset: 4)
                         .help("Clear Shortcut")
                 }
             }

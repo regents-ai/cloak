@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- A hover on what can be clicked (Sean, 20 November 2026: "can you add
+  subtle onhover effects to anything that is clickable? like hovering a
+  chat thread here, there should be a visual indicator it is
+  clickable"). One modifier (`Hover.swift`): a faint fill, 8% of the
+  label colour, fading in 0.12 s, none while a control is off. On the
+  rows of Chat's and Settings' sidebars (the size of the selection's
+  highlight, none on the chosen row), the Agents window's rows that
+  open, every borderless or plain button (Modes, the Dismiss crosses,
+  Copy, Remove, the QR code, Clear Shortcut), the Cover, Tor and zkAPI
+  pills and NEAR's Tor, and the details pills, chips and swatches. What
+  macOS draws keeps its own look: push buttons, the round Send and Stop,
+  toolbar buttons, switches, pickers, links and menus. The sidebar's
+  three marks say what they are when the pointer rests on them: "Agent
+  chat" (the hammer he asked about), "NEAR Private AI chat", "Local
+  Llama chat". Seen on his Mac: a chat row, a Settings row and the Cover
+  pill under the pointer. Release 0.5.4.
 - Release 0.5.3 (172) published for invited testers, 20 November 2026
   (docs/release.md, "Releases so far").
 - The app no longer ends by itself (20 November 2026). At 11:18:41 on

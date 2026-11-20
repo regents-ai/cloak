@@ -108,6 +108,7 @@ private struct Account: View {
                             .contentShape(.rect)
                     }
                     .buttonStyle(.borderless)
+                    .hover(Circle())
                     .help("Copy")
                     CodeButton(address: address)
                 }
@@ -147,6 +148,7 @@ private struct CodeButton: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.borderless)
+        .hover(Circle())
         .help("Show QR Code")
         .popover(isPresented: $open, arrowEdge: .bottom) {
             if let code = QRCode.image(for: address) {
@@ -309,6 +311,7 @@ struct StopRow: View {
             Button("Dismiss", systemImage: "xmark", action: dismiss)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .hover(Circle(), outset: 4)
                 .help("Dismiss")
         }
     }
