@@ -280,7 +280,13 @@ public enum Remote {
         } catch {
             throw RemoteStop(code: .failed, detail: "cannot build the body: \(error)")
         }
-        let completion = try await complete(body, identity: identity, key: key, deposits: deposits, exchange: exchange)
+        return try content(of: try await complete(body, identity: identity, key: key, deposits: deposits, exchange: exchange))
+    }
+
+    /// The answer in `completion`, a chat completion in OpenAI's shape: the
+    /// first choice's text, when it has one and finished by stopping or at
+    /// its length. Shared by Development mode and NEAR mode (`Near`).
+    public static func content(of completion: Data) throws(RemoteStop) -> String {
         struct Completion: Decodable {
             let choices: [Choice]
             struct Choice: Decodable {

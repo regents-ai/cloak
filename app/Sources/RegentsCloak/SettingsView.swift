@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import CloakChat
 import CloakDoor
 import CloakSupervisor
 import OSLog
@@ -10,7 +11,8 @@ import SwiftUI
 /// whether it shows each reworded message before sending it, whether it
 /// saves chats, whether the guest sends cover traffic, how long the model
 /// may go unused before it leaves memory, and, when the app has an updater,
-/// whether it checks for updates by itself), Shortcut (the
+/// whether it checks for updates by itself), NEAR (the NEAR key, Tor, how
+/// long a passed check is used again, and the model), Shortcut (the
 /// quick prompt's), Door (its port on 127.0.0.1) and Advanced (how Cloak
 /// started its parts, this session's log, and Restore Defaults).
 struct SettingsView: View {
@@ -19,15 +21,16 @@ struct SettingsView: View {
     let supervisor: Supervisor
     let door: Door
     let updates: Updates?
+    let near: NearMode
 
     static func window(
-        _ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door, updates: Updates?
+        _ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door, updates: Updates?, near: NearMode
     ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Settings"
         let content = NSHostingController(
-            rootView: SettingsView(settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates))
+            rootView: SettingsView(settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: near))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
         window.setContentSize(NSSize(width: 680, height: 500))
@@ -35,13 +38,14 @@ struct SettingsView: View {
     }
 
     private enum Pane: String, CaseIterable, Identifiable {
-        case general, shortcut, door, advanced
+        case general, near, shortcut, door, advanced
 
         var id: Self { self }
 
         var title: String {
             switch self {
             case .general: "General"
+            case .near: "NEAR"
             case .shortcut: "Shortcut"
             case .door: "Door"
             case .advanced: "Advanced"
@@ -51,6 +55,7 @@ struct SettingsView: View {
         var symbol: String {
             switch self {
             case .general: "gearshape"
+            case .near: "cpu"
             case .shortcut: "keyboard"
             case .door: "door.left.hand.open"
             case .advanced: "wrench.and.screwdriver"
@@ -73,6 +78,7 @@ struct SettingsView: View {
             Group {
                 switch shown {
                 case .general: GeneralPane(settings: settings, updates: updates)
+                case .near: NearPane(settings: settings, mode: near)
                 case .shortcut: ShortcutPane(settings: settings, prompt: prompt)
                 case .door: DoorPane(settings: settings, door: door)
                 case .advanced: AdvancedPane(settings: settings, prompt: prompt, supervisor: supervisor, updates: updates)
@@ -158,6 +164,79 @@ private struct UpdatesSection: View {
         // window is away, so the setting is read again when it comes back.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             checks = updates.checksAutomatically
+        }
+    }
+}
+
+/// NEAR mode's key, kept in the keychain and never shown again; whether it
+/// goes through Tor; how long a passed check is used again; and its one
+/// model.
+private struct NearPane: View {
+    @Bindable var settings: AppSettings
+    let mode: NearMode
+    @State private var key = ""
+    @State private var replacing = false
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Key") {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if mode.hasKey == true, !replacing {
+                            HStack(spacing: 6) {
+                                Text("Saved")
+                                    .foregroundStyle(.secondary)
+                                Button("Replace") { replacing = true }
+                                Button("Remove") { Task { await mode.remove() } }
+                            }
+                        } else {
+                            HStack(spacing: 6) {
+                                SecureField("NEAR key", text: $key, prompt: Text("NEAR key"))
+                                    .labelsHidden()
+                                    .frame(width: 220)
+                                    .onSubmit(save)
+                                Button("Save", action: save)
+                                    .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                        if mode.keyFailed {
+                            Text("The keychain said no. Try again.")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+            } footer: {
+                Footnote("Kept in this Mac's keychain and never shown again. It pays for every message and ties each to your NEAR account.")
+            }
+            Section {
+                Toggle("Tor", isOn: $settings.nearTor)
+            } footer: {
+                Footnote("On, NEAR and Intel see a Tor address, Cloak must be running, and a check takes about half a minute. Off, they see this Mac's internet address.")
+            }
+            Section {
+                Picker("Freshness", selection: $settings.proofFreshness) {
+                    ForEach(ProofFreshness.allCases) { Text($0.title).tag($0) }
+                }
+            } footer: {
+                Footnote("How long a passed check is reused. Reused, the hardware was checked up to that long before your message.")
+            }
+            Section {
+                LabeledContent("Model", value: "Qwen3.8-27B")
+            } footer: {
+                Footnote("The model's software isn't part of the measurement.")
+            }
+        }
+        .task { await mode.find() }
+    }
+
+    /// Keeps the key typed, and clears the field at once.
+    private func save() {
+        let typed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        key = ""
+        guard !typed.isEmpty else { return }
+        Task {
+            if await mode.save(typed) { replacing = false }
         }
     }
 }
@@ -342,7 +421,7 @@ private struct AdvancedPane: View {
                     Button("Restore Defaults…") { restoring = true }
                 }
             } footer: {
-                Footnote("Puts every setting in this window back. Your wallet, chats and model stay as they are.")
+                Footnote("Puts every setting in this window back. Your wallet, NEAR key, chats and model stay as they are.")
             }
         }
         .task { await read() }
@@ -357,9 +436,10 @@ private struct AdvancedPane: View {
     /// What Restore Defaults does, from the defaults themselves.
     private var restored: String {
         """
-        \(updates == nil ? "Launch at login turns" : "Launch at login and Updates turn") off, \
+        \(updates == nil ? "Launch at login and Tor for NEAR turn" : "Launch at login, Updates and Tor for NEAR turn") off, \
         rewording, Review, Saved chats and Cover traffic turn back on, \
-        Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
+        Free memory goes back to “\(AppSettings.defaultFreeMemory.title)” \
+        and Freshness to “\(AppSettings.defaultProofFreshness.title)”, \
         the quick prompt loses its shortcut, and the door goes back to port \(AppSettings.defaultDoorPort).
         """
     }

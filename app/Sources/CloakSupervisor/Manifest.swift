@@ -14,6 +14,8 @@ public struct Manifest: Codable, Sendable, Equatable {
         /// llama-worker/install.sh in the Application Support folder, where
         /// its sandbox lets it run.
         case worker
+        /// NEAR mode's helper, cloak-near, in the bundle.
+        case near
     }
 
     public enum Place: String, Codable, Sendable {
@@ -115,6 +117,13 @@ public struct Layout: Sendable {
     /// pins at each start.
     public func model(_ manifest: Manifest) -> URL {
         support.appending(path: "models").appending(path: manifest.model.name)
+    }
+
+    /// NEAR mode's helper and its pin, which the app checks before each
+    /// start of the helper (`Near`).
+    public func near(_ manifest: Manifest) -> (helper: URL, sha256: String) {
+        let pin = manifest.pins.first { $0.part == .near }!
+        return (url(pin), pin.sha256)
     }
 
     /// tor's lasting folder, as the stage 2 and 3 kits use it.

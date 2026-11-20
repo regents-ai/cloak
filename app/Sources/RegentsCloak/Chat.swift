@@ -15,7 +15,9 @@ import os
 /// through the guest's sender and Tor to a remote model, paid from the one
 /// wallet. A conversation whose first message is a task is the agent's
 /// (decision 12): each task runs when its owner presses Run, its model
-/// requests reworded at the door. With Saved chats off, a conversation
+/// requests reworded at the door. A conversation whose first message went
+/// to NEAR is NEAR's (`NearMode`): each message goes there as written, at
+/// once, paid by the owner's NEAR key. With Saved chats off, a conversation
 /// started or continued is kept in memory only (`unsaved`).
 @MainActor
 @Observable
@@ -75,6 +77,7 @@ final class Chat {
     /// What a conversation is, fixed by its first message.
     enum Kind: Hashable {
         case chat
+        case near
         case agent
     }
 
@@ -84,6 +87,7 @@ final class Chat {
     let agent: Agent
     let folder: URL
     let wallet: Wallet
+    let nearMode: NearMode
     private(set) var access = Access.opening
     /// Newest first.
     private(set) var conversations: [Conversation] = []
@@ -135,11 +139,12 @@ final class Chat {
     @ObservationIgnored private var identities: [UUID: String] = [:]
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "chat")
 
-    init(supervisor: Supervisor, settings: AppSettings, folder: URL, wallet: URL, door: Door) {
+    init(supervisor: Supervisor, settings: AppSettings, folder: URL, wallet: URL, door: Door, nearMode: NearMode) {
         self.supervisor = supervisor
         self.settings = settings
         self.folder = folder
         self.wallet = Wallet(supervisor: supervisor, folder: wallet)
+        self.nearMode = nearMode
         let agent = Agent(parts: Agent.Parts(
             run: { supervisor.run($0) }, pass: { door.pass(for: $0) }, reworded: { door.reworded(for: $0) }))
         self.agent = agent
@@ -172,10 +177,12 @@ final class Chat {
 
     /// With Never reword ticked, a message is added without Cloak running;
     /// its card then says why Send is off. A task runs unless running it is
-    /// certain to stop, or one runs in its conversation already.
+    /// certain to stop, or one runs in its conversation already. A NEAR
+    /// message goes unless sending it is certain to stop.
     var canSubmit: Bool {
         guard let selected, !Self.isBlank(draft) else { return false }
         if isAgent(selected) { return isOpen && runBlock == nil && agent.runs[selected.id] == nil }
+        if isNear(selected) { return isOpen && nearMode.sendBlock == nil }
         return settings.neverReword ? canCompose : canReword
     }
 
@@ -183,6 +190,12 @@ final class Chat {
     /// it has none, as chosen.
     func isAgent(_ conversation: Conversation) -> Bool {
         conversation.turns.isEmpty ? kind == .agent : conversation.isAgent
+    }
+
+    /// Whether `conversation` is NEAR's: as its first message went, or,
+    /// while it has none, as chosen.
+    func isNear(_ conversation: Conversation) -> Bool {
+        conversation.turns.isEmpty ? kind == .near : conversation.isNear
     }
 
     /// Whether the agent of `conversation`, which has earlier tasks, starts
@@ -322,8 +335,9 @@ final class Chat {
     /// sent once reworded when Review is off;
     /// or, with Never reword ticked, adds it as written and sends it, the
     /// model on this Mac not asked; or, in the agent's conversation, runs it
-    /// as its next task. The message goes with a line for each detail
-    /// picked.
+    /// as its next task; or, in a NEAR conversation, adds it as written and
+    /// sends it to NEAR. The message goes with a line for each detail
+    /// picked, but to NEAR, which gets it as written.
     func submit() {
         let (written, picked) = (draft, picks)
         let original = picked.message(written.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -331,6 +345,13 @@ final class Chat {
         draft = ""
         if isAgent(conversation) {
             run(original, in: conversation.id)
+        } else if isNear(conversation) {
+            let turn = Turn(original: written.trimmingCharacters(in: .whitespacesAndNewlines), reworded: nil)
+            conversation.turns.append(turn)
+            conversation.near = true
+            opened = turn.id
+            update(conversation)
+            send(turn.id, in: conversation.id)
         } else if settings.neverReword {
             let turn = Turn(original: original, reworded: nil)
             conversation.turns.append(turn)
@@ -409,19 +430,26 @@ final class Chat {
     /// A turn sent after later ones moves to the end first, so the
     /// conversation is in the order its turns were sent and each request is
     /// the one before it plus more. Each press is sent; one under way never
-    /// stops another.
+    /// stops another. A NEAR conversation's turn goes to NEAR only, and
+    /// every other to the wallet's provider only.
     func send(_ turn: UUID, in id: UUID) {
-        guard let deposits = wallet.deposits, var conversation = conversations.first(where: { $0.id == id }),
-            let index = conversation.turns.firstIndex(where: { $0.id == turn }), sendBlock(conversation.turns[index]) == nil
+        guard var conversation = conversations.first(where: { $0.id == id }),
+            let index = conversation.turns.firstIndex(where: { $0.id == turn })
         else { return }
-        if index != conversation.turns.count - 1 {
-            conversation.turns.append(conversation.turns.remove(at: index))
-            update(conversation)
+        if conversation.isNear {
+            guard nearMode.sendBlock == nil, let route = nearMode.route else { return }
+            press(turn, at: index, in: &conversation)
+            Task { [conversation] in
+                let answer = await nearMode.send(turn, in: conversation, route: route)
+                sent(turn, in: id, answer: answer)
+            }
+            return
         }
+        guard let deposits = wallet.deposits, sendBlock(conversation.turns[index]) == nil else { return }
+        press(turn, at: index, in: &conversation)
         sendStop = nil
         let identity = identities[id] ?? Self.newIdentity()
         identities[id] = identity
-        if sending[turn] == nil { sending[turn] = Sending(started: .now) } else { sending[turn]?.presses += 1 }
         let (model, exchange) = (wallet.model, wallet.exchange)
         Task { [conversation] in
             let result: Result<String, RemoteStop>
@@ -437,25 +465,38 @@ final class Chat {
     }
 
     private func finish(_ turn: UUID, in id: UUID, _ result: Result<String, RemoteStop>) {
-        if let presses = sending[turn]?.presses, presses > 1 { sending[turn]?.presses -= 1 } else { sending[turn] = nil }
-        switch result {
-        case .success(let answer):
-            // A conversation deleted meanwhile takes its answer with it.
-            if var conversation = conversations.first(where: { $0.id == id }),
-                let index = conversation.turns.firstIndex(where: { $0.id == turn })
-            {
-                conversation.turns[index].answer = answer
-                update(conversation)
-            }
-        case .failure(let stop):
+        if case .failure(let stop) = result {
             logger.error("a send stopped: \(stop.code.rawValue, privacy: .public) \(stop.detail, privacy: .private)")
             sendStop = SendStop(turn: turn, stop: stop)
         }
+        sent(turn, in: id, answer: try? result.get())
         Task { await wallet.refresh() }
     }
 
-    /// 32 random bytes, as hex: Tor's user name for one conversation.
-    private static func newIdentity() -> String {
+    /// Moves a turn sent after later ones to the end, and counts the press.
+    private func press(_ turn: UUID, at index: Int, in conversation: inout Conversation) {
+        if index != conversation.turns.count - 1 {
+            conversation.turns.append(conversation.turns.remove(at: index))
+            update(conversation)
+        }
+        if sending[turn] == nil { sending[turn] = Sending(started: .now) } else { sending[turn]?.presses += 1 }
+    }
+
+    /// One press of Send on the turn ended; its answer, when one came, is
+    /// kept with it. A conversation deleted meanwhile takes its answer with
+    /// it.
+    private func sent(_ turn: UUID, in id: UUID, answer: String?) {
+        if let presses = sending[turn]?.presses, presses > 1 { sending[turn]?.presses -= 1 } else { sending[turn] = nil }
+        guard let answer, var conversation = conversations.first(where: { $0.id == id }),
+            let index = conversation.turns.firstIndex(where: { $0.id == turn })
+        else { return }
+        conversation.turns[index].answer = answer
+        update(conversation)
+    }
+
+    /// 32 random bytes, as hex: Tor's user name for one conversation, or for
+    /// NEAR's or Intel's connections in NEAR mode.
+    static func newIdentity() -> String {
         (0..<32).map { _ in String(format: "%02x", UInt8.random(in: .min ... .max)) }.joined()
     }
 
@@ -470,11 +511,11 @@ final class Chat {
     /// Once the draft has rested a moment, asks the model on this Mac for its
     /// details, in place of any request before. Not while something is
     /// picked, nor unless the draft has a few words, Cloak is running and
-    /// nothing is being reworded. An answer that does not come shows
-    /// nothing.
+    /// nothing is being reworded, nor in a NEAR conversation. An answer that
+    /// does not come shows nothing.
     private func askDetails() {
         stopAskingDetails()
-        guard !picks.fixed, Details.enoughToAsk(draft) else { return }
+        guard !picks.fixed, Details.enoughToAsk(draft), selected.map(isNear) != true else { return }
         let draft = draft
         detailsAsk = Task {
             guard (try? await Task.sleep(for: Self.draftRest)) != nil, canReword, !picks.fixed else { return }

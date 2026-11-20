@@ -3,11 +3,15 @@ import Foundation
 /// One chat: its messages, each as written and, unless it goes as written,
 /// as reworded, in the order they were sent, those not yet sent where they
 /// were added. Or, when its first turn is a task, a conversation with the
-/// agent (decision 12): its tasks in the order they ran.
+/// agent (decision 12): its tasks in the order they ran. Or, when its first
+/// message went to NEAR, a NEAR conversation: each message as written.
 public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let created: Date
     public var turns: [Turn]
+    /// True once its first message went to NEAR (NEAR mode); absent
+    /// otherwise. Every later message goes to NEAR too.
+    public var near: Bool?
 
     public init(id: UUID = UUID(), created: Date = .now, turns: [Turn] = []) {
         self.id = id
@@ -24,6 +28,11 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     /// A conversation with the agent: its first turn is a task.
     public var isAgent: Bool {
         turns.first?.steps != nil
+    }
+
+    /// A NEAR conversation: its first message went to NEAR.
+    public var isNear: Bool {
+        near == true
     }
 }
 

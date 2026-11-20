@@ -264,8 +264,11 @@ figure.
 With the guest, the host's tor and the worker built and installed (stage 2
 commands), build `app/build/Regents Cloak.app`, with Sparkle.framework
 inside, signed ad hoc and inside out, the app with the virtualization
-entitlement, with a manifest that pins the guest, tor and the installed
-worker (rebuild after reinstalling any of them):
+entitlement, with NEAR mode's helper `cloak-near`, which it builds from
+`guest/near` with cargo (rustup takes the Rust version that
+`guest/near/rust-toolchain.toml` names), and with a manifest that pins the
+guest, tor, the helper and the installed worker (rebuild after reinstalling
+any of them):
 
 ```bash
 app/build.sh
@@ -301,13 +304,18 @@ launch first removes any that a killed app left there.
 
 "Settings…" in the menu (Command-comma) is where the app's settings
 change, and the one place but for Never reword, which Chat's review area
-also has, and Cover traffic, which Chat's Cover pill also turns on and
-off; no link, script, app or agent can set one. General has Launch
+also has, Cover traffic, which Chat's Cover pill also turns on and off,
+and Tor for NEAR, which Chat's Tor pill in a NEAR conversation also turns
+on and off; no link, script, app or agent can set one. General has Launch
 at login (off until turned on; the app still opens Paused), "Never reword
 text. Reduces your privacy." (off until ticked; see Chat, below), Review
 and Saved chats (on until turned off; see Chat, below), Cover traffic (on
 until turned off; used from the next Start), Free
-memory and, in a build with an update feed, Updates (below). Shortcut sets the quick prompt's keys, none until chosen; keys
+memory and, in a build with an update feed, Updates (below). NEAR has the
+NEAR key (a field and Save; once saved, Saved with Replace and Remove),
+Tor (off until turned on), Freshness (10 minutes until chosen, or Every
+message or 1 hour) and the model, Qwen3.8-27B, which can't be changed; see
+NEAR mode, below. Shortcut sets the quick prompt's keys, none until chosen; keys
 without Command, Option or Control are refused, as is a shortcut macOS
 won't take. Door sets the port Agents answer on (below), 8742 until
 chosen: a number from 1024 to 65535 that nothing on this Mac listens on
@@ -315,7 +323,7 @@ when it is saved, used from the next Start, and always on 127.0.0.1 only.
 Advanced shows exactly how the last start started tor and the worker, one
 command a line, and this session's lines of Cloak's log, each with Copy,
 and Restore Defaults, which puts these settings back and nothing else: not
-the wallet, the chats or the model.
+the wallet, the NEAR key, the chats or the model.
 
 Updates come through Sparkle 2.8.1, and only to a build whose
 `app/release.json` sets both `update_feed` and `update_key` (both empty
@@ -395,10 +403,12 @@ Under the message box, three small pills show Cover, Tor and zkAPI, each
 with a dot, filled while on. Cover turns cover traffic on and off, as in
 Settings, and while Cloak is running with the other value it says "Cover
 changes at the next Start." Tor is always on and zkAPI is off, since one
-wallet pays for everything; neither can be changed yet.
+wallet pays for everything; neither can be changed yet. In a NEAR
+conversation, one pill, Tor for NEAR (below), takes their place.
 
 Send is Development mode (decision 10 in [docs/plan.md](docs/plan.md)),
-marked as such at the top of Chat, and never part of a release: the
+marked as such at the top of Chat (NEAR's mark takes its place in a NEAR
+conversation), and never part of a release: the
 reworded text, after the conversation's earlier sent and answered turns,
 goes from the guest's sender through Tor to a remote model at Boundless,
 paid through MPP on Tempo from one wallet, so the provider can link every
@@ -437,6 +447,38 @@ the menu; one that ended without an answer can be run again. Tasks in
 different conversations run at the same time. The agent's work lives in
 the guest's memory, so after Cloak starts again it does not remember a
 conversation's earlier tasks, and the conversation says so.
+
+A new conversation can be NEAR's instead: before its first message, pick
+NEAR under the message box (Cloak, NEAR or Agent; a new chat is Cloak's at
+each launch). Its messages then go as written, never reworded, to one
+model on NEAR AI Cloud, `Qwen/Qwen3.8-27B`, paid by your own NEAR key, and
+its later messages go there too. A Cloak conversation never goes to NEAR,
+and a NEAR one never goes to the wallet's provider. Before a message
+leaves, NEAR's hardware proof is checked: the Intel quotes of the model's
+servers and Intel Trust Authority's verdict on one server's GPUs. The
+helper that checks it and sends, `cloak-near` (see `guest/near`), is in
+the app, started at the first check or message once its file matches its
+pin. Showing a NEAR conversation runs the check; the line beside its Tor
+pill says it is under way, when it passed and what it covered ("Checked 2
+min ago: 1 server, 8 GPUs"), or why it stopped, with Check Again. A passed
+check is used again for the Freshness chosen in Settings, and the line
+says when the next message checks again. The Tor pill (off until turned
+on) sends the check and the messages through Cloak's tor, NEAR's and
+Intel's connections each under a name of their own made at each launch,
+and needs Cloak running; off, NEAR and Intel see this Mac's internet
+address. Send is off only with no NEAR key saved ("Add your NEAR key in
+Settings.") or with Tor on while Cloak is not running ("Start Cloak to
+send through Tor."). Limits, at the top, lists what the check does not
+cover. A message that stops says why on its card, and whether it may have
+reached NEAR, when sending again may be charged twice; nothing then goes
+another way. The helper takes one line at a time, so an answer under way
+holds later checks and messages; nothing cancels it but Quit, which ends
+the helper at once. The NEAR key, typed in Settings, is kept only in the
+login keychain, this Mac only, and never shown again; it is read only when
+a message is sent and goes to the helper with that message alone, never to
+the log or to disk. After a rebuild, the Mac asks again whether the new
+build may use it. A NEAR conversation is kept like any other, marked in
+the list by a chip icon.
 
 While you write a message or a task, Cloak may suggest details it leaves
 open (decision 13). Once the draft has four words or more and has rested
@@ -496,8 +538,9 @@ results and the model's answers are not shown. Up to 200 requests are held
 in memory until Cloak quits, never on disk, and only the latest 20 keep
 their text. No request's text is ever logged or written to disk.
 
-Run the app's checks (the send path with the deposit kept sealed, and
-whether this Mac holds the wallet):
+Run the app's checks (the send path with the deposit kept sealed, whether
+this Mac holds the wallet, and that NEAR mode's line to its helper carries
+the freshness and route chosen):
 
 ```bash
 swift test --package-path app

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- NEAR mode is in the Mac app. A new conversation can be NEAR's (Cloak,
+  NEAR or Agent under the message box): each message goes as written to
+  `Qwen/Qwen3.8-27B` on NEAR AI Cloud, paid by the owner's own NEAR key,
+  once NEAR's hardware proof passes. `app/build.sh` builds the helper
+  `cloak-near` from `guest/near`, signs it and puts it in the bundle,
+  and the manifest pins it; the app checks that pin before each start
+  of it (`CloakChat/Near.swift`, `RegentsCloak/NearMode.swift`). The
+  key is typed in Settings, NEAR, kept in the login keychain and never
+  shown again. Tor for NEAR is a switch, off until turned on, and needs
+  Cloak running; Freshness chooses how long a passed check is used
+  again (10 minutes until chosen). The check runs when a NEAR
+  conversation shows, and its result is beside the Tor pill. Send is
+  off only with no key saved or with Tor on while Cloak is not running.
+  A message that stops says why and whether it may have reached NEAR;
+  nothing then goes another way. One check, `NearTests`: the line to
+  the helper carries the freshness and route chosen. Seen in the
+  installed app with no key saved; no message has been sent from the
+  app yet.
+
+- `reference/near-pins.json` gains a fifth model set. On 20 November at
+  about 02:07 UTC NEAR's gpu13 server for `Qwen/Qwen3.8-27B` began
+  presenting the compose of the fourth set (but for its label and the
+  compose's name line), so the app's first check was refused. The
+  change was read, the set added, and a fresh keyless check passed.
+  This is the second such change in one evening.
+
 - NEAR mode: `cloak-near`, the helper the Mac app will start
   (`guest/near`, `src/bin/cloak-near.rs`, `src/helper.rs`). One request
   a line on standard input, one answer a line on standard output: a

@@ -2946,7 +2946,22 @@ candidates, so the split has to be re-declared before any holdout opens.
       and 49 seconds for the first of each (the check is 20 to 40 of
       it), 3 to 31 after. The servers NEAR shows changed within a day,
       so the shipped pins will need updating often; that is the open
-      problem. Then the app. From NEAR's own words,
+      problem. Sean's answer, 20 November: the pins stay inside the app,
+      NEAR mode stops with "Proof refused" until the change is read and
+      an update ships, and the count comes back to him if it is often.
+      The count so far: two changes on the evening of 19 November
+      (about 00:45 and 02:07 UTC on the 20th), each one server moved to
+      a compose already accepted but for its label, each read and
+      pinned within minutes. Then the app, the same evening: NEAR is a
+      third kind of conversation beside Cloak's and the agent's, the
+      helper is built into the bundle and pinned in the manifest, the
+      key is typed in Settings and kept in the keychain, Tor is a
+      switch that is off until turned on and needs Cloak running, and
+      the check's result is on screen before a message is written. On
+      screen in the installed app with no key saved: the mark, Limits,
+      the check passing direct, and Send off with "Add your NEAR key in
+      Settings." Not yet shown: a message sent from the app, which
+      waits for Sean to type his key there. From NEAR's own words,
       to be said on screen: the model's software is not in the
       measurement, a key ties every request to one account, and on 8
       November a flaw on one server exposed requests in progress.

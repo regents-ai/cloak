@@ -11,7 +11,8 @@ repository and revision), the memory the model and all of Cloak need (from
 app/release.json, in GiB there and in bytes here), and pins every part the
 supervisor runs by its sha256: the guest's kernel and root, tor and libevent in
 the bundle, and the worker as llama-worker/install.sh installed it in the
-Application Support folder.
+Application Support folder; and NEAR mode's helper, cloak-near, in the bundle,
+which the app checks against its pin before each start of it.
 
     uv run app/manifest.py <Resources folder> <Application Support folder> <build>
 """
@@ -31,6 +32,7 @@ PARTS = [
     ("tor", "bundle", "tor/tor"),
     ("libevent", "bundle", "tor/libevent-2.1.7.dylib"),
     ("worker", "support", "worker/cloak-rewriter-llama"),
+    ("near", "bundle", "near/cloak-near"),
 ]
 
 

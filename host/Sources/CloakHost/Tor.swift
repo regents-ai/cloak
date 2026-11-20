@@ -42,6 +42,9 @@ public final class Tor: Sendable {
     /// tor's SOCKS port, a socket file.
     private let listener: String
     private let child: Child
+
+    /// tor's SOCKS socket file, which NEAR mode's helper connects through.
+    public var socket: String { listener }
     /// The guest sockets of the Tor relay's connections to tor's SOCKS
     /// socket; nil once tor has stopped.
     private let relayed: OSAllocatedUnfairLock<Set<Int32>?>
@@ -166,7 +169,7 @@ public final class Tor: Sendable {
                 log("cannot reach tor (it has stopped); closed a Tor port connection without an answer")
                 return nil
             }
-            let socks = socket(AF_UNIX, SOCK_STREAM, 0)
+            let socks = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
             guard socks >= 0 else { return nil }
             // tor opened its socket on this name, so it fits.
             var address = sockaddr_un()

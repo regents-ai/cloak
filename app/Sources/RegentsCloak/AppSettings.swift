@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import CloakChat
 import Darwin
 import Observation
 import os
@@ -8,7 +9,8 @@ import ServiceManagement
 /// Cloak's settings, kept in the app's defaults: every key and its default
 /// is named here, once, and read and written only here. Only the Settings
 /// window sets them, and Never reword also Chat's review area, beside Send
-/// Original Text, and Cover also its pill under Chat's message box. No
+/// Original Text, and Cover and Tor for NEAR also their pills under Chat's
+/// message box. No
 /// setting can be set from a link, from the door, from AppleScript or from
 /// the guest: none of those reaches this type. Whether the app opens at
 /// login is the system's login item (`LoginItem`), and whether it checks
@@ -28,12 +30,15 @@ final class AppSettings {
         case cover
         case review
         case savedChats
+        case nearTor
+        case proofFreshness
     }
 
     /// Each setting until it is chosen, and again after Restore Defaults.
     /// The quick prompt's shortcut has none; Never reword is off; Cover,
-    /// Review and Saved chats are on.
+    /// Review and Saved chats are on; Tor for NEAR is off.
     nonisolated static let defaultFreeMemory = FreeMemory.fiveMinutes
+    nonisolated static let defaultProofFreshness = ProofFreshness.tenMinutes
     nonisolated static let defaultDoorPort: UInt16 = 8742
     /// The ports the door may take: none the system keeps for itself.
     nonisolated static let doorPorts: ClosedRange<Int> = 1024...65535
@@ -138,6 +143,29 @@ final class AppSettings {
         }
     }
 
+    /// Whether NEAR mode goes through Tor, which needs Cloak running. Off,
+    /// NEAR and Intel see this Mac's internet address.
+    var nearTor: Bool {
+        get {
+            access(keyPath: \.nearTor)
+            return defaults.bool(forKey: Key.nearTor.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.nearTor) { defaults.set(newValue, forKey: Key.nearTor.rawValue) }
+        }
+    }
+
+    /// How long NEAR mode uses a passed check of NEAR's hardware again.
+    var proofFreshness: ProofFreshness {
+        get {
+            access(keyPath: \.proofFreshness)
+            return (defaults.object(forKey: Key.proofFreshness.rawValue) as? Int).flatMap(ProofFreshness.init) ?? Self.defaultProofFreshness
+        }
+        set {
+            withMutation(keyPath: \.proofFreshness) { defaults.set(newValue.rawValue, forKey: Key.proofFreshness.rawValue) }
+        }
+    }
+
     /// Why a port can't be the door's.
     enum PortRefusal: Error, Equatable {
         /// Not a whole number in `doorPorts`.
@@ -194,6 +222,8 @@ final class AppSettings {
             case .cover: withMutation(keyPath: \.cover, remove)
             case .review: withMutation(keyPath: \.review, remove)
             case .savedChats: withMutation(keyPath: \.savedChats, remove)
+            case .nearTor: withMutation(keyPath: \.nearTor, remove)
+            case .proofFreshness: withMutation(keyPath: \.proofFreshness, remove)
             }
         }
     }

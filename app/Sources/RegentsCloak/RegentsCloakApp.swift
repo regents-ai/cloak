@@ -8,11 +8,11 @@ import SwiftUI
 
 /// The menu-bar app: one supervisor, the model's download, its menu, its
 /// Chat, Agents, Details and Settings windows, the quick prompt, a welcome
-/// on the first launch, the door other apps and the agent in the guest send
-/// through while Cloak is Running, its AppleScript commands
-/// (`StartCommand` and the others), the control channel `cloak` uses to
-/// drive the same supervisor, and its updater when the bundle names a feed
-/// (`Updates`).
+/// on the first launch, NEAR mode's helper, the door other apps and the
+/// agent in the guest send through while Cloak is Running, its AppleScript
+/// commands (`StartCommand` and the others), the control channel `cloak`
+/// uses to drive the same supervisor, and its updater when the bundle names
+/// a feed (`Updates`).
 @main
 struct RegentsCloakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var app
@@ -39,17 +39,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let supervisor = Launch.supervisor
     let download = ModelDownload(manifest: Launch.manifest, layout: Launch.layout)
+    /// NEAR mode's helper, pinned in the manifest; it starts at the first
+    /// check or message.
+    let near: Near = {
+        let near = Launch.layout.near(Launch.manifest)
+        return Near(helper: near.helper, sha256: near.sha256)
+    }()
+    /// Made at the first show of Chat or Settings, or the quick prompt's
+    /// first Return.
+    private lazy var nearMode = NearMode(near: near, supervisor: supervisor, settings: .standard)
     /// Made at its window's first show or the quick prompt's first Return.
     private lazy var conversations = Chat(
         supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
-        door: door)
+        door: door, nearMode: nearMode)
     private lazy var chat = AppWindow { [unowned self] in
         ChatView.window(conversations, showDetails: { self.showDetails() })
     }
     private lazy var details = AppWindow { [supervisor, download] in DetailsView.window(supervisor, download) }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
-    private lazy var settings = AppWindow { [supervisor, prompt, door, updates] in
-        SettingsView.window(.standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates)
+    private lazy var settings = AppWindow { [supervisor, prompt, door, updates, nearMode] in
+        SettingsView.window(.standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode)
     }
     private lazy var welcome = AppWindow { WelcomeView.window() }
     private lazy var prompt = QuickPrompt(settings: .standard) { [unowned self] text in
@@ -130,7 +139,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Quit, from the menu or the system, goes through the one shutdown,
     /// and ends once every app with a request under way has been answered.
+    /// NEAR mode's helper ends at once, a message under way or not.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        near.stop()
         supervisor.quit { [server, door] in
             server?.close()
             Task {

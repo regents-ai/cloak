@@ -227,6 +227,12 @@ public final class Supervisor {
         manifest.status(of: phase, check: check, detail: detail)
     }
 
+    /// tor's SOCKS socket file while Running, for NEAR mode with Tor on; nil
+    /// otherwise.
+    public var torSocket: String? {
+        phase == .running ? stack.tor?.socket : nil
+    }
+
     /// What Cloak holds in memory now (`Memory`); a guest started for this
     /// run must have its virtual machine among it.
     public func memory() -> Memory {

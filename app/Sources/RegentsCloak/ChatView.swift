@@ -8,8 +8,9 @@ import SwiftUI
 /// on the right, each message as written and as reworded, side by side (or
 /// as written alone when it goes so), and its answer once sent, with the box
 /// to write the next one at the bottom. In the agent's conversations, each
-/// task in place of a message, with the steps the agent took.
-/// Development mode's mark is always at the top.
+/// task in place of a message, with the steps the agent took. In NEAR's
+/// conversations, each message as written and its answer. Development
+/// mode's mark is at the top, or NEAR mode's in a NEAR conversation.
 struct ChatView: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
@@ -49,11 +50,12 @@ private struct Sidebar: View {
         List(selection: $chat.selection) {
             ForEach(chat.conversations) { conversation in
                 let agent = chat.isAgent(conversation)
+                let near = chat.isNear(conversation)
                 let unsaved = chat.unsaved.contains(conversation.id)
                 HStack(spacing: 6) {
                     Text(agent && conversation.turns.isEmpty ? "New task" : conversation.title)
                         .lineLimit(1)
-                    if agent || unsaved {
+                    if agent || near || unsaved {
                         Spacer(minLength: 0)
                     }
                     if unsaved {
@@ -68,6 +70,12 @@ private struct Sidebar: View {
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("Agent")
+                    }
+                    if near {
+                        Image(systemName: "cpu")
+                            .imageScale(.small)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("NEAR")
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -114,7 +122,11 @@ private struct Detail: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DevelopmentBar()
+            if chat.selected.map(chat.isNear) == true {
+                NearBar(settings: chat.settings)
+            } else {
+                DevelopmentBar()
+            }
             Divider()
             content
         }
@@ -173,6 +185,7 @@ private struct Turns: View {
     var body: some View {
         let rewording = chat.rewording?.conversation == conversation.id ? chat.rewording : nil
         let agent = chat.isAgent(conversation)
+        let near = chat.isNear(conversation)
         let run = chat.agent.runs[conversation.id]
         ScrollViewReader { proxy in
             ScrollView {
@@ -183,6 +196,11 @@ private struct Turns: View {
                                 Text("New task")
                                     .font(.title3.weight(.semibold))
                                 Text("Each task is reworded on this Mac before the model sees it. You see both, each step the agent takes, and its answer.")
+                                    .foregroundStyle(.secondary)
+                            } else if near {
+                                Text("New chat")
+                                    .font(.title3.weight(.semibold))
+                                Text("Each message goes to NEAR as you wrote it, once NEAR's hardware check passes.")
                                     .foregroundStyle(.secondary)
                             } else {
                                 Text("New chat")
@@ -207,7 +225,7 @@ private struct Turns: View {
                                 newest: turn.id == conversation.turns.last?.id)
                         } else {
                             TurnCard(
-                                chat: chat, conversation: conversation.id, turn: turn,
+                                chat: chat, conversation: conversation.id, turn: turn, near: near,
                                 open: chat.isOpen(turn, in: conversation),
                                 rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil })
                         }
@@ -247,11 +265,13 @@ private struct Turns: View {
 /// is never good in Development mode. While it has a reworded text, Send
 /// Original Text beside Send sends it as written instead, with Never
 /// reword's checkbox under them. Another unsent one is shrunk, says so, and
-/// opens when pressed anywhere.
+/// opens when pressed anywhere. A NEAR message is shown as written alone,
+/// and the open one has Send, with no lights and no rewording.
 private struct TurnCard: View {
     let chat: Chat
     let conversation: UUID
     let turn: Turn
+    let near: Bool
     let open: Bool
     let rewording: Chat.Rewording?
     @State private var hovering = false
@@ -277,8 +297,9 @@ private struct TurnCard: View {
                     }
                 }
             } else {
-                Pane(title: "Original", count: nil, mark: .removed) {
-                    TextBox(text: .constant(turn.original), label: "Original", editable: false)
+                let title = near ? "Message" : "Original"
+                Pane(title: title, count: nil, mark: .removed) {
+                    TextBox(text: .constant(turn.original), label: title, editable: false)
                 }
             }
             if let answer = turn.answer {
@@ -286,23 +307,32 @@ private struct TurnCard: View {
                     AnswerText(text: answer)
                 }
             }
-            if let stop = chat.sendStop, stop.turn == turn.id {
+            if !near, let stop = chat.sendStop, stop.turn == turn.id {
                 StopRow(stop: stop.stop) { chat.sendStop = nil }
+                    .padding(12)
+                    .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            }
+            if near, let stop = chat.nearMode.sendStop, stop.turn == turn.id {
+                NearStopRow(stop: stop.stop) { chat.nearMode.sendStop = nil }
                     .padding(12)
                     .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             }
             if let rewording {
                 Progress(chat: chat, started: rewording.started)
             } else if open {
-                Lights(reworded: turn.reworded.map { !Chat.isBlank($0) } ?? false, routed: chat.supervisor.phase == .running)
+                if !near {
+                    Lights(reworded: turn.reworded.map { !Chat.isBlank($0) } ?? false, routed: chat.supervisor.phase == .running)
+                }
                 HStack(spacing: 12) {
-                    Button("Reword", systemImage: "arrow.clockwise") { chat.reword(turn, in: conversation) }
-                        .disabled(!chat.canReword || sending != nil)
+                    if !near {
+                        Button("Reword", systemImage: "arrow.clockwise") { chat.reword(turn, in: conversation) }
+                            .disabled(!chat.canReword || sending != nil)
+                    }
                     if let sending {
                         SendingProgress(started: sending.started)
                     }
                     Spacer()
-                    let block = chat.sendBlock(turn)
+                    let block = near ? chat.nearMode.sendBlock : chat.sendBlock(turn)
                     let originalBlock = turn.reworded == nil ? nil : chat.originalBlock
                     if let words = originalBlock ?? block {
                         Text(words)
@@ -677,8 +707,11 @@ extension View {
 /// Review off. In the agent's conversation, the box for the next task,
 /// with Run, or Stop while a task runs there, and a note when the agent
 /// starts without the earlier tasks. While the conversation is empty, what
-/// it is to be: a chat or the agent's. Above either box, its details; at
-/// the foot, the Cover, Tor and zkAPI switches.
+/// it is to be: Cloak's, NEAR's or the agent's. Above either box, its
+/// details; at the foot, the Cover, Tor and zkAPI switches. In a NEAR
+/// conversation, the box's button sends each message as written, with no
+/// details, and at the foot NEAR's Tor switch and what its hardware check
+/// last found.
 private struct Compose: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
@@ -687,9 +720,10 @@ private struct Compose: View {
     var body: some View {
         let conversation = chat.selected
         let agent = conversation.map(chat.isAgent) ?? false
+        let near = conversation.map(chat.isNear) ?? false
         let running = conversation.flatMap { chat.agent.runs[$0.id] } != nil
-        let neverReword = !agent && chat.settings.neverReword
-        let sends = neverReword || (!agent && !chat.settings.review)
+        let neverReword = !agent && !near && chat.settings.neverReword
+        let sends = neverReword || near || (!agent && !chat.settings.review)
         let label = agent ? "Task" : "Message"
         VStack(alignment: .leading, spacing: 10) {
             if let stop = chat.stop {
@@ -702,10 +736,13 @@ private struct Compose: View {
                     chat.problem = nil
                 }
             }
-            if chat.supervisor.phase != .running {
+            // NEAR's status line and Send say what Cloak not running stops.
+            if !near, chat.supervisor.phase != .running {
                 Waiting(supervisor: chat.supervisor, to: agent ? "run" : sends ? "send" : "reword", showDetails: showDetails)
             }
-            DetailsRow(chat: chat)
+            if !near {
+                DetailsRow(chat: chat)
+            }
             HStack(alignment: .bottom, spacing: 10) {
                 TextBox(text: $chat.draft, label: label, maxHeight: 160, autofocus: true, submit: chat.submit)
                     .overlay(alignment: .topLeading) {
@@ -748,7 +785,8 @@ private struct Compose: View {
             HStack(spacing: 16) {
                 if let conversation, conversation.turns.isEmpty, chat.rewording?.conversation != conversation.id {
                     Picker("Type", selection: $chat.kind) {
-                        Text("Chat").tag(Chat.Kind.chat)
+                        Text("Cloak").tag(Chat.Kind.chat)
+                        Text("NEAR").tag(Chat.Kind.near)
                         Text("Agent").tag(Chat.Kind.agent)
                     }
                     .pickerStyle(.segmented)
@@ -773,9 +811,17 @@ private struct Compose: View {
                     Text(block)
                         .foregroundStyle(.secondary)
                 }
+                if near, let block = chat.nearMode.sendBlock {
+                    Text(block)
+                        .foregroundStyle(.secondary)
+                }
             }
             .font(.callout)
-            Switches(settings: chat.settings, supervisor: chat.supervisor)
+            if near {
+                NearSwitches(settings: chat.settings, nearMode: chat.nearMode)
+            } else {
+                Switches(settings: chat.settings, supervisor: chat.supervisor)
+            }
         }
         .padding(16)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: chat.picks.details)
@@ -806,6 +852,181 @@ private struct Switches: View {
             Spacer(minLength: 0)
         }
         .font(.callout)
+    }
+}
+
+/// NEAR mode's one switch, Tor (`AppSettings.nearTor`), and beside it what
+/// NEAR's hardware check last found. The check runs as this shows, and
+/// again each time the route changes.
+private struct NearSwitches: View {
+    @Bindable var settings: AppSettings
+    let nearMode: NearMode
+
+    var body: some View {
+        HStack(spacing: 10) {
+            SwitchPill(
+                title: "Tor", isOn: $settings.nearTor,
+                help: settings.nearTor ? "NEAR and Intel see a Tor address. Slower." : "NEAR and Intel see this Mac's internet address.")
+            NearStatus(settings: settings, nearMode: nearMode)
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+        .task(id: nearMode.route) { await nearMode.check() }
+    }
+}
+
+/// What NEAR's hardware check last found: under way, passed and how long
+/// ago, or stopped with Check Again; or that Tor needs Cloak running.
+private struct NearStatus: View {
+    let settings: AppSettings
+    let nearMode: NearMode
+
+    var body: some View {
+        if nearMode.route == nil {
+            Text("Not checked. Tor needs Cloak running.")
+                .foregroundStyle(.secondary)
+        } else if let started = nearMode.checking {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(settings.nearTor ? "Checking NEAR's hardware through Tor" : "Checking NEAR's hardware")
+                Text(timerInterval: started...Date.distantFuture, countsDown: false)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        } else if let stop = nearMode.checkStop {
+            HStack(spacing: 8) {
+                Text("Not checked: \(stop.title).")
+                    .foregroundStyle(.secondary)
+                Button("Check Again") { Task { await nearMode.check() } }
+                    .controlSize(.small)
+            }
+        } else if let proof = nearMode.proof {
+            // Each minute from the check, so the age and the freshness
+            // passing show as they happen.
+            TimelineView(.periodic(from: proof.passedAt, by: 60)) { context in
+                let age = context.date.timeIntervalSince(proof.passedAt)
+                HStack(spacing: 4) {
+                    Text(Self.checked(proof, age: age))
+                    if age >= Double(settings.proofFreshness.rawValue) {
+                        Text("Next message checks again.")
+                    }
+                }
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    /// "Checked 2 min ago: 1 server, 8 GPUs", or with several servers,
+    /// "Checked 2 min ago: 3 servers, 8 GPUs on one".
+    private static func checked(_ proof: NearProof, age: TimeInterval) -> String {
+        let minutes = Int(age / 60)
+        let when = minutes < 1 ? "just now" : "\(minutes) min ago"
+        let gpus = proof.gpus == 1 ? "1 GPU" : "\(proof.gpus) GPUs"
+        return proof.modelServers == 1
+            ? "Checked \(when): 1 server, \(gpus)"
+            : "Checked \(when): \(proof.modelServers) servers, \(gpus) on one"
+    }
+}
+
+/// NEAR mode's mark, in place of Development mode's: what goes and who pays,
+/// and Limits, what NEAR's hardware check does not cover.
+private struct NearBar: View {
+    let settings: AppSettings
+    @State private var showingLimits = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Text("NEAR")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.2), in: Capsule())
+                Text("Sent as you wrote it. Your NEAR key pays.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            Spacer(minLength: 0)
+            Button("Limits") { showingLimits = true }
+                .controlSize(.small)
+                .popover(isPresented: $showingLimits, arrowEdge: .bottom) {
+                    Limits(settings: settings)
+                }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.06))
+    }
+}
+
+/// What NEAR's hardware check does not cover, as the settings are now.
+private struct Limits: View {
+    let settings: AppSettings
+
+    var body: some View {
+        let freshness = switch settings.proofFreshness {
+        case .everyMessage: "Each message is checked first."
+        case .tenMinutes: "With a reused check, the hardware was checked up to 10 minutes ago."
+        case .oneHour: "With a reused check, the hardware was checked up to 1 hour ago."
+        }
+        let lines = [
+            "The model's software isn't part of the measurement.",
+            "Your key ties every message to one NEAR account.",
+            "The GPU check covers one server, which NEAR picks.",
+            freshness,
+            settings.nearTor ? "Through Tor, they see a Tor address." : "Tor is off, so NEAR and Intel see this Mac's internet address.",
+            "On 8 November a flaw on one NEAR server exposed requests in progress.",
+        ]
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Not checked")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(lines, id: \.self) { line in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: 4))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    Text(line)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .font(.callout)
+        .padding(16)
+        .frame(width: 340, alignment: .leading)
+    }
+}
+
+/// Why a NEAR message stopped, in plain words, and whether it may have
+/// reached NEAR.
+private struct NearStopRow: View {
+    let stop: NearStop
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(stop.title)
+                    .fontWeight(.medium)
+                Text(stop.words)
+                    .foregroundStyle(.secondary)
+                Text(stop.sent ? "Your message may have reached NEAR. Sending again may be charged twice." : "Nothing was sent.")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Dismiss", systemImage: "xmark", action: dismiss)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("Dismiss")
+        }
     }
 }
 
@@ -945,6 +1166,52 @@ extension Chat.Stop {
         }
         let back = newMessage ? "Your message is back in the box." : "The message is as it was."
         return next.isEmpty ? back : back + " " + next
+    }
+}
+
+extension NearStop {
+    var title: String {
+        switch kind {
+        case .line: "Cloak error"
+        case .request: "Can't send"
+        case .fetch: "No proof"
+        case .refused: "Proof refused"
+        case .connect: "No connection"
+        case .pin: "Server changed"
+        case .send: "Interrupted"
+        case .status:
+            switch code {
+            case 401, 403: "Key refused"
+            case 429: "Too many"
+            default: "NEAR error"
+            }
+        case .reply: "Answer refused"
+        case .helper: "Damaged"
+        case .ended: "Stopped"
+        case .key: "Key unreadable"
+        }
+    }
+
+    var words: String {
+        switch kind {
+        case .line: "Cloak's request wasn't formed right."
+        case .request: "This message can't go as it is."
+        case .fetch: "Cloak couldn't fetch NEAR's proof. Try again."
+        case .refused: "NEAR's servers don't match what this version of Cloak accepts. Update Cloak."
+        case .connect: "The proof passed, but Cloak couldn't connect to NEAR."
+        case .pin: "NEAR answered from a server other than the one checked."
+        case .send: "The connection dropped before NEAR's answer came."
+        case .status:
+            switch code {
+            case 401, 403: "NEAR didn't accept your key. Replace it in Settings."
+            case 429: "NEAR is limiting your account. Wait, then send again."
+            default: "NEAR answered with error \(code ?? 0)."
+            }
+        case .reply: "NEAR's answer didn't open, so it isn't shown."
+        case .helper: "Reinstall Regents Cloak."
+        case .ended: "The part of Cloak that talks to NEAR quit."
+        case .key: "The keychain didn't give Cloak your NEAR key."
+        }
     }
 }
 

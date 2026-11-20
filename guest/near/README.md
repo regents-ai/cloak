@@ -5,9 +5,11 @@ proof, its Intel quotes and Intel Trust Authority's verdict on its GPUs,
 made before anything is sent, and the chat requests that follow a passed
 check, encrypted to the model key the check established. It holds
 no account: the caller gives the key for each request. `cloak-near`, the
-helper the Mac app will start for NEAR mode, runs it one line at a time
-(see "The helper"). Neither the crate nor the helper is part of the guest
-image, the build scripts or the app yet.
+helper the Mac app starts for NEAR mode, runs it one line at a time (see
+"The helper"). app/build.sh builds the helper, puts it in the app at
+`Contents/Resources/near/cloak-near` and pins it in the app's manifest; the
+app checks that pin before each start of it. The crate is not part of the
+guest image.
 
 - `fetch_report` opens one TLS connection to `cloud-api.near.ai` on the
   caller's route (see "Routes"), with ordinary certificate checks against

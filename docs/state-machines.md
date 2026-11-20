@@ -713,6 +713,63 @@ Stopped, Downloading, Retrying, Waiting for network --cancel--> Stopped, partial
 The download's checks were deleted on 19 November (decision 15 in
 `docs/plan.md`); nothing checks what they checked now.
 
+## 9b. NEAR mode (`app/Sources/CloakChat/Near.swift`, `app/Sources/RegentsCloak/NearMode.swift`)
+
+A conversation whose first message went to NEAR (`Conversation.near`, true
+from that message on and absent otherwise) sends each message as written
+to NEAR AI Cloud through `cloak-near`, the helper in the app's bundle
+(`guest/near/README.md`, "The helper"). It never goes to the wallet's
+provider, and a Cloak conversation never goes to NEAR. What a new
+conversation is, is the type picked under the message box (`Chat.kind`, in
+memory only, Cloak at each launch).
+
+The helper's life is owned by the `Near` actor, which runs on a serial
+queue of its own and blocks on the helper's pipes with no suspension
+point, so lines go one at a time, in the order they came:
+
+```
+not started --first check or message, file matches its pin--> running
+not started --file does not match, or cannot start--> not started (stop `helper`, nothing sent)
+running --line written, answer line read--> running
+running --write fails--> not started (stop `ended`, nothing sent)
+running --output ends before the answer--> not started (stop `ended`; may be sent for a message)
+running --answer line does not read--> not started (stop `helper`; may be sent for a message)
+running --Quit--> ended (`stop()`, from any thread, a line under way or not)
+```
+
+A line that stopped is never written again; the next check or Send starts
+a new helper as the first did, after the pin check. The key is read from
+the keychain only as a message's line is built, and one that cannot be
+read stops it with nothing written. `sent` is the helper's for its own
+stops and the app's for its own: false while the helper never had the
+whole line, true once it may have sent the request.
+
+The check line beside the Tor pill (`NearMode`) is one of: Tor needs
+Cloak running (Tor on and no socket: `Supervisor.torSocket` is non-nil
+only while Running); checking (`checking`, from when the checks under way
+began until the last ends); passed (`proof`: when it passed, what it
+covered, and "Next message checks again." once it is older than the
+freshness chosen); or stopped (`checkStop`, with Check Again). A check
+runs whenever a NEAR conversation is shown and whenever its route changes
+(`.task(id:)` on `NearMode.route`: direct, or tor with its socket and the
+launch's two names). A message that is answered sets `proof` to the check
+it went on; one that stops where the helper keeps no check (`fetch`,
+`refused`, `pin`, `reply`, `helper`, `ended`) clears `proof` and sets
+`checkStop`.
+
+A NEAR message card is written and sent at once (`Chat.submit`), then
+answered or stopped (`NearMode.sendStop`, with whether it may have reached
+NEAR): read off `Turn.answer`, `Chat.sending[turn]` and
+`NearMode.sendStop`, as section 10's message card is. Send is off only
+with no key kept (`NearMode.hasKey` false) or with Tor on while Cloak is
+not running; every other press reaches the helper, behind any line under
+way.
+
+`app/Tests/CloakTests/NearTests.swift` checks that the `ask` line carries
+exactly the freshness chosen, in seconds, and the route chosen, against a
+stand-in helper pinned as the real one is. Nothing else here is under
+test.
+
 ## 10. Stages still implied (found 15 November 2026)
 
 A second read, of everything built since section 9: the chat window, the
@@ -738,7 +795,9 @@ its stages first.
   off (`AppSettings.review`), a rewording that finishes, a new message's or
   a Reword's, sends the turn at once, as a press of Send would, through
   the same checks: one that cannot go stays reworded and open, saying why,
-  so "reworded and open" is skipped only when the send can start.
+  so "reworded and open" is skipped only when the send can start. A NEAR
+  conversation's card (section 9b) is never reworded, and its stop is
+  `NearMode.sendStop`.
 - **One conversation on disk** (`Chat.update`, `Chat.unsaved`). Saved, each
   change sealed and written, or in memory only: a conversation changed
   while Saved chats is off (`AppSettings.savedChats`) joins `unsaved`, and
