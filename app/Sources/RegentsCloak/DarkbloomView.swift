@@ -83,6 +83,7 @@ struct DarkbloomView: View {
                         Text("From darkbloom.dev")
                             .foregroundStyle(.secondary)
                         SymbolButton("Install", symbol: "arrow.down.circle") { mode.install() }
+                            .overhanging()
                     }
                 case .installing(let step):
                     ProgressView(value: Double(step), total: 5)
@@ -96,11 +97,13 @@ struct DarkbloomView: View {
                             .foregroundStyle(.secondary)
                         InfoButton("About Connect", note: Self.connectNote)
                         SymbolButton("Connect", symbol: "link") { mode.connect() }
+                            .overhanging()
                     }
                 case .failed(let failure):
                     HStack(spacing: 2) {
                         Failure(failure: failure)
                         SymbolButton("Try Again", symbol: "arrow.clockwise") { mode.open() }
+                            .overhanging()
                     }
                 default:
                     Working(words: "Checking")
@@ -121,7 +124,7 @@ struct DarkbloomView: View {
         puts Darkbloom in ~/.darkbloom and adds it to your shell's path in ~/.zshrc. Before Cloak runs anything of \
         Darkbloom's, it checks that it is signed by Darkbloom's developer (team SLDQ2GJ6TL). Cloak then starts \
         Darkbloom's control service, which stays on this Mac and opens at login. Nothing is served until you press \
-        Start.
+        Start. Closing this window before Install finishes stops it.
         """
 
     private static let connectNote = """
@@ -191,6 +194,7 @@ struct DarkbloomView: View {
                 .frame(width: 120)
                 .accessibilityLabel("Download")
                 SymbolButton("Cancel Download", symbol: "xmark.circle") { confirmingCancel = true }
+                    .overhanging()
             }
         } else if model.downloaded {
             Image(systemName: "checkmark.circle.fill")
@@ -199,6 +203,7 @@ struct DarkbloomView: View {
                 .accessibilityLabel("Downloaded")
         } else {
             SymbolButton("Download", symbol: "arrow.down.circle") { mode.downloadModel() }
+                .overhanging()
         }
     }
 
@@ -225,6 +230,7 @@ struct DarkbloomView: View {
                 HStack {
                     if mode.isOn {
                         SymbolButton("Stop", symbol: "stop.fill") { mode.stop() }
+                            .overhanging()
                             .disabled(mode.state == .stopping)
                     } else {
                         if let block = mode.startBlock {
@@ -236,6 +242,7 @@ struct DarkbloomView: View {
                             switching = nil
                             if mode.changes.isEmpty { mode.start() } else { confirmingStart = true }
                         }
+                        .overhanging()
                         .disabled(mode.startBlock != nil)
                     }
                 }
@@ -302,7 +309,7 @@ struct DarkbloomView: View {
     }
 
     private var key: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
+        HStack(spacing: 4) {
             if let key = mode.shownKey {
                 Text(key)
                     .font(.body.monospaced())
@@ -310,11 +317,13 @@ struct DarkbloomView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 SymbolButton("Hide Key", symbol: "eye.slash") { mode.hideKey() }
+                    .overhanging()
             } else {
                 Text("••••••••••••")
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Hidden")
                 SymbolButton("Show Key", symbol: "eye") { Task { await mode.showKey() } }
+                    .overhanging()
             }
             SymbolButton("Copy Key", symbol: "doc.on.doc") {
                 Task {
@@ -323,6 +332,7 @@ struct DarkbloomView: View {
                     NSPasteboard.general.setString(key, forType: .string)
                 }
             }
+            .overhanging()
         }
     }
 
@@ -469,6 +479,7 @@ struct DarkbloomView: View {
                                     .foregroundStyle(.secondary)
                             }
                             SymbolButton("Remove Model", symbol: "trash") { confirmingRemove = true }
+                                .overhanging()
                                 .disabled(model.serving || model.loaded)
                         }
                     }
@@ -501,6 +512,15 @@ struct DarkbloomView: View {
                     .accessibilityAction { more.toggle() }
             }
         }
+    }
+}
+
+private extension View {
+    /// A 28-point symbol button in a row overhangs the row's line of text, as
+    /// `InfoButton` does, so the row is no taller and its words line up with
+    /// the label's.
+    func overhanging() -> some View {
+        padding(.vertical, -6)
     }
 }
 

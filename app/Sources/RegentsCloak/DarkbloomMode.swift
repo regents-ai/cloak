@@ -178,7 +178,7 @@ final class DarkbloomMode {
             switch self {
             case .network: "Serves Darkbloom's network"
             case .open: "Open beyond this Mac"
-            case .forwards: "Sends your requests on"
+            case .forwards: "Your requests can leave this Mac"
             }
         }
 
