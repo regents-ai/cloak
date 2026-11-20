@@ -241,8 +241,10 @@ final class DarkbloomMode {
 
     // MARK: Presses
 
-    /// Looks for Darkbloom again and follows it while the window is open.
+    /// Looks for Darkbloom again and follows it while the window is open;
+    /// on a system Darkbloom doesn't run on, nothing.
     func open() {
+        guard Darkbloom.systemFits else { return }
         failure = nil
         follow { await self.look(ensuring: false) }
     }
