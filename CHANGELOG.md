@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Release 0.5.3 (172) published for invited testers, 20 November 2026
+  (docs/release.md, "Releases so far").
 - The app no longer ends by itself (20 November 2026). At 11:18:41 on
   Sean's Mac the published 0.5.2 was ended by macOS with SIGPIPE, forty
   seconds after a Start and with no crash report: the app writes to its

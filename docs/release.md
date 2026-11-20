@@ -410,6 +410,19 @@ Releases so far:
   Applications, its labels readable in the dark appearance. Not yet
   shown: the same window on a Mac in the light appearance, and with
   Finder's tab bar off.
+- 0.5.3 (172), 20 November 2026, from commit `7a1bc2f`: the app no
+  longer ends by itself, the modes' new names and the Modes button
+  (decision 19 in [plan.md](plan.md)), Feedback and Help in Settings,
+  and pills that respond. Apple accepted the app and the image; the
+  image downloaded from the address above is the one built, byte for
+  byte, and Gatekeeper accepts it; the feed keeps the three earlier
+  entries. On Sean's Mac, in the build before the release: Start, two
+  minutes Running and Pause in one process; the Modes list and the
+  Feedback and Help section pictured; help shown between 0.6 and 1.3 s
+  of the pointer resting on Cover; a press on Tor showing its words;
+  Cover off and on again. Not yet shown: the Modes list opening by
+  itself under a resting pointer, VoiceOver on the new controls, and
+  the update from 0.5.2 found by the app itself.
 - Seen on Sean's Mac only: macOS asked once whether to open the worker,
   as "(null)", because its sandbox folder there was made by ad hoc
   builds and the worker is now signed by a team. A Mac that only ever
