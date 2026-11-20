@@ -1,9 +1,10 @@
 #!/bin/busybox sh
 # The guest's only process tree, after /init has moved the root: load vsock,
 # the entropy driver and the disk's drivers, open the payment disk when the
-# host attaches one, start the adapter on loopback as its own user, the
-# Tor port (the one way out, to tor on the host) as another, the daemon's
-# local API as a third, run the daemon's rewrite checks as a fourth, then the
+# host attaches one and start the payer on it, start the adapter on loopback
+# as its own user, the Tor port (the way out, to tor on the host; the payer
+# has its own) as another, the daemon's local API as a third, run the
+# daemon's rewrite checks as a fourth, then the
 # agent cases (Pi in the reference sandbox as the agent user), print the
 # results on the console, then serve when asked to (the door port, the
 # agent's tasks and sends), and power off. No network device exists in this
@@ -28,6 +29,14 @@ ip link set lo up
 # mounted for the payer alone (guest/image/pay-disk). The key's file is gone
 # once the disk is open. A disk that does not open ends the guest, with the
 # reason on the console.
+#
+# Then the payer, in a network namespace of its own, whose loopback nothing
+# else in the guest shares, the agent's sandbox included: a Tor port of its
+# own there, as the guest's below, then cloak-pay as the payer's user, which
+# starts its companion and prints "ready" once the companion answers and it
+# listens on vsock (guest/pay/zz_cloak_pay_linux.go). Its log, which holds no
+# content, stays in /run/cloak. One that does not start ends the guest, with
+# its log on the console. With no disk, no payer starts.
 if [ -e /run/cloak/pay-disk-key ]; then
 	verb=open
 	[ -e /etc/cloak/pay-disk-new ] && verb=create
@@ -36,6 +45,17 @@ if [ -e /run/cloak/pay-disk-key ]; then
 	rm /run/cloak/pay-disk-key
 	[ $opened = 0 ] || poweroff -f
 	echo "cloak-guest: payment disk open"
+
+	mkfifo /run/cloak/pay-tor-port-ready /run/cloak/pay-ready
+	unshare -n sh -c '
+		ip link set lo up || exit 1
+		su -s /bin/sh torport -c "exec /usr/bin/cloak-port 9050" > /run/cloak/pay-tor-port-ready &
+		read -r ready < /run/cloak/pay-tor-port-ready
+		[ "$ready" = ready ] || exit 1
+		exec su -s /bin/sh pay -c "exec /usr/bin/cloak-pay"' > /run/cloak/pay-ready 2> /run/cloak/pay.log &
+	read -r ready < /run/cloak/pay-ready
+	[ "$ready" = ready ] || { echo "cloak-guest: payer did not start"; cat /run/cloak/pay.log; poweroff -f; }
+	echo "cloak-guest: payer ready"
 fi
 
 # The adapter, the Tor port and the daemon each print "ready" once they

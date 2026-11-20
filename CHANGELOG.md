@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- zkAPI step 5: the real companion and its proving keys are in the
+  guest, and the payer starts when the payment disk opens (Sean, 20
+  November 2026, "all of this work needs to be done asap"). No network,
+  no money and no real key yet.
+  - `guest/build.sh` builds the pinned companion (`zkapi-walletd` with
+    its protocol submodule) in Docker as `cloak-pay-walletd`: crates
+    fetched first, which runs none of its code, then compiled with no
+    network. It and the four proving keys ship read-only in the image at
+    `/opt/zkapi`, where the daemon looks. The image grows by 19.7 MB
+    packed and 35.2 MB in memory; the payer at rest uses about 23 MB.
+  - After "cloak-guest: payment disk open" the boot starts the payer in
+    a network namespace of its own (`unshare -n`), with a Tor port of
+    its own, and prints "cloak-guest: payer ready"; a payer that does
+    not start ends the guest with its log on the console. The
+    companion's port 8790 and the payer's own proxy are on a loopback
+    the agent's sandbox does not have. With no disk, no payer starts and
+    the boot is as before.
+  - `cloak-pay` starts the companion as the daemon's own serve does,
+    waits for it, logs "wallet: no note" or "wallet: a note", and has
+    the daemon's `FundingHandler` wired in for step 6. If the companion
+    ends, `cloak-pay` ends.
+  - One change to upstream's companion, `guest/pay/companion-start.patch`:
+    its call to the service's `/health` before it listens is taken out,
+    since the guest has no network at boot and the call ended the
+    companion. Whether the service takes requests now shows at the first
+    request.
+  - Checked on Sean's Mac in the real guest: `tests/test_pay_disk.py` 7
+    passed (a new disk reads "no note"; after a kill and restart it
+    reads "a note" with every file untouched; no disk starts no payer),
+    `tests/test_escape_path.py` 14 passed (from the sandbox, three
+    requests to the companion get no answer, the payer's port refuses
+    all three addresses, its files cannot be read),
+    `guest/image/pay-disk-check.sh` passed 10, `guest/pay/check.sh` ok,
+    `tests/test_tor_path.py` 10 passed (one real-Tor fetch was reset on
+    the first run and passed alone on the second).
+  - `tests/test_pay_path.py` is removed: it was written to wait for the
+    payer at boot, and its checks now run in `tests/test_escape_path.py`.
+  - Known: nothing watches the payer after "ready", so if it stops later
+    the guest keeps running; memory during a real proof in the 1 GiB
+    guest is not measured (129 to 165 MiB in the 15 November trial); the
+    companion's route through the payer's Tor port to the real service
+    is untried (step 7).
 - Local Llama answers from a model you choose, and Inkling 2 Mini is the
   second on the list (Sean, 20 November 2026, "20. a - build now", then
   "I want to urgently add in support for local mode to use the inkling

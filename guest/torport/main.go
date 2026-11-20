@@ -1,13 +1,14 @@
 // Command cloak-port carries one of the guest's ports to the host: it listens
 // on 127.0.0.1:<port> and carries each connection's bytes unchanged over
-// vsock to the host (CID 2) on the same port. The guest runs it twice, each
-// time as its own user:
+// vsock to the host (CID 2) on the same port. The guest runs it for two
+// ports, each as its own user:
 //
 //   - 9050, the Tor port, the guest's one way out (Decision 5 in
 //     docs/plan.md). It listens where the reference's tor listens, so the
 //     daemon's Tor route and the torsocks settings stay as they are. The host
 //     passes a connection on to tor only if it opens with a SOCKS5 greeting,
-//     and closes anything else.
+//     and closes anything else. A guest with the payment disk runs a second
+//     one in the payer's own network namespace, the payer's one way out.
 //   - 8742, the door port, in a guest that serves (decision 12): where the
 //     agent's model requests go, to the app's door on the Mac, which checks
 //     each request's pass as it checks any app's.

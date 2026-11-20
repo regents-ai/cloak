@@ -1,9 +1,9 @@
 #!/bin/sh
 # Runs inside the pinned build image. Reads the guest binaries from /out (the
-# sender among them, the one dynamic Cloak program) and Cloak's cover list
-# beside them, the
-# pinned Pi package from /pi, the pinned Node.js runtime from /node and the
-# reference wrapper from /wrapper, and writes /out/Image (the uncompressed
+# sender and the payer's companion among them, the dynamic ones) and Cloak's
+# cover list beside them, the pinned Pi package from /pi, the pinned Node.js
+# runtime from /node, the reference wrapper from /wrapper and the companion's
+# proving keys from /proof-setup, and writes /out/Image (the uncompressed
 # kernel), /out/initrd.gz (the guest root) and /out/guest-manifest.txt (what
 # went into both, with hashes).
 #
@@ -50,6 +50,15 @@ install -m 0644 /etc/mke2fs.conf $root/etc/mke2fs.conf
 install -m 0755 /src/pay-disk $root/usr/lib/cloak/pay-disk
 chmod 0700 $root/var/lib/cloak-pay
 
+# The payer's companion, which cloak-pay starts, and its four proving keys
+# where the daemon looks for them, share/zkapi-clientd/proof-setup beside its
+# bin/: root's, as everything in the root is, and read-only for every user.
+# The agent's sandbox binds nothing of /opt but the wrapper.
+mkdir -p $root/opt/zkapi/bin $root/opt/zkapi/share/zkapi-clientd/proof-setup
+install -m 0755 /out/cloak-pay-walletd $root/opt/zkapi/bin/zkapi-walletd
+install -m 0444 /proof-setup/request.pk /proof-setup/request.vk /proof-setup/withdrawal.pk /proof-setup/withdrawal.vk \
+	$root/opt/zkapi/share/zkapi-clientd/proof-setup/
+
 # The reference wrapper and what it runs: bash, bubblewrap, torsocks, the CA
 # certificates it binds, Node.js and Pi, installed where `npm install -g` puts it,
 # and curl for the agent's tools.
@@ -78,7 +87,7 @@ ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js $ro
 
 # Shared libraries the dynamic programs need, from this image's glibc.
 for elf in /bin/bash /usr/bin/bwrap /usr/bin/curl $root/usr/local/bin/node /usr/lib/$arch/torsocks/libtorsocks.so $root/usr/bin/cloak-sender \
-	/usr/sbin/cryptsetup /usr/sbin/mke2fs; do
+	/usr/sbin/cryptsetup /usr/sbin/mke2fs $root/opt/zkapi/bin/zkapi-walletd; do
 	ldd $elf | awk '/=>/ { print $3 } /ld-linux/ { print $1 }'
 done | sort -u | while read -r library; do
 	case $library in
@@ -129,7 +138,8 @@ chmod 1777 $root/tmp
 		e2fsprogs libext2fs2t64
 	(cd /node && sha256sum node-v24.22.2-linux-arm64.tar.xz)
 	(cd /pi && sha256sum earendil-works-pi-coding-agent-1.3.0.tgz)
+	(cd /proof-setup && sha256sum request.pk request.vk withdrawal.pk withdrawal.vk)
 	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-port cloak-rewrite-check cloak-daemon cloak-agent-check \
-		cloak-runner cloak-routing-probe cloak-vsock-probe cloak-sender cloak-pay cover.json
+		cloak-runner cloak-routing-probe cloak-vsock-probe cloak-sender cloak-pay cloak-pay-walletd cover.json
 } > /out/guest-manifest.txt
 cat /out/guest-manifest.txt

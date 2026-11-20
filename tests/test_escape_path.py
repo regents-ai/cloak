@@ -10,7 +10,8 @@ attempt fails or reaches only what the design gives it. docs/plan.md,
     uv run --with pytest==8.4.2 pytest tests/test_escape_path.py
 
 The file boots the guest twice, each boot shared by the checks that read it,
-and each with a payment disk of its own. The first has the payer's user
+and each with a payment disk of its own, on which the payer, cloak-pay with
+the real companion, starts (guest/pay/). The first has the payer's user
 write stand-ins for its files on the disk, then runs plain commands in the
 sandbox, one case each, with cover off and the stand-in tor (fake_tor.py),
 which notes each connection's SOCKS identity and destination and refuses it,
@@ -22,14 +23,13 @@ door's scripted answers (tests/door_answers.json).
 import hashlib
 import json
 import re
-import secrets
 import socket
 import threading
 from pathlib import Path
 
 import pytest
-from guest_boot import (ADDRESS, JOURNAL, NOTE, PAY_HOME, Serving, boot, box_pass, events, fake_tor, outputs, pay,
-                        pay_files, routes, sandbox, task, wait_for, write_pay_files)
+from guest_boot import (ADDRESS, DEPLOYMENT, NOTE, PAY_HOME, PAY_LOG, Disk, Serving, boot, box_pass, events, fake_tor,
+                        outputs, pay, pay_files, pay_marker, routes, sandbox, task, wait_for, write_pay_files)
 
 OUTSIDE = "93.184.215.14"
 OUTSIDE_V6 = "2606:2800:21f:cb07:6820:80da:af6b:8b2c"
@@ -53,13 +53,27 @@ READS = ["/run/cloak/rewriter-key", "/run/cloak/adapter-token", "/etc/cloak/cove
 WRITES = ["/etc/ssl/certs/probe", "/etc/ca-certificates/probe", "/etc/alternatives/probe", "/etc/ld.so.cache",
           "/etc/cloak/cover.json", "/opt/cloak/wrapper/sandbox", "/opt/cloak/wrapper/probe", "/usr/bin/probe",
           "/usr/bin/busybox"]
-# The payment disk (guest/image/pay-disk): the payer's files on it, the raw
-# disk, the opened disk's device-mapper nodes, device-mapper's control and
-# the key's boot file; and the disk's mount point and device folders, listed.
-PAY_MARKER = "cloak-escape-" + secrets.token_hex(16)
-DISK_READS = [f"{PAY_HOME}/{path}" for path in (ADDRESS, NOTE, JOURNAL)] + [
+# The payment disk (guest/image/pay-disk): the payer's files on it, the
+# companion's among them, the raw disk, the opened disk's device-mapper
+# nodes, device-mapper's control and the key's boot file; and the disk's
+# mount point and device folders, listed.
+PAY_MARKER = pay_marker()
+DISK_READS = [f"{PAY_HOME}/{path}" for path in (ADDRESS, NOTE, DEPLOYMENT)] + [
     "/dev/vda", "/dev/mapper/cloak-pay", "/dev/dm-0", "/dev/mapper/control", "/run/cloak/pay-disk-key"]
 DISK_LISTS = [PAY_HOME, "/dev/mapper", "/sys/block"]
+# One whole request frame for cloak-pay, as the Mac would send it: kind R, a
+# four-byte big-endian length, then the payload (guest/pay/zz_cloak_pay.go).
+PAYLOAD = json.dumps({"identity": "0123456789abcdef" * 4,
+                      "body": json.dumps({"model": "stand-in/model",
+                                          "messages": [{"role": "user", "content": "Hello."}]})}).encode()
+FRAME = b"R" + len(PAYLOAD).to_bytes(4, "big") + PAYLOAD
+# The guest's own loopback vsock address, the host, and the address the Mac
+# gives the guest.
+CIDS = [1, 2, 3]
+# A guess at the bridge token cloak-pay gives its companion: 32 random bytes
+# in hex, as the daemon makes it (zkapi-clientd/internal/config at the pinned
+# mainnet commit).
+BRIDGE_GUESS = "Authorization: Bearer " + "0123456789abcdef" * 4
 # A device node of the sandbox's own for the raw disk and the opened disk,
 # made from the numbers the kernel lists for each, then read.
 NODES = ("for disk in vda dm-0; do "
@@ -110,6 +124,11 @@ def statuses(output: str) -> list[tuple[str, str]]:
     return [tuple(line.rsplit(" ", 1)) for line in output.splitlines()]
 
 
+def escaped(data: bytes) -> str:
+    """The bytes as Go escapes, which cloak-vsock-probe reads."""
+    return "".join(f"\\x{byte:02x}" for byte in data)
+
+
 # Node sends one UDP datagram to OUTSIDE, port 443, as QUIC would, and prints
 # "udp sent" or why it could not.
 UDP = ("node -e 'const s = require(\"dgram\").createSocket(\"udp4\"); "
@@ -117,10 +136,12 @@ UDP = ("node -e 'const s = require(\"dgram\").createSocket(\"udp4\"); "
        f"s.on(\"error\", end); s.send(\"x\", 443, \"{OUTSIDE}\", end)'")
 
 ATTEMPTS = [
-    # The payer's user, outside the sandbox: its files written on the disk,
-    # then read back with the disk's line in the mount table.
+    # The payer's user, outside the sandbox: cloak-pay's log, which says its
+    # companion answered, then its files written on the disk and read back
+    # with the disk's line in the mount table.
+    pay("payer", f"cat {PAY_LOG}"),
     write_pay_files("payment files", pay_files(PAY_MARKER)),
-    pay("payer reads", f"grep ' {PAY_HOME} ' /proc/mounts; for file in {ADDRESS} {NOTE} {JOURNAL}; do cat $file; echo; done"),
+    pay("payer reads", f"grep ' {PAY_HOME} ' /proc/mounts; for file in {ADDRESS} {NOTE}; do cat $file; echo; done"),
     # The guest's network, which the sandbox shares: what listens on it.
     sandbox("listeners", 'for t in tcp tcp6 udp udp6; do echo "== $t"; cat /proc/net/$t; done'),
     # The Tor port without torsocks: SOCKS5 by hand, with no identity, with
@@ -140,6 +161,14 @@ ATTEMPTS = [
         status("GET", "http://127.0.0.1:8787/admin/funding/address", PI_KEY),
         status("POST", "http://127.0.0.1:8787/admin/funding/deposit", PI_KEY, "X-OA-Management-Token: local"),
         status("POST", "http://127.0.0.1:8787/admin/withdrawal", PI_KEY, "X-OA-Management-Token: local")])),
+    # The payer: its companion's port, with no token and with a guessed one,
+    # and cloak-pay's vsock port, with a whole request frame from each
+    # address the sandbox can try.
+    sandbox("companion port", "; ".join([
+        status("GET", "http://127.0.0.1:8790/wallet/status"),
+        status("GET", "http://127.0.0.1:8790/wallet/status", BRIDGE_GUESS),
+        status("POST", "http://127.0.0.1:8790/oa/v1/lease", BRIDGE_GUESS, "Content-Type: application/json")])),
+    sandbox("pay port", "; ".join(f"cloak-vsock-probe 8021 '{escaped(FRAME)}' {cid}" for cid in CIDS)),
     # The Mac over vsock, on the door's port (open only while the guest
     # serves) and on the port numbers of the guest's own sender and runner.
     sandbox("vsock", "for port in 8742 8020 8030; do cloak-vsock-probe $port x; done"),
@@ -172,7 +201,7 @@ def attempts(tmp_path_factory) -> tuple[dict[str, str], list[dict], Path]:
     """Each attempt's output, every connection the stand-in tor saw, and the
     folder where the stand-in worker keeps each request it gets."""
     folder = tmp_path_factory.mktemp("attempts")
-    results, _ = boot(folder, ATTEMPTS, fake_tor(folder, "ready"))
+    results, _ = boot(folder, ATTEMPTS, fake_tor(folder, "ready"), disk=Disk.blank(folder))
     return {name: r["output"] for name, r in results.items()}, routes(folder), folder
 
 
@@ -184,7 +213,9 @@ def test_loopback_holds_three_services_and_nothing_takes_udp(attempts):
             table = tables.setdefault(line[3:], [])
         elif (fields := line.split()) and fields[0].rstrip(":").isdigit():
             table.append((fields[1], fields[3]))
-    # Local address and port in hex; state 0A is listening.
+    # Local address and port in hex; state 0A is listening. The payer's
+    # listeners, its companion's, its CONNECT proxy's and its own Tor port's,
+    # are in its own network namespace.
     listening = {(local.split(":")[0], int(local.split(":")[1], 16))
                  for name in ("tcp", "tcp6") for local, state in tables[name] if state == "0A"}
     assert listening == {("0100007F", 8012), ("0100007F", 8787), ("0100007F", 9050)}, out["listeners"]
@@ -196,7 +227,8 @@ def test_the_tor_port_without_torsocks_takes_a_socks_request_to_tor(attempts):
     # The greeting is answered with no authentication, the request with tor's refusal.
     assert out["tor port"].split() == hexes(bytes([5, 0]) + REFUSED)
     # tor saw the three requests made to the Tor port by hand, each for the
-    # destination it named, and nothing else in the boot reached it.
+    # destination it named, and nothing else in the boot reached it, the
+    # payer and the frames sent to it included.
     destination = f"{OUTSIDE}:443"
     assert seen == [{"identity": "none", "destination": destination},
                     {"identity": identity(CHOSEN, b"x"), "destination": destination},
@@ -222,6 +254,19 @@ def test_the_adapter_and_the_daemon_refuse_pis_key_and_no_key(attempts):
     assert out["daemon"].split() == ["401"] * 5
     # Nothing reached the worker.
     assert not (folder / "1.json").exists()
+
+
+def test_the_sandbox_reaches_neither_the_companion_nor_cloak_pay(attempts):
+    out, _, _ = attempts
+    # cloak-pay runs, and read the wallet through its companion.
+    assert [line.split(" ", 3)[3] for line in out["payer"].splitlines()] == ["wallet: no note"], out["payer"]
+    # Nothing answers the companion's port in the sandbox's network, with no
+    # token or a guessed one.
+    assert out["companion port"].split() == ["000"] * 3, out["companion port"]
+    # Each frame to cloak-pay's vsock port was refused or closed unanswered.
+    lines = out["pay port"].splitlines()
+    assert len(lines) == len(CIDS), lines
+    assert all(line.startswith(("refused", "closed, no answer")) for line in lines), lines
 
 
 def test_the_mac_answers_no_vsock_port_the_sandbox_tries(attempts):

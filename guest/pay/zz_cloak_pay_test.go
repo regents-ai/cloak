@@ -525,7 +525,7 @@ func standIns(t *testing.T) (*standInTor, *standInCompanion, config.Config) {
 }
 
 func startPay(t *testing.T, ctx context.Context, c config.Config) *pay {
-	p, err := newPay(ctx, c, log.New(io.Discard, "", 0))
+	p, err := newPay(ctx, c, t.TempDir(), log.New(io.Discard, "", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -836,7 +836,7 @@ func TestCloakPayStartsOnlyOnTor(t *testing.T) {
 	defer cancel()
 	for _, route := range []string{"", "socks5://127.0.0.1:9050", "wss://relay.example/", "tor://203.0.113.1:9050", "tor://user@127.0.0.1:9050"} {
 		c.RelayURL = route
-		if _, err := newPay(ctx, c, log.New(io.Discard, "", 0)); err == nil {
+		if _, err := newPay(ctx, c, t.TempDir(), log.New(io.Discard, "", 0)); err == nil {
 			t.Errorf("started on %q", route)
 		}
 		if proxy, err := relay.StartConnectProxy(ctx, route); err == nil {

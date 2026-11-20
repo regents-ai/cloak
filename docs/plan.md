@@ -987,6 +987,22 @@ limits are in CHANGELOG.md.
   passes one (step 6). `docs/plan.md`'s escape checks list the disk
   attempts only here.
 
+**Step 5, the real companion (20 November 2026).** Built by a worker,
+checked by the chief in the real guest; what it is, its checks and its
+known limits are in CHANGELOG.md. The payer runs in a network namespace
+of its own, which settles the companion's listener. `tests/test_pay_path.py`,
+named above as written but not run, is gone: its checks are in
+`tests/test_escape_path.py`.
+
+- **For step 6, the guest half.** `cloak-pay` has the daemon's
+  `FundingHandler` and the real companion client; the `C`, `V` and `H`
+  frames and the chain read are still to add, to the wire shapes the Mac
+  half writes into `docs/zkapi-mac-side.md`.
+- **For step 7.** The companion's route through the payer's Tor port to
+  the host's real tor; a call to the real service with no note,
+  expecting 402; memory in the guest during a real proof; and what
+  happens when the payer ends after "ready".
+
 ## Stage 3 so far
 
 - The feasibility kit is ready: `uv run scripts/stage3.py feasibility <name>`

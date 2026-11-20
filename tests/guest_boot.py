@@ -2,9 +2,9 @@
 cases in one boot (cloak-agent-check prints one result per case), or
 serving, as the app's guest does, with a stand-in for the app's door. The
 host's worker is the stand-in (fake_worker.py) and its tor the stand-in
-(fake_tor.py), but where a check names tor itself. Every boot has a payment
-disk (guest/image/pay-disk), a new one in the boot's folder unless a check
-gives its own.
+(fake_tor.py), but where a check names tor itself. A boot has a payment disk
+(guest/image/pay-disk) only when its check gives one, and then the payer
+starts on it; with none, the guest boots as the app's does today.
 """
 
 import json
@@ -70,25 +70,36 @@ class Disk:
         return ["--disk", self.image, "--disk-key", self.key, *(["--new-disk"] if self.new else [])]
 
 
-# The payer's home, the payment disk's mount point, and the files the payer's
+# The payer's home, the payment disk's mount point, and what the payer's
 # programs keep there (docs/plan.md, "The encrypted disk"): the daemon's
-# payment address, which holds its signing key, and the companion's note,
-# which holds its note secret, and write-ahead journal.
+# payment address, which holds its signing key, the companion's note, which
+# holds its note secret, and the deployment the daemon writes for the
+# companion at its first start and checks at each one after. The payer's log, which holds no content, is in the
+# guest's /run.
 PAY_HOME = "/var/lib/cloak-pay"
 NOTE_DIR = ".config/zkapi-clientd/zkapi/mainnet/zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930"
-ADDRESS, NOTE, JOURNAL = (".config/zkapi-clientd/funding/mainnet/address-funding.json",
-                          f"{NOTE_DIR}/note_state.json", f"{NOTE_DIR}/pending_journal.json")
+ADDRESS, NOTE, DEPLOYMENT = (".config/zkapi-clientd/funding/mainnet/address-funding.json",
+                             f"{NOTE_DIR}/note_state.json", f"{NOTE_DIR}/deployment-manifest.json")
+PAY_LOG = "/run/cloak/pay.log"
+
+
+def pay_marker() -> str:
+    """31 random bytes in hex: a note secret the companion takes."""
+    return secrets.token_hex(31)
 
 
 def pay_files(marker: str) -> dict[str, str]:
-    """Stand-ins for the payment files, each holding the marker, the
-    journal in upstream's shape (zkapi-client's journal.rs at the pinned
-    protocol commit)."""
+    """Stand-ins for the payment files, each holding the marker (pay_marker):
+    the note in the companion's own shape (zkapi-client's note_state.rs at
+    the pinned protocol commit), so the companion reads it, with the marker
+    as its secret."""
     return {
-        ADDRESS: json.dumps({"version": 1, "address": "0x0", "private_key": f"{marker}-signing-key", "phase": "ready"}),
-        NOTE: json.dumps({"note_id": 7, "secret_s": f"{marker}-note-secret", "current_balance": 1000}),
-        JOURNAL: json.dumps({"exists": True, "client_request_id": f"{marker}-request", "nullifier": "0x2",
-                             "payload_hash": "0x3", "user_rerandomization": "0x1", "created_at_ms": 1}),
+        ADDRESS: json.dumps({"version": 1, "address": "0x0", "private_key": f"0x{marker}", "phase": "ready"}),
+        NOTE: json.dumps({"protocol_version": 1, "chain_id": 1, "contract_address": "0x4386fdbda35d995beb3bf8625118ec5982ec81fe",
+                          "note_id": 7, "secret_s": f"0x{marker}", "deposit_amount": 1000, "expiry_ts": 1,
+                          "current_balance": 1000, "balance_blinding": "0x1", "current_commitment_x": "0x1",
+                          "current_commitment_y": "0x2", "current_anchor": "0x1", "is_genesis": True,
+                          "state_signature": None}),
     }
 
 
@@ -126,16 +137,15 @@ def routes(tmp_path: Path) -> list[dict]:
 
 def host(tmp_path: Path, cases: list[dict], tor_launcher: Path, disk: Disk | None = None) -> dict:
     """The host's command line and environment, to run the cases in one
-    guest boot, with tor's lasting folder in tmp_path, and the disk given or
-    a new one there. The guest boots with cover off, an empty cover list laid
-    over the image's (cover_list.py), so the stand-in tor sees only what the
-    cases cause."""
+    guest boot, with tor's lasting folder in tmp_path, and the disk given,
+    if any. The guest boots with cover off, an empty cover list laid over the
+    image's (cover_list.py), so the stand-in tor sees only what the cases
+    cause."""
     cases_file = tmp_path / "cases.jsonl"
     cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
-    disk = disk or Disk.blank(tmp_path)
     return {"args": [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", initrd(tmp_path, NO_COVER),
                      "--cases", cases_file, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
-                     "--tor", tor_launcher, "--tor-data", tmp_path / "tor-data", *disk.args()],
+                     "--tor", tor_launcher, "--tor-data", tmp_path / "tor-data", *(disk.args() if disk else [])],
             "env": os.environ | {"FAKE_WORKER_LOG": str(tmp_path)}}
 
 

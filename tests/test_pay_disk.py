@@ -1,40 +1,52 @@
 """The payment disk on the guest (guest/image/pay-disk; docs/plan.md, "The
-encrypted disk"): the guest's one disk, an image file on the Mac encrypted
-under 32 bytes the host gives, which the guest opens for the payer's user
-alone. Every image here is a temporary one and every key 32 random bytes
-made here; each boot has the stand-in worker and tor.
+encrypted disk"), and the payer that starts on it (cloak-pay with the real
+companion, guest/pay/): the guest's one disk, an image file on the Mac
+encrypted under 32 bytes the host gives, which the guest opens for the
+payer's user alone. Every image here is a temporary one and every key 32
+random bytes made here; each boot has the stand-in worker and tor, which
+refuses every connection, so nothing leaves the Mac.
 
     llama-worker/install.sh
     guest/build.sh
     host/build.sh
     uv run --with pytest==8.4.2 pytest tests/test_pay_disk.py
 
-The first boot makes the disk, the payer's user writes stand-ins for its
-files there, each to a temporary name renamed into place, and the host is
-killed (SIGKILL) as soon as that case's result is on the console, while the
-next case holds the guest running, so nothing stops cleanly. The second
-boot opens the same disk and reads the files back. Then the disk is booted
-with a wrong key, with both copies of its header damaged (on a copy), and
-called new once more: each ends the guest before any case runs, saying why,
-with the image unchanged. Last, the image is searched for the marker every
-stand-in holds. guest/image/pay-disk-check.sh checks the same program in
-Docker, with the image copied at the moment the files are renamed into place
-and more kinds of damage.
+The first boot makes the disk; the payer starts and its companion makes its
+state there, and the wallet reads "no note" through the companion. The
+payer's user then writes stand-ins for the payment address and the note,
+each to a temporary name renamed into place, and the host is killed
+(SIGKILL) as soon as that case's result is on the console, while the next
+case holds the guest running, so nothing stops cleanly. The second boot
+opens the same disk: the payer starts on the state it left, the wallet reads
+the stand-in note through the companion, and the files read back. Then the
+disk is booted with a wrong key, with both copies of its header damaged (on
+a copy), and called new once more: each ends the guest before any case
+runs, saying why, with the image unchanged. A boot with no disk starts no
+payer. Last, the image is searched for the marker every stand-in holds.
+guest/image/pay-disk-check.sh checks the same program in Docker, with the
+image copied at the moment the files are renamed into place and more kinds
+of damage.
 """
 
 import hashlib
 import json
+import re
 import secrets
 import shutil
 from pathlib import Path
 
 import pytest
-from guest_boot import ADDRESS, JOURNAL, NOTE, PAY_HOME, Disk, fake_tor, pay, pay_files, run, write_pay_files
+from guest_boot import (ADDRESS, DEPLOYMENT, NOTE, PAY_HOME, PAY_LOG, Disk, fake_tor, pay, pay_files, pay_marker, routes,
+                        run, sandbox, write_pay_files)
 
-MARKER = "cloak-at-rest-" + secrets.token_hex(16)
+MARKER = pay_marker()
 FILES = pay_files(MARKER)
-READ = pay("read", f"grep ' {PAY_HOME} ' /proc/mounts; for file in {ADDRESS} {NOTE} {JOURNAL}; do cat $file; echo; done")
+READ = pay("read", f"grep ' {PAY_HOME} ' /proc/mounts; for file in {ADDRESS} {NOTE}; do cat $file; echo; done")
+# The payer's log, then each of the payer's files and folders on the disk,
+# with its inode.
+PAYER = pay("payer", f"cat {PAY_LOG}; find .config | xargs stat -c '%i %n'")
 OPEN = "cloak-guest: payment disk open"
+READY = "cloak-guest: payer ready"
 STOP = "cloak-guest: payment disk did not open: "
 
 
@@ -50,7 +62,20 @@ def result(console: str, name: str) -> dict | None:
     return None
 
 
-def boot(folder: Path, cases: list[dict], disk: Disk) -> str:
+def payer(console: str) -> tuple[list[str], dict[str, str]]:
+    """What the payer case printed: the payer's log, each line without its
+    time, and the inode of each of the payer's files and folders."""
+    log, inodes = [], {}
+    for line in result(console, "payer")["output"].splitlines():
+        if re.fullmatch(r"\d+ \.config\S*", line):
+            inode, path = line.split()
+            inodes[path] = inode
+        else:
+            log.append(re.sub(r"^cloak-pay \d{4}/\d\d/\d\d \d\d:\d\d:\d\d ", "", line))
+    return log, inodes
+
+
+def boot(folder: Path, cases: list[dict], disk: Disk | None) -> str:
     """One boot to its end; the guest's console."""
     console, err, returncode = run(folder, cases, fake_tor(folder, "ready"), disk=disk)
     assert returncode == 0, err
@@ -66,13 +91,14 @@ def refused(folder: Path, disk: Disk) -> tuple[str, str, str]:
 
 @pytest.fixture(scope="module")
 def boots(tmp_path_factory) -> dict:
-    folder = {name: tmp_path_factory.mktemp(name) for name in ("first", "second", "wrong", "damaged", "again")}
+    folder = {name: tmp_path_factory.mktemp(name) for name in ("first", "second", "wrong", "damaged", "again", "none")}
     disk = Disk.blank(folder["first"])
-    first, _, _ = run(folder["first"], [write_pay_files("write", FILES), pay("hold", "sleep 600")],
+    first, _, _ = run(folder["first"], [PAYER, write_pay_files("write", FILES), pay("hold", "sleep 600")],
                       fake_tor(folder["first"], "ready"), disk=disk,
                       until=lambda console: result(console, "write") is not None)
     disk.new = False
-    second = boot(folder["second"], [READ], disk)
+    second = boot(folder["second"], [READ, PAYER], disk)
+    seen = routes(folder["first"]) + routes(folder["second"])
     wrong_key = folder["wrong"] / "wrong.key"
     wrong_key.write_bytes(secrets.token_bytes(32))
     wrong = refused(folder["wrong"], Disk(disk.image, wrong_key, False))
@@ -83,7 +109,9 @@ def boots(tmp_path_factory) -> dict:
         image.write(secrets.token_bytes(32 << 10))
     damaged = refused(folder["damaged"], Disk(damaged_image, disk.key, False))
     again = refused(folder["again"], Disk(disk.image, disk.key, True))
-    return {"first": first, "second": second, "wrong": wrong, "damaged": damaged, "again": again, "image": disk.image}
+    none = boot(folder["none"], [sandbox("nothing", "true")], None)
+    return {"first": first, "second": second, "seen": seen, "wrong": wrong, "damaged": damaged, "again": again,
+            "none": none, "image": disk.image}
 
 
 def test_a_disk_cut_off_after_its_files_were_written_opens_with_each_file_as_written(boots):
@@ -97,8 +125,30 @@ def test_a_disk_cut_off_after_its_files_were_written_opens_with_each_file_as_wri
     assert (device, point, kind) == ("/dev/mapper/cloak-pay", PAY_HOME, "ext4"), mount
     assert {"sync", "nosuid", "nodev", "noexec"} <= set(options.split(",")), mount
     assert files == list(FILES.values())
-    # The journal reads, in upstream's shape.
-    assert json.loads(files[2]) == json.loads(FILES[JOURNAL])
+
+
+def test_the_payer_starts_on_a_new_disk_and_again_on_the_state_it_left(boots):
+    first, second = boots["first"], boots["second"]
+    assert READY in first and READY in second, first + second
+    (first_log, made), (second_log, found) = payer(first), payer(second)
+    # The wallet, read in cloak-pay through the real companion: no note on
+    # the new disk, then the stand-in note written before the kill.
+    assert first_log == ["wallet: no note"], first_log
+    assert second_log == ["wallet: a note"], second_log
+    # The companion made its state on the new disk, and the second start
+    # found every file and folder as the first left it, none made again; the
+    # only new ones are the two written.
+    assert DEPLOYMENT in made, made
+    assert {path: found.get(path) for path in made} == made, found
+    assert set(found) - set(made) == {ADDRESS, NOTE}, found
+    # Neither start reached tor.
+    assert boots["seen"] == []
+
+
+def test_a_boot_with_no_disk_starts_no_payer(boots):
+    console = boots["none"]
+    assert result(console, "nothing")["exit"] == 0 and "cloak-guest: agent check exited 0" in console, console
+    assert OPEN not in console and "cloak-guest: payer" not in console, console
 
 
 @pytest.mark.parametrize("boot_name, reason", [

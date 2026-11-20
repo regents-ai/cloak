@@ -34,7 +34,7 @@
       "ref": "codex/native-eth-review-integration-20260928",
       "commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
       "full_history": false,
-      "role": "Source of the Rust companion zkapi-walletd that the zkapi-mainnet daemon proves and pays with: the commit its zkapi-clientd/packaging/zkapi-source.env names (OA_COMPANION_COMMIT), 28 Sep 2026, an ancestor of the mainnet release line. Built by guest/zkapi/build.sh with the tree's companion.patch."
+      "role": "Source of the Rust companion zkapi-walletd that the zkapi-mainnet daemon proves and pays with: the commit its zkapi-clientd/packaging/zkapi-source.env names (OA_COMPANION_COMMIT), 28 Sep 2026, an ancestor of the mainnet release line. Built by guest/build.sh for the guest image, with the tree's companion.patch and guest/pay/companion-start.patch, and by guest/zkapi/build.sh for the trial, with the tree's companion.patch."
     },
     {
       "name": "zkapi-walletd-protocol",
@@ -43,7 +43,7 @@
       "ref": "codex/native-eth-review-integration-20260928",
       "commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
       "full_history": false,
-      "role": "The companion's protocol submodule (circuits, prover and the proving keys in setup/v2), from the fork its .gitmodules names, at the commit zkapi-walletd records and zkapi-source.env pins (OA_PROTOCOL_COMMIT), 27 Sep 2026. Built with the tree's protocol-transport.patch; its own contract submodules are not needed for the build."
+      "role": "The companion's protocol submodule (circuits, prover and the proving keys in setup/v2), from the fork its .gitmodules names, at the commit zkapi-walletd records and zkapi-source.env pins (OA_PROTOCOL_COMMIT), 27 Sep 2026. Built with the tree's protocol-transport.patch; its own contract submodules are not needed for the build. Its four proving keys (request.pk, request.vk, withdrawal.pk and withdrawal.vk, 13,720,908 bytes) are all the companion needs at run time beyond its binary, its state and the guest's CA certificates; guest/build.sh puts them in the guest image read-only, and the daemon checks them against the sha256s of its pinned deployment at every start."
     },
     {
       "name": "pi",

@@ -1,0 +1,11 @@
+--- a/crates/zkapi-cli/src/main.rs
++++ b/crates/zkapi-cli/src/main.rs
+@@ -807,8 +807,6 @@
+             require_oa_org_key_source,
+         },
+     )?;
+-    service.ensure_request_mode_available().await?;
+-
+     let status = service.status().await?;
+     if !status.has_note {
+         if no_fund {

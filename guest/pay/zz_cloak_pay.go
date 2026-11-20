@@ -30,15 +30,21 @@
 // request, waiting or held, and nothing is sent or spent for it. A SIGTERM
 // stops it as the daemon's own serve stops (run says how).
 //
-// It opens no TCP listener: the daemon's local API (127.0.0.1:8787), with its
-// keyless loopback inference and its admin routes, is never started. The API
-// is called in this process, with bearer authentication on, its key made at
-// start and kept in memory, and no admin handler.
+// The daemon's local API (127.0.0.1:8787), with its keyless loopback
+// inference, is never started. The API is called in this process, with
+// bearer authentication on and its key made at start and kept in memory. Its
+// admin routes are the daemon's FundingHandler, mounted as serveSnapshot
+// mounts it, behind a management token also made at start and kept in
+// memory: no frame reaches them yet (step 6 adds those frames).
 //
-// Not yet (docs/release.md, the build order): the encrypted disk, and the
-// companion, which nothing here starts. With no companion, every request
-// stops at the daemon's companion check, before any key is asked for and
-// before anything reaches Tor.
+// Its companion, the wallet and prover zkapi-walletd (payCompanion), runs as
+// serveSnapshot runs it: a child behind the daemon's authenticated CONNECT
+// proxy, listening on 127.0.0.1:8790 and called with the bridge token made at
+// start. All of them listen on the loopback of the payer's own network
+// namespace, where the guest's boot starts cloak-pay, so nothing else in the
+// guest, the agent's sandbox among them, can reach them. The configuration,
+// the companion's state and the funding records are in the payer's home, the
+// payment disk.
 package main
 
 import (
@@ -52,6 +58,7 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -75,10 +82,15 @@ const (
 	// The largest frame either side takes, as the sender's; the daemon's API
 	// takes request bodies up to the same size.
 	payMaxFrame = 16 << 20
+	// The companion as the guest image installs it, read-only. The daemon
+	// finds the proving keys beside it, in
+	// /opt/zkapi/share/zkapi-clientd/proof-setup.
+	payCompanionBinary = "/opt/zkapi/bin/zkapi-walletd"
 )
 
-// payConfig is the daemon's default configuration with Tor as its only route
-// and a new provider key for every request (Sean, 18 November).
+// payConfig is the daemon's default configuration with Tor as its only route,
+// a new provider key for every request (Sean, 18 November), the guest's
+// companion, and a management token of its own.
 func payConfig() (config.Config, error) {
 	c, err := config.Default()
 	if err != nil {
@@ -86,13 +98,19 @@ func payConfig() (config.Config, error) {
 	}
 	c.RelayURL = payTorRoute
 	c.KeyReuseWindowSeconds = 0
+	c.ZKAPI.Binary = payCompanionBinary
+	if c.ManagementToken, err = config.Secret(); err != nil {
+		return config.Config{}, err
+	}
 	return c, config.Validate(c)
 }
 
-// pay is the daemon's inference API, called in this process.
+// pay is the daemon's inference API, called in this process, and its wallet
+// client, which reads the companion in this process.
 type pay struct {
 	api        http.Handler
 	key        string
+	wallet     *zkapi.Client
 	logger     *log.Logger
 	turns      payTurns
 	background sync.WaitGroup // the daemon's session reporting and automatic settlement
@@ -113,11 +131,14 @@ func (p payInference) Complete(ctx context.Context, body json.RawMessage) (*http
 }
 
 // newPay builds the API as the daemon's serveSnapshot does, from the same
-// relay client, zkConfig, zkapi.Client, zkInference error mapping, server.API
-// and request log, but with the hold in front of the backend, bearer
-// authentication on and no admin handler, and runs the daemon's session
-// reporting and automatic settlement for the life of ctx.
-func newPay(ctx context.Context, c config.Config, logger *log.Logger) (*pay, error) {
+// relay client, zkConfig, zkapi.Client, zkInference error mapping,
+// FundingHandler with its records in dir, the configuration folder, server.API
+// and request log, but with the hold in front of the backend and bearer
+// authentication on, and runs the daemon's session reporting and automatic
+// settlement for the life of ctx. The funding handler's public origin is the
+// daemon's loopback address, which nothing listens on: the handler only
+// checks that it is loopback.
+func newPay(ctx context.Context, c config.Config, dir string, logger *log.Logger) (*pay, error) {
 	client, err := relay.NewClient(c.RelayURL)
 	if err != nil {
 		return nil, err
@@ -126,12 +147,18 @@ func newPay(ctx context.Context, c config.Config, logger *log.Logger) (*pay, err
 	if err != nil {
 		return nil, err
 	}
+	funding, err := zkapi.NewFundingHandler(wallet, "http://"+c.Listen, filepath.Join(dir, "funding"))
+	if err != nil {
+		return nil, err
+	}
 	api, err := server.New(payInference{zkInference{wallet}}, c.APIKey, c.Concurrency)
 	if err != nil {
 		return nil, err
 	}
 	api.RequireAPIKey = true
-	p := &pay{api: server.LogRequests(api, logger), key: c.APIKey, logger: logger}
+	api.ManagementToken = c.ManagementToken
+	api.Admin = http.HandlerFunc(funding.ServeAdminHTTP)
+	p := &pay{api: server.LogRequests(api, logger), key: c.APIKey, wallet: wallet, logger: logger}
 	p.background.Add(2)
 	go func() {
 		defer p.background.Done()

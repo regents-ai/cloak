@@ -52,7 +52,7 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `rewriter-kit/` | The worker's protocol and pins: the frames to and from the host, the daemon's request, a Local Llama conversation, the replies and the model pins |
 | `host/` | The host library (tor, the worker's channel, the relay, the guest) and the `cloak-host` command the kits run |
 | `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build, and the scripts that release them (Release, below) |
-| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), the door port and the runner (the owner's agent tasks, decision 12), the payment disk (`guest/image/pay-disk`), kernel and root build |
+| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), the door port and the runner (the owner's agent tasks, decision 12), the payment disk (`guest/image/pay-disk`) and the payer on it (`guest/pay/`, cloak-pay and its companion), kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
 | `evidence/stage4/` | Stage 4 development records and every score, one folder per model |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
@@ -130,8 +130,9 @@ uv run scripts/drive_worker.py --name inkling-mini-gguf --chat "My cat is called
 uv run scripts/drive_worker.py --name inkling-mini-gguf "a text to rewrite"
 ```
 
-Build the guest (Go cross-builds and a pinned Debian image in Docker, two
-cores), then the host supervisor, signed with the virtualization
+Build the guest (Go cross-builds, the payer's companion in Rust and a pinned
+Debian image in Docker, two cores; the companion's crates are fetched first
+and it is built with no network), then the host supervisor, signed with the virtualization
 entitlement, with the pinned tor beside it (the Tor Project's own build,
 fetched once by `uv run scripts/fetch_sources.py` and checked by its hash):
 
@@ -168,7 +169,7 @@ uv run --with pytest==8.4.2 pytest tests/test_tor_path.py
 
 Check what a hostile agent in the sandbox can reach: the guest's loopback
 services, the Tor port by hand, vsock, the guest's files, the payment disk
-(its files, devices and key), other ways out, a process that tries to
+(its files, devices and key) and the payer's two listeners, other ways out, a process that tries to
 outlive its command, and another conversation's files. Two boots, both
 against the stand-in tor: the first with cover off, the second serving two
 conversations to the stand-in door (`docs/plan.md`, "Escape checks"):
@@ -179,14 +180,18 @@ uv run --with pytest==8.4.2 pytest tests/test_escape_path.py
 
 Check the payment disk, the guest's one disk: an image file on the Mac,
 encrypted under a key the host is given, mounted in the guest for the
-payer's user alone (`docs/state-machines.md`, section 6c). Every check here
-boots with a payment disk of its own, a temporary image and a random key.
-The first command checks the program that opens and makes it, in the guest
-build image on Docker's own loop devices (no network); the second boots the
-guest five times: the disk made, written and the host killed, opened again
-and read, then a wrong key, a damaged header and a made image called new,
-each a stop with the image unchanged; and the image searched for what was
-written inside it:
+payer's user alone, and the payer that starts on it, cloak-pay with its
+companion (`docs/state-machines.md`, sections 6c and 6d). Every check here
+boots with a payment disk of its own, a temporary image and a random key,
+or with none. The first command checks the program that opens and makes it,
+in the guest build image on Docker's own loop devices (no network); the
+second boots the guest six times: the disk made, the payer started on it
+with its wallet reading no note, stand-in files written and the host
+killed; opened again, the payer started on the state it left, the stand-in
+note read through the companion and the files read; then a wrong key, a
+damaged header and a made image called new, each a stop with the image
+unchanged; a boot with no disk, which starts no payer; and the image
+searched for what was written inside it:
 
 ```bash
 sh guest/image/pay-disk-check.sh

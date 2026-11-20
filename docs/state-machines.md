@@ -378,7 +378,7 @@ gone and exits. The stage 3 kit stops a boot over its time limit this way.
 
 ```
 root copied to tmpfs --> switched root --> mounts --> vsock, entropy and disk modules --> loopback
-  --> payment disk open, when the host gives one (section 6c) --> adapter ready --> Tor port ready
+  --> payment disk open and payer ready, when the host gives a disk (sections 6c and 6d) --> adapter ready --> Tor port ready
   --> daemon ready --> daemon checks --> workspace made --> agent cases --> power off
 ```
 
@@ -485,6 +485,62 @@ The sandbox binds none of it: not the mount point, the raw disk, the
 device-mapper nodes or control, nor `/sys`; it cannot make a device node;
 and the key's file is gone before any case runs. Check: `tests/test_escape_path.py`.
 
+## 6d. The payer (`guest/pay/zz_cloak_pay_linux.go`, `guest/image/boot`)
+
+The boot starts the payer once the payment disk is open, and only then: a
+guest with no disk starts none and boots as before.
+
+```
+payer's network namespace made, its loopback up --> payer's Tor port ready
+  --> cloak-pay started as the payer's user --> its folder on the disk checked (0700)
+  --> CONNECT proxy listening --> companion started --> companion answers (90 s)
+  --> wallet read ("no note" or "a note") --> vsock port 8021 listening --> payer ready
+any step failing --> the payer's log on the console --> power off
+companion ends --> cloak-pay ends (status 1)
+cloak-pay stopped (SIGTERM) --> companion stopped (SIGTERM, killed after 5 s) --> stopped
+```
+
+cloak-pay is the mainnet daemon (`zkapi-clientd`, pinned in
+`reference/sources.json`) with its patched copies and Cloak's own files
+(`guest/pay/`). Its companion is `/opt/zkapi/bin/zkapi-walletd`, the `zkapi`
+program of `zkapi-walletd` built from its pins with the mainnet tree's two
+companion patches and `guest/pay/companion-start.patch`, which removes the
+companion's call to the service's `/health` at start: with it, a companion
+that cannot reach the service stops before it starts, so a payer with no way
+out could not even read its wallet; without it, whether the service takes
+requests shows at the first one. Beside it, in
+`/opt/zkapi/share/zkapi-clientd/proof-setup`, are the four proving keys from
+the protocol's pinned `setup/v2`; cloak-pay checks them against its pinned
+deployment's sha256s at every start. Both are root's and read-only in the
+image; nothing is fetched at run time.
+
+Everything the payer keeps is on the disk, in
+`/var/lib/cloak-pay/.config/zkapi-clientd`, each folder 0700 and the
+payer's: the companion's state under `zkapi/mainnet/<deployment>/` (its lock,
+the deployment cloak-pay writes for it at the first start and checks at
+each one after, the note once there is one) and the
+funding records under `funding/mainnet/`. A second start on the same disk
+reads that state and makes nothing again. The payer's log, which holds no
+content, is `/run/cloak/pay.log`, in the guest's memory.
+
+The payer has its own network namespace (`unshare -n`), whose loopback no
+other program in the guest has: the companion listens there on
+`127.0.0.1:8790`, cloak-pay's CONNECT proxy on a random port behind a
+password, and the payer's own Tor port (`cloak-tor-port`, as `torport`) on
+9050. The agent's sandbox and every other program are in the guest's own
+namespace and reach none of the three. Each of the companion's routes also
+needs the bridge token cloak-pay makes for it at each start. The companion's
+only way out is the proxy, the proxy's is the payer's Tor port, and that
+port's is vsock to the host's tor (section 7a). vsock is not split by
+namespace, so cloak-pay's own vsock port, 8021, takes a connection from the
+host (CID 2) alone. Nothing reaches the wallet over 8021 yet, and the funding
+routes, behind a token kept only in memory, are reached by no frame.
+
+Checks: `tests/test_pay_disk.py` (started on a new disk and again on the
+state it left; none without a disk), `tests/test_escape_path.py` (the
+sandbox reaches neither listener nor the payer's files) and
+`guest/pay/check.sh` (Docker, no network).
+
 ## 7. One request in the guest adapter (`guest/adapter/main.go`)
 
 ```
@@ -508,6 +564,11 @@ a program that skips torsocks --> unreachable   |                              |
 anything but a SOCKS5 greeting on 9050 -------> | closed, no byte              |
 any other vsock port -------------------------> | refused                      |
 ```
+
+A guest with the payment disk has a second `cloak-tor-port`, the payer's,
+in the payer's own network namespace (section 6d): the companion's
+connections go through cloak-pay's CONNECT proxy to it, then over vsock
+port 9050 to the same relay.
 
 tor's life, as the host's child:
 
