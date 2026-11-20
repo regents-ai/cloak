@@ -1,6 +1,6 @@
 # zkAPI build steps 6 and 9: design for a worker
 
-Drawn by a planning helper on 20 November 2026 from the source, for the chief. Not yet checked line by line; the chief's choices on its section 7 are in plan.md.
+Drawn by a planning helper on 20 November 2026 from the source, for the chief. Not yet checked line by line; the chief's choices on its section 7 are in plan.md. Sean's decisions 23 and 24 of the same day change it: a withdrawal goes to the guest's own funding address (question 2, option c), and the Tempo wallet stays as a mode of its own, so section 5's deletions of the sender, its host half and the Tempo wallet parts do not happen, and question 5 falls away.
 
 Nothing was changed, and no code from the mainnet tree was run. Everything below is read from source; the last section before the file list says what I could not determine.
 

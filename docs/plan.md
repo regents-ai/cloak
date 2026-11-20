@@ -2688,8 +2688,13 @@ candidates, so the split has to be re-declared before any holdout opens.
     each request is paid with a new key. Withdraw and Deposit each open
     a review of amount, fee and destination, and its button signs. The
     expiry warning starts 10 days ahead.
-  - Sean's to decide: where a withdrawal goes (23), and the money in
-    the Development wallet before its code is deleted (24).
+  - Sean's answers the same day (decisions 23 and 24): a withdrawal
+    goes back to Cloak's own funding address, with Send Out… to move it
+    on; and the Tempo wallet is not deleted. So the design's section 5
+    (the deletion list) no longer holds for the sender, its host half
+    or the Tempo wallet parts, and its items 10 to 13 add the payer
+    beside today's wallet, each for its own mode, never one in place of
+    the other inside a mode.
   - Checked against source by the chief: `claimExpired` has no pause
     guard while `deposit` and `mutualClose` do, so a deposit that
     expires during a pause can be taken while its owner cannot
@@ -3323,6 +3328,35 @@ candidates, so the split has to be re-declared before any holdout opens.
     same day ("Cloak your local AI. Always private, full anon is
     optional.") is with the Regents chief, with the film's last frame
     re-made for it.
+23. A zkAPI withdrawal goes back to Cloak's own funding address.
+    Decided 20 November 2026 (Sean, "23. a"): the whole balance returns
+    to the address the guest holds, and a Send Out… button moves it on
+    to any address later. Nothing is typed at the moment of withdrawing.
+24. The USDC.e wallet stays, as a mode of its own; V always pays
+    through zkAPI. Decided 20 November 2026 (Sean: "I think the USDC.e
+    + boundless tempo inference needs to stay, as a different mode from
+    'V mode' which I think should force use of the the zkAPI. So then
+    there is another mode, called Token Inference (?), because that is
+    the main draw, and it is useful to buy inference with only
+    tokens"). This replaces "Development mode is removed, not kept
+    beside it" and the cutover's deletion of the sender, its host half
+    and the Tempo wallet parts. What it means:
+    - Four modes: V, the token mode (working name "Token Inference";
+      its name is Sean's open question), NEAR Private AI, Local Llama.
+    - The token mode is today's V path unchanged: reworded on the Mac,
+      sent through Tor from the guest, cover traffic, paid from the one
+      Tempo wallet. Its standing note is the one the Development bar
+      carries now: the provider can link its chats, because one wallet
+      pays for all of them.
+    - V has one way to pay, zkAPI. Not a switch, and never the Tempo
+      wallet when zkAPI cannot serve: a V chat that cannot pay stops.
+    - The two are separate modes, not one path with a fallback. The
+      guest keeps both programs, the sender and `cloak-pay`, each on its
+      own port, and the escape checks cover both.
+    - Nothing changes on screen until step 6 lands: until then V is
+      still the Tempo path. At step 6 the Tempo path moves under the
+      token mode and V takes the payer. Saved V chats stay V.
+    - "Development" as a word, and its bar, still go at step 6.
 
 ## Gates
 

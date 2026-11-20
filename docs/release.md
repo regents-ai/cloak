@@ -99,8 +99,10 @@ step 7: the overlay's front over vsock; the identity patch; holding
 during settlement; the encrypted disk; the real companion and proving
 keys with no network; the Mac side (a payer in place of the Tempo parts,
 a new wallet sheet); the real service with no money; the first deposit
-(Sean's own decision); the cutover, which deletes the sender, its host
-half, the Tempo wallet parts and Development mode.
+(Sean's own decision); the cutover, which moves the Tempo path under
+its own mode, gives V the payer alone, and removes the Development bar
+(decision 24 in [plan.md](plan.md); until 20 November the cutover was
+to delete the sender, its host half and the Tempo wallet parts).
 
 Sean's answers, 19 November:
 
@@ -272,7 +274,9 @@ the ownership table is settled. The payment files kept on the Mac,
 encrypted, written before a request leaves; the agent gets no way to
 sign. "Kept safely" to be spelled out: encryption at rest, who may read
 the keychain item, who may sign, how a half-written file is recovered,
-backup. Then Development mode is removed, not kept beside it. A second
+backup. The Tempo wallet then stays as a mode of its own, and V pays
+only through zkAPI (Sean, 20 November; decision 24 in [plan.md](plan.md)).
+A second
 decision for Sean before users: whether a service with a 30-day expiry
 and an operator who can pause it is fit for people to leave money in.
 
