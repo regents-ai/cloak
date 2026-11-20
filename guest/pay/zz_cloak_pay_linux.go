@@ -5,15 +5,17 @@
 // Usage: cloak-pay
 // It prints "ready" on standard output once it listens on vsock, and nothing
 // else there. Its log goes to standard error: the daemon's request lines,
-// which carry no content, and a line for each connection that got no answer.
+// which carry no content, a line for each connection that got no answer, and
+// "stopped" once a SIGTERM has ended it, after which it exits 0.
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -35,39 +37,78 @@ func payMain(args []string, logger *log.Logger) error {
 	if err != nil {
 		return err
 	}
-	life := context.Background()
+	life, stop := payLife()
+	defer stop()
 	p, err := newPay(life, c, logger)
 	if err != nil {
 		return err
 	}
-	listener, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	listener, err := listenVsock()
 	if err != nil {
 		return err
 	}
-	if err := unix.Bind(listener, &unix.SockaddrVM{CID: unix.VMADDR_CID_ANY, Port: payPort}); err != nil {
-		return err
-	}
-	if err := unix.Listen(listener, unix.SOMAXCONN); err != nil {
-		return err
-	}
 	fmt.Println("ready")
+	if err := p.run(life, listener); err != nil {
+		return err
+	}
+	logger.Print("stopped")
+	return nil
+}
+
+// payVsock is the guest's vsock port. Its socket is non-blocking, so the
+// runtime's poller serves it and Close ends an Accept waiting: a close from
+// another thread does not wake a blocking accept on Linux.
+type payVsock struct {
+	file *os.File
+	raw  syscall.RawConn
+}
+
+func listenVsock() (payVsock, error) {
+	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return payVsock{}, err
+	}
+	file := os.NewFile(uintptr(fd), "vsock")
+	if err := unix.Bind(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_ANY, Port: payPort}); err != nil {
+		file.Close()
+		return payVsock{}, err
+	}
+	if err := unix.Listen(fd, unix.SOMAXCONN); err != nil {
+		file.Close()
+		return payVsock{}, err
+	}
+	raw, err := file.SyscallConn()
+	if err != nil {
+		file.Close()
+		return payVsock{}, err
+	}
+	return payVsock{file, raw}, nil
+}
+
+// Accept gives the next connection from the host; one from anywhere else is
+// closed unanswered.
+func (v payVsock) Accept() (io.ReadWriteCloser, error) {
 	for {
-		fd, peer, err := unix.Accept4(listener, unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC)
+		var fd int
+		var peer unix.Sockaddr
+		var err error
+		if waitErr := v.raw.Read(func(listener uintptr) bool {
+			fd, peer, err = unix.Accept4(int(listener), unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC)
+			return err != unix.EAGAIN
+		}); waitErr != nil {
+			return nil, waitErr
+		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		// Non-blocking, so the runtime's poller serves it and a close ends
 		// a read waiting on it.
 		conn := os.NewFile(uintptr(fd), "vsock")
-		if vm, ok := peer.(*unix.SockaddrVM); !ok || !payFromHost(vm.CID) {
-			conn.Close()
-			continue
+		if vm, ok := peer.(*unix.SockaddrVM); ok && payFromHost(vm.CID) {
+			return conn, nil
 		}
-		go func() {
-			defer conn.Close()
-			if err := p.serve(life, conn); err != nil {
-				logger.Printf("connection ended with no answer: %s", err)
-			}
-		}()
+		conn.Close()
 	}
 }
+
+func (v payVsock) Close() error { return v.file.Close() }

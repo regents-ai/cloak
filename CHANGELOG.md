@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- zkAPI payment, build order step 3: `cloak-pay` holds a request while
+  an earlier one's settlement is unfinished (this run's or one an
+  earlier run left), serves requests one at a time in order, drops a
+  request whose host hangs up with nothing sent or spent, and ends
+  cleanly on SIGTERM. Stand-ins only; the running product is unchanged.
+  `docs/plan.md`, "Step 3, holding during settlement".
 - The Wallet sheet says how the chat in front is paid for (Sean, 20
   November 2026: "for the wallet menu, is it applicable at all for the
   near ai and local modes? ... if local mode is selected , it should

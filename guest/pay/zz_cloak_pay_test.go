@@ -14,8 +14,10 @@
 // certificate from an authority made for the test. That authority is the
 // only one this test binary trusts (the go:debug line above and
 // x509.SetFallbackRoots), so the daemon's own transport is used unchanged.
-// A stand-in companion on loopback answers the daemon's status, lease and
-// settlement calls.
+// A stand-in companion on loopback answers the daemon's status, wallet,
+// lease and settlement calls from a wallet and journal that outlive its
+// process and cloak-pay's: each lease leaves its request pending until a
+// settlement installs the result.
 package main
 
 import (
@@ -33,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
@@ -45,9 +48,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
 	"github.com/ethereum/zkapi/zkapi-clientd/internal/relay"
 	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
 )
@@ -259,6 +264,14 @@ func (s *standInTor) connections() []torSeen {
 	return slices.Clone(s.seen)
 }
 
+// inferred gives the provider keys the inferences carried, in the order they
+// arrived.
+func (s *standInTor) inferred() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.keys)
+}
+
 func testCertificates(hosts ...string) (*x509.Certificate, tls.Certificate, error) {
 	authorityKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -289,45 +302,254 @@ func testCertificates(hosts ...string) (*x509.Certificate, tls.Certificate, erro
 	return authority, tls.Certificate{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}, nil
 }
 
+// standInCompanion is the companion, with the wallet and journal it keeps,
+// which outlive its process: each lease leaves its request pending until a
+// settlement installs the result, and a settlement cut short leaves the
+// journal as it was. It notes every call it gets.
+type standInCompanion struct {
+	*httptest.Server
+	mu       sync.Mutex
+	options  companionOptions
+	pending  int         // the lease whose settlement is unfinished; 0 for none
+	leases   int         // the leases handed out, numbered from 1
+	attempts map[int]int // settlement calls that reached the wallet, by lease
+	settled  map[int]int // settlements installed, by lease
+	calls    []string
+}
+
+type companionOptions struct {
+	// The companion has restarted with a request pending: its lease route
+	// fails on that request (HTTP 502), as on the trip, where a running one
+	// withholds the key (409 lease_pending).
+	restarted bool
+	// Each lease's first settlement outlasts the companion's own wait for the
+	// server and answers 409 lease_pending; the next installs it.
+	unfinished bool
+	// When set, a settlement waits until gate closes and is cut if its caller
+	// goes first; settling gets the lease of each one that waits.
+	gate     chan struct{}
+	settling chan int
+}
+
+type companionState struct {
+	pending, leases   int
+	attempts, settled map[int]int
+	calls             []string
+}
+
 // startCompanion starts the stand-in companion: the status the daemon checks,
-// a new lease for each request, and settlement.
-func startCompanion(t *testing.T, bridge string, d standInDeployment) (*httptest.Server, *int) {
-	var mu sync.Mutex
-	leases := 0
-	companion := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// the wallet's state, a new lease for each request, and settlement.
+func startCompanion(t *testing.T, bridge string, d standInDeployment) *standInCompanion {
+	s := &standInCompanion{attempts: map[int]int{}, settled: map[int]int{}}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+bridge {
 			http.Error(w, "{}", http.StatusUnauthorized)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
+		switch route := r.Method + " " + r.URL.Path; route {
 		case "GET /oa/v1/status":
+			s.note("status")
 			json.NewEncoder(w).Encode(map[string]any{"chain_id": d.ChainID, "mode": "direct_openrouter", "require_oa_org_key_source": true,
 				"bridge_version": 4, "deployment_id": d.ID, "contract_address": d.Contract, "billing_asset": d.Asset,
 				"billing_unit": d.Unit, "circuit_id": d.Proof.Circuit})
+		case "GET /wallet/status":
+			s.mu.Lock()
+			s.calls = append(s.calls, "wallet")
+			pending := s.pending != 0
+			s.mu.Unlock()
+			json.NewEncoder(w).Encode(map[string]any{"has_note": true, "pending_request": pending,
+				"note": map[string]any{"note_id": 1, "current_balance": 1000000}})
+		case "GET /oa/v1/withdraw/status":
+			s.note("withdrawal")
+			fmt.Fprint(w, `{"phase": "none"}`)
 		case "POST /oa/v1/lease":
-			mu.Lock()
-			leases++
-			n := leases
-			mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]any{"api_key": fmt.Sprintf("stand-in-key-%d", n), "base_url": zkapi.DefaultInferenceBaseURL,
-				"expires_at": time.Now().Unix() + 300, "verified": true, "verification_status": "verified"})
+			s.lease(w)
 		case "POST /wallet/settle":
-			fmt.Fprint(w, `{"pending_request": false}`)
+			s.settle(w, r)
+		case "GET /oa/v1/session-events":
+			s.note("session-events")
+			http.Error(w, "{}", http.StatusNotFound)
 		default:
+			s.note(route)
 			http.Error(w, "{}", http.StatusNotFound)
 		}
 	}))
-	t.Cleanup(companion.Close)
-	return companion, &leases
+	t.Cleanup(s.Close)
+	return s
 }
 
-// exchange sends one request frame to p over a pipe and reads its answer.
-func exchange(t *testing.T, ctx context.Context, p *pay, request any) payAnswerFrame {
+func (s *standInCompanion) note(call string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, call)
+}
+
+func (s *standInCompanion) configure(options companionOptions) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.options = options
+}
+
+// leftPending is the journal an earlier run left: lease's request pending,
+// its settlement unfinished.
+func (s *standInCompanion) leftPending(lease int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leases, s.pending = lease, lease
+}
+
+func (s *standInCompanion) state() companionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return companionState{s.pending, s.leases, maps.Clone(s.attempts), maps.Clone(s.settled), slices.Clone(s.calls)}
+}
+
+func (s *standInCompanion) lease(w http.ResponseWriter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.pending != 0 && s.options.restarted:
+		s.calls = append(s.calls, "lease failed")
+		w.WriteHeader(http.StatusBadGateway)
+		fmt.Fprint(w, `{"error": {"code": "wallet_error"}}`)
+	case s.pending != 0:
+		s.calls = append(s.calls, "lease withheld")
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, `{"error": {"code": "lease_pending"}}`)
+	default:
+		s.leases++
+		s.pending = s.leases
+		s.calls = append(s.calls, fmt.Sprintf("lease %d", s.leases))
+		json.NewEncoder(w).Encode(map[string]any{"api_key": fmt.Sprintf("stand-in-key-%d", s.leases), "base_url": zkapi.DefaultInferenceBaseURL,
+			"expires_at": time.Now().Unix() + 300, "verified": true, "verification_status": "verified"})
+	}
+}
+
+func (s *standInCompanion) settle(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	lease, gate, settling := s.pending, s.options.gate, s.options.settling
+	s.mu.Unlock()
+	if lease != 0 && gate != nil {
+		settling <- lease
+		select {
+		case <-gate:
+		case <-r.Context().Done():
+			s.note(fmt.Sprintf("settle %d cut", lease))
+			return
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lease = s.pending
+	if lease == 0 {
+		s.calls = append(s.calls, "settle none")
+		fmt.Fprint(w, `{"pending_request": false}`)
+		return
+	}
+	s.attempts[lease]++
+	if s.options.unfinished && s.attempts[lease] == 1 {
+		s.calls = append(s.calls, fmt.Sprintf("settle %d unfinished", lease))
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, `{"error": {"code": "lease_pending"}}`)
+		return
+	}
+	s.settled[lease]++
+	s.pending = 0
+	s.calls = append(s.calls, fmt.Sprintf("settle %d", lease))
+	fmt.Fprint(w, `{"pending_request": false}`)
+}
+
+// paid keeps the calls that hand out a key or settle one: not a settlement
+// call that found nothing pending.
+func paid(calls []string) []string {
+	var kept []string
+	for _, call := range calls {
+		if strings.HasPrefix(call, "lease") || (strings.HasPrefix(call, "settle") && call != "settle none") {
+			kept = append(kept, call)
+		}
+	}
+	return kept
+}
+
+// asked counts the calls of each kind made for requests: every call but the
+// daemon's session reporter's. The reporter asks for the status, then the
+// session events, at start and every five seconds, so each session-events
+// call stands for one status call of its, noted before it. A round of its
+// under way shows as one status call more, until its session-events call
+// arrives; nothing else asks for the session events.
+func (s companionState) asked() map[string]int {
+	counts := map[string]int{}
+	for _, call := range s.calls {
+		counts[call]++
+	}
+	counts["status"] -= counts["session-events"]
+	delete(counts, "session-events")
+	if counts["status"] == 0 {
+		delete(counts, "status")
+	}
+	return counts
+}
+
+// waitAsked waits, up to ten seconds, until the calls made for requests are
+// exactly want.
+func waitAsked(t *testing.T, companion *standInCompanion, want map[string]int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s := companion.state()
+		if got := s.asked(); maps.Equal(got, want) {
+			return
+		} else if time.Now().After(deadline) {
+			t.Fatalf("asked for requests %v, want %v; calls %v", got, want, s.calls)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// standIns starts a stand-in Tor port and companion, and gives cloak-pay's
+// configuration with them as its route and its companion.
+func standIns(t *testing.T) (*standInTor, *standInCompanion, config.Config) {
+	d := pinnedMainnet(t)
+	tor := startTor(t, hostOf(t, d.Privacy.IssuerURL), hostOf(t, zkapi.DefaultInferenceBaseURL))
+	bridge := strings.Repeat("b", 64)
+	companion := startCompanion(t, bridge, d)
+	c, err := payConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.RelayURL = "tor://" + tor.listener.Addr().String()
+	c.ZKAPI.ClientURL = companion.URL
+	c.ZKAPI.BridgeToken = bridge
+	return tor, companion, c
+}
+
+func startPay(t *testing.T, ctx context.Context, c config.Config) *pay {
+	p, err := newPay(ctx, c, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// sentFrame is a request frame sent on a connection of its own, its answer
+// still to read.
+type sentFrame struct {
+	host   net.Conn
+	served chan error // serve's result, when the test runs serve itself
+}
+
+// send sends one request frame to p over a pipe.
+func send(t *testing.T, ctx context.Context, p *pay, request any) sentFrame {
 	host, guest := net.Pipe()
-	defer host.Close()
 	served := make(chan error, 1)
 	go func() { served <- p.serve(ctx, guest); guest.Close() }()
+	writeRequest(t, host, request)
+	return sentFrame{host, served}
+}
+
+// writeRequest writes the frame, and returns once the guest has read it.
+func writeRequest(t *testing.T, host net.Conn, request any) {
 	payload, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)
@@ -335,19 +557,109 @@ func exchange(t *testing.T, ctx context.Context, p *pay, request any) payAnswerF
 	if err := writePayFrame(host, payRequest, payload); err != nil {
 		t.Fatal(err)
 	}
-	kind, data, err := readPayFrame(host)
+}
+
+// answer reads the frame's answer and closes the connection.
+func (f sentFrame) answer(t *testing.T) payAnswerFrame {
+	t.Helper()
+	kind, data, err := readPayFrame(f.host)
 	if err != nil || kind != payAnswer {
 		t.Fatalf("answer %q %v", kind, err)
 	}
-	host.Close()
-	if err := <-served; err != nil {
-		t.Fatal(err)
+	f.host.Close()
+	if f.served != nil {
+		if err := <-f.served; err != nil {
+			t.Fatal(err)
+		}
 	}
 	var answer payAnswerFrame
 	if err := json.Unmarshal(data, &answer); err != nil {
 		t.Fatal(err)
 	}
 	return answer
+}
+
+// hangUp closes the connection before the answer, and waits for serve to
+// end.
+func (f sentFrame) hangUp(t *testing.T) {
+	t.Helper()
+	f.host.Close()
+	select {
+	case <-f.served:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a request was still being served after its host hung up")
+	}
+}
+
+// exchange sends one request frame to p over a pipe and reads its answer.
+func exchange(t *testing.T, ctx context.Context, p *pay, request any) payAnswerFrame {
+	t.Helper()
+	return send(t, ctx, p, request).answer(t)
+}
+
+func ask(identity, text string) map[string]string {
+	return map[string]string{"identity": identity, "body": chat(text)}
+}
+
+func identity(t *testing.T) string {
+	identity, err := relay.NewTorIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
+}
+
+// pipeListener hands run the guest's ends of pipes, as the vsock port hands
+// it connections from the host.
+type pipeListener struct {
+	conns  chan net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newPipeListener() *pipeListener {
+	return &pipeListener{conns: make(chan net.Conn), closed: make(chan struct{})}
+}
+
+func (l *pipeListener) Accept() (io.ReadWriteCloser, error) {
+	select {
+	case conn := <-l.conns:
+		return conn, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *pipeListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return nil
+}
+
+// send connects and sends one request frame.
+func (l *pipeListener) send(t *testing.T, request any) sentFrame {
+	host, guest := net.Pipe()
+	l.conns <- guest
+	writeRequest(t, host, request)
+	return sentFrame{host: host}
+}
+
+// waitFor waits, up to ten seconds, until done reports true.
+func waitFor(t *testing.T, what string, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !done() {
+		if time.Now().After(deadline) {
+			t.Fatalf("still waiting for %s", what)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// turnsTaken counts the requests holding or waiting for the turn.
+func turnsTaken(p *pay) int {
+	p.turns.mu.Lock()
+	defer p.turns.mu.Unlock()
+	return len(p.turns.queue)
 }
 
 // listening lists the listening TCP sockets of this network namespace: the
@@ -395,9 +707,7 @@ func chat(text string) string {
 func TestCloakPayFramesAndTorIdentities(t *testing.T) {
 	d := pinnedMainnet(t)
 	issuer, inference := hostOf(t, d.Privacy.IssuerURL), hostOf(t, zkapi.DefaultInferenceBaseURL)
-	tor := startTor(t, issuer, inference)
-	bridge := strings.Repeat("b", 64)
-	companion, leases := startCompanion(t, bridge, d)
+	tor, companion, c := standIns(t)
 	before := listening(t)
 	stands := []string{tor.listener.Addr().String(), companion.Listener.Addr().String()}
 	sort.Strings(stands)
@@ -405,21 +715,10 @@ func TestCloakPayFramesAndTorIdentities(t *testing.T) {
 		t.Fatalf("before cloak-pay, listening %v, want the stand-ins %v", before, stands)
 	}
 
-	c, err := payConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.RelayURL = "tor://" + tor.listener.Addr().String()
-	c.ZKAPI.ClientURL = companion.URL
-	c.ZKAPI.BridgeToken = bridge
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	p, err := newPay(ctx, c, log.New(io.Discard, "", 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, _ := relay.NewTorIdentity()
-	b, _ := relay.NewTorIdentity()
+	p := startPay(t, ctx, c)
+	a, b := identity(t), identity(t)
 	sent := []string{chat("First conversation."), chat("Second conversation.")}
 	for i, identity := range []string{a, b} {
 		answer := exchange(t, ctx, p, map[string]string{"identity": identity, "body": sent[i]})
@@ -430,7 +729,7 @@ func TestCloakPayFramesAndTorIdentities(t *testing.T) {
 
 	// A frame without a conversation's identity is refused, and nothing
 	// leaves for it.
-	seenBefore, leasesBefore := len(tor.connections()), *leases
+	seenBefore, leasesBefore := len(tor.connections()), companion.state().leases
 	for _, request := range []any{
 		map[string]string{"identity": "not hex", "body": sent[0]},
 		map[string]string{"identity": strings.ToUpper(a)[:62], "body": sent[0]},
@@ -441,7 +740,7 @@ func TestCloakPayFramesAndTorIdentities(t *testing.T) {
 			t.Fatalf("refused %v: %d %s", request, answer.Status, answer.Body)
 		}
 	}
-	if len(tor.connections()) != seenBefore || *leases != leasesBefore {
+	if len(tor.connections()) != seenBefore || companion.state().leases != leasesBefore {
 		t.Fatal("a refused frame reached Tor or the companion")
 	}
 
@@ -501,10 +800,13 @@ func TestCloakPayFramesAndTorIdentities(t *testing.T) {
 
 	// Two requests, two provider keys; each body as the Mac sent it, less
 	// the fields the daemon never forwards.
-	if len(tor.keys) != 2 || tor.keys[0] == tor.keys[1] {
-		t.Fatalf("provider keys %v", tor.keys)
+	if keys := tor.inferred(); len(keys) != 2 || keys[0] == keys[1] {
+		t.Fatalf("provider keys %v", keys)
 	}
-	for i, body := range tor.bodies {
+	tor.mu.Lock()
+	bodies := slices.Clone(tor.bodies)
+	tor.mu.Unlock()
+	for i, body := range bodies {
 		var got, want map[string]any
 		_ = json.Unmarshal([]byte(body), &got)
 		_ = json.Unmarshal([]byte(sent[i]), &want)
@@ -542,4 +844,268 @@ func TestCloakPayStartsOnlyOnTor(t *testing.T) {
 			t.Errorf("proxy started on %q", route)
 		}
 	}
+}
+
+// settlingLease waits, up to ten seconds, for a settlement to wait at the
+// stand-in companion's gate, and gives its lease.
+func settlingLease(t *testing.T, settling chan int) int {
+	t.Helper()
+	select {
+	case lease := <-settling:
+		return lease
+	case <-time.After(10 * time.Second):
+		t.Fatal("no settlement started")
+		return 0
+	}
+}
+
+func begins(calls, want []string) bool {
+	return len(calls) >= len(want) && slices.Equal(calls[:len(want)], want)
+}
+
+// Two frames sent together: the second is held until the first's settlement
+// is installed, here once automatic settlement's call has outlasted the
+// companion's wait, and both are answered.
+func TestCloakPayHoldsTheNextRequest(t *testing.T) {
+	tor, companion, c := standIns(t)
+	companion.configure(companionOptions{unfinished: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	p := startPay(t, ctx, c)
+	first := send(t, ctx, p, ask(identity(t), "First, sent with the second."))
+	second := send(t, ctx, p, ask(identity(t), "Second, sent with the first."))
+	for i, frame := range []sentFrame{first, second} {
+		if answer := frame.answer(t); answer.Status != http.StatusOK || answer.Body != standInAnswer {
+			t.Fatalf("answer %d: %d %s", i+1, answer.Status, answer.Body)
+		}
+	}
+	want := []string{"lease 1", "settle 1 unfinished", "settle 1", "lease 2"}
+	if calls := paid(companion.state().calls); !begins(calls, want) {
+		t.Fatalf("paid calls %v, want first %v", calls, want)
+	}
+	if keys := tor.inferred(); !slices.Equal(keys, []string{"Bearer stand-in-key-1", "Bearer stand-in-key-2"}) {
+		t.Fatalf("inferences under %v", keys)
+	}
+}
+
+// A settlement an earlier run left unfinished: the first request is held,
+// with no key asked for and nothing sent, until the companion installs that
+// settlement, then answered. Asked for a key first, the restarted companion
+// would fail, as on the trip.
+func TestCloakPayHoldsForAnEarlierRun(t *testing.T) {
+	tor, companion, c := standIns(t)
+	companion.leftPending(7)
+	gate, settling := make(chan struct{}), make(chan int, 4)
+	companion.configure(companionOptions{restarted: true, gate: gate, settling: settling})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := startPay(t, ctx, c)
+	first := send(t, ctx, p, ask(identity(t), "First after a restart."))
+	select {
+	case lease := <-settling:
+		if lease != 7 {
+			t.Fatalf("settling lease %d", lease)
+		}
+	case <-time.After(10 * time.Second):
+		answer := first.answer(t)
+		t.Fatalf("answered with no settlement: %d %s", answer.Status, answer.Body)
+	}
+	if s := companion.state(); s.leases != 7 || len(tor.connections()) != 0 {
+		t.Fatalf("while held, %d leases and %d connections to Tor", s.leases, len(tor.connections()))
+	}
+	close(gate)
+	if answer := first.answer(t); answer.Status != http.StatusOK || answer.Body != standInAnswer {
+		t.Fatalf("answer: %d %s", answer.Status, answer.Body)
+	}
+	s := companion.state()
+	if want := []string{"settle 7", "lease 8"}; !begins(paid(s.calls), want) || s.settled[7] != 1 {
+		t.Fatalf("paid calls %v, want first %v", paid(s.calls), want)
+	}
+	if keys := tor.inferred(); !slices.Equal(keys, []string{"Bearer stand-in-key-8"}) {
+		t.Fatalf("inferences under %v", keys)
+	}
+}
+
+// SIGTERM while automatic settlement is under way, the next request held
+// behind it: the held request is answered as cancelled, the settlement is cut
+// and left in the journal, and run returns. The next run settles that
+// request once, before it asks for a key, and answers.
+func TestCloakPayStopsOnSIGTERM(t *testing.T) {
+	tor, companion, c := standIns(t)
+	gate, settling := make(chan struct{}), make(chan int, 4)
+	companion.configure(companionOptions{gate: gate, settling: settling})
+	life, stop := payLife()
+	defer stop()
+	p := startPay(t, life, c)
+	listener := newPipeListener()
+	ran := make(chan error, 1)
+	go func() { ran <- p.run(life, listener) }()
+
+	if answer := listener.send(t, ask(identity(t), "Before the stop.")).answer(t); answer.Status != http.StatusOK {
+		t.Fatalf("answer: %d %s", answer.Status, answer.Body)
+	}
+	if lease := settlingLease(t, settling); lease != 1 {
+		t.Fatalf("settling lease %d", lease)
+	}
+	held := listener.send(t, ask(identity(t), "Held at the stop."))
+	waitFor(t, "the held request to take its turn", func() bool { return turnsTaken(p) == 1 })
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if answer := held.answer(t); answer.Status != http.StatusRequestTimeout {
+		t.Fatalf("held request: %d %s", answer.Status, answer.Body)
+	}
+	select {
+	case err := <-ran:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("cloak-pay did not stop")
+	}
+	waitFor(t, "the settlement to be cut", func() bool { return slices.Contains(companion.state().calls, "settle 1 cut") })
+	if s := companion.state(); s.pending != 1 || s.leases != 1 || s.attempts[1] != 0 {
+		t.Fatalf("after the stop, lease %d pending, %d leases, %d settlement calls", s.pending, s.leases, s.attempts[1])
+	}
+
+	companion.configure(companionOptions{restarted: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	next := startPay(t, ctx, c)
+	if answer := exchange(t, ctx, next, ask(identity(t), "After the stop.")); answer.Status != http.StatusOK || answer.Body != standInAnswer {
+		t.Fatalf("next run's answer: %d %s", answer.Status, answer.Body)
+	}
+	s := companion.state()
+	if want := []string{"lease 1", "settle 1 cut", "settle 1", "lease 2"}; !begins(paid(s.calls), want) || s.attempts[1] != 1 || s.settled[1] != 1 {
+		t.Fatalf("paid calls %v, want first %v", paid(s.calls), want)
+	}
+	if keys := tor.inferred(); !slices.Equal(keys, []string{"Bearer stand-in-key-1", "Bearer stand-in-key-2"}) {
+		t.Fatalf("inferences under %v", keys)
+	}
+}
+
+// Requests whose hosts hang up while they are held end at once: nothing
+// reaches Tor or the companion for them, no key is asked for, and the next
+// request is served. Every call a request makes is answered before its serve
+// returns, but for one a hang-up cuts, so once hangUp has returned and the
+// cut call has arrived, what was asked for it is final.
+func TestCloakPayDropsAHeldRequest(t *testing.T) {
+	t.Run("behind automatic settlement, and waiting for its turn", func(t *testing.T) {
+		tor, companion, c := standIns(t)
+		gate, settling := make(chan struct{}), make(chan int, 4)
+		companion.configure(companionOptions{gate: gate, settling: settling})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		p := startPay(t, ctx, c)
+		if answer := exchange(t, ctx, p, ask(identity(t), "Answered.")); answer.Status != http.StatusOK {
+			t.Fatalf("answer: %d %s", answer.Status, answer.Body)
+		}
+		if lease := settlingLease(t, settling); lease != 1 {
+			t.Fatalf("settling lease %d", lease)
+		}
+		// The answered request's: the hold's reading of the wallet (status,
+		// wallet, withdrawal), then the daemon's check and key (status, lease).
+		answered := map[string]int{"status": 2, "wallet": 1, "withdrawal": 1, "lease 1": 1}
+		waitAsked(t, companion, answered)
+		held := send(t, ctx, p, ask(identity(t), "Held."))
+		waitFor(t, "the held request to take its turn", func() bool { return turnsTaken(p) == 1 })
+		waiting := send(t, ctx, p, ask(identity(t), "Waiting for its turn."))
+		waitFor(t, "the next request to wait for its turn", func() bool { return turnsTaken(p) == 2 })
+		seen := len(tor.connections())
+		held.hangUp(t)
+		waiting.hangUp(t)
+		close(gate)
+		// Its settlement, and nothing for the two whose hosts hung up.
+		answered["settle 1"] = 1
+		waitAsked(t, companion, answered)
+		if len(tor.connections()) != seen || turnsTaken(p) != 0 {
+			t.Fatalf("after the hang-ups, %d connections to Tor (was %d), %d turns taken", len(tor.connections()), seen, turnsTaken(p))
+		}
+		if answer := exchange(t, ctx, p, ask(identity(t), "Sent after.")); answer.Status != http.StatusOK {
+			t.Fatalf("next answer: %d %s", answer.Status, answer.Body)
+		}
+		if keys := tor.inferred(); !slices.Equal(keys, []string{"Bearer stand-in-key-1", "Bearer stand-in-key-2"}) {
+			t.Fatalf("inferences under %v", keys)
+		}
+	})
+	t.Run("in the settlement of a request an earlier run left", func(t *testing.T) {
+		tor, companion, c := standIns(t)
+		companion.leftPending(7)
+		gate, settling := make(chan struct{}), make(chan int, 4)
+		companion.configure(companionOptions{restarted: true, gate: gate, settling: settling})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		p := startPay(t, ctx, c)
+		held := send(t, ctx, p, ask(identity(t), "Held."))
+		if lease := settlingLease(t, settling); lease != 7 {
+			t.Fatalf("settling lease %d", lease)
+		}
+		held.hangUp(t)
+		// The hold's reading of the wallet and its settlement call, which the
+		// hang-up cut, and nothing after.
+		waitAsked(t, companion, map[string]int{"status": 1, "wallet": 1, "withdrawal": 1, "settle 7 cut": 1})
+		if len(tor.connections()) != 0 {
+			t.Fatalf("after the hang-up, %d connections to Tor", len(tor.connections()))
+		}
+		close(gate)
+		if answer := exchange(t, ctx, p, ask(identity(t), "Sent after.")); answer.Status != http.StatusOK {
+			t.Fatalf("next answer: %d %s", answer.Status, answer.Body)
+		}
+		if s := companion.state(); s.settled[7] != 1 || !slices.Equal(tor.inferred(), []string{"Bearer stand-in-key-8"}) {
+			t.Fatalf("settlements of the earlier request %d, inferences under %v", s.settled[7], tor.inferred())
+		}
+	})
+}
+
+// Turns go in the order asked for; one whose caller goes while it waits
+// leaves the queue without holding up the next.
+func TestCloakPayTurnsInOrder(t *testing.T) {
+	var turns payTurns
+	queued := func() int {
+		turns.mu.Lock()
+		defer turns.mu.Unlock()
+		return len(turns.queue)
+	}
+	end, err := turns.take(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan string, 3)
+	goes, leave := context.WithCancel(context.Background())
+	defer leave()
+	for i, name := range []string{"B", "C", "D"} {
+		ctx := context.Background()
+		if name == "B" {
+			ctx = goes
+		}
+		go func() {
+			end, err := turns.take(ctx)
+			if err != nil {
+				served <- name + " left"
+				return
+			}
+			served <- name
+			end()
+		}()
+		waitFor(t, name+" to wait for its turn", func() bool { return queued() == i+2 })
+	}
+	next := func() string {
+		select {
+		case name := <-served:
+			return name
+		case <-time.After(10 * time.Second):
+			return "nobody"
+		}
+	}
+	leave()
+	if got := next(); got != "B left" {
+		t.Fatalf("first %s, want B left", got)
+	}
+	end()
+	for _, want := range []string{"C", "D"} {
+		if got := next(); got != want {
+			t.Fatalf("served %s, want %s", got, want)
+		}
+	}
+	waitFor(t, "the queue to empty", func() bool { return queued() == 0 })
 }

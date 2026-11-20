@@ -17,7 +17,7 @@
  	KeyReuseWindow   time.Duration `json:"-"` // fixed, in-memory window; zero disables reuse
  }
  
-@@ -240,6 +241,18 @@
+@@ -240,6 +241,62 @@
  		return &Error{http.StatusBadGateway, "companion_deployment_mismatch"}
  	}
  	return nil
@@ -33,10 +33,54 @@
 +// WithConversation carries a conversation's Tor identity to Complete.
 +func WithConversation(ctx context.Context, identity string) context.Context {
 +	return context.WithValue(ctx, conversationKey{}, identity)
++}
++
++// Regents Cloak (guest/pay/client.patch): WaitSettled holds its caller, a
++// request about to call Complete, while the wallet reports a request whose
++// settlement is unfinished: this run's, or one an earlier run left in the
++// wallet's journal, which no key group here knows and on which the
++// companion's lease route can fail rather than withhold a key. It takes the
++// request slot, so it waits behind a response being served and behind
++// automatic settlement, and asks for no key. It asks the companion to settle
++// (/wallet/settle, which retires or recovers the lease from the saved journal
++// and installs the signed result; not settleGroup, whose one attempt per key
++// group automatic settlement may already have spent) until it answers that
++// nothing is pending, and after each answer that the settlement is still
++// pending, waits a settlement poll before asking again. A cancelled caller
++// asks nothing more, leaving the settlement to the journal; a lost or failed
++// reply is returned, never retried.
++func (c *Client) WaitSettled(ctx context.Context) error {
++	select {
++	case c.requestSlot <- struct{}{}:
++	case <-ctx.Done():
++		return ctx.Err()
++	}
++	defer func() { <-c.requestSlot }()
++	state, err := c.Readiness(ctx)
++	if err != nil || !state.PendingRequest {
++		return err
++	}
++	activity.Report(ctx, activity.Event{Kind: activity.SettlementWaiting})
++	for {
++		started := time.Now()
++		activity.Report(ctx, activity.Event{Kind: activity.SettlementStarted})
++		err = c.retireLease(ctx)
++		activity.Report(ctx, activity.Event{Kind: activity.SettlementFinished, Complete: err == nil, Duration: time.Since(started)})
++		if !isPendingSettlement(err) {
++			return err
++		}
++		timer := time.NewTimer(c.settlementPoll)
++		select {
++		case <-ctx.Done():
++			timer.Stop()
++			return ctx.Err()
++		case <-timer.C:
++		}
++	}
  }
  
  // Complete passes the caller's JSON unchanged over the anonymous HTTP client.
-@@ -277,7 +290,8 @@
+@@ -277,7 +334,8 @@
  		c.cachedLease = nil
  		return nil, err
  	}

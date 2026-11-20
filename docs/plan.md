@@ -900,8 +900,8 @@ third argument.
 
 **Not built, or not shown.**
 
-- Holding during settlement, the encrypted disk, the real companion and
-  proving keys, the Mac side, removing the sender: later steps. Nothing
+- The encrypted disk, the real companion and proving keys, the Mac side,
+  removing the sender: later steps. Nothing
   starts the companion, so every request stops at the daemon's companion
   check, before a key is asked for (read in the code; the Linux run
   answered in 1 ms).
@@ -918,8 +918,56 @@ third argument.
   arrives whole, in one frame, when the API returns. The daemon's own
   error messages, which name `zkapi-clientd config`, reach the host as
   they are.
-- No signal handling: a stop ends the process at once, which matters
-  once settlement is held (step 3).
+
+**Step 3, holding during settlement (20 November 2026).** Stand-ins
+only, as before; nothing in the running product changes.
+
+- **One at a time, in order.** Requests reach the daemon's API one at a
+  time, in the order their frames were read in full (`payTurns`, a queue
+  in `zz_cloak_pay.go`): the guest's own guarantee, whatever the
+  daemon's slots allow.
+- **The hold** (`WaitSettled`, in `client.patch`). Before a request asks
+  for its key it takes the daemon's request slot and reads the wallet.
+  If the wallet reports a request whose settlement is unfinished, this
+  run's or one an earlier run left in the wallet's journal, it asks the
+  companion to settle until the companion says nothing is pending,
+  waiting the daemon's settlement poll (5 s) after each "still pending".
+  It asks for no key meanwhile. A wallet error from the hold fails the
+  request (502); nothing is retried.
+- **A hang-up.** A host that closes its connection cancels its request:
+  waiting for its turn it leaves the queue, and held it asks nothing
+  more, leaving the settlement to the journal. Nothing is sent or spent
+  for it.
+- **A stop.** `cloak-pay` ends on SIGTERM as the daemon's own serve
+  ends: no new request is taken, one waiting is closed unanswered, one
+  held or waiting for its key is answered 408 with nothing spent, a
+  settlement under way is cut and left in the journal, which the next
+  run's first request waits on. It logs "stopped" and exits 0 once every
+  connection and the daemon's session reporting and automatic settlement
+  have ended. The vsock listener is non-blocking, so closing it ends a
+  waiting accept.
+- **What the checks showed** (`sh guest/pay/check.sh`, the pinned image,
+  no network; the companion and Tor are stand-ins). The next request is
+  held until the earlier one's settlement is done, and asks for its key
+  only then; a request is held for a settlement an earlier run left; a
+  SIGTERM ends it as above; a held request whose host hangs up asks
+  nothing more (behind automatic settlement and waiting for its turn,
+  and in the settlement an earlier run left), each counted call by call
+  against an exact list; three requests take their turns in order. The
+  worker ran every check 300 times under the race detector with no
+  failure, and broken copies (the hold removed, an extra status call
+  after a settle call, a status call from a cancelled waiter, and the
+  earlier three) each failed the check meant for them. The chief ran
+  the script three times: clean.
+- **A fault found in the check, not the program.** The daemon's session
+  reporter reads the companion's status every 5 s on its own; the
+  stand-in counted that as the request's, so one run in about seventy
+  failed under the race detector. The stand-in now logs the reporter's
+  rounds and takes them out of the count.
+- **Left for later steps.** The Mac needs its own time limit and a
+  "still settling" state to show (step 6). That the journal survives a
+  restart is shown only with the stand-in (step 5). The hold's own
+  settle failure reaches the host as a plain 502.
 
 ## Stage 3 so far
 
