@@ -3420,6 +3420,20 @@ candidates, so the split has to be re-declared before any holdout opens.
     note; reopened from Details and from Chat's Modes button. The
     AppleScript `start` does not open Chat. Built with step 6's Mac
     half.
+29. Sean makes the first real try of sharing, and Cloak shares the
+    way NEAR's Gateway does. Decided 20 November 2026 (Sean, "29. a -
+    copy their gateway mac app and do it the same way"). The chief's
+    reading, told to him: he tries one real, harmless NEAR chat
+    through NEAR's Gateway app (a real exchange, never an invented
+    one, since the Gateway's draft terms forbid fabricated sessions),
+    from the folder `/Users/sean/Documents/Cloak Trace Test`; and
+    Cloak does the sharing itself, inside the app, after the Gateway's
+    own steps (strip, show before and after, ask, upload under the
+    person's NEAR AI account), so nobody needs a second app. This
+    replaces the chief's choice in decision 27 to hand files to the
+    Gateway. A second read of NEAR's source for that build is with a
+    helper; nothing is built until the try shows a plain chat is
+    accepted and step 6's Mac half is merged.
 
 Two more sections asked for by Sean on 20 November 2026, each with a
 helper in its own checkout and nothing merged yet: a Darkbloom serving
