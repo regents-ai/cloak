@@ -1,12 +1,17 @@
 //! Development only: fetches one model's report from NEAR's gateway, its
 //! Intel collateral, and Intel Trust Authority's tokens on the GPUs under
-//! the same nonce with the keys Intel signs them with, through a SOCKS5
-//! proxy, checks both sides against the pins in reference/near-pins.json,
-//! and says what happened in plain words. No account key, no chat request:
-//! GETs only, of the report, the tokens, Intel's collateral and Intel's keys.
+//! the same nonce with the keys Intel signs them with, checks both sides
+//! against the pins in reference/near-pins.json, and says what happened in
+//! plain words. No account key, no chat request: GETs only, of the report,
+//! the tokens, Intel's collateral and Intel's keys.
 //!
-//!     cloak-near-probe --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B [--save DIR]
-//!     cloak-near-probe --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B --key-file FILE [--proof-age SECONDS] [--repeat N]
+//!     cloak-near-probe (--socks 127.0.0.1:9050 | --direct) --model Qwen/Qwen3.8-27B [--save DIR]
+//!     cloak-near-probe (--socks 127.0.0.1:9050 | --direct) --model Qwen/Qwen3.8-27B --key-file FILE [--proof-age SECONDS] [--repeat N]
+//!
+//! Exactly one route: --socks goes through Tor's SOCKS5 port at that
+//! address, one circuit for NEAR and one for Intel; --direct goes straight
+//! there, so NEAR and Intel see this Mac's internet address. The first line
+//! printed says which.
 //!
 //! With --save, the report, nonce, TLS key hash, collateral, NEAR's answer
 //! of Intel's tokens, Intel's keys, and the time both checks are made at go
@@ -17,8 +22,8 @@
 //! "ping", encrypted to the checked model key. The key is never printed.
 //! --repeat asks N times (1 when not given) with one `Kept`, which keeps a
 //! passed proof for --proof-age seconds (0 when not given: every ask checks
-//! its own); for each ask it says how long it took and whether its proof
-//! was checked in it or kept from an earlier ask, and how old.
+//! its own); for each ask it says how long it took and how long before the
+//! reply its proof passed.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -28,7 +33,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cloak_near::{
     ask, fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, verify_gpu,
-    verify_intel, FetchError, Kept, Pins, Proxy, Routes, Stop,
+    verify_intel, FetchError, Kept, Pins, Proxy, Route, Routes, Stop,
 };
 use hex::encode as hex;
 use serde_json::json;
@@ -41,6 +46,7 @@ const ATTEMPTS: u32 = 3;
 
 fn main() -> ExitCode {
     let mut socks = None;
+    let mut direct = false;
     let mut model = None;
     let mut save = None;
     let mut key_file = None;
@@ -49,7 +55,11 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--socks" => socks = args.next().and_then(|a| a.parse::<SocketAddr>().ok()),
+            "--socks" => match args.next().and_then(|a| a.parse::<SocketAddr>().ok()) {
+                Some(addr) => socks = Some(addr),
+                None => return usage(),
+            },
+            "--direct" => direct = true,
             "--model" => model = args.next(),
             "--save" => save = args.next().map(PathBuf::from),
             "--key-file" => key_file = args.next().map(PathBuf::from),
@@ -64,20 +74,33 @@ fn main() -> ExitCode {
             _ => return usage(),
         }
     }
-    let (Some(socks), Some(model)) = (socks, model) else {
+    let Some(model) = model else {
         return usage();
     };
-    let outcome = match (key_file, save) {
-        (Some(_), Some(_)) => return usage(),
-        (Some(key_file), None) => chat(
+    // Exactly one route; --save only without --key-file, and the chat
+    // settings only with it.
+    let chat_settings = proof_age.is_some() || repeat.is_some();
+    if socks.is_some() == direct
+        || (key_file.is_some() && save.is_some())
+        || (key_file.is_none() && chat_settings)
+    {
+        return usage();
+    }
+    match socks {
+        Some(addr) => println!(
+            "Route: Tor, through the SOCKS5 proxy at {addr}, one circuit for NEAR and one for Intel"
+        ),
+        None => println!("Route: direct, no Tor: NEAR and Intel see this Mac's internet address"),
+    }
+    let outcome = match key_file {
+        Some(key_file) => chat(
             socks,
             &model,
             &key_file,
             proof_age.unwrap_or(0),
             repeat.unwrap_or(1),
         ),
-        (None, _) if proof_age.is_some() || repeat.is_some() => return usage(),
-        (None, save) => {
+        None => {
             let started = Instant::now();
             let outcome = run(socks, &model, save);
             println!("In all: {:.1} s", started.elapsed().as_secs_f64());
@@ -95,16 +118,16 @@ fn main() -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: cloak-near-probe --socks HOST:PORT --model NAME [--save DIR | --key-file FILE [--proof-age SECONDS] [--repeat N]]"
+        "usage: cloak-near-probe (--socks HOST:PORT | --direct) --model NAME [--save DIR | --key-file FILE [--proof-age SECONDS] [--repeat N]]"
     );
     ExitCode::from(2)
 }
 
 /// The proof check and then a chat request saying "ping", with the account
 /// key in `key_file`, `repeat` times with one `Kept` that keeps a passed
-/// proof for `proof_age` seconds.
+/// proof for `proof_age` seconds; through Tor at `socks`, or direct.
 fn chat(
-    socks: SocketAddr,
+    socks: Option<SocketAddr>,
     model: &str,
     key_file: &Path,
     proof_age: u64,
@@ -115,14 +138,11 @@ fn chat(
         .map_err(|e| format!("reading {}: {e}", key_file.display()))?;
     let mut kept = Kept::new(Duration::from_secs(60 * 60), Duration::from_secs(proof_age))
         .ok_or("a proof age over an hour is refused")?;
-    println!("Checking NEAR AI Cloud's proof for {model}, then sending \"ping\", through {socks}");
+    println!("Checking NEAR AI Cloud's proof for {model}, then sending \"ping\"");
     println!("Proof age {proof_age} s; {repeat} ask(s)");
 
     let identities = [fresh_identity()?, fresh_identity()?];
-    let routes = Routes {
-        near: route(socks, &identities[0]),
-        intel: route(socks, &identities[1]),
-    };
+    let routes = routes(socks, &identities);
     let body =
         json!({"model": model, "messages": [{"role": "user", "content": "ping"}]}).to_string();
     let mut stopped = 0;
@@ -146,8 +166,8 @@ fn chat(
     }
 }
 
-/// One ask, said in plain words: how long it took, whether its proof was
-/// checked in it or kept from an earlier ask, and the reply.
+/// One ask, said in plain words: how long it took, how long before the
+/// reply its proof passed, and the reply.
 fn ask_once(
     routes: &Routes,
     model: &str,
@@ -156,22 +176,18 @@ fn ask_once(
     pins: &Pins,
     kept: &mut Kept,
 ) -> Result<(), String> {
-    let began = seconds_now()?;
     let started = Instant::now();
     let outcome = ask(routes, model, key, body, pins, kept);
     let took = started.elapsed().as_secs_f64();
     match outcome {
         Ok(answered) => {
-            // A proof checked in this ask passed after it began; a kept one
-            // passed in an earlier ask.
-            if answered.proof_passed_at < began {
-                println!(
-                    "The proof was kept from an earlier ask: it passed {} s before this one began",
-                    began - answered.proof_passed_at
-                );
-            } else {
-                println!("The proof was checked in this ask");
-            }
+            // The clock counts whole seconds, so a proof kept from an ask
+            // that ended in the second this one began cannot be told from a
+            // new one; the age says it either way.
+            println!(
+                "The proof this went under passed {} s before the reply came",
+                seconds_now()?.saturating_sub(answered.proof_passed_at)
+            );
             println!(
                 "The proof passed for {} model instance(s) and the {} GPUs of one model server, model encryption key {}",
                 answered.proof.intel.instances,
@@ -200,16 +216,16 @@ fn ask_once(
     }
 }
 
-fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), String> {
+fn run(socks: Option<SocketAddr>, model: &str, save: Option<PathBuf>) -> Result<(), String> {
     let pins: Pins = serde_json::from_str(PINS).map_err(|e| format!("the pins file: {e}"))?;
-    println!("Checking NEAR AI Cloud's proof for {model}, through {socks}");
+    println!("Checking NEAR AI Cloud's proof for {model}");
 
     let identities = [fresh_identity()?, fresh_identity()?];
-    let report_proxy = route(socks, &identities[0]);
+    let routes = routes(socks, &identities);
     let mut busy = 0;
     let fetched = loop {
         let started = Instant::now();
-        match fetch_report(&report_proxy, model) {
+        match fetch_report(&routes.near, model) {
             Ok(fetched) => {
                 println!(
                     "Report: {} bytes in {:.1} s on one connection; gateway TLS key {}",
@@ -232,9 +248,8 @@ fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), Stri
         println!("Busy answers before the report: {busy}");
     }
 
-    let collateral_proxy = route(socks, &identities[1]);
     let started = Instant::now();
-    let collateral = fetch_collateral(&collateral_proxy, &fetched.report)
+    let collateral = fetch_collateral(&routes.intel, &fetched.report)
         .map_err(|e| format!("fetching Intel's collateral: {e}"))?;
     println!(
         "Intel collateral: {} platform famil{} ({}), {} requests to Intel in {:.1} s",
@@ -288,7 +303,8 @@ fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), Stri
         "the gateway's MRTD, RTMR0-2, MRCONFIGID, app-id, key-provider, mr-kms and os-image-hash are the pinned ones",
         "every model entry is for this model, and its encryption key is the key its quote binds",
         "every instance holds the same encryption key and has an instance id of its own, bound in RTMR3",
-        "every instance's quote passes the same Intel, debug, report data, event log, compose and pin checks",
+        "every instance's quote passes the same Intel, debug, report data, event log and compose checks",
+        "every instance's measurements are a pinned model set, its compose file compared without the digits of its one INSTANCE_LABEL=gpu",
     ] {
         println!("  passed: {line}");
     }
@@ -307,7 +323,7 @@ fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), Stri
 
     // The same nonce as the report's, on the report's route.
     let started = Instant::now();
-    let tokens = fetch_ita_tokens(&report_proxy, model, &fetched.nonce).map_err(|e| {
+    let tokens = fetch_ita_tokens(&routes.near, model, &fetched.nonce).map_err(|e| {
         format!(
             "fetching Intel Trust Authority's tokens from NEAR ({:.1} s): {e}",
             started.elapsed().as_secs_f64()
@@ -319,7 +335,7 @@ fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), Stri
         started.elapsed().as_secs_f64()
     );
     let started = Instant::now();
-    let keys = fetch_ita_keys(&collateral_proxy).map_err(|e| {
+    let keys = fetch_ita_keys(&routes.intel).map_err(|e| {
         format!(
             "fetching Intel Trust Authority's keys ({:.1} s): {e}",
             started.elapsed().as_secs_f64()
@@ -373,12 +389,20 @@ fn run(socks: SocketAddr, model: &str, save: Option<PathBuf>) -> Result<(), Stri
     Ok(())
 }
 
-/// A route through the proxy with a SOCKS user name of its own.
-fn route<'a>(socks: SocketAddr, identity: &'a str) -> Proxy<'a> {
-    Proxy {
-        addr: socks,
-        user: identity,
-        password: "cloak",
+/// The routes to NEAR and to Intel: through Tor at `socks`, each with a
+/// SOCKS user name of its own, or both direct.
+fn routes<'a>(socks: Option<SocketAddr>, identities: &'a [String; 2]) -> Routes<'a> {
+    let route = |identity: &'a str| match socks {
+        Some(addr) => Route::Tor(Proxy {
+            addr,
+            user: identity,
+            password: "cloak",
+        }),
+        None => Route::Direct,
+    };
+    Routes {
+        near: route(&identities[0]),
+        intel: route(&identities[1]),
     }
 }
 

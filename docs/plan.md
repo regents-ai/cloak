@@ -2934,7 +2934,19 @@ candidates, so the split has to be re-declared before any holdout opens.
       checks Cloak makes, but covering one server NEAR picks, not tied
       to a server whose quote Cloak checked, and said so in the crate's
       README)
-      service; then the guest image and the app. From NEAR's own words,
+      service; then, 19 and 20 November: a passed proof kept for a chosen
+      time, an hour at most; a new Tor circuit, three at most, when one
+      cannot connect; a direct route, since Sean decided NEAR mode need
+      not use Tor ("it can be optionable only if it works, even if it is
+      very slow"); and a model server pinned by its compose file without
+      its own label, after NEAR added a server whose compose differed
+      from a pinned one only there and in its telemetry address. Live
+      with his key, three "ping"s on one check to each model: direct, six
+      of six answered, 3 to 14 seconds each; through Tor, six of six, 43
+      and 49 seconds for the first of each (the check is 20 to 40 of
+      it), 3 to 31 after. The servers NEAR shows changed within a day,
+      so the shipped pins will need updating often; that is the open
+      problem. Then the app. From NEAR's own words,
       to be said on screen: the model's software is not in the
       measurement, a key ties every request to one account, and on 8
       November a flaw on one server exposed requests in progress.

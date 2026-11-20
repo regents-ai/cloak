@@ -13,7 +13,13 @@ use dcap_qvl::{QuotePolicy, TcbStatus};
 use serde::Deserialize;
 use sha2::{Digest, Sha256, Sha384};
 
-use crate::{Collateral, GpuRefusal, IntelProof, Measurements, Pins};
+use crate::{Collateral, GpuRefusal, IntelProof, Measurements, ModelMeasurements, Pins};
+
+/// What names a model server's own host in its compose file, followed by
+/// one to four digits: `INSTANCE_LABEL=gpu04`.
+const LABEL: &[u8] = b"INSTANCE_LABEL=gpu";
+/// The most digits a host's label may have.
+const LABEL_DIGITS: usize = 4;
 
 /// Which part of the report a refusal is about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +65,9 @@ pub enum Refusal {
     Rtmr3(Who),
     /// MRCONFIGID is not 01, the SHA-256 of the compose file, then zeros.
     ConfigId(Who),
+    /// A model server's compose file does not name its host exactly once,
+    /// as `INSTANCE_LABEL=gpu` and one to four digits.
+    Label(Who),
     /// A measured event that must appear once is missing or repeated.
     Event { who: Who, name: &'static str },
     /// The report lists no instance of the model.
@@ -71,8 +80,9 @@ pub enum Refusal {
     KeysDiffer(Who),
     /// An instance id already listed.
     SameInstance(Who),
-    /// Measurements that equal no accepted set.
-    Pin { who: Who, seen: Box<Measurements> },
+    /// Measurements that equal no accepted set; `seen` names the ones a
+    /// reviewer compares first.
+    Pin { who: Who, seen: String },
     /// Intel Trust Authority's verdict on the GPUs, or its tie to our nonce,
     /// did not pass.
     Gpu(GpuRefusal),
@@ -92,19 +102,14 @@ impl fmt::Display for Refusal {
             Refusal::ReportData(who) => write!(f, "{who}'s quote is not tied to its key, the TLS key and our nonce"),
             Refusal::Rtmr3(who) => write!(f, "{who}'s event log does not match its quote"),
             Refusal::ConfigId(who) => write!(f, "{who}'s compose file does not match its quote"),
+            Refusal::Label(who) => write!(f, "{who}'s compose file does not name its host once, as INSTANCE_LABEL=gpu and one to four digits"),
             Refusal::Event { who, name } => write!(f, "{who}'s measured event {name} is missing or repeated"),
             Refusal::NoModels => write!(f, "the report lists no instance of the model"),
             Refusal::ModelName { who, name } => write!(f, "{who} is for another model, {name}"),
             Refusal::KeyNotBound(who) => write!(f, "{who}'s encryption key is not the key its quote binds"),
             Refusal::KeysDiffer(who) => write!(f, "{who} holds a different encryption key"),
             Refusal::SameInstance(who) => write!(f, "{who} repeats another instance"),
-            Refusal::Pin { who, seen } => write!(
-                f,
-                "{who}'s measurements are not among the pinned ones (MRTD {}, MRCONFIGID {}, os-image-hash {})",
-                hex::encode(&seen.mrtd),
-                hex::encode(&seen.mrconfigid),
-                hex::encode(&seen.os_image_hash)
-            ),
+            Refusal::Pin { who, seen } => write!(f, "{who}'s measurements are not among the pinned ones ({seen})"),
             Refusal::Gpu(refusal) => write!(f, "Intel's GPU verdict: {refusal}"),
         }
     }
@@ -211,6 +216,7 @@ pub fn verify_intel(
     };
     let model_key = bytes::<32>("an encryption key", &first.signing_public_key)?;
     let mut models = Vec::new();
+    let mut model_pins = Vec::new();
     for (index, entry) in report.model_attestations.iter().enumerate() {
         let who = Who::Model(index);
         if entry.model_name != model {
@@ -243,12 +249,18 @@ pub fn verify_intel(
         {
             return Err(Refusal::SameInstance(who));
         }
+        // The compose file is the one MRCONFIGID binds: `server` checked it.
+        model_pins.push(model_measurements(
+            who,
+            &measured.measurements,
+            &entry.info.tcb_info.app_compose,
+        )?);
         models.push(measured);
     }
 
     pinned(Who::Gateway, &gateway_measured.measurements, &pins.gateway)?;
-    for (index, measured) in models.iter().enumerate() {
-        pinned(Who::Model(index), &measured.measurements, &pins.model)?;
+    for (index, pin) in model_pins.iter().enumerate() {
+        pinned(Who::Model(index), pin, &pins.model)?;
     }
 
     Ok(IntelProof {
@@ -415,12 +427,171 @@ fn server(
     })
 }
 
-fn pinned(who: Who, seen: &Measurements, accepted: &[Measurements]) -> Result<(), Refusal> {
+/// A model server's measurements as they are pinned: MRCONFIGID gives way
+/// to the SHA-256 of its compose file without its label's digits.
+fn model_measurements(
+    who: Who,
+    measured: &Measurements,
+    app_compose: &str,
+) -> Result<ModelMeasurements, Refusal> {
+    Ok(ModelMeasurements {
+        mrtd: measured.mrtd.clone(),
+        rtmr0: measured.rtmr0.clone(),
+        rtmr1: measured.rtmr1.clone(),
+        rtmr2: measured.rtmr2.clone(),
+        compose_sha256_without_label: without_label(app_compose)
+            .ok_or(Refusal::Label(who))?
+            .to_vec(),
+        app_id: measured.app_id.clone(),
+        key_provider: measured.key_provider.clone(),
+        mr_kms: measured.mr_kms.clone(),
+        os_image_hash: measured.os_image_hash.clone(),
+    })
+}
+
+/// SHA-256 of a compose file, exactly as sent, with the digits of its host's
+/// label dropped: `LABEL` must appear exactly once, followed by one to
+/// `LABEL_DIGITS` ASCII digits; None otherwise. Only those digits are
+/// dropped, so anything else in or after the label stays in what is hashed.
+fn without_label(app_compose: &str) -> Option<[u8; 32]> {
+    let text = app_compose.as_bytes();
+    let mut labels = (0..text.len()).filter(|&at| text[at..].starts_with(LABEL));
+    let (Some(at), None) = (labels.next(), labels.next()) else {
+        return None;
+    };
+    let digits_at = at + LABEL.len();
+    let digits = text[digits_at..]
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    (1..=LABEL_DIGITS).contains(&digits).then(|| {
+        Sha256::new()
+            .chain_update(&text[..digits_at])
+            .chain_update(&text[digits_at + digits..])
+            .finalize()
+            .into()
+    })
+}
+
+fn pinned<T: PartialEq + fmt::Display>(who: Who, seen: &T, accepted: &[T]) -> Result<(), Refusal> {
     match accepted.contains(seen) {
         true => Ok(()),
         false => Err(Refusal::Pin {
             who,
-            seen: Box::new(seen.clone()),
+            seen: seen.to_string(),
         }),
+    }
+}
+
+/// What a gateway's refusal names.
+impl fmt::Display for Measurements {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MRTD {}, MRCONFIGID {}, os-image-hash {}",
+            hex::encode(&self.mrtd),
+            hex::encode(&self.mrconfigid),
+            hex::encode(&self.os_image_hash)
+        )
+    }
+}
+
+/// What a model server's refusal names.
+impl fmt::Display for ModelMeasurements {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MRTD {}, compose SHA-256 without the label {}, os-image-hash {}",
+            hex::encode(&self.mrtd),
+            hex::encode(&self.compose_sha256_without_label),
+            hex::encode(&self.os_image_hash)
+        )
+    }
+}
+
+/// The gate checks of the host's label in a model server's compose file,
+/// offline, on the real compose of the third instance of the saved
+/// z-ai/glm-5.3-flash report (tests/fixtures/report.json), label `gpu23`,
+/// whose hash without the label is pinned in reference/near-pins.json. That
+/// compose passes MRCONFIGID in the report's own check (tests/proof.rs).
+#[cfg(test)]
+mod label {
+    use super::without_label;
+    use crate::Pins;
+
+    /// The real compose, exactly as sent.
+    fn real() -> String {
+        let report: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../tests/fixtures/report.json")).unwrap();
+        report["model_attestations"][2]["info"]["tcb_info"]["app_compose"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    /// The real compose with its label, `INSTANCE_LABEL=gpu23`, in place.
+    fn relabelled(label: &str) -> String {
+        let real = real();
+        assert_eq!(real.matches("INSTANCE_LABEL=gpu23").count(), 1);
+        real.replace("INSTANCE_LABEL=gpu23", label)
+    }
+
+    /// Whether a model server with this compose, and otherwise the third
+    /// instance's measurements, would pass the pin.
+    fn passes(compose: &str) -> bool {
+        let pins: Pins =
+            serde_json::from_str(include_str!("../../../reference/near-pins.json")).unwrap();
+        without_label(compose)
+            .is_some_and(|hash| pins.model[2].compose_sha256_without_label == hash)
+    }
+
+    #[test]
+    fn composes_differing_only_in_label_digits_have_one_pin() {
+        assert!(passes(&real()));
+        for label in ["gpu04", "gpu7", "gpu1234", "gpu0000"] {
+            let compose = relabelled(&format!("INSTANCE_LABEL={label}"));
+            assert_eq!(without_label(&compose), without_label(&real()), "{label}");
+            assert!(passes(&compose), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_label_with_letters_or_more_than_four_digits_is_refused() {
+        for label in ["gpuab", "gpu12345", "gpu2b", "gpu23x", "gpu-23", "gpu 23"] {
+            assert!(
+                !passes(&relabelled(&format!("INSTANCE_LABEL={label}"))),
+                "{label}"
+            );
+        }
+        // With no digit, or more than four, no pin is made at all; any other
+        // character stays in what is hashed.
+        assert_eq!(without_label(&relabelled("INSTANCE_LABEL=gpuab")), None);
+        assert_eq!(without_label(&relabelled("INSTANCE_LABEL=gpu12345")), None);
+    }
+
+    #[test]
+    fn a_compose_without_exactly_one_label_is_refused() {
+        for compose in [
+            relabelled(""),
+            relabelled("INSTANCE_LABEL=gpu"),
+            relabelled("INSTANCE_LABEL=gpu23 INSTANCE_LABEL=gpu24"),
+            relabelled("INSTANCE_LABEL=gpu23 INSTANCE_LABEL=gpu23"),
+        ] {
+            assert_eq!(without_label(&compose), None);
+        }
+    }
+
+    #[test]
+    fn a_compose_differing_anywhere_else_is_refused() {
+        // Another telemetry address, as on the second Qwen/Qwen3.8-27B server
+        // seen on 19 November, whose label differs too.
+        let real = real();
+        let other = relabelled("INSTANCE_LABEL=gpu04")
+            .replace("telemetry-stg.infra.near.ai", "telemetry.infra.near.ai");
+        assert_ne!(other, relabelled("INSTANCE_LABEL=gpu04"));
+        assert!(!passes(&other));
+        // One byte more, before the label and after it.
+        assert!(!passes(&format!(" {real}")));
+        assert!(!passes(&format!("{real} ")));
     }
 }

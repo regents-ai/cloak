@@ -168,7 +168,7 @@ fn a_changed_pin_is_refused() {
 
     // The third instance runs the third accepted image.
     let mut case = Case::real();
-    case.pins.model[2].mrconfigid[1] ^= 1;
+    case.pins.model[2].compose_sha256_without_label[1] ^= 1;
     assert!(matches!(
         refusal(case),
         Refusal::Pin {

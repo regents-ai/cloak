@@ -22,7 +22,7 @@ use crate::fetch::{connect, families, mozilla, request, NEAR};
 use crate::gpu::keys_cover;
 use crate::{
     fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, verify_gpu, verify_intel,
-    Collateral, FetchError, Pins, Proof, Proxy, Refusal, Routes,
+    Collateral, FetchError, Pins, Proof, Refusal, Route, Routes,
 };
 
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -103,10 +103,10 @@ impl std::error::Error for Stop {}
 /// not cover every platform family a new report's quotes name; the keys when
 /// they are older, or do not hold every key new tokens name.
 ///
-/// And for each model, the last proof that passed, with the gateway TLS key
-/// hash it was checked with and the second it passed, used again for at
-/// most `proof_age`. A request sent under a kept proof goes on hardware
-/// checked up to that long before, not at the moment of sending.
+/// And for each model, the last proof that passed, which holds the gateway
+/// TLS key hash it was checked with, and the second it passed, used again
+/// for at most `proof_age`. A request sent under a kept proof goes on
+/// hardware checked up to that long before, not at the moment of sending.
 pub struct Kept {
     max_age: u64,
     proof_age: u64,
@@ -122,10 +122,9 @@ pub struct Kept {
 /// A proof that passed, as [`Kept`] keeps it.
 #[derive(Clone)]
 struct Passed {
+    /// Every request sent under it goes on a connection showing the gateway
+    /// TLS key it was checked with, `proof.intel.gateway_tls_key`.
     proof: Proof,
-    /// SHA-256 of the gateway's TLS key the proof was checked with: every
-    /// request sent under the proof goes on a connection showing this key.
-    spki_sha256: [u8; 32],
     /// When the proof passed, in seconds since 1970.
     at: u64,
 }
@@ -167,7 +166,7 @@ impl Kept {
     /// The collateral for `report`'s quotes at `now`.
     fn collateral_for(
         &mut self,
-        intel: &Proxy,
+        intel: &Route,
         report: &[u8],
         now: u64,
     ) -> Result<&[Collateral], Stop> {
@@ -187,7 +186,7 @@ impl Kept {
     }
 
     /// Intel Trust Authority's key list for the tokens in `answer` at `now`.
-    fn keys_for(&mut self, intel: &Proxy, answer: &[u8], now: u64) -> Result<&[u8], Stop> {
+    fn keys_for(&mut self, intel: &Route, answer: &[u8], now: u64) -> Result<&[u8], Stop> {
         if !keys_cover(answer, &self.keys) || now.saturating_sub(self.keys_at) > self.max_age {
             self.keys = fetch_ita_keys(intel).map_err(Stop::Fetch)?;
             self.keys_at = now;
@@ -244,7 +243,6 @@ pub fn ask(
     // Only now, holding a proof that passed, is the request sent.
     let reply = send(
         &passed.proof,
-        &passed.spki_sha256,
         &routes.near,
         &mozilla(),
         model,
@@ -295,7 +293,6 @@ fn prove(routes: &Routes, model: &str, pins: &Pins, kept: &mut Kept) -> Result<P
         .map_err(Stop::Refused)?;
     Ok(Passed {
         proof: Proof { intel, gpu },
-        spki_sha256: fetched.spki_sha256,
         at: now,
     })
 }
@@ -309,15 +306,15 @@ fn seconds() -> Result<u64, Stop> {
 }
 
 /// Seals `body`'s words for the model key in `proof`, opens a new
-/// connection to the gateway through `proxy` that is accepted only if its
+/// connection to the gateway on `route` that is accepted only if its
 /// certificate passes the ordinary checks against `roots` and its key
-/// hashes to `pinned`, sends the request, and opens the reply with a key
-/// made for this request. Only [`ask`] calls it, with a proof that passed in
-/// the same call or that [`Kept`] held for the model within the proof age.
+/// hashes to the gateway TLS key `proof` was checked with, sends the
+/// request once, and opens the reply with a key made for this request. Only
+/// [`ask`] calls it, with a proof that passed in the same call or that
+/// [`Kept`] held for the model within the proof age.
 pub(crate) fn send(
     proof: &Proof,
-    pinned: &[u8; 32],
-    proxy: &Proxy,
+    route: &Route,
     roots: &RootCertStore,
     model: &str,
     api_key: &str,
@@ -339,8 +336,10 @@ pub(crate) fn send(
     .map_err(Stop::Request)?;
     let body = serde_json::to_vec(&body).expect("a JSON map serializes");
 
-    let (mut tls, spki_sha256) = connect(proxy, NEAR, roots).map_err(Stop::Send)?;
-    if spki_sha256 != *pinned {
+    // `connect` writes no byte of the request: a connection it cannot make
+    // is tried again there, before anything of the request goes out.
+    let (mut tls, spki_sha256) = connect(route, NEAR, roots).map_err(Stop::Send)?;
+    if spki_sha256 != proof.intel.gateway_tls_key {
         return Err(Stop::Pin);
     }
     tls.sock
@@ -621,7 +620,7 @@ mod proof_age {
 
     use super::{ask, seconds, Kept, Passed, Stop, DAY, HOUR};
     use crate::e2ee::ReplyKey;
-    use crate::{GpuProof, IntelProof, Pins, Proof, Proxy, Routes, TcbStatus};
+    use crate::{GpuProof, IntelProof, Pins, Proof, Proxy, Route, Routes, TcbStatus};
 
     const MODEL: &str = "z-ai/glm-5.3-flash";
     const OTHER: &str = "Qwen/Qwen3.8-27B";
@@ -640,7 +639,6 @@ mod proof_age {
                 },
                 gpu: GpuProof { gpus: 8 },
             },
-            spki_sha256: [7; 32],
             at,
         }
     }
@@ -648,14 +646,14 @@ mod proof_age {
     /// Whether `ask` for `model` went straight to sending under a kept
     /// proof, rather than fetching a new report.
     fn reuses(kept: &mut Kept, model: &str) -> bool {
-        let proxy = Proxy {
+        let route = Route::Tor(Proxy {
             addr: closing_proxy(),
             user: "proof",
             password: "age",
-        };
+        });
         let routes = Routes {
-            near: proxy,
-            intel: proxy,
+            near: route,
+            intel: route,
         };
         let body = json!({"model": model, "messages": [{"role": "user", "content": "ping"}]});
         let pins = Pins {

@@ -7,15 +7,14 @@ check, encrypted to the model key the check established. It holds
 no account: the caller gives the key for each request. It is not yet part
 of the guest image, the build scripts or the app.
 
-- `fetch_report` opens one TLS connection to `cloud-api.near.ai` through a
-  SOCKS5 proxy (names resolved by the proxy, a SOCKS user name of the
-  caller's for Tor stream isolation), with ordinary certificate checks
-  against Mozilla's roots. It records the SHA-256 of the gateway
-  certificate's SubjectPublicKeyInfo, and on that connection asks for one
-  model's attestation report with a fresh 32-byte nonce, no Authorization
-  header, `x-no-aliasing: true` and an uncompressed body of at most 4 MiB (about 245 KB an instance
-  on 19 November).
-- `fetch_collateral` fetches, through the same proxy, the Intel collateral
+- `fetch_report` opens one TLS connection to `cloud-api.near.ai` on the
+  caller's route (see "Routes"), with ordinary certificate checks against
+  Mozilla's roots. It records the SHA-256 of the gateway certificate's
+  SubjectPublicKeyInfo, and on that connection asks for one model's
+  attestation report with a fresh 32-byte nonce, no Authorization header,
+  `x-no-aliasing: true` and an uncompressed body of at most 4 MiB (about
+  245 KB an instance on 19 November).
+- `fetch_collateral` fetches, on the caller's route, the Intel collateral
   the report's quotes need, straight from Intel's servers
   (`api.trustedservices.intel.com` and `certificates.trustedservices.intel.com`).
 - `fetch_ita_tokens` asks NEAR's gateway, with no account key and under
@@ -43,8 +42,34 @@ of the guest image, the build scripts or the app.
   only then, holding a `Proof` with both halves, is the request sent.
   There is no way to skip the GPU. A step that fails before sending ends
   the call with its `Stop` and nothing is sent. NEAR's gateway and Intel's
-  servers each go through a route of the caller's (`Routes`), meant to be
-  two Tor circuits.
+  servers each go through a route of the caller's (`Routes`).
+
+## Routes
+
+Each of the two routes, to NEAR's gateway and to Intel's servers, is one
+of:
+
+- **Tor** (`Route::Tor`): through Tor's SOCKS5 port, names resolved by
+  Tor, with a SOCKS user name of the caller's, so that each route has a
+  circuit of its own. NEAR and Intel see a Tor exit's address. When a
+  connection cannot be made (the SOCKS step or the TLS handshake fails,
+  before any byte of a request is written), it is made again on a new
+  circuit, asked for by the caller's user name with the attempt's number
+  appended (`abc-2`, then `abc-3`), three attempts at most; then the last
+  failure stops the call. Each new connection starts again from the
+  caller's own user name, so a circuit that failed is tried first again.
+- **Direct** (`Route::Direct`): an ordinary connection to the host on port
+  443, its name looked up by the Mac's system, each address it has tried
+  in turn. NEAR and Intel see the Mac's internet address. One attempt:
+  there is no other path to try.
+
+Either way the same timeouts, certificate checks, key pin and HTTP follow.
+No request is sent twice: a connection is tried again only before any byte
+of a request is written on it, and a request once written, the chat request
+included, is never tried again. One answer is asked for again: NEAR's
+answer of Intel Trust Authority's tokens, when NEAR answers 502 (its own
+call to Intel failed), up to three asks in all under the same nonce; no
+other status is.
 
 ## What `verify_intel` checks
 
@@ -65,9 +90,18 @@ For the gateway and for every model entry:
 - the nonce sent back is ours;
 - the event log replays to the quoted RTMR3, and MRCONFIGID is 01, the
   SHA-256 of the exact compose file, then 15 zero bytes;
-- MRTD, RTMR0-2, MRCONFIGID and the RTMR3 events `app-id`, `key-provider`,
-  `mr-kms` and `os-image-hash` equal one accepted set in
-  `reference/near-pins.json`, every value alike.
+- for the gateway: MRTD, RTMR0-2, MRCONFIGID and the RTMR3 events `app-id`,
+  `key-provider`, `mr-kms` and `os-image-hash` equal one accepted gateway
+  set in `reference/near-pins.json`, every value alike;
+- for a model server: the same, but in place of MRCONFIGID, the SHA-256 of
+  its compose file with its host's label dropped. Every model server's
+  compose file names its host, `INSTANCE_LABEL=gpu04` on one and
+  `INSTANCE_LABEL=gpu23` on another, so the whole file's hash would refuse
+  every server NEAR adds. The label must appear exactly once, followed by
+  one to four ASCII digits, or the server is refused; only those digits
+  are dropped, from the exact text MRCONFIGID binds, so anything else in
+  or after the label, or anywhere in the file, still has to match. A
+  compose file with another telemetry address is another set.
 
 And for the model list: it is not empty, every entry names the requested
 model, every entry's `signing_public_key` is the `signing_address` its quote
@@ -174,12 +208,14 @@ missing, malformed or false is refused.
 
 ## The chat request
 
-- **The connection.** A new TLS connection through the same proxy, with the
+- **The connection.** A new TLS connection on the route to NEAR, with the
   ordinary certificate checks against Mozilla's roots, and accepted only if
   the SHA-256 of its certificate key equals the one seen when the report was
   fetched, the key the gateway's quote is tied to (for a kept proof, the
   report that proof was checked on). The comparison is made after the
-  handshake and before any byte of the request is written.
+  handshake and before any byte of the request is written. The request is
+  written once; a connection that cannot be made is tried again through
+  Tor before that (see "Routes"), and another certificate key is not.
 - **Kept between requests.** `Kept` holds Intel's collateral and Intel
   Trust Authority's key list. The caller chooses their age, at most a day.
   The collateral is fetched again when older, or when a report names a
@@ -260,12 +296,14 @@ From the research, section 4.5:
   `presence_penalty`, `frequency_penalty`, `parallel_tool_calls` and
   `stream`;
 - usage counts, response ids, finish reasons and timing;
-- the Tor exit's address.
+- the Tor exit's address, or on the direct route the Mac's internet
+  address.
 
 ## What Intel sees
 
-From Cloak: the Tor exit's address and the timing of each collateral
-fetch and each fetch of the key list. From NEAR's gateway, for each
+From Cloak: the Tor exit's address (on the direct route, the Mac's
+internet address) and the timing of each collateral fetch and each fetch
+of the key list. From NEAR's gateway, for each
 proof check: the gateway's quote and runtime data (our nonce, the gateway's
 key and TLS key fingerprint) and one model server's GPU evidence. A request
 sent under a kept proof causes none. Never the prompt, the reply or the
@@ -332,14 +370,21 @@ a proof for the model is kept within its age.
   alone, `certificates.trustedservices.intel.com` on 4 of 4, and
   `api.trustedservices.intel.com` in 1 of 8 probe runs.
   Intel did not refuse any connection that reached it, and in every probe
-  run whose collateral came, the key list came on the same circuit.
-  Nothing here retries on another circuit or goes around Tor, so `ask`
-  stops when the circuit's exit cannot reach Intel and neither what Intel
-  serves nor a proof within its age is kept yet.
+  run whose collateral came, the key list came on the same circuit. Later
+  that day, on ten separate circuits each, Intel's three hosts answered 10
+  of 10. A connection that cannot be made is now tried on up to three
+  circuits (see "Routes"); how often a check still stops this way has not
+  been measured with this build.
 - **NEAR's call to Intel fails at times.** NEAR's gateway answered 502
   (`ITA upstream error: ITA transport error`) to 2 of 8 token requests for
   `z-ai/glm-5.3-flash` on 19 November; all 5 for `Qwen/Qwen3.8-27B` were
-  answered.
+  answered. A 502 is now asked again, up to three asks in all.
+- **A second `Qwen/Qwen3.8-27B` server is not pinned.** On 19 November a
+  report for `Qwen/Qwen3.8-27B` listed a new server (label `gpu04`) whose
+  compose file differs from the pinned `gpu23` one in its label and its
+  telemetry address. The only saved report with it has no fetch time, so
+  it was not checked and not pinned: until it is, a report that lists that
+  server is refused, naming its compose hash without the label.
 
 ## Dependencies
 
@@ -355,13 +400,17 @@ new gateway or model image, its servers stop matching and every check is
 refused until the pins are updated from a reviewed live report. On 19
 November one model (`z-ai/glm-5.3-flash`) ran on three measured
 configurations (two OS images, three compose files), and one machine served
-two models, so the model sets are a list not tied to a model.
+two models, so the model sets are a list not tied to a model. A model set
+pins the compose file without its host's label, so a new server whose
+compose file differs from a pinned one only in the label's digits passes;
+the gateway set pins the whole compose file through MRCONFIGID.
 
 ## Running it
 
     cargo build --locked
     cargo test --locked            # the gate checks, offline
     cargo run --locked --bin cloak-near-probe -- --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B
+    cargo run --locked --bin cloak-near-probe -- --direct --model Qwen/Qwen3.8-27B
     cargo run --locked --bin cloak-near-probe -- --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B --key-file FILE
     cargo run --locked --bin cloak-near-probe -- --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B --key-file FILE --proof-age 600 --repeat 3
 
@@ -382,6 +431,11 @@ The gate checks:
   (`tests/fixtures/ita/test-key.der`) and added to the key list; the real
   tokens signed again unchanged that way pass, so each refusal comes from
   its change. A proof age over an hour is refused.
+- `src/verify.rs`: the host's label, on the real compose file of a pinned
+  model server (`gpu23`). The same file with other label digits (`gpu04`,
+  `gpu7`, `gpu1234`) gives the same pin; a label with letters or more
+  than four digits, no label and two labels are refused; so are another
+  telemetry address and one byte more before or after the label.
 - `src/chat.rs`: the proof age. A passed proof is put in `Kept` by hand and
   `ask` is pointed at a proxy on this machine that closes every
   connection, so its `Stop` shows whether it went to fetch a new report or
@@ -399,7 +453,10 @@ The gate checks:
   refused; and a certificate key other than the pinned one is refused before
   any request byte reaches it.
 
-The probe is for development. Without `--key-file` it makes only the
+The probe is for development. It takes exactly one route: `--socks
+HOST:PORT` (Tor's SOCKS5 port, one circuit for NEAR and one for Intel) or
+`--direct` (no Tor: NEAR and Intel see the Mac's internet address), and
+its first line says which. Without `--key-file` it makes only the
 report GET, Intel's collateral GETs, the GET of Intel's tokens from NEAR
 and the GET of Intel's key list, and prints each outcome, with timings, in
 plain words; `--save DIR` keeps what it fetched, as `tests/fixtures` is
@@ -407,8 +464,8 @@ kept. With `--key-file` it reads the account key from FILE and makes one
 chat request through `ask`, the message "ping", after the proof check. It
 never prints the key. `--repeat N` makes N such requests with one `Kept`,
 and `--proof-age SECONDS` (0 when not given) is the proof age it keeps a
-passed proof for; for each request it says how long it took and whether
-its proof was checked in it or kept from an earlier one, and how old.
+passed proof for; for each request it says how long it took and how long
+before the reply its proof passed.
 
 No code is copied from NEAR, Intel, NVIDIA or anywhere else. NEAR's
 MIT-licensed `inference-sdk` and its model server's source

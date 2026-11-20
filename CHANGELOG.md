@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- NEAR mode (`guest/near`): a direct route beside Tor (`Route::Direct`,
+  the probe's `--direct`; NEAR and Intel then see the Mac's internet
+  address), by Sean's word that NEAR mode need not use Tor. Through
+  Tor, a connection that cannot be made is made again on a new circuit,
+  three at most, before any byte of a request is written; NEAR's 502
+  from its token endpoint is asked again, three asks at most. A model
+  server is now pinned by the SHA-256 of its compose file without the
+  digits of its own `INSTANCE_LABEL=gpu` label (exactly one label, one
+  to four digits, or it is refused); MRCONFIGID must still equal the
+  whole compose's hash, and the gateway's pin is unchanged.
+  `reference/near-pins.json` gains a fourth model set, the server NEAR
+  added on 19 November. The kept proof no longer holds a second copy
+  of the gateway key hash. Live with Sean's key, three "ping"s on one
+  check to each of two models: direct, six of six answered in 3 to 14
+  s; through Tor, six of six, 43 and 49 s for the first of each and 3
+  to 31 s after. 28 offline checks pass.
+
 - NEAR mode: a passed proof is kept and used again for a chosen time, an
   hour at most, none by default (`guest/near`, `Kept::new(max_age,
   proof_age)`). A request under a kept proof still goes only on a

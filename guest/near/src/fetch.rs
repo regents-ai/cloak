@@ -1,14 +1,14 @@
 //! The network half: the report and Intel Trust Authority's tokens from
 //! NEAR's gateway, Intel's collateral, and the keys Intel Trust Authority
-//! signs with, every connection through the caller's SOCKS5 proxy, with
-//! names resolved by the proxy and ordinary certificate checks against
-//! Mozilla's roots. The chat request (`chat.rs`) uses the same connection
-//! and HTTP code.
+//! signs with, every connection on the caller's route (through Tor's SOCKS5
+//! port, names resolved by Tor, or direct, names looked up by the system)
+//! with ordinary certificate checks against Mozilla's roots. The chat
+//! request (`chat.rs`) uses the same connection and HTTP code.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,7 +18,7 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
-use crate::{Collateral, Proxy, QuoteCollateralV3};
+use crate::{Collateral, Proxy, QuoteCollateralV3, Route};
 
 pub(crate) const NEAR: &str = "cloud-api.near.ai";
 const INTEL_API: &str = "api.trustedservices.intel.com";
@@ -34,8 +34,15 @@ const REPORT_LIMIT: usize = 4 << 20;
 /// about 12 KB, and NEAR's tokens on eight GPUs about 36 KB.
 const INTEL_LIMIT: usize = 1 << 20;
 const HEAD_LIMIT: usize = 64 << 10;
-/// Each step through Tor: connecting, the handshake, every read and write.
+/// Each step, on either route: connecting, the handshake, every read and
+/// write.
 const STEP: Duration = Duration::from_secs(60);
+/// Tor circuits one connection may try: a new one each time the last could
+/// not be connected through (the SOCKS step or the TLS handshake failed).
+const PATHS: u32 = 3;
+/// Asks for Intel Trust Authority's tokens from NEAR, at most: NEAR's own
+/// call to Intel fails at times, and NEAR then answers 502.
+const TOKEN_ASKS: u32 = 3;
 /// Says nothing about Cloak.
 const USER_AGENT: &str = "curl/8.7.1";
 
@@ -97,10 +104,10 @@ impl From<io::Error> for FetchError {
 /// Asks NEAR's gateway, with no account key, for `model`'s attestation
 /// report under a fresh nonce, on one connection whose certificate key it
 /// records.
-pub fn fetch_report(proxy: &Proxy, model: &str) -> Result<Fetched, FetchError> {
+pub fn fetch_report(route: &Route, model: &str) -> Result<Fetched, FetchError> {
     let nonce =
         crate::random().ok_or_else(|| FetchError::Connect("no randomness for the nonce".into()))?;
-    let (mut tls, spki_sha256) = connect(proxy, NEAR, &mozilla())?;
+    let (mut tls, spki_sha256) = connect(route, NEAR, &mozilla())?;
     let path = format!(
         "/v1/attestation/report?model={}&provider=near&signing_algo=ed25519&include_tls_fingerprint=true&nonce={}",
         percent_encode(model),
@@ -136,10 +143,10 @@ pub fn fetch_report(proxy: &Proxy, model: &str) -> Result<Fetched, FetchError> {
 
 /// Fetches from Intel's own servers the collateral for every platform family
 /// the report's quotes name.
-pub fn fetch_collateral(proxy: &Proxy, report: &[u8]) -> Result<Vec<Collateral>, FetchError> {
+pub fn fetch_collateral(route: &Route, report: &[u8]) -> Result<Vec<Collateral>, FetchError> {
     families(report)?
         .into_iter()
-        .map(|(fmspc, ca)| family_collateral(proxy, fmspc, ca))
+        .map(|(fmspc, ca)| family_collateral(route, fmspc, ca))
         .collect()
 }
 
@@ -152,23 +159,23 @@ pub(crate) fn families(report: &[u8]) -> Result<BTreeSet<(String, String)>, Fetc
         .collect()
 }
 
-fn family_collateral(proxy: &Proxy, fmspc: String, ca: String) -> Result<Collateral, FetchError> {
+fn family_collateral(route: &Route, fmspc: String, ca: String) -> Result<Collateral, FetchError> {
     let pck = intel(
-        proxy,
+        route,
         INTEL_API,
         &format!("/sgx/certification/v4/pckcrl?ca={ca}&encoding=der"),
     )?;
     let tcb = intel(
-        proxy,
+        route,
         INTEL_API,
         &format!("/tdx/certification/v4/tcb?fmspc={fmspc}&update=standard"),
     )?;
     let qe = intel(
-        proxy,
+        route,
         INTEL_API,
         "/tdx/certification/v4/qe/identity?update=standard",
     )?;
-    let root = intel(proxy, INTEL_CERTS, "/IntelSGXRootCA.der")?;
+    let root = intel(route, INTEL_CERTS, "/IntelSGXRootCA.der")?;
     let (tcb_info, tcb_info_signature) = signed(&tcb.body, "tcbInfo")?;
     let (qe_identity, qe_identity_signature) = signed(&qe.body, "enclaveIdentity")?;
     Ok(Collateral {
@@ -193,9 +200,11 @@ fn family_collateral(proxy: &Proxy, fmspc: String, ca: String) -> Result<Collate
 /// Asks NEAR's gateway, with no account key and on a connection of its own,
 /// for the tokens Intel Trust Authority signs on the gateway's quote and on
 /// one of `model`'s servers' GPUs, under `nonce`, the report's; NEAR's
-/// answer as it came.
+/// answer as it came. A 502, NEAR's own call to Intel having failed, is
+/// asked again under the same nonce, `TOKEN_ASKS` asks at most; no other
+/// answer is.
 pub fn fetch_ita_tokens(
-    proxy: &Proxy,
+    route: &Route,
     model: &str,
     nonce: &[u8; 32],
 ) -> Result<Vec<u8>, FetchError> {
@@ -204,36 +213,41 @@ pub fn fetch_ita_tokens(
         percent_encode(model),
         hex::encode(nonce)
     );
-    let answer = get(
-        proxy,
-        NEAR,
-        &path,
-        &[("Accept", "application/json"), ("x-no-aliasing", "true")],
-        INTEL_LIMIT,
-    )?;
-    Ok(answer.body)
+    let mut asks = 1;
+    loop {
+        match get(
+            route,
+            NEAR,
+            &path,
+            &[("Accept", "application/json"), ("x-no-aliasing", "true")],
+            INTEL_LIMIT,
+        ) {
+            Err(FetchError::Status { code: 502, .. }) if asks < TOKEN_ASKS => asks += 1,
+            answer => return Ok(answer?.body),
+        }
+    }
 }
 
 /// The list of keys Intel Trust Authority signs its tokens with, from its
 /// portal, as it came.
-pub fn fetch_ita_keys(proxy: &Proxy) -> Result<Vec<u8>, FetchError> {
-    Ok(get(proxy, ITA_PORTAL, "/certs", &[], INTEL_LIMIT)?.body)
+pub fn fetch_ita_keys(route: &Route) -> Result<Vec<u8>, FetchError> {
+    Ok(get(route, ITA_PORTAL, "/certs", &[], INTEL_LIMIT)?.body)
 }
 
 /// One GET to Intel on a connection of its own.
-fn intel(proxy: &Proxy, host: &'static str, path: &str) -> Result<Answer, FetchError> {
-    get(proxy, host, path, &[], INTEL_LIMIT)
+fn intel(route: &Route, host: &'static str, path: &str) -> Result<Answer, FetchError> {
+    get(route, host, path, &[], INTEL_LIMIT)
 }
 
 /// One GET on a connection of its own, which must be answered 200.
 fn get(
-    proxy: &Proxy,
+    route: &Route,
     host: &'static str,
     path: &str,
     headers: &[(&str, &str)],
     limit: usize,
 ) -> Result<Answer, FetchError> {
-    let (mut tls, _) = connect(proxy, host, &mozilla())?;
+    let (mut tls, _) = connect(route, host, &mozilla())?;
     let answer = request(&mut tls, "GET", host, path, headers, None, limit)?;
     match answer.status {
         200 => Ok(answer),
@@ -266,15 +280,49 @@ pub(crate) fn mozilla() -> RootCertStore {
     }
 }
 
-/// A TLS connection to `host`:443 through the proxy, after ordinary
-/// certificate checks against `roots`, and the SHA-256 of the leaf
-/// certificate's SubjectPublicKeyInfo.
+/// A TLS connection to `host`:443 on `route`, after ordinary certificate
+/// checks against `roots`, and the SHA-256 of the leaf certificate's
+/// SubjectPublicKeyInfo. No byte of any request is written here.
+///
+/// Through Tor, when the connection cannot be made (the SOCKS step or the
+/// TLS handshake fails), it is made again on a new circuit, asked for by
+/// the caller's SOCKS user name with the attempt's number appended, `PATHS`
+/// attempts at most; then the last failure is returned. Direct, there is
+/// one attempt.
 pub(crate) fn connect(
-    proxy: &Proxy,
+    route: &Route,
     host: &str,
     roots: &RootCertStore,
 ) -> Result<(Tls, [u8; 32]), FetchError> {
-    let tcp = socks(proxy, host, 443)?;
+    let proxy = match route {
+        Route::Direct => return handshake(direct(host)?, host, roots),
+        Route::Tor(proxy) => proxy,
+    };
+    let mut path = 1;
+    loop {
+        let user = match path {
+            1 => proxy.user.to_owned(),
+            _ => format!("{}-{path}", proxy.user),
+        };
+        let circuit = Proxy {
+            user: &user,
+            ..*proxy
+        };
+        match socks(&circuit, host, 443).and_then(|tcp| handshake(tcp, host, roots)) {
+            Err(_) if path < PATHS => path += 1,
+            made => return made,
+        }
+    }
+}
+
+/// TLS on `tcp` to `host`, after ordinary certificate checks against
+/// `roots`, and the SHA-256 of the leaf certificate's
+/// SubjectPublicKeyInfo.
+fn handshake(
+    tcp: TcpStream,
+    host: &str,
+    roots: &RootCertStore,
+) -> Result<(Tls, [u8; 32]), FetchError> {
     let provider = rustls::crypto::ring::default_provider();
     let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
@@ -311,9 +359,7 @@ fn socks(proxy: &Proxy, host: &str, port: u16) -> Result<TcpStream, FetchError> 
     {
         return Err(refused("cannot take this user name, password or host"));
     }
-    let mut stream = TcpStream::connect_timeout(&proxy.addr, STEP)?;
-    stream.set_read_timeout(Some(STEP))?;
-    stream.set_write_timeout(Some(STEP))?;
+    let mut stream = tcp(&proxy.addr)?;
     let mut two = [0u8; 2];
     stream.write_all(&[5, 1, 2])?;
     stream.read_exact(&mut two)?;
@@ -352,6 +398,28 @@ fn socks(proxy: &Proxy, host: &str, port: u16) -> Result<TcpStream, FetchError> 
         _ => return Err(refused("answered with an unknown address type")),
     };
     stream.read_exact(&mut vec![0u8; address + 2])?;
+    Ok(stream)
+}
+
+/// An ordinary connection to `host`:443, its name looked up by the system.
+/// Each address the name has is tried in turn, as any connection does.
+fn direct(host: &str) -> Result<TcpStream, FetchError> {
+    let mut failed = FetchError::Connect(format!("{host} has no address"));
+    for addr in (host, 443).to_socket_addrs()? {
+        match tcp(&addr) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => failed = error.into(),
+        }
+    }
+    Err(failed)
+}
+
+/// A TCP connection to `addr`, with `STEP` for connecting and for every
+/// read and write.
+fn tcp(addr: &SocketAddr) -> io::Result<TcpStream> {
+    let stream = TcpStream::connect_timeout(addr, STEP)?;
+    stream.set_read_timeout(Some(STEP))?;
+    stream.set_write_timeout(Some(STEP))?;
     Ok(stream)
 }
 

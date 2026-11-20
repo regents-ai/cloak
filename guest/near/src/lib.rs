@@ -15,10 +15,10 @@
 //! hardware was then checked up to that long before, not at the moment of
 //! sending.
 //!
-//! [`fetch_report`] opens one TLS connection to NEAR's gateway through a
-//! SOCKS5 proxy (the guest's Tor port), records the SHA-256 of the gateway
-//! certificate's public key, and on that connection asks for the attestation
-//! report of one model with a fresh nonce and no account key.
+//! [`fetch_report`] opens one TLS connection to NEAR's gateway on the
+//! caller's [`Route`] (through Tor, or direct), records the SHA-256 of the
+//! gateway certificate's public key, and on that connection asks for the
+//! attestation report of one model with a fresh nonce and no account key.
 //! [`fetch_collateral`] fetches the Intel collateral the report's quotes
 //! need, straight from Intel's servers. [`fetch_ita_tokens`] asks NEAR's
 //! gateway, under the same nonce, for the tokens Intel Trust Authority
@@ -62,8 +62,10 @@ fn random<const N: usize>() -> Option<[u8; N]> {
     Some(bytes)
 }
 
-/// The SOCKS5 proxy every connection goes through. Names are resolved by the
-/// proxy; the user name and password ask Tor for a circuit of their own.
+/// Tor's SOCKS5 port. Names are resolved by Tor; the user name and password
+/// ask Tor for a circuit of their own. A connection that cannot be made on
+/// that circuit is tried on new ones, each asked for by this user name with
+/// the attempt's number appended.
 #[derive(Clone, Copy, Debug)]
 pub struct Proxy<'a> {
     pub addr: SocketAddr,
@@ -71,14 +73,25 @@ pub struct Proxy<'a> {
     pub password: &'a str,
 }
 
-/// The routes [`ask`] takes, each meant to be a Tor circuit of its own:
-/// NEAR's gateway (the report, Intel Trust Authority's tokens and the chat
-/// request), and Intel's servers (the collateral, and the keys Intel Trust
-/// Authority signs its tokens with).
+/// How a connection reaches its host. Either way, the same certificate
+/// checks, key pin and HTTP follow.
+#[derive(Clone, Copy, Debug)]
+pub enum Route<'a> {
+    /// An ordinary connection to the host, its name looked up by the system:
+    /// the host sees the Mac's internet address. One attempt.
+    Direct,
+    /// Through Tor: the host sees a Tor exit's address.
+    Tor(Proxy<'a>),
+}
+
+/// The routes [`ask`] takes: to NEAR's gateway (the report, Intel Trust
+/// Authority's tokens and the chat request), and to Intel's servers (the
+/// collateral, and the keys Intel Trust Authority signs its tokens with).
+/// Through Tor, each is meant to be a circuit of its own.
 #[derive(Clone, Copy, Debug)]
 pub struct Routes<'a> {
-    pub near: Proxy<'a>,
-    pub intel: Proxy<'a>,
+    pub near: Route<'a>,
+    pub intel: Route<'a>,
 }
 
 /// Intel's collateral for the quotes of one platform family (one FMSPC and
@@ -99,11 +112,12 @@ pub struct Collateral {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Pins {
     pub gateway: Vec<Measurements>,
-    pub model: Vec<Measurements>,
+    pub model: Vec<ModelMeasurements>,
 }
 
 /// One server's measurements, read from its verified quote and from its
-/// replayed RTMR3 event log. Every value is hex in the pins file.
+/// replayed RTMR3 event log; a gateway's are pinned as they are. Every value
+/// is hex in the pins file.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Measurements {
@@ -136,11 +150,42 @@ pub struct Measurements {
     pub os_image_hash: Vec<u8>,
 }
 
+/// A model server's measurements as they are pinned: those of
+/// [`Measurements`] but MRCONFIGID. Every model server's compose file names
+/// its own host (`INSTANCE_LABEL=gpu04`), so it is pinned by its hash with
+/// that label's digits dropped, once MRCONFIGID has been checked against
+/// the whole file. Every value is hex in the pins file.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelMeasurements {
+    #[serde(with = "hex")]
+    pub mrtd: Vec<u8>,
+    #[serde(with = "hex")]
+    pub rtmr0: Vec<u8>,
+    #[serde(with = "hex")]
+    pub rtmr1: Vec<u8>,
+    #[serde(with = "hex")]
+    pub rtmr2: Vec<u8>,
+    /// SHA-256 of the compose file, its one `INSTANCE_LABEL=gpu` followed by
+    /// one to four digits, with those digits dropped.
+    #[serde(with = "hex")]
+    pub compose_sha256_without_label: Vec<u8>,
+    #[serde(with = "hex")]
+    pub app_id: Vec<u8>,
+    #[serde(with = "hex")]
+    pub key_provider: Vec<u8>,
+    #[serde(with = "hex")]
+    pub mr_kms: Vec<u8>,
+    #[serde(with = "hex")]
+    pub os_image_hash: Vec<u8>,
+}
+
 /// What a passed check establishes before a chat request is sent: both
 /// halves, from one report under one nonce.
 ///
 /// Covered: genuine, up-to-date Intel TDX hardware reports that the gateway
-/// and every listed instance of the model run the pinned images, that the
+/// and every listed instance of the model run the pinned images (a model
+/// instance's compose file pinned but for its host's label), that the
 /// gateway's report is tied to the TLS key this client saw and to this
 /// client's nonce, and that every instance holds the one encryption key it
 /// names; and Intel Trust Authority, in tokens it signed, passes every GPU

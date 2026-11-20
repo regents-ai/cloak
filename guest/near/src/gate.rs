@@ -34,7 +34,7 @@ use sha2::{Digest, Sha512};
 
 use crate::chat::send;
 use crate::e2ee::{ReplyKey, SealKey};
-use crate::{GpuProof, IntelProof, Proof, Proxy, Stop, TcbStatus};
+use crate::{GpuProof, IntelProof, Proof, Proxy, Route, Stop, TcbStatus};
 
 const MODEL: &str = "z-ai/glm-5.3-flash";
 const API_KEY: &str = "sk-stand-in";
@@ -256,11 +256,12 @@ fn model_key() -> ReplyKey {
     ReplyKey([0x42; 32])
 }
 
-fn proof() -> Proof {
+/// A proof checked with the gateway TLS key hash `pin`.
+fn proof(pin: [u8; 32]) -> Proof {
     Proof {
         intel: IntelProof {
             gateway_key: [0; 32],
-            gateway_tls_key: pinned(),
+            gateway_tls_key: pin,
             model_key: model_key().public(),
             instances: 1,
             gateway_tcb: TcbStatus::UpToDate,
@@ -275,16 +276,16 @@ fn pinned() -> [u8; 32] {
 }
 
 /// `send`s `request()` to a stand-in that answers as `answer`, or expects
-/// nothing, on a connection pinned to `pin`.
+/// nothing, under a proof checked with the gateway TLS key hash `pin`.
 fn run(answer: Option<Answer>, pin: [u8; 32]) -> (Result<Value, Stop>, Seen) {
     let (addr, stand_in) = stand_in(answer);
-    let proxy = Proxy {
+    let route = Route::Tor(Proxy {
         addr,
         user: "gate",
         password: "check",
-    };
+    });
     let body = serde_json::to_vec(&request()).unwrap();
-    let result = send(&proof(), &pin, &proxy, &roots(), MODEL, API_KEY, &body);
+    let result = send(&proof(pin), &route, &roots(), MODEL, API_KEY, &body);
     (result, stand_in.join().unwrap())
 }
 
