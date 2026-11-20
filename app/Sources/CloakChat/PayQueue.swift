@@ -36,9 +36,13 @@ public final class PayQueue {
     /// The request out is held behind an earlier settlement.
     public private(set) var held = false
     @ObservationIgnored private let line: PayLine
+    /// How long a held request may wait: `PayLimit.hold`, shorter only in
+    /// checks.
+    @ObservationIgnored private let hold: Duration
 
-    public init(line: @escaping PayLine) {
+    public init(line: @escaping PayLine, hold: Duration = PayLimit.hold) {
         self.line = line
+        self.hold = hold
     }
 
     /// A chat request is out.
@@ -149,9 +153,8 @@ public final class PayQueue {
     }
 
     /// One frame to the payer and its answer. A chat request may run for
-    /// `limit` from its frame; from an `H` that holds it, for
-    /// `PayLimit.hold`; and from the `H` that ends the hold, for `limit`
-    /// again. When a limit runs out, or the caller is cancelled, the
+    /// `limit` from its frame; from an `H` that holds it, for `hold`; and
+    /// from the `H` that ends the hold, for `limit` again. When a limit runs out, or the caller is cancelled, the
     /// connection closes.
     private func exchange(_ ask: Pay.Ask, _ payload: Data, limit: Duration) async throws(PayStop) -> PayFrame.Answer {
         let events: AsyncThrowingStream<Pay.Event, any Error>
@@ -161,6 +164,7 @@ public final class PayQueue {
             throw PayStop(.unreachable, "\(error)")
         }
         let watch = Watch()
+        let hold = self.hold
         let reader = Task { () throws -> Data in
             for try await event in events {
                 switch event {
@@ -169,7 +173,7 @@ public final class PayQueue {
                         throw PayStop(.failed, "an H frame did not read")
                     }
                     held = frame.held
-                    watch.arm(frame.held ? .held : .over, for: frame.held ? PayLimit.hold : limit)
+                    watch.arm(frame.held ? .held : .over, for: frame.held ? hold : limit)
                 case .answer(let data):
                     return data
                 }
@@ -193,7 +197,7 @@ public final class PayQueue {
         case .failure(let error):
             if let ran = watch.ranOut {
                 throw ran == .held
-                    ? PayStop(.heldTooLong, "held past \(PayLimit.hold)") : PayStop(.timedOut, "no answer within the limit")
+                    ? PayStop(.heldTooLong, "held past \(hold)") : PayStop(.timedOut, "no answer within the limit")
             }
             if Task.isCancelled { throw PayStop(.cancelled, "cancelled") }
             // Nothing was sent while the hold lasted.
