@@ -99,6 +99,8 @@ public final class Payer {
     public private(set) var stop: PayStop?
     /// The expiry kept on the Mac, for while Cloak is paused.
     public private(set) var savedExpiry: Date?
+    /// Presses under way: quotes and approves.
+    public private(set) var working = 0
     @ObservationIgnored private let running: @MainActor () -> Bool
     @ObservationIgnored private let keep: @MainActor (Date?) -> Void
     @ObservationIgnored private let chosen: @MainActor () -> String?
@@ -162,7 +164,7 @@ public final class Payer {
     /// `failed`, and nothing is guessed.
     public static func state(view: DepositView, funding: FundingStatus, withdrawal: WithdrawalStatus, sending: Bool) -> State {
         switch funding.phase {
-        case "ready", "waiting_funds", "active", "withdrawal_pending":
+        case "ready", "waiting_funds", "active", "withdrawal_pending", "return_pending":
             break
         case "approval_pending", "deposit_pending", "confirming":
             let stage = funding.depositStage ?? "pending"
@@ -275,6 +277,8 @@ public final class Payer {
 
     private func quote(_ make: () async throws(PayStop) -> Review) async {
         stop = nil
+        working += 1
+        defer { working -= 1 }
         do {
             review = try await make()
         } catch {
@@ -297,6 +301,8 @@ public final class Payer {
             return
         }
         stop = nil
+        working += 1
+        defer { working -= 1 }
         do throws(PayStop) {
             let answer = try await queue.call(
                 "POST", "/admin/\(review.route)/approve", body: json(["quote_id": quote.id]), limit: PayLimit.approve)
@@ -316,6 +322,12 @@ public final class Payer {
     /// Closes the review; nothing is approved.
     public func cancelReview() {
         review = nil
+    }
+
+    /// Clears why the last press and the last read stopped.
+    public func dismiss() {
+        stop = nil
+        readStop = nil
     }
 
     // MARK: Buttons
