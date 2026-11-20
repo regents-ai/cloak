@@ -2675,10 +2675,13 @@ candidates, so the split has to be re-declared before any holdout opens.
    `small-challenger-gguf` (Google's own Q4_0 GGUF of Gemma 4 12B, from its
    quantization-aware-trained checkpoint, not the instruct weights its MLX
    twin came from; [models.md](../reference/models.md)). Nothing measured
-   on an MLX twin counts for its GGUF one. llama.cpp is pinned at release
-   v1.0.0 (commit `b1b770d9`) in [sources.json](../reference/sources.json)
-   and built from that source; every llama.cpp setting that could change a
-   result or the memory a rewrite takes is set in the worker
+   on an MLX twin counts for its GGUF one. llama.cpp is pinned in
+   [sources.json](../reference/sources.json) and built from that source:
+   at release v1.0.0 (commit `b1b770d9`) until 19 November 2026, when
+   Sean asked for the latest, and at build b12556 (commit `50518b64`)
+   since; the stage 3 and stage 4 records were measured on v1.0.0. Every
+   llama.cpp setting that could change a result or the memory a rewrite
+   takes is set in the worker
    (`llama-worker/Sources/CLlama/cloak_llama.cpp`). The confidence split
    decision 7 leaves to re-declare now covers six candidates, not four.
    The engine is chosen (14 November, the chief): llama.cpp with the reply

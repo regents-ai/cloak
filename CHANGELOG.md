@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- llama.cpp moves from release v1.0.0 to build b12556 (commit
+  `50518b64`, 197 commits later, published 19 November 2026), at Sean's
+  word to update to the latest. Of what changed, Cloak builds the fixes
+  in Metal (an overflow in a matrix multiply's destination offset, a
+  range argument), the faster grammar matching, the lighter chat
+  template rendering and the context's cell bookkeeping. llama.cpp now
+  marks `llama_decode` and `llama_batch_get_one` for removal, so the
+  worker feeds the model through their replacements, `llama_process`
+  and the `llama_batch_ext` calls, setting each token's position
+  itself; the build has no warnings. Proven by hand on the small lead:
+  a short pair of messages reworded in 1.0 s and a 576-token prompt,
+  read in two pieces, in 3.7 s, both replies passing the grammar. No
+  stage 3 or stage 4 score was re-run on the new build; those records
+  stay as measured on v1.0.0.
+
 - The rewording worker ships inside the app. `app/build.sh` copies the
   worker that `llama-worker/install.sh` built and signed into the
   bundle, and the manifest pins every part in the bundle, with no place

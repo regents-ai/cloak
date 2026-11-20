@@ -282,6 +282,23 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
         return fail("grammar", 0);
     }
 
+    // The model reads these tokens next, at the positions after everything it
+    // has read, and predicts after the last of them. Zero, or llama.cpp's code.
+    llama_batch_ext_ptr batch(llama_batch_ext_init(context.get()));
+    llama_pos           position = 0;
+    const auto read = [&](const llama_token * tokens, int32_t count) -> int32_t {
+        llama_batch_ext_clear(batch.get());
+        for (int32_t i = 0; i < count; ++i, ++position) {
+            const int32_t at = llama_batch_ext_add_token(batch.get(), 0, tokens[i]);
+            if (at < 0) {
+                return at;
+            }
+            llama_batch_ext_set_pos(batch.get(), at, &position);
+        }
+        llama_batch_ext_set_output_logits(batch.get(), count - 1, true);
+        return llama_process(context.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get());
+    };
+
     auto started = std::chrono::steady_clock::now();
     for (size_t at = 0; at < prompt.size(); at += prompt_chunk) {
         if (engine->cancelled) {
@@ -289,7 +306,7 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
             return result;
         }
         const auto n = static_cast<int32_t>(std::min<size_t>(prompt_chunk, prompt.size() - at));
-        if (const int32_t code = llama_decode(context.get(), llama_batch_get_one(prompt.data() + at, n))) {
+        if (const int32_t code = read(prompt.data() + at, n)) {
             return fail("prompt", code);
         }
     }
@@ -317,7 +334,7 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
             result.finish = CLOAK_FINISH_LENGTH;
             break;
         }
-        if (const int32_t code = llama_decode(context.get(), llama_batch_get_one(&token, 1))) {
+        if (const int32_t code = read(&token, 1)) {
             return fail("generation", code);
         }
     }

@@ -75,10 +75,10 @@
       "name": "llama.cpp",
       "kind": "git",
       "url": "https://github.com/ggml-org/llama.cpp.git",
-      "ref": "v1.0.0",
-      "commit": "b1b770d90d94cad9e9ea5b993bdbc383a522fb28",
+      "ref": "b12556",
+      "commit": "50518b64c6f2191a116d2760042f106c4b3387d7",
       "full_history": false,
-      "role": "The rewriter engine (decision 8), built from this source by llama-worker/build-llama.sh with Metal for macOS arm64. Release v1.0.0, published 13 Nov 2026 10:20Z; the tag is annotated (tag object a6d1a74dbebce3a16f4f2ceddbf38c21a08d8674, made by github-actions[bot]) and names this commit."
+      "role": "The rewriter engine (decision 8), built from this source by llama-worker/build-llama.sh with Metal for macOS arm64. Build b12556, published 19 Nov 2026 23:12Z, 197 commits after release v1.0.0 (b1b770d9, 13 Nov 2026), which was pinned until 20 Nov 2026; the newest named release is still v1.0.0, and llama.cpp tags each merge to master as a numbered build. Moved at Sean's word, to update to the latest, for the fixes since in the code Cloak builds: Metal, the grammar sampler, the chat templates and the context's cells."
     },
     {
       "name": "mpp",
