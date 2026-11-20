@@ -176,8 +176,16 @@ Sean's answers, 20 November:
   to clicks", and "a 1 second onhover should show a tooltip describing
   what that button controls". All three pills are buttons and say what
   they control after a second. Tor off in an Anon chat and zkAPI on are
-  not built, so a press on either says so; whether Tor gets an off
-  switch before payment is his open decision.
+  not built, so a press on either says so. Asked whether Anon chats get
+  a Tor off switch now, he answered "15. a": Tor stays on in Anon, and
+  the switch is built with zkAPI payment, as he chose on 19 November.
+- The Cloak page takes the app's names ("14. a"): Anon, NEAR Private AI
+  and Local Llama in its list of modes, in its drawn window and in the
+  film, and its last line points to patchbay.help/regents.sh. "NEAR AI
+  Gateway", which the page had, is the name of NEAR's own product.
+- zkAPI payment is wanted in the app now: "why isnt zkAPI payment added
+  yet? if vitalik can do it, we should be able to". Step 3 of the build
+  order above was started the same hour.
 
 ## Gates for stage 2
 
