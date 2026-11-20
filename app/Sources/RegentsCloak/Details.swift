@@ -3,7 +3,8 @@ import CloakControl
 import CloakSupervisor
 import SwiftUI
 
-/// The small window: the state, why it needs attention and what to do, the
+/// The small window: the state, what Running and Paused each mean, why it
+/// needs attention and what to do, the
 /// model's download while its files are not all in place, the release, the
 /// model and whether it is out of memory, what Cloak holds in memory now,
 /// the last check, and technical detail on demand, the build and each
@@ -41,6 +42,13 @@ struct DetailsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityElement(children: .combine)
+                }
+            } footer: {
+                // What Start and Pause change, both said, so the two can be
+                // told apart whichever Cloak is in.
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Running: Tor is connected. Anon and Agent chats can send.")
+                    Text("Paused: Tor is off. Anon and Agent chats wait.")
                 }
             }
             if download.state != .installed {

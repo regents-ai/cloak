@@ -273,7 +273,9 @@ now (the app, tor, the worker and the guest's virtual machine, by the
 footprint Activity Monitor shows), read every 3 seconds while the window
 is on screen; it says it can't be measured when any part cannot be read,
 and the technical details, like `cloak status --json`, give each part's
-figure.
+figure. Under Status, Details
+says what the two states mean: "Running: Tor is connected. Anon and Agent
+chats can send." and "Paused: Tor is off. Anon and Agent chats wait."
 
 With the guest, the host's tor and the worker built (stage 2 commands),
 build `app/build/Regents Cloak.app`, with Sparkle.framework inside, signed

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Details says what Running and Paused each mean, under Status (Sean,
+  20 November 2026: "its pretty unclear what the difference is between
+  the app being paused vs running", then "can it be a short phrase for
+  each in 'Details'"): "Running: Tor is connected. Anon and Agent chats
+  can send." and "Paused: Tor is off. Anon and Agent chats wait." Seen
+  on Sean's Mac in both states.
 - A log for testing on this Mac (Sean, 20 November 2026: "it seems to be
   crashing, can you add error logs or something?", then "no, just for
   local testings"; it had not crashed: the chief had closed it four
