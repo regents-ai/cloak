@@ -11,8 +11,7 @@ import SwiftUI
 /// on the first launch, NEAR mode's helper, the door other apps and the
 /// agent in the guest send through while Cloak is Running, its AppleScript
 /// commands (`StartCommand` and the others), the control channel `cloak`
-/// uses to drive the same supervisor, and its updater when the bundle names
-/// a feed (`Updates`).
+/// uses to drive the same supervisor, and its updater (`Updates`).
 @main
 struct RegentsCloakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var app
@@ -66,8 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showChat()
     }
     private var menu: StatusMenu?
-    /// Made at launch; none when the bundle names no update feed.
-    private var updates: Updates?
+    /// Made at launch, with the menu.
+    private lazy var updates = Updates()
     let door: Door = {
         let supervisor = Launch.supervisor, conversations = Launch.layout.conversations
         return Door(
@@ -85,11 +84,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.current = self
-        updates = Updates.start()
         menu = StatusMenu(
             supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest), showChat: showChat,
             showAgents: showAgents, showDetails: showDetails, showSettings: showSettings,
-            checkForUpdates: updates.map { updates in updates.check })
+            checkForUpdates: updates.check)
         // Made now, so the shortcut chosen works from launch.
         _ = prompt
         // The agent's model requests from the guest come in at the door.

@@ -25,8 +25,10 @@ core, running the small lead, and a Chat window that rewords messages and,
 in a labelled Development mode (decision 10), sends the reworded text
 through Tor to a remote model, paid from one wallet on the Mac. Stages 1
 and 2 stay open in
-[docs/plan.md](docs/plan.md). Nothing here is a release, and no protection is
-claimed as proven. A gate counts only when its evidence
+[docs/plan.md](docs/plan.md). The one build meant to leave this Mac is the
+technical preview for invited testers ([docs/release.md](docs/release.md),
+stage 1), which claims no protection; nothing here is the public release,
+and no protection is claimed as proven. A gate counts only when its evidence
 is recorded in [docs/plan.md](docs/plan.md).
 
 ## Layout
@@ -49,7 +51,7 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `llama-worker/` | The native rewrite worker (decision 8): Swift over llama.cpp, built from its pinned source with Metal, its sandbox entitlements and install script |
 | `rewriter-kit/` | The worker's protocol and pins: the frames to and from the host, the daemon's request, the replies and the model pins |
 | `host/` | The host library (tor, the worker's channel, the relay, the guest) and the `cloak-host` command the kits run |
-| `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build |
+| `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build, and the scripts that release them (Release, below) |
 | `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), the door port and the runner (the owner's agent tasks, decision 12), kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
 | `evidence/stage4/` | Stage 4 development records and every score, one folder per model |
@@ -282,6 +284,12 @@ the pin, and runs the worker from there:
 app/build.sh
 ```
 
+Given the name of a signing identity in the keychain as its one argument,
+`app/build.sh` signs every part with that identity instead, under the
+hardened runtime and with a secure timestamp, tor, libevent and the
+worker included, the worker into its sandbox. `app/release.sh` does that
+with the Developer ID (Release, below).
+
 The app opens Paused in the menu bar, and never starts by itself. On the
 first launch only, a Welcome window says what Cloak does and where it is,
 and starts nothing. The menu's top shows the state, as a coloured dot and
@@ -319,7 +327,7 @@ at login (off until turned on; the app still opens Paused), "Never reword
 text. Reduces your privacy." (off until ticked; see Chat, below), Review
 and Saved chats (on until turned off; see Chat, below), Cover traffic (on
 until turned off; used from the next Start), Free
-memory and, in a build with an update feed, Updates (below). NEAR has the
+memory and Updates (below). NEAR has the
 NEAR key (a field and Save; once saved, Saved with Replace and Remove),
 Tor (off until turned on), Freshness (10 minutes until chosen, or Every
 message or 1 hour) and the model, Qwen3.8-27B, which can't be changed; see
@@ -333,11 +341,12 @@ command a line, and this session's lines of Cloak's log, each with Copy,
 and Restore Defaults, which puts these settings back and nothing else: not
 the wallet, the NEAR key, the chats or the model.
 
-Updates come through Sparkle 2.8.1, and only to a build whose
-`app/release.json` sets both `update_feed` and `update_key` (both empty
-today, so no build has an updater; `app/build.sh` stops if only one is
-set). Such a build has Check for Updates… in the menu, above Quit, and
-Updates in General: Sparkle's own setting for checking once a day, off
+Updates come through Sparkle 2.8.1, from the feed and the update key's
+public half in `app/release.json`: the feed is `appcast.xml` in the
+public repository `regents-ai/cloak-releases`, which holds only signed
+builds (Release, below). Every build, the development build included,
+has Check for Updates… in the menu, above Quit, and Updates in General:
+Sparkle's own setting for checking once a day, off
 until the person answers Sparkle's question on the second launch or turns
 it on, and off again after Restore Defaults. A check goes straight from
 the Mac to the feed's host, not through Tor, with a generic User-Agent,
@@ -416,7 +425,9 @@ conversation, one pill, Tor for NEAR (below), takes their place.
 
 Send is Development mode (decision 10 in [docs/plan.md](docs/plan.md)),
 marked as such at the top of Chat (NEAR's mark takes its place in a NEAR
-conversation), and never part of a release: the
+conversation), and never part of the public release (the technical
+preview for invited testers carries it, labelled;
+[docs/release.md](docs/release.md), stage 1): the
 reworded text, after the conversation's earlier sent and answered turns,
 goes from the guest's sender through Tor to a remote model at Boundless,
 paid through MPP on Tempo from one wallet, so the provider can link every
@@ -560,6 +571,27 @@ guest build uses the pinned Rust image instead):
 
 ```bash
 (cd guest/sender && cargo test)
+```
+
+## Release
+
+Only the chief runs these, on this Mac. `app/release.sh` builds the app
+signed with the Developer ID, has Apple notarize it, packs it in a disk
+image that is signed and notarized too, and writes the update feed,
+signed with the update key. It uploads nothing, and leaves the image,
+`appcast.xml` and the tag in `app/build/release/`. It needs a clean tree,
+the Developer ID ("Developer ID Application: Sean Brennan (367G3Z7G3J)")
+and the update key (account `cloak`) in the keychain, and the notary
+profile `cloak-notary`, saved once with `xcrun notarytool
+store-credentials cloak-notary`. `app/publish.sh` then puts the image in
+a release of `regents-ai/cloak-releases`, and the feed on that
+repository's main branch. It needs `gh` signed in with the right to
+write there. Each release's steps are in [docs/release.md](docs/release.md),
+item 7.
+
+```bash
+app/release.sh
+app/publish.sh
 ```
 
 ## Progress

@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- A signed, notarized download of Regents Cloak, with updates, for the
+  friends Sean invited (his answers of 19 November). `app/build.sh`
+  takes one optional argument, a signing identity: with it, every part,
+  tor, libevent, NEAR's helper and the worker included, is signed with
+  that identity under the hardened runtime and with a secure timestamp,
+  the worker into its sandbox, before the manifest pins it, and the
+  build stops if any program in the bundle lacks either; with none, it
+  signs ad hoc as before. `app/release.json` names the update feed,
+  `appcast.xml` in the new public repository
+  `regents-ai/cloak-releases`, and the update key's public half, so
+  every build has an updater, and the app's allowance for a build with
+  none is removed (`Updates`, the menu, Settings); the release is 0.5.0.
+  `app/release.sh` builds with the Developer ID, has Apple notarize the
+  app and then a disk image holding it, staples and checks both, and
+  writes the feed with Sparkle's `generate_appcast`, keeping earlier
+  releases and embedding `app/release-notes.md`; it uploads nothing.
+  `app/publish.sh` creates the GitHub release with the image, under its
+  own name and as `Regents-Cloak.dmg` so one address always downloads
+  the newest, then puts the feed on that repository's main branch, and
+  waits until the public feed names it. Neither script has been run
+  yet. The technical preview carries Development mode, labelled, as
+  stage 1 of `docs/release.md` says; decision 10 and the README now say
+  "the public release" where they meant stage 2's.
+
 - llama.cpp moves from release v1.0.0 to build b12556 (commit
   `50518b64`, 197 commits later, published 19 November 2026), at Sean's
   word to update to the latest. Of what changed, Cloak builds the fixes

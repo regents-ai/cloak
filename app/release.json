@@ -1,9 +1,9 @@
 {
-  "release": "0.5.0-dev",
+  "release": "0.5.0",
   "model": "small-lead-gguf-grammar",
   "model_label": "Qwen 3.5 9B",
   "model_memory_gib": 7,
   "cloak_memory_gib": 10,
-  "update_feed": "",
-  "update_key": ""
+  "update_feed": "https://raw.githubusercontent.com/regents-ai/cloak-releases/main/appcast.xml",
+  "update_key": "Dw2edhocMd1y+8c+Q5Lm0kG15miKI4TX+zj7tYuomjk="
 }

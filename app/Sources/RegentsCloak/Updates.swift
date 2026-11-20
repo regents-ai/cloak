@@ -4,12 +4,10 @@ import Sparkle
 
 /// Updates, through Sparkle: its window, its own setting for checking by
 /// itself (`checksAutomatically`; Sparkle keeps it and asks the person on
-/// the app's second launch), and Check for Updates… in the menu.
-///
-/// There is an updater only when the bundle names a feed: app/build.sh
-/// writes `SUFeedURL`, with `SUPublicEDKey`, into Info.plist when
-/// app/release.json sets both. With none, `start()` makes nothing, and the
-/// menu and Settings show nothing about updates.
+/// the app's second launch), and Check for Updates… in the menu. The feed
+/// and the update key's public half are in the bundle's Info.plist
+/// (`SUFeedURL`, `SUPublicEDKey`), written by app/build.sh from
+/// app/release.json.
 ///
 /// What the spec asks of it (UPD01, UPD02, NET09):
 /// - A check is maintenance traffic and never carries task content. It goes
@@ -23,9 +21,10 @@ import Sparkle
 ///   (`Phase`, and `Supervisor.phase`'s first value).
 /// - An update is taken only with a signature Sparkle checks: an EdDSA
 ///   signature for the bundle's `SUPublicEDKey`, or, so that key can be
-///   changed, a code signature that matches the installed app's. Signed ad
-///   hoc, as today, no other build matches, so the EdDSA signature is the
-///   only way in. Nothing here changes how Sparkle checks either.
+///   changed, a code signature that matches the installed app's. A
+///   development build is signed ad hoc, which no other build matches, so
+///   there the EdDSA signature is the only way in. Nothing here changes
+///   how Sparkle checks either.
 ///
 /// Gentle reminders, and a Dock icon while Sparkle's window shows, follow
 /// the Llama app (decision 14 in docs/plan.md).
@@ -35,14 +34,9 @@ final class Updates: NSObject {
         startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "updates")
 
-    /// The updater, started; nil when the bundle names no feed.
-    static func start() -> Updates? {
-        Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") == nil ? nil : Updates()
-    }
-
     /// Started once its User-Agent is set, so no check goes out with
     /// Sparkle's own, which names the app and its version.
-    private override init() {
+    override init() {
         super.init()
         controller.updater.userAgentString = "curl/8.7.1"
         controller.startUpdater()

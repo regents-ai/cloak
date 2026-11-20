@@ -10,8 +10,8 @@ import SwiftUI
 /// General (whether the app opens at login, whether Chat never rewords,
 /// whether it shows each reworded message before sending it, whether it
 /// saves chats, whether the guest sends cover traffic, how long the model
-/// may go unused before it leaves memory, and, when the app has an updater,
-/// whether it checks for updates by itself), NEAR (the NEAR key, Tor, how
+/// may go unused before it leaves memory, and whether the app checks for
+/// updates by itself), NEAR (the NEAR key, Tor, how
 /// long a passed check is used again, and the model), Shortcut (the
 /// quick prompt's), Door (its port on 127.0.0.1) and Advanced (how Cloak
 /// started its parts, this session's log, and Restore Defaults).
@@ -20,11 +20,11 @@ struct SettingsView: View {
     let prompt: QuickPrompt
     let supervisor: Supervisor
     let door: Door
-    let updates: Updates?
+    let updates: Updates
     let near: NearMode
 
     static func window(
-        _ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door, updates: Updates?, near: NearMode
+        _ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door, updates: Updates, near: NearMode
     ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -95,7 +95,7 @@ struct SettingsView: View {
 
 private struct GeneralPane: View {
     @Bindable var settings: AppSettings
-    let updates: Updates?
+    let updates: Updates
     @State private var login = LoginItem.isOn
 
     var body: some View {
@@ -133,7 +133,7 @@ private struct GeneralPane: View {
             } footer: {
                 Footnote("The model leaves memory once Cloak has reworded nothing for that long, and the next message takes a few seconds longer.")
             }
-            if let updates { UpdatesSection(updates: updates) }
+            UpdatesSection(updates: updates)
         }
         // The login item can change in System Settings while the window is
         // away, so it is read again each time the window comes back.
@@ -367,7 +367,7 @@ private struct AdvancedPane: View {
     let settings: AppSettings
     let prompt: QuickPrompt
     let supervisor: Supervisor
-    let updates: Updates?
+    let updates: Updates
     @State private var log: Result<[String], any Error>?
     @State private var restoring = false
 
@@ -436,7 +436,7 @@ private struct AdvancedPane: View {
     /// What Restore Defaults does, from the defaults themselves.
     private var restored: String {
         """
-        \(updates == nil ? "Launch at login and Tor for NEAR turn" : "Launch at login, Updates and Tor for NEAR turn") off, \
+        Launch at login, Updates and Tor for NEAR turn off, \
         rewording, Review, Saved chats and Cover traffic turn back on, \
         Free memory goes back to “\(AppSettings.defaultFreeMemory.title)” \
         and Freshness to “\(AppSettings.defaultProofFreshness.title)”, \
@@ -461,7 +461,7 @@ private struct AdvancedPane: View {
         prompt.choose(nil)
         settings.restore()
         if LoginItem.isOn { _ = LoginItem.set(false) }
-        updates?.checksAutomatically = false
+        updates.checksAutomatically = false
     }
 
     /// A command as a shell takes it, so it can be pasted into Terminal:

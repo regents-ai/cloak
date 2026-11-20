@@ -40,8 +40,9 @@ together.
 
 1. **Technical preview.** A few invited people. Tests install, the model
    download, the interface, whether tasks are useful, and recovery. The
-   payment is wallet-linked and says so. No claim about privacy. Not on
-   the public site as Regents Cloak.
+   payment is wallet-linked and says so. No claim about privacy. On the
+   public site only as a listed page at regents.sh/cloak, its text
+   approved by Sean (19 November).
 2. **Reference parity.** Private payment and cover traffic work, the
    gates below pass, and someone outside has reviewed it. This is the
    announcement.
@@ -268,14 +269,14 @@ now. Choosing and paying them is Sean's.
   and never mixed up with the route prompts take.
 - First run in steps, in plain words.
 
-**Signed updates, prepared (18 November).** The app carries Sparkle
-2.8.1. `update_feed` and `update_key` in `app/release.json` are empty, so
-the app has no updater and shows nothing about updates. With both set,
-`app/build.sh` writes them into the bundle, and the app gets Check for
+**Signed updates (prepared 18 November, on since 19 November).** The app
+carries Sparkle 2.8.1. `update_feed` in `app/release.json` names the
+feed, `appcast.xml` on the main branch of `regents-ai/cloak-releases`,
+and `update_key` the update key's public half; `app/build.sh` writes both
+into every build, the development build included. The app has Check for
 Updates… in its menu and an Updates switch in Settings, General (off
 until the person answers Sparkle's question on the second launch, or
-turns it on). With only one set, the build stops. They stay empty until
-the stage 2 protections are in (Sean, 18 November, in plan.md).
+turns it on).
 
 What Sean supplies and decides first:
 
@@ -310,7 +311,8 @@ Sean's answers, 18 November:
   name. Sean is getting a D-U-N-S number for Regent Labs, Inc so that
   the public release is signed by the company; when that Apple account
   exists, a new key and certificate are made the same way and this one
-  is used for nothing public. No backup of the key is kept, by his
+  is used for nothing public (changed 19 November: it signs the friends'
+  build, below). No backup of the key is kept, by his
   choice: it can be replaced at Apple. The notarization sign-in is still
   to come.
 - The key: made that day with `generate_keys --account cloak`, on his
@@ -323,24 +325,45 @@ Sean's answers, 18 November:
   `https://raw.githubusercontent.com/regents-ai/cloak/main/appcast.xml`
   and the downloads the repository's releases. Until then `update_feed`
   and `update_key` stay empty, since a private repository's feed cannot
-  be read and a check would only fail.
+  be read and a check would only fail. Replaced on 19 November, below.
 
-Then each release:
+Sean's answers, 19 November (friends' build):
 
-1. Raise `release` in `app/release.json`.
-2. Build the app with `app/build.sh`, its parts signed inside out with
-   the Developer ID in place of ad hoc, with the hardened runtime.
-3. Notarize the app and staple the ticket to it.
-4. Pack it in a zip or disk image.
-5. Sign that file with the private update key (Sparkle's `sign_update`).
-6. Upload it to the download host.
-7. Add the release to the feed: its release, its build number (the
-   commit count `app/build.sh` gives the bundle, which Sparkle compares
-   to find a newer one), its notes written inside the feed (no link,
-   image or page from elsewhere), the file's address, its size and its
-   signature.
-8. Publish the feed, then check from a Mac with the previous release
-   that it finds the update, takes it, and opens Paused.
+- Close friends download Cloak, install it and test it.
+- Their build is signed and notarized with the certificate in his own
+  name, "Developer ID Application: Sean Brennan (367G3Z7G3J)".
+- Updates are on in that build.
+- The downloads and the feed live in `regents-ai/cloak-releases`, a new
+  public repository that holds only signed builds. This replaces the
+  plan to host them in this repository once it is public. The feed is
+  `https://raw.githubusercontent.com/regents-ai/cloak-releases/main/appcast.xml`,
+  and each download is a release there.
+- The page at regents.sh/cloak will be a listed page, its text approved
+  by him separately.
+
+Then each release, by the chief alone, on this Mac:
+
+1. Raise `release` in `app/release.json`, write that release's notes in
+   `app/release-notes.md` (plain words, which go into the feed as they
+   are: no link, image or page from elsewhere), and commit.
+2. Run `app/release.sh`, from a clean tree. It builds the app with
+   `app/build.sh` and the Developer ID, every part signed inside out
+   with the hardened runtime and a secure timestamp; has Apple notarize
+   the app and staples the ticket to it; packs it in a disk image, which
+   is signed, notarized and stapled the same way; checks that Gatekeeper
+   accepts both; and adds the release to the feed with Sparkle's
+   `generate_appcast`, which signs the image with the private update key
+   and writes its release, its build number (the commit count
+   `app/build.sh` gives the bundle, which Sparkle compares to find a
+   newer one), its notes, the file's address, its size and its
+   signature, keeping the earlier releases. It uploads nothing, and
+   leaves the image, the feed and the tag in `app/build/release/`.
+3. Run `app/publish.sh`. It creates the release in
+   `regents-ai/cloak-releases` with the image, then puts the feed on that
+   repository's main branch, and waits until the public feed names the
+   new release.
+4. Check from a Mac with the previous release that it finds the update,
+   takes it, and opens Paused.
 
 **8. Memory and speed, measured.** One table: the model and its
 quantization; peak memory with the guest, tor, Pi, payment and the model

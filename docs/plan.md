@@ -16,7 +16,7 @@ or inconclusive check is not a pass. Progress lives here.
 | 2. Build the local path | Minimal guest adapter and native worker through the real daemon | Synthetic inputs, malformed replies, cancellation and worker loss keep the contract and stop safely | In progress |
 | 3. Check feasibility early | Runs of each of the two candidates (decision 7's small pair, as GGUF files on llama.cpp under the reply grammar: decisions 8 and 9) on a specified 48 GB Mac with the full stack loaded (no 32 GB machine; decision 2) | Input, deadline and memory risks measured before the large privacy evaluation | Kit ready; the small lead has two feasibility runs and two EVAL01 screens, the small challenger none |
 | 4. Qualify the substitution | Separate fidelity and authored privacy holdouts; one pinned winner of the two candidates or an explicit no-pass | Protection, fidelity, statistical and usability gates pass | Kit in progress: no holdout, reference run or candidate result yet; the confidence split is to be settled before any holdout opens (decisions 7 to 9) |
-| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead, with Chat sending in a Development mode only (decision 10; "Stage 5 so far"), and the daemon's own cover traffic in its guest (on since 19 November); no signed full bundle, setup, recovery, updates, sessions or the daemon's own payment |
+| 5. Package the product | Signed full bundle, shared CLI and menu-bar supervisor, setup, recovery, updates | Clean-machine and full real-service tests pass | In progress: a development build of the supervisor, the menu-bar app and `cloak`, running the small lead, with Chat sending in a Development mode only (decision 10; "Stage 5 so far"), and the daemon's own cover traffic in its guest (on since 19 November); the scripts for a signed, notarized technical-preview build with updates, for invited testers, are written and not yet run ([release.md](release.md), stage 1 and item 7); no setup, recovery, sessions or the daemon's own payment |
 | 6. Release at the planned home | Download, guide and evidence for supported configurations | A01 to A26 pass; claims and hardware scope match results | Not started |
 
 Stage 2 builds and tests the path with a small model labelled as a
@@ -2730,6 +2730,12 @@ candidates, so the split has to be re-declared before any holdout opens.
     daemon's own, not built) and gives up conversation isolation (A07)
     while it is used; it departs from the spec by the owner's ruling, for
     development only, as decision 2 departs from HW01.
+    - Read with the release plan, 19 November (the chief's reading, told
+      to Sean the same day): the technical preview for invited testers
+      ([release.md](release.md), stage 1: "The payment is wallet-linked
+      and says so. No claim about privacy.") carries Development mode,
+      labelled as it is here. "Public release" above is stage 2's, which
+      never has it: the cutover deletes it.
 11. Send Original, in Chat. Decided 14 November 2026 (Sean: "There should
     be a checkbox that says 'Send Original', and it does that without any
     rewords"). A checkbox under Chat's message box sends that message as
@@ -2998,7 +3004,10 @@ candidates, so the split has to be re-declared before any holdout opens.
       and the app opens Paused after it. No key was made and nothing
       was signed, notarized or published: those are Sean's
       ([release.md](release.md), item 7). Not run: a real feed, a real
-      update.
+      update. Changed 19 November: Sean's answers for the friends' build
+      turn updates on, so the feed and the key are set and every build
+      has the updater; the app's allowance for a build with none is
+      removed.
     - Found on the way and left: the door's tests pick a free port, let
       it go and open the door on it, so another program sometimes takes
       it first and a run fails.
