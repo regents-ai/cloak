@@ -372,8 +372,21 @@ Releases so far:
   `https://github.com/regents-ai/cloak-releases/releases/latest/download/Regents-Cloak.dmg`,
   and the feed's signature of it matches the update key in the app. On
   Sean's Mac the signed build starts and rewords (`cloak verify`). Not
-  yet shown: a first run on a Mac that never had Cloak, and an update
-  from one release to the next, which needs a second release.
+  yet shown: a first run on a Mac that never had Cloak.
+- 0.5.1 (168), 20 November 2026, from commit `9774db9`: Llama Normal
+  chats and the modes' new names (decision 17 in [plan.md](plan.md)).
+  Apple accepted the app and the image; the image downloaded from the
+  address above is the one built, byte for byte, and Gatekeeper accepts
+  it; the feed keeps 0.5.0's entry beside the new one, and its
+  signature of the new image matches the update key in the app. The
+  update itself, shown once on Sean's Mac: a copy of the published
+  0.5.0, opened from a folder of its own, found 0.5.1 through Check for
+  Updates…, installed it and reopened Paused as 0.5.1 (168), still
+  notarized. Not yet shown: a first run on a Mac that never had Cloak,
+  and an update found by the daily check rather than the menu.
+- Seen in that update: Sparkle's window shows a blank icon, because the
+  app has none, and no notes, because the feed carries none (the notes
+  are on the release's page only).
 - Seen on Sean's Mac only: macOS asked once whether to open the worker,
   as "(null)", because its sandbox folder there was made by ad hoc
   builds and the worker is now signed by a team. A Mac that only ever

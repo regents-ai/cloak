@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Release 0.5.1 (168) published for invited testers, 20 November 2026:
+  Llama Normal chats and the modes' new names. The first update from
+  one release to the next was tried on Sean's Mac and worked: the
+  published 0.5.0 found 0.5.1, installed it and reopened Paused
+  (docs/release.md, "Releases so far").
 - Llama Normal chats, and the modes renamed (decision 17, Sean's "5. a"
   of 20 November 2026). A new chat's mode is one of Anon V, NEAR
   Privacy, Llama Normal and Agent. In a Llama Normal chat the model on
