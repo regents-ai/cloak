@@ -151,6 +151,19 @@ Later the same day he settled these:
 - NEAR's enclave models are built now as a second, named mode, not after
   zkAPI is in the guest (decision 14 in [plan.md](plan.md)).
 
+Sean's answers, 20 November:
+
+- NEAR mode need not use Tor: "the Near mode of the app may or may not
+  allow Tor to be used with it. it can be optionable only if it works,
+  even if it is very slow". Tor is a switch inside NEAR mode, off until
+  turned on; off, NEAR and Intel see the Mac's internet address.
+- The list of NEAR server software Cloak accepts stays inside the app
+  (`reference/near-pins.json`). When NEAR changes its servers, NEAR mode
+  stops with the proof refused until the change is read and a Cloak
+  update ships. To be counted over the next days and brought back if it
+  is frequent; a list Regent signs and publishes, or accepting what NEAR
+  itself signs, were the choices not taken.
+
 ## Gates for stage 2
 
 Each is a check that runs, not a statement.
