@@ -3124,6 +3124,16 @@ candidates, so the split has to be re-declared before any holdout opens.
       Stop. The helper showed with the real model that a rewrite gives
       the same output as before the change and that a message reading
       `{"texts":["a"]}` is answered as chat.
+18. The app's icon, and the install window. Decided 20 November 2026
+    (Sean, "10. a" to have one made from the crown, then "11. a" for the
+    dark one of two pictures shown; and "make sure ... the download
+    folder menu (for the drag action) [is] good"). The icon is the
+    design system's flat crown, block for block, near-white on its
+    near-black, on a tile in macOS proportions (`app/art.swift`,
+    `app/AppIcon.icns`). The disk image opens as one window: the app, an
+    arrow, Applications, with no toolbar or sidebar
+    (`app/install-window.py` over `app/install-window.tiff`). Both
+    pictures are committed and redrawn only by `app/art.sh`.
 
 ## Gates
 

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The app has an icon, and the disk image opens as an install window
+  (decision 18, Sean's "11. a" of 20 November 2026). The icon is the
+  design system's flat crown on a near-black tile, drawn by
+  `app/art.swift` and committed as `app/AppIcon.icns`; `app/build.sh`
+  copies it and `Info.plist` names it. `app/release.sh` now makes a
+  writable image, mounts it out of Finder's sight, has
+  `app/install-window.py` lay out the app, an arrow and Applications
+  over `app/install-window.tiff`, and compresses that. Release 0.5.2.
 - Release 0.5.1 (168) published for invited testers, 20 November 2026:
   Llama Normal chats and the modes' new names. The first update from
   one release to the next was tried on Sean's Mac and worked: the

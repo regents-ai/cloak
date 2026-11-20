@@ -386,7 +386,7 @@ Releases so far:
   and an update found by the daily check rather than the menu.
 - Seen in that update: Sparkle's window shows a blank icon, because the
   app has none, and no notes, because the feed carries none (the notes
-  are on the release's page only).
+  are on the release's page only). The icon came with 0.5.2.
 - Seen on Sean's Mac only: macOS asked once whether to open the worker,
   as "(null)", because its sandbox folder there was made by ad hoc
   builds and the worker is now signed by a team. A Mac that only ever

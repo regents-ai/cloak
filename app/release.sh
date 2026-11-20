@@ -3,7 +3,9 @@
 # Builds the app (app/build.sh, signed with the Developer ID), has Apple
 # notarize it and staples the ticket to it, packs it in a disk image that
 # is signed, notarized and stapled the same way, and checks that
-# Gatekeeper accepts both. Then writes the update feed with Sparkle's
+# Gatekeeper accepts both. The image opens as a window with the app, an
+# arrow and Applications (app/install-window.py lays it out over
+# app/install-window.tiff, drawn by app/art.sh). Then writes the update feed with Sparkle's
 # generate_appcast, which signs the image with the update key (in the
 # login keychain under the account `cloak`; the Mac asks to allow it),
 # embeds app/release-notes.md, and keeps the public feed's earlier
@@ -39,7 +41,7 @@ fi
 out=app/build/release
 work=app/build/notarize
 rm -rf "$out" "$work"
-mkdir -p "$out" "$work/image"
+mkdir -p "$out" "$work/volume"
 
 # Sends a file to Apple's notary service and waits for its answer. Stops
 # unless that is Accepted, printing Apple's log of why. The answer is read
@@ -60,10 +62,21 @@ notarize "$work/Regents Cloak.zip"
 xcrun stapler staple "$app"
 xcrun stapler validate "$app"
 
-ditto "$app" "$work/image/Regents Cloak.app"
-ln -s /Applications "$work/image/Applications"
+# A writable image first, mounted where Finder does not show it: the
+# window's layout names its picture by an alias that is only right when
+# made on the volume itself. Then the compressed, read-only image from it.
+diskutil image create blank --size "$(($(du -sm "$app" | cut -f1) + 60))m" --volumeName "Regents Cloak" --fs APFS "$work/image.dmg"
+diskutil image attach --nobrowse --mountPoint "$work/volume" "$work/image.dmg"
+trap 'diskutil eject "$work/volume"' EXIT
+ditto "$app" "$work/volume/Regents Cloak.app"
+ln -s /Applications "$work/volume/Applications"
+mkdir "$work/volume/.background"
+cp app/install-window.tiff "$work/volume/.background/"
+PYTHONDONTWRITEBYTECODE=1 uv run app/install-window.py "$work/volume"
+trap - EXIT
+diskutil eject "$work/volume"
 dmg="$out/Regents-Cloak-$tag.dmg"
-diskutil image create from --volumeName "Regents Cloak" --format UDZO "$work/image" "$dmg"
+diskutil image create from --format UDZO "$work/image.dmg" "$dmg"
 codesign -s "$identity" --timestamp "$dmg"
 notarize "$dmg"
 xcrun stapler staple "$dmg"

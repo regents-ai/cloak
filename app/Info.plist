@@ -8,6 +8,8 @@
 	<string>Regents Cloak</string>
 	<key>CFBundleExecutable</key>
 	<string>RegentsCloak</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>sh.regents.cloak</string>
 	<key>CFBundleInfoDictionaryVersion</key>

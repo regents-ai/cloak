@@ -2,7 +2,8 @@
 # Builds the app, app/build/Regents Cloak.app: the menu-bar app and `cloak`
 # (SwiftPM, release, two jobs, low priority, and one build at a time on
 # this Mac through /tmp/cloak-build.lock), Sparkle.framework, the app's
-# AppleScript dictionary (app/RegentsCloak.sdef), the guest from
+# AppleScript dictionary (app/RegentsCloak.sdef), its icon (app/AppIcon.icns,
+# drawn by app/art.sh), the guest from
 # guest/build, tor and libevent from host/.build/tor, NEAR mode's helper
 # cloak-near (built here from guest/near with cargo, two jobs, low priority,
 # through the same lock; rustup takes the Rust version from
@@ -40,7 +41,7 @@ cp "$bin/RegentsCloak" "$bin/cloak" "$app/Contents/MacOS/"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 # SwiftPM's run path is the binary's own folder; the framework is in Frameworks.
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/RegentsCloak"
-cp app/RegentsCloak.sdef "$app/Contents/Resources/"
+cp app/RegentsCloak.sdef app/AppIcon.icns "$app/Contents/Resources/"
 cp guest/build/Image guest/build/initrd.gz "$app/Contents/Resources/guest/"
 cp host/.build/tor/tor host/.build/tor/libevent-2.1.7.dylib "$app/Contents/Resources/tor/"
 cp guest/near/target/release/cloak-near "$app/Contents/Resources/near/"
