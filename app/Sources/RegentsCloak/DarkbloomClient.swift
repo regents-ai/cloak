@@ -146,32 +146,50 @@ enum Darkbloom {
 
     /// Runs `executable` with `arguments` and nothing on its input, handing
     /// back each line it writes on either output as it comes. It ends once
-    /// the program does, throwing `Exit` unless it ended well.
+    /// the program has ended and its output is all read, throwing `Exit`
+    /// unless it ended well. Whoever stops reading first stops the program,
+    /// so none is left waiting on output nobody reads. The end is heard from
+    /// the process's own handler: `waitUntilExit` polls a run loop, and on
+    /// the thread a task resumes on it can wait forever.
     static func lines(
         _ executable: URL, _ arguments: [String], environment: [String: String]? = nil
     ) -> AsyncThrowingStream<String, any Error> {
         AsyncThrowingStream { continuation in
-            let task = Task.detached {
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = arguments
+            if let environment { process.environment = environment }
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = output
+            process.standardInput = FileHandle.nullDevice
+            let (ends, end) = AsyncStream.makeStream(of: Int32.self)
+            process.terminationHandler = { process in
+                end.yield(process.terminationStatus)
+                end.finish()
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.finish(throwing: error)
+                return
+            }
+            let task = Task {
                 do {
-                    let process = Process()
-                    process.executableURL = executable
-                    process.arguments = arguments
-                    if let environment { process.environment = environment }
-                    let output = Pipe()
-                    process.standardOutput = output
-                    process.standardError = output
-                    process.standardInput = FileHandle.nullDevice
-                    try process.run()
                     for try await line in output.fileHandleForReading.bytes.lines {
                         continuation.yield(line)
                     }
-                    process.waitUntilExit()
-                    continuation.finish(throwing: process.terminationStatus == 0 ? nil : Exit(status: process.terminationStatus))
+                    for await status in ends {
+                        continuation.finish(throwing: status == 0 ? nil : Exit(status: status))
+                    }
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { _ in task.cancel() }
+            continuation.onTermination = { _ in
+                task.cancel()
+                if process.isRunning { process.terminate() }
+            }
         }
     }
 
@@ -334,11 +352,15 @@ struct DarkbloomControl: Sendable {
         try await send(request("state"))
     }
 
-    /// The local address's key, or nil when it takes none.
+    /// The local address's key, or nil while no local address runs (the
+    /// service answers `null`; DesktopResources.swift:16–18).
     func endpointKey() async throws(DarkbloomError) -> String? {
-        struct Key: Decodable { let key: String? }
-        let key: Key = try await send(request("endpoint-key"))
-        return key.key
+        let key: Key? = try await send(request("endpoint-key"))
+        return key?.key
+    }
+
+    private struct Key: Decodable {
+        let key: String
     }
 
     /// Asks for `action`; the service answers with the operation it started.
