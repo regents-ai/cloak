@@ -56,13 +56,19 @@ struct AgentsView: View {
                             .symbolRenderingMode(.multicolor)
                     }
                 }
-                Section("Apps") {
+                Section {
                     if door.apps.isEmpty {
                         Text("No apps yet.")
                             .foregroundStyle(.secondary)
                     }
                     ForEach(door.apps) { app in
                         AppRow(app: app) { removing = app }
+                    }
+                } header: {
+                    HStack {
+                        Text("Apps")
+                        Spacer()
+                        SymbolButton("Add", symbol: "plus") { adding = true }
                     }
                 }
                 Section {
@@ -92,13 +98,6 @@ struct AgentsView: View {
                 }
             }
             .formStyle(.grouped)
-            HStack {
-                Spacer()
-                SymbolButton("Add", symbol: "plus") { adding = true }
-            }
-            // Level with the form's boxes.
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
         }
         .frame(width: 520, height: 560)
         .task { await door.load() }
