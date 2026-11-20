@@ -602,7 +602,7 @@ extension PayStop {
         case .timedOut: "No answer came in time. The request may have been paid for."
         case .ended: "The connection ended before the answer. The request may have been paid for."
         case .cancelled: "The request was stopped."
-        case .failed: "Something went wrong. Try again."
+        case .failed: "V's wallet couldn't finish this. Try again."
         }
     }
 }
