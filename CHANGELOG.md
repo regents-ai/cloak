@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Settings: the four descriptions in the NEAR pane are rewritten as
+  whole sentences that say what each setting is and does (where the key
+  comes from, what Tor changes and costs, what the check is and what
+  Freshness sets, what the check does not cover for the model). Every
+  description under a setting, in every pane, can now be selected and
+  copied.
+
 - NEAR mode is in the Mac app. A new conversation can be NEAR's (Cloak,
   NEAR or Agent under the message box): each message goes as written to
   `Qwen/Qwen3.8-27B` on NEAR AI Cloud, paid by the owner's own NEAR key,

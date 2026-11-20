@@ -207,24 +207,24 @@ private struct NearPane: View {
                     }
                 }
             } footer: {
-                Footnote("Kept in this Mac's keychain and never shown again. It pays for every message and ties each to your NEAR account.")
+                Footnote("Your API key from NEAR AI Cloud. You can create one at cloud.near.ai. It pays for the messages you send in NEAR chats, so NEAR can connect those messages to your account. Cloak keeps it in this Mac's keychain, and it can't be viewed here after you save it.")
             }
             Section {
                 Toggle("Tor", isOn: $settings.nearTor)
             } footer: {
-                Footnote("On, NEAR and Intel see a Tor address, Cloak must be running, and a check takes about half a minute. Off, they see this Mac's internet address.")
+                Footnote("Sends your NEAR chats through the Tor network, so NEAR and Intel see a Tor address instead of your internet address. It's slower: checking NEAR's servers takes about half a minute, and Cloak needs to be started first.")
             }
             Section {
                 Picker("Freshness", selection: $settings.proofFreshness) {
                     ForEach(ProofFreshness.allCases) { Text($0.title).tag($0) }
                 }
             } footer: {
-                Footnote("How long a passed check is reused. Reused, the hardware was checked up to that long before your message.")
+                Footnote("Before sending a message, Cloak checks proof from NEAR's servers, with Intel's help, that they are the hardware and software this version of Cloak accepts. This sets how long a successful check counts before Cloak checks again. “Every message” is the most careful and adds a few seconds to each one.")
             }
             Section {
                 LabeledContent("Model", value: "Qwen3.8-27B")
             } footer: {
-                Footnote("The model's software isn't part of the measurement.")
+                Footnote("The model that answers your NEAR chats. Cloak's check covers the servers it runs on, not the model software itself.")
             }
         }
         .task { await mode.find() }
@@ -510,5 +510,6 @@ private struct Footnote: View {
         Text(text)
             .font(.caption)
             .foregroundStyle(.secondary)
+            .textSelection(.enabled)
     }
 }
