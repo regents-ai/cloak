@@ -116,10 +116,23 @@ private struct WalletSections: View {
     }
 }
 
-/// In place of an amount the network hasn't shown since Cloak opened: the
-/// wallet is read only while Cloak runs.
-private func unread(running: Bool) -> String {
-    running ? "Not read yet" : "Start Cloak to see"
+/// In place of an amount the network hasn't shown since Cloak opened: a
+/// dash, with why as its help, anywhere on the row's value side. The wallet
+/// is read only while Cloak runs, so nothing leaves this Mac for it while
+/// Cloak is paused.
+private struct Unread: View {
+    let running: Bool
+    /// What would be here: "wallet balance" or "deposit".
+    let what: String
+
+    var body: some View {
+        let why = running ? "Not read yet." : "Start Cloak to load the \(what)."
+        Text("—")
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .contentShape(.rect)
+            .help(why)
+            .accessibilityLabel(why)
+    }
 }
 
 /// How a NEAR Private AI chat is paid for: the owner's own key from NEAR AI
@@ -212,7 +225,7 @@ private struct Account: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                LabeledContent("Balance", value: unread(running: running))
+                LabeledContent("Balance") { Unread(running: running, what: "wallet balance") }
             }
         }
     }
@@ -304,8 +317,10 @@ private struct Holding: View {
             LabeledContent("Held") {
                 if let deposit {
                     Text("\(deposit.deposit.text), \(deposit.spent.text) spent")
+                } else if none {
+                    Text("None")
                 } else {
-                    Text(none ? "None" : unread(running: running))
+                    Unread(running: running, what: "deposit")
                 }
             }
             HStack {

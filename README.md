@@ -460,7 +460,9 @@ when Create is pressed: its key is made in the guest and kept only in the
 login keychain, this Mac only; the address to fund takes USDC.e on Tempo,
 and the QR button beside Copy shows it as a code for a phone's wallet.
 Its balance and deposit are read through the guest, so until Cloak has run
-since it opened they say "Start Cloak to see". The model picker shows each
+since it opened they show a dash, whose help says "Start Cloak to load the
+wallet balance." (or "the deposit"): nothing leaves this Mac for the wallet
+while Cloak is paused. The model picker shows each
 model's price per million tokens as "in | out". In a NEAR Private AI
 conversation, Wallet shows instead that your NEAR key pays, with
 cloud.near.ai to sign up and add credit, whether a key is saved and Open

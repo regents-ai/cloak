@@ -11,8 +11,11 @@
   Settings, which shows Settings on its NEAR pane (the pane shown now
   lives in `SettingsView.Selection`, so the app can choose it). A Local
   Llama chat: nothing to pay. The wallet is read only when the sheet
-  shows it. A balance or deposit not read says "Start Cloak to see" or
-  "Not read yet" in place of a dash, which read as empty. The model
+  shows it. A balance or deposit not read keeps its dash, and the
+  pointer resting on it says why: "Start Cloak to load the wallet
+  balance." (first built as words in the dash's place; Sean, the same
+  day: "adding a phrase instead of a - is not good. it can be a dash
+  with a mouseover tooltip"). The model
   picker's rows are "name: $in | $out" (his words: "these can be
   simplified to be 'model name: $price-in | $price-out'"); the prices
   are the provider's own list, read while Cloak runs. Seen on his Mac:
