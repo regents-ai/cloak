@@ -431,6 +431,21 @@ Releases so far:
   Cover off and on again. Not yet shown: the Modes list opening by
   itself under a resting pointer, VoiceOver on the new controls, and
   the update from 0.5.2 found by the app itself.
+- 0.5.4 (179), 20 November 2026, from commit `9abe5b7`: a faint light
+  under the pointer on what can be clicked, the sidebar marks' help,
+  the Wallet sheet per kind of chat, a dash with its help for a balance
+  or deposit not read, and price rows as in | out. Apple accepted the
+  app and the image; the image downloaded from the address above is the
+  one built, byte for byte, and Gatekeeper accepts it; the feed keeps
+  the four earlier entries. On Sean's Mac, in the builds before the
+  release: the light pictured on a chat row, a Settings row and Cover;
+  the Wallet sheet pictured for three kinds of chat while Paused; the
+  dash's help pictured ("Start Cloak to load the wallet balance.") and
+  its value side read through accessibility as 264 points wide with
+  that help; the model list read through accessibility while Running
+  ("deepseek/deepseek-v4-flash-0731, $0.04 in, $0.21 out"). Not shown:
+  the price rows' visible text, VoiceOver, and the app finding this
+  update by itself.
 - Seen on Sean's Mac only: macOS asked once whether to open the worker,
   as "(null)", because its sandbox folder there was made by ad hoc
   builds and the worker is now signed by a team. A Mac that only ever

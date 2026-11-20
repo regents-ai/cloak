@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Release 0.5.4 (179) published for invited testers, 20 November 2026
+  (docs/release.md, "Releases so far").
 - zkAPI payment, build order step 3: `cloak-pay` holds a request while
   an earlier one's settlement is unfinished (this run's or one an
   earlier run left), serves requests one at a time in order, drops a
