@@ -3,35 +3,30 @@ import Foundation
 /// The app's manifest, written into the bundle by app/build.sh: the release
 /// and build, the one model (spec: no picker, no switching) with each of its
 /// files pinned and where it downloads from, the memory the model and all of
-/// Cloak need, and every part the supervisor runs, each pinned by its sha256.
+/// Cloak need, and every part the supervisor runs, each in the bundle and
+/// pinned by its sha256.
 public struct Manifest: Codable, Sendable, Equatable {
     public enum Part: String, Codable, Sendable, CaseIterable {
-        /// The guest's kernel and base root, in the bundle.
+        /// The guest's kernel and base root.
         case kernel, initrd
-        /// tor and the libevent it loads, in the bundle.
+        /// tor and the libevent it loads.
         case tor, libevent
-        /// The worker, its shaders built in, installed by
-        /// llama-worker/install.sh in the Application Support folder, where
-        /// its sandbox lets it run.
+        /// The worker, its shaders built in, as llama-worker/install.sh
+        /// built and signed it into its sandbox. It runs from a copy in the
+        /// Application Support folder (`Layout.worker`).
         case worker
-        /// NEAR mode's helper, cloak-near, in the bundle.
+        /// NEAR mode's helper, cloak-near.
         case near
     }
 
-    public enum Place: String, Codable, Sendable {
-        case bundle
-        case support
-    }
-
+    /// A part's path in the bundle's Resources folder, and its sha256.
     public struct Pin: Codable, Sendable, Equatable {
         public var part: Part
-        public var place: Place
         public var path: String
         public var sha256: String
 
-        public init(part: Part, place: Place, path: String, sha256: String) {
+        public init(part: Part, path: String, sha256: String) {
             self.part = part
-            self.place = place
             self.path = path
             self.sha256 = sha256
         }
@@ -95,7 +90,8 @@ public struct Manifest: Codable, Sendable, Equatable {
     }
 }
 
-/// Where the manifest's places are on this Mac.
+/// Where Cloak's files are on this Mac: the bundle's Resources folder, which
+/// holds every pinned part, and the Application Support folder.
 public struct Layout: Sendable {
     public var bundle: URL
     public var support: URL
@@ -106,7 +102,7 @@ public struct Layout: Sendable {
     }
 
     func url(_ pin: Manifest.Pin) -> URL {
-        (pin.place == .bundle ? bundle : support).appending(path: pin.path)
+        bundle.appending(path: pin.path)
     }
 
     func url(_ part: Manifest.Part, in manifest: Manifest) -> URL {
@@ -125,6 +121,12 @@ public struct Layout: Sendable {
         let pin = manifest.pins.first { $0.part == .near }!
         return (url(pin), pin.sha256)
     }
+
+    /// The one place the worker runs from: its sandbox cannot start a
+    /// program kept under ~/Documents or ~/Downloads, where the app may be.
+    /// The supervisor copies the bundle's worker here at each Start when
+    /// the file here is not the pinned one.
+    var worker: URL { support.appending(path: "worker/cloak-rewriter-llama") }
 
     /// tor's lasting folder, as the stage 2 and 3 kits use it.
     var torData: URL { support.appending(path: "tor") }

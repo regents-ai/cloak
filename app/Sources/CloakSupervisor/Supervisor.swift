@@ -6,9 +6,10 @@ import os
 
 /// The one supervisor the menu-bar app and `cloak` both drive (spec
 /// sections 5 and 6). It owns what scripts/boot.py and cloak-host drive in
-/// the stage 2 and 3 kits: it checks the installed parts against their pins,
-/// starts tor, the worker and a guest, watches them, and stops them all
-/// through one shutdown. Its states and transitions are `Phase`'s.
+/// the stage 2 and 3 kits: it checks the bundle's parts against their pins,
+/// puts the pinned worker where it runs, starts tor, the worker and a guest,
+/// watches them, and stops them all through one shutdown. Its states and
+/// transitions are `Phase`'s.
 ///
 /// Running means tor is up, the worker is up or resting, the startup check
 /// sent a rewrite through the guest, the daemon and the worker, and the
@@ -275,14 +276,16 @@ public final class Supervisor {
         return lines.joined(separator: "\n")
     }
 
-    /// Checks, then starts tor, the worker and the check guest, each only
-    /// once the one before it is up. Ends in `prepared`, or in the first
-    /// failure; a cancelled preparation starts nothing more.
+    /// Checks, puts the pinned worker where it runs, then starts tor, the
+    /// worker and the check guest, each only once the one before it is up.
+    /// Ends in `prepared`, or in the first failure; a cancelled preparation
+    /// starts nothing more.
     private func prepare() async {
         do {
             for case (_, let failure?) in await Checks.run(manifest, layout, hardware: hardware) {
                 throw failure
             }
+            try await Self.placeWorker(manifest, layout)
             try Task.checkCancellation()
 
             let tor: Tor
@@ -302,7 +305,7 @@ public final class Supervisor {
             // Every worker of the run, the first and each after a rest,
             // starts the same way.
             let start: @Sendable () async throws -> WorkerChannel = {
-                [executable = layout.url(.worker, in: manifest), arguments = ["--name", manifest.model.name, "--dir", layout.model(manifest).path]] in
+                [executable = layout.worker, arguments = ["--name", manifest.model.name, "--dir", layout.model(manifest).path]] in
                 try await WorkerChannel.start(executable: executable, arguments: arguments)
             }
             let worker: WorkerChannel
@@ -362,6 +365,33 @@ public final class Supervisor {
         } catch {
             // Cancelled: the shutdown under way stops what has started.
         }
+    }
+
+    /// Makes the worker where it runs (`Layout.worker`) the pinned one. When
+    /// the file there is missing or is not the pinned one, it is replaced by
+    /// a copy of the bundle's worker, which the checks have just matched to
+    /// its pin, byte for byte, so it keeps the signature that puts it in its
+    /// sandbox. The copy is written under a new name in the same folder and
+    /// renamed over the file, so a cut copy never sits under the real name
+    /// and a signed program is never written over in place, which macOS may
+    /// then refuse to run. Then the file there is checked against the pin.
+    @concurrent
+    private static func placeWorker(_ manifest: Manifest, _ layout: Layout) async throws(Failure) {
+        let pin = manifest.pins.first { $0.part == .worker }!
+        let (bundled, target) = (layout.url(pin), layout.worker)
+        if (try? await Checks.sha256(target)) == pin.sha256 { return }
+        let folder = target.deletingLastPathComponent()
+        let partial = folder.appending(path: ".\(UUID().uuidString).partial")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data(contentsOf: bundled).write(to: partial, options: .withoutOverwriting)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: partial.path)
+            guard rename(partial.path, target.path) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        } catch {
+            try? FileManager.default.removeItem(at: partial)
+            throw Failure(.partMissing, "worker: cannot copy \(bundled.path) to \(target.path): \(error)")
+        }
+        if case (_, let failure?) = await Checks.pinCheck(pin, at: target) { throw failure }
     }
 
     /// How the worker exits when the model folder does not hold exactly the

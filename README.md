@@ -91,8 +91,11 @@ llama.cpp from its pinned source (`reference/src/llama.cpp`, fetched above;
 CMake comes through uv) with Metal, then the worker (two build jobs, low
 priority). It is signed into the App Sandbox with no network and reading
 only the models folder, and installed in
-`~/Library/Application Support/Regents Cloak/worker/` (the sandbox cannot
-start a program kept under `~/Documents`). The model pins and the reply
+`~/Library/Application Support/Regents Cloak/worker/` for the scripts and
+checks below (the sandbox cannot start a program kept under `~/Documents`).
+`app/build.sh` takes the same signed build into the app, which puts its own
+copy in that folder at each Start when the file there is not the one it
+pins (Stage 5 commands, below). The model pins and the reply
 grammars are built into the worker, so rebuild after `reference/models.json`,
 `reference/rewrite-reply.gbnf` or `reference/details-reply.gbnf` changes:
 
@@ -261,14 +264,19 @@ is on screen; it says it can't be measured when any part cannot be read,
 and the technical details, like `cloak status --json`, give each part's
 figure.
 
-With the guest, the host's tor and the worker built and installed (stage 2
-commands), build `app/build/Regents Cloak.app`, with Sparkle.framework
-inside, signed ad hoc and inside out, the app with the virtualization
-entitlement, with NEAR mode's helper `cloak-near`, which it builds from
-`guest/near` with cargo (rustup takes the Rust version that
-`guest/near/rust-toolchain.toml` names), and with a manifest that pins the
-guest, tor, the helper and the installed worker (rebuild after reinstalling
-any of them):
+With the guest, the host's tor and the worker built (stage 2 commands),
+build `app/build/Regents Cloak.app`, with Sparkle.framework inside, signed
+ad hoc and inside out, the app with the virtualization entitlement, with
+NEAR mode's helper `cloak-near`, which it builds from `guest/near` with
+cargo (rustup takes the Rust version that `guest/near/rust-toolchain.toml`
+names), with the worker as `llama-worker/install.sh` built and signed it,
+and with a manifest that pins the guest, tor, the helper and the worker
+(rebuild after rebuilding any of them). Every part the app runs is inside
+it. The worker's sandbox cannot start a program kept under `~/Documents`
+or `~/Downloads`, so at each Start, once the checks pass, the app copies
+its worker to `~/Library/Application Support/Regents Cloak/worker/` when
+the file there is missing or not the one it pins, checks the copy against
+the pin, and runs the worker from there:
 
 ```bash
 app/build.sh
@@ -292,8 +300,8 @@ cloak="app/build/Regents Cloak.app/Contents/MacOS/cloak"
 ```
 
 The commands are `status`, `start`, `pause`, `resume`, `stop`, `verify`
-(the startup check, then stop) and `doctor` (the Mac and every installed
-part against its pin). Each waits until its change has finished; `--json`
+(the startup check, then stop) and `doctor` (the Mac and every part in the
+app against its pin). Each waits until its change has finished; `--json`
 prints the versioned status with its reason and next action, and the exit
 status is 1 when a command is refused, the app isn't open, or it needs
 attention. `cloak` takes no task text and prints no prompt text or keys.

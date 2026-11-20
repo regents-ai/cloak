@@ -9,12 +9,13 @@ reference/models.json, and the URL the app downloads each from, the one
 scripts/fetch_model.py uses: a file marked `from` comes from that model's
 repository and revision), the memory the model and all of Cloak need (from
 app/release.json, in GiB there and in bytes here), and pins every part the
-supervisor runs by its sha256: the guest's kernel and root, tor and libevent in
-the bundle, and the worker as llama-worker/install.sh installed it in the
-Application Support folder; and NEAR mode's helper, cloak-near, in the bundle,
-which the app checks against its pin before each start of it.
+supervisor runs by its sha256, each in the bundle: the guest's kernel and root,
+tor and libevent, the worker as llama-worker/install.sh built and signed it,
+which the app copies to its Application Support folder at each Start and runs
+from there, and NEAR mode's helper, cloak-near, which the app checks against
+its pin before each start of it.
 
-    uv run app/manifest.py <Resources folder> <Application Support folder> <build>
+    uv run app/manifest.py <Resources folder> <build>
 """
 
 import hashlib
@@ -27,12 +28,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from fetch_model import url  # noqa: E402
 
 PARTS = [
-    ("kernel", "bundle", "guest/Image"),
-    ("initrd", "bundle", "guest/initrd.gz"),
-    ("tor", "bundle", "tor/tor"),
-    ("libevent", "bundle", "tor/libevent-2.1.7.dylib"),
-    ("worker", "support", "worker/cloak-rewriter-llama"),
-    ("near", "bundle", "near/cloak-near"),
+    ("kernel", "guest/Image"),
+    ("initrd", "guest/initrd.gz"),
+    ("tor", "tor/tor"),
+    ("libevent", "tor/libevent-2.1.7.dylib"),
+    ("worker", "worker/cloak-rewriter-llama"),
+    ("near", "near/cloak-near"),
 ]
 
 
@@ -45,11 +46,10 @@ def digest(path: Path) -> str:
 
 
 def main() -> None:
-    resources, support, build = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+    resources, build = Path(sys.argv[1]), sys.argv[2]
     release = json.loads((ROOT / "app/release.json").read_text())
     models = {m["name"]: m for m in json.loads((ROOT / "reference/models.json").read_text())["models"]}
     model = models[release["model"]]
-    places = {"bundle": resources, "support": support}
 
     def file(entry: dict) -> dict:
         source = models[entry.get("from", model["name"])]
@@ -66,8 +66,7 @@ def main() -> None:
             "label": release["model_label"],
             "files": [file(entry) for entry in model["files"]],
         },
-        "pins": [{"part": part, "place": place, "path": path, "sha256": digest(places[place] / path)}
-                 for part, place, path in PARTS],
+        "pins": [{"part": part, "path": path, "sha256": digest(resources / path)} for part, path in PARTS],
     }
     (resources / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 

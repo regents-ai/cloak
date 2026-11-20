@@ -537,9 +537,16 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   checks (the Mac: Apple silicon, the model's memory within Metal's graphics
   limit less 1 GiB, and all of Cloak's within the memory less 4 GiB for
   macOS, both needs from the manifest, a graphics limit that cannot be read
-  failing it; each installed part's SHA-256 against the bundle's
+  failing it; each part in the bundle against its SHA-256 in the bundle's
   manifest; the model's files and sizes, whose hashes the worker checks
-  itself), then tor, started and bootstrapped, then the worker, started and
+  itself), then the worker put where it runs,
+  `worker/cloak-rewriter-llama` in the app's Application Support folder
+  (its sandbox cannot start a program kept under `~/Documents` or
+  `~/Downloads`): a file there that is missing or not the pinned one is
+  replaced by a copy of the bundle's, written under a new name in the same
+  folder and renamed over it, and the file is then checked against the pin
+  (`part_missing` when it cannot be put there, `part_changed` when it does
+  not match), then tor, started and bootstrapped, then the worker, started and
   ready, then a check guest, which sends one rewrite through the daemon, the
   relay and the worker and powers off. The first failure is the reason.
   A worker that exits before it is ready because the model folder is not

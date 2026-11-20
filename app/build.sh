@@ -6,17 +6,19 @@
 # guest/build, tor and libevent from host/.build/tor, NEAR mode's helper
 # cloak-near (built here from guest/near with cargo, two jobs, low priority,
 # through the same lock; rustup takes the Rust version from
-# guest/near/rust-toolchain.toml), and the manifest that pins them and the
-# installed worker. The update feed and its public key
-# from app/release.json go into Info.plist when both are set; with neither,
-# the app has no updater. Signed ad hoc, inside out, the app with the
+# guest/near/rust-toolchain.toml), the worker as llama-worker/install.sh
+# built and signed it, and the manifest that pins them all. The update feed
+# and its public key from app/release.json go into Info.plist when both are
+# set; with neither, the app has no updater. Signed ad hoc, inside out, the
+# app with the
 # virtualization entitlement; no Developer ID and no notarization. Needs
 # rustup, and guest/build.sh, host/build.sh and llama-worker/install.sh to
 # have run first.
 set -eu
 cd "$(dirname "$0")/.."
 
-ls guest/build/Image guest/build/initrd.gz host/.build/tor/tor host/.build/tor/libevent-2.1.7.dylib > /dev/null
+worker=llama-worker/.xcode/Build/Products/Release/cloak-rewriter-llama
+ls guest/build/Image guest/build/initrd.gz host/.build/tor/tor host/.build/tor/libevent-2.1.7.dylib "$worker" > /dev/null
 feed=$(plutil -extract update_feed raw app/release.json)
 key=$(plutil -extract update_key raw app/release.json)
 if [ -n "$feed$key" ] && { [ -z "$feed" ] || [ -z "$key" ]; }; then
@@ -32,7 +34,7 @@ bin=$(swift build --package-path app -c release --show-bin-path)
 app="app/build/Regents Cloak.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources/guest" "$app/Contents/Resources/tor" \
-	"$app/Contents/Resources/near"
+	"$app/Contents/Resources/near" "$app/Contents/Resources/worker"
 cp "$bin/RegentsCloak" "$bin/cloak" "$app/Contents/MacOS/"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 # SwiftPM's run path is the binary's own folder; the framework is in Frameworks.
@@ -43,6 +45,11 @@ cp host/.build/tor/tor host/.build/tor/libevent-2.1.7.dylib "$app/Contents/Resou
 cp guest/near/target/release/cloak-near "$app/Contents/Resources/near/"
 # Signed before the manifest pins it: signing rewrites the file.
 codesign -s - -f "$app/Contents/Resources/near/cloak-near"
+# Already signed into its sandbox by llama-worker/install.sh, and copied as
+# it is. The app copies it to its Application Support folder at each Start
+# and runs it from there: the sandbox cannot start a program kept under
+# ~/Documents or ~/Downloads.
+ditto "$worker" "$app/Contents/Resources/worker/cloak-rewriter-llama"
 
 build=$(git describe --always --dirty)
 # The bundle's version is the commit count, a number that grows, which is
@@ -54,8 +61,7 @@ if [ -n "$feed" ]; then
 	plutil -insert SUFeedURL -string "$feed" "$app/Contents/Info.plist"
 	plutil -insert SUPublicEDKey -string "$key" "$app/Contents/Info.plist"
 fi
-PYTHONDONTWRITEBYTECODE=1 uv run app/manifest.py "$app/Contents/Resources" \
-	"$HOME/Library/Application Support/Regents Cloak" "$build"
+PYTHONDONTWRITEBYTECODE=1 uv run app/manifest.py "$app/Contents/Resources" "$build"
 
 # Inside out, as Sparkle's documentation orders it for an app signed
 # outside Xcode: its helpers, the framework, `cloak`, then the app.

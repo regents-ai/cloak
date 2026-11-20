@@ -1,10 +1,13 @@
 #!/bin/sh
 # Builds llama.cpp (build-llama.sh), then the worker (two build jobs, low
 # priority), signs it into the App Sandbox with cloak-rewriter.entitlements,
-# and installs it in ~/Library/Application Support/Regents Cloak/worker/. The
-# sandbox cannot start a program kept under ~/Documents, so the worker runs
-# from there. The Metal shaders are built into the binary, so it is the one
-# file installed.
+# and installs it in ~/Library/Application Support/Regents Cloak/worker/ for
+# the scripts and checks under scripts/ and tests/. The sandbox cannot start
+# a program kept under ~/Documents, so they run it from there. The Metal
+# shaders are built into the binary, so it is the one file installed.
+# app/build.sh takes the signed build from .xcode into the app, which copies
+# its own worker to the same place at each Start when the file there is not
+# the one it pins.
 set -eu
 cd "$(dirname "$0")"
 ./build-llama.sh

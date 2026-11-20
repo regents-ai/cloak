@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- The rewording worker ships inside the app. `app/build.sh` copies the
+  worker that `llama-worker/install.sh` built and signed into the
+  bundle, and the manifest pins every part in the bundle, with no place
+  for each. At each Start, once the checks pass, the app copies its
+  worker to `~/Library/Application Support/Regents Cloak/worker/` when
+  the file there is missing or not the pinned one (written under a new
+  name, then renamed over it), checks it against the pin, and runs it
+  from there, since the worker's sandbox cannot start a program kept
+  under `~/Documents` or `~/Downloads`. Start no longer needs
+  `llama-worker/install.sh` to have run on that Mac. This is the first
+  step toward a build Sean's friends can download (his word, 19
+  November).
+
 - Settings: the four descriptions in the NEAR pane are rewritten as
   whole sentences that say what each setting is and does (where the key
   comes from, what Tor changes and costs, what the check is and what
