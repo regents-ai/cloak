@@ -6,15 +6,19 @@
 //! GETs only, of the report, the tokens, Intel's collateral and Intel's keys.
 //!
 //!     cloak-near-probe --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B [--save DIR]
-//!     cloak-near-probe --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B --key-file FILE
+//!     cloak-near-probe --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B --key-file FILE [--proof-age SECONDS] [--repeat N]
 //!
 //! With --save, the report, nonce, TLS key hash, collateral, NEAR's answer
 //! of Intel's tokens, Intel's keys, and the time both checks are made at go
 //! into DIR, as the gate check's fixtures are kept.
 //!
 //! With --key-file, the account key is read from FILE and the probe makes
-//! one chat request through `ask` instead: the proof check, then the message
+//! chat requests through `ask` instead: the proof check, then the message
 //! "ping", encrypted to the checked model key. The key is never printed.
+//! --repeat asks N times (1 when not given) with one `Kept`, which keeps a
+//! passed proof for --proof-age seconds (0 when not given: every ask checks
+//! its own); for each ask it says how long it took and whether its proof
+//! was checked in it or kept from an earlier ask, and how old.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -40,6 +44,8 @@ fn main() -> ExitCode {
     let mut model = None;
     let mut save = None;
     let mut key_file = None;
+    let mut proof_age = None;
+    let mut repeat = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -47,6 +53,14 @@ fn main() -> ExitCode {
             "--model" => model = args.next(),
             "--save" => save = args.next().map(PathBuf::from),
             "--key-file" => key_file = args.next().map(PathBuf::from),
+            "--proof-age" => match args.next().and_then(|a| a.parse::<u64>().ok()) {
+                Some(seconds) => proof_age = Some(seconds),
+                None => return usage(),
+            },
+            "--repeat" => match args.next().and_then(|a| a.parse::<u32>().ok()) {
+                Some(times) if times > 0 => repeat = Some(times),
+                _ => return usage(),
+            },
             _ => return usage(),
         }
     }
@@ -55,7 +69,14 @@ fn main() -> ExitCode {
     };
     let outcome = match (key_file, save) {
         (Some(_), Some(_)) => return usage(),
-        (Some(key_file), None) => chat(socks, &model, &key_file),
+        (Some(key_file), None) => chat(
+            socks,
+            &model,
+            &key_file,
+            proof_age.unwrap_or(0),
+            repeat.unwrap_or(1),
+        ),
+        (None, _) if proof_age.is_some() || repeat.is_some() => return usage(),
         (None, save) => {
             let started = Instant::now();
             let outcome = run(socks, &model, save);
@@ -74,38 +95,83 @@ fn main() -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: cloak-near-probe --socks HOST:PORT --model NAME [--save DIR | --key-file FILE]"
+        "usage: cloak-near-probe --socks HOST:PORT --model NAME [--save DIR | --key-file FILE [--proof-age SECONDS] [--repeat N]]"
     );
     ExitCode::from(2)
 }
 
-/// The proof check and then one chat request saying "ping", with the
-/// account key in `key_file`.
-fn chat(socks: SocketAddr, model: &str, key_file: &Path) -> Result<(), String> {
+/// The proof check and then a chat request saying "ping", with the account
+/// key in `key_file`, `repeat` times with one `Kept` that keeps a passed
+/// proof for `proof_age` seconds.
+fn chat(
+    socks: SocketAddr,
+    model: &str,
+    key_file: &Path,
+    proof_age: u64,
+    repeat: u32,
+) -> Result<(), String> {
     let pins: Pins = serde_json::from_str(PINS).map_err(|e| format!("the pins file: {e}"))?;
     let key = std::fs::read_to_string(key_file)
         .map_err(|e| format!("reading {}: {e}", key_file.display()))?;
+    let mut kept = Kept::new(Duration::from_secs(60 * 60), Duration::from_secs(proof_age))
+        .ok_or("a proof age over an hour is refused")?;
     println!("Checking NEAR AI Cloud's proof for {model}, then sending \"ping\", through {socks}");
+    println!("Proof age {proof_age} s; {repeat} ask(s)");
 
     let identities = [fresh_identity()?, fresh_identity()?];
     let routes = Routes {
         near: route(socks, &identities[0]),
         intel: route(socks, &identities[1]),
     };
-    let mut kept = Kept::new(Duration::from_secs(60 * 60)).expect("an hour is within a day");
-    let body = json!({"model": model, "messages": [{"role": "user", "content": "ping"}]});
+    let body =
+        json!({"model": model, "messages": [{"role": "user", "content": "ping"}]}).to_string();
+    let mut stopped = 0;
+    for n in 1..=repeat {
+        println!("Ask {n} of {repeat}:");
+        if let Err(stop) = ask_once(
+            &routes,
+            model,
+            key.trim(),
+            body.as_bytes(),
+            &pins,
+            &mut kept,
+        ) {
+            println!("Stopped: {stop}");
+            stopped += 1;
+        }
+    }
+    match stopped {
+        0 => Ok(()),
+        _ => Err(format!("{stopped} of {repeat} ask(s) got no reply")),
+    }
+}
+
+/// One ask, said in plain words: how long it took, whether its proof was
+/// checked in it or kept from an earlier ask, and the reply.
+fn ask_once(
+    routes: &Routes,
+    model: &str,
+    key: &str,
+    body: &[u8],
+    pins: &Pins,
+    kept: &mut Kept,
+) -> Result<(), String> {
+    let began = seconds_now()?;
     let started = Instant::now();
-    let outcome = ask(
-        &routes,
-        model,
-        key.trim(),
-        body.to_string().as_bytes(),
-        &pins,
-        &mut kept,
-    );
+    let outcome = ask(routes, model, key, body, pins, kept);
     let took = started.elapsed().as_secs_f64();
     match outcome {
         Ok(answered) => {
+            // A proof checked in this ask passed after it began; a kept one
+            // passed in an earlier ask.
+            if answered.proof_passed_at < began {
+                println!(
+                    "The proof was kept from an earlier ask: it passed {} s before this one began",
+                    began - answered.proof_passed_at
+                );
+            } else {
+                println!("The proof was checked in this ask");
+            }
             println!(
                 "The proof passed for {} model instance(s) and the {} GPUs of one model server, model encryption key {}",
                 answered.proof.intel.instances,

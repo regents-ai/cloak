@@ -9,7 +9,11 @@
 //! GPUs under the same nonce, checks them with Intel's signing keys, and
 //! only then sends the chat request, encrypted to the model key the proof
 //! checked, on a new connection that must show the gateway certificate key
-//! the proof is tied to.
+//! the proof is tied to. When [`Kept`] holds a proof that passed for the
+//! same model no longer ago than the proof age the caller chose, at most an
+//! hour, the request goes straight to sending under that proof instead: the
+//! hardware was then checked up to that long before, not at the moment of
+//! sending.
 //!
 //! [`fetch_report`] opens one TLS connection to NEAR's gateway through a
 //! SOCKS5 proxy (the guest's Tor port), records the SHA-256 of the gateway
@@ -151,6 +155,9 @@ pub struct Measurements {
 /// values of Cloak's own (Intel's verifier judges them against NVIDIA's);
 /// the model workload the measured launcher fetches; where the images came
 /// from; and anything about the replies.
+///
+/// All of it holds at the moment the check passed. A request sent under a
+/// proof [`Kept`] holds goes on hardware checked up to the proof age before.
 #[derive(Clone, Debug)]
 pub struct Proof {
     pub intel: IntelProof,

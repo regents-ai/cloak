@@ -2,8 +2,8 @@
 
 Slices 1 to 3 of Cloak's NEAR mode: the check of NEAR AI Cloud's hardware
 proof, its Intel quotes and Intel Trust Authority's verdict on its GPUs,
-made before anything is sent, and the one chat request that follows a
-passed check, encrypted to the model key the check established. It holds
+made before anything is sent, and the chat requests that follow a passed
+check, encrypted to the model key the check established. It holds
 no account: the caller gives the key for each request. It is not yet part
 of the guest image, the build scripts or the app.
 
@@ -33,15 +33,18 @@ of the guest image, the build scripts or the app.
   model name, the `IntelProof`, Intel's key list, the pins and `now` in; a
   `GpuProof` or one `Refusal` out.
 - `ask` sends one chat request, and is the only way to send one. In one
-  call and in this order: the request is checked; a report is fetched under
-  a fresh nonce; Intel's collateral is reused from `Kept` or fetched; the
-  Intel quotes are verified; Intel Trust Authority's tokens are fetched
-  from NEAR under the same nonce; Intel's keys are reused from `Kept` or
-  fetched; the GPU side is verified; and only then, holding a `Proof` with
-  both halves, is the request sent. There is no way to skip the GPU. A
-  failed step ends the call with its `Stop` and nothing is sent. NEAR's
-  gateway and Intel's servers each go through a route of the caller's
-  (`Routes`), meant to be two Tor circuits.
+  call and in this order: the request is checked; a proof is taken from
+  `Kept` if one passed for the same model no longer ago than the proof age
+  the caller chose (see "Proof age" below), or else a new one is checked:
+  a report is fetched under a fresh nonce; Intel's collateral is reused
+  from `Kept` or fetched; the Intel quotes are verified; Intel Trust
+  Authority's tokens are fetched from NEAR under the same nonce; Intel's
+  keys are reused from `Kept` or fetched; the GPU side is verified; and
+  only then, holding a `Proof` with both halves, is the request sent.
+  There is no way to skip the GPU. A step that fails before sending ends
+  the call with its `Stop` and nothing is sent. NEAR's gateway and Intel's
+  servers each go through a route of the caller's (`Routes`), meant to be
+  two Tor circuits.
 
 ## What `verify_intel` checks
 
@@ -163,21 +166,42 @@ missing, malformed or false is refused.
   gateway's quote, made after our nonce, can name an Intel nonce issued up
   to five minutes before, so one server's evidence could serve several
   requests in that time. How long Intel itself accepts its nonces is not
-  documented.
+  documented. All of this holds at the moment the proof passes. A request
+  sent under a kept proof (see "Proof age") goes on hardware checked up to
+  the proof age before, up to an hour, not at the moment of sending:
+  nothing about Intel's tokens, the five minutes included, is looked at
+  again.
 
 ## The chat request
 
 - **The connection.** A new TLS connection through the same proxy, with the
   ordinary certificate checks against Mozilla's roots, and accepted only if
   the SHA-256 of its certificate key equals the one seen when the report was
-  fetched, the key the gateway's quote is tied to. The comparison is made
-  after the handshake and before any byte of the request is written.
+  fetched, the key the gateway's quote is tied to (for a kept proof, the
+  report that proof was checked on). The comparison is made after the
+  handshake and before any byte of the request is written.
 - **Kept between requests.** `Kept` holds Intel's collateral and Intel
   Trust Authority's key list. The caller chooses their age, at most a day.
   The collateral is fetched again when older, or when a report names a
   platform family it does not cover; the key list when older, or when a
   token names a key it does not hold (about 12 KB on 19 November). Intel's
-  tokens are never kept: each request has its own, for its own nonce.
+  tokens are never kept: each proof check fetches its own, for its own
+  nonce.
+- **Proof age.** `Kept` also holds, for each model, the last proof that
+  passed, the gateway TLS key hash it was checked with and the second it
+  passed. The caller chooses the proof age, at most an hour. Zero, the
+  probe's default, keeps no proof: every request fetches and checks its
+  own. Within the proof age, a request for that model fetches and checks
+  nothing and goes straight to sending under the kept proof, pinned to the
+  TLS key it was checked with and sealed for the model key it checked.
+  The limit: with a kept proof, the hardware was checked up to the proof
+  age before, not at the moment of sending. A proof older than the proof
+  age is not used, nor one whose second is after the clock's (the clock
+  went back), and a proof kept for one model is never used for another.
+  When the gateway shows another TLS key, or the reply does not open, the
+  model's proof is forgotten and the next request checks afresh; nothing
+  is tried again within the request. `Answered` says when the proof it was
+  sent under passed.
 - **The request.** `POST /v1/chat/completions` with the key as a Bearer
   token, `X-Signing-Algo: ed25519`, `X-Client-Pub-Key`, `X-Model-Pub-Key`
   (the key the proof checked), `X-Encryption-Version: 2`,
@@ -242,10 +266,12 @@ From the research, section 4.5:
 
 From Cloak: the Tor exit's address and the timing of each collateral
 fetch and each fetch of the key list. From NEAR's gateway, for each
-request: the gateway's quote and runtime data (our nonce, the gateway's
-key and TLS key fingerprint) and one model server's GPU evidence. Never the
-prompt, the reply or the account key. Intel Trust Authority is an online
-dependency through NEAR: when NEAR cannot get a token, nothing is sent.
+proof check: the gateway's quote and runtime data (our nonce, the gateway's
+key and TLS key fingerprint) and one model server's GPU evidence. A request
+sent under a kept proof causes none. Never the prompt, the reply or the
+account key. Intel Trust Authority is an online dependency through NEAR:
+when NEAR cannot get a token, no proof passes and nothing is sent, unless
+a proof for the model is kept within its age.
 
 ## What it does not check
 
@@ -261,7 +287,7 @@ dependency through NEAR: when NEAR cannot get a token, nothing is sent.
   evidence; that evidence is outside the instance's quote, so the match
   would rest on NEAR's word, and it is not made.
 - **The model's other servers.** One server's GPUs are appraised for each
-  request. On 19 November `z-ai/glm-5.3-flash` had three servers in its
+  proof check. On 19 November `z-ai/glm-5.3-flash` had three servers in its
   report and one token on eight GPUs; `Qwen/Qwen3.8-27B` had one server and
   one token on eight GPUs.
 - **That the GPUs and any Intel quote are one machine.** The GPUs, the
@@ -308,7 +334,8 @@ dependency through NEAR: when NEAR cannot get a token, nothing is sent.
   Intel did not refuse any connection that reached it, and in every probe
   run whose collateral came, the key list came on the same circuit.
   Nothing here retries on another circuit or goes around Tor, so `ask`
-  stops when the circuit's exit cannot reach Intel and nothing is kept yet.
+  stops when the circuit's exit cannot reach Intel and neither what Intel
+  serves nor a proof within its age is kept yet.
 - **NEAR's call to Intel fails at times.** NEAR's gateway answered 502
   (`ITA upstream error: ITA transport error`) to 2 of 8 token requests for
   `z-ai/glm-5.3-flash` on 19 November; all 5 for `Qwen/Qwen3.8-27B` were
@@ -336,6 +363,7 @@ two models, so the model sets are a list not tied to a model.
     cargo test --locked            # the gate checks, offline
     cargo run --locked --bin cloak-near-probe -- --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B
     cargo run --locked --bin cloak-near-probe -- --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B --key-file FILE
+    cargo run --locked --bin cloak-near-probe -- --socks 127.0.0.1:9050 --model Qwen/Qwen3.8-27B --key-file FILE --proof-age 600 --repeat 3
 
 The gate checks:
 
@@ -353,7 +381,14 @@ The gate checks:
   signature forbids are signed again with a key made for these checks alone
   (`tests/fixtures/ita/test-key.der`) and added to the key list; the real
   tokens signed again unchanged that way pass, so each refusal comes from
-  its change.
+  its change. A proof age over an hour is refused.
+- `src/chat.rs`: the proof age. A passed proof is put in `Kept` by hand and
+  `ask` is pointed at a proxy on this machine that closes every
+  connection, so its `Stop` shows whether it went to fetch a new report or
+  straight to sending. A proof within the age is sent under; one a second
+  older than the age, one whose second is after the clock's, and one kept
+  for another model are not, and a new report is fetched; with a proof age
+  of zero nothing is kept.
 - `src/gate.rs`: NEAR's published version 2 vectors open, do not open with
   one byte changed, and what this crate seals for NEAR's key opens with
   NEAR's secret. A stand-in for NEAR's gateway on this machine (a SOCKS5
@@ -370,7 +405,10 @@ and the GET of Intel's key list, and prints each outcome, with timings, in
 plain words; `--save DIR` keeps what it fetched, as `tests/fixtures` is
 kept. With `--key-file` it reads the account key from FILE and makes one
 chat request through `ask`, the message "ping", after the proof check. It
-never prints the key.
+never prints the key. `--repeat N` makes N such requests with one `Kept`,
+and `--proof-age SECONDS` (0 when not given) is the proof age it keeps a
+passed proof for; for each request it says how long it took and whether
+its proof was checked in it or kept from an earlier one, and how old.
 
 No code is copied from NEAR, Intel, NVIDIA or anywhere else. NEAR's
 MIT-licensed `inference-sdk` and its model server's source

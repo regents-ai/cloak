@@ -21,12 +21,18 @@
 //! Each real set passes at its fetch time and is refused for each change
 //! below.
 //!
+//! A passed proof is used again for at most an hour: a longer proof age is
+//! refused. (Which kept proof `ask` uses is checked in src/chat.rs, where
+//! it can be put in `Kept` by hand.)
+//!
 //!     cargo test --locked --manifest-path guest/near/Cargo.toml
+
+use std::time::Duration;
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use cloak_near::{
-    verify_gpu, verify_intel, Collateral, GpuProof, GpuRefusal, IntelProof, Pins, Refusal,
+    verify_gpu, verify_intel, Collateral, GpuProof, GpuRefusal, IntelProof, Kept, Pins, Refusal,
     TcbStatus, Who,
 };
 use ring::rand::SystemRandom;
@@ -477,4 +483,11 @@ fn an_expired_token_is_refused() {
     assert!(case.check().is_ok());
     case.now = expires;
     assert_eq!(gpu_refusal(case), GpuRefusal::Time);
+}
+
+#[test]
+fn a_proof_age_over_an_hour_is_refused() {
+    let day = Duration::from_secs(DAY);
+    assert!(Kept::new(day, Duration::from_secs(60 * 60)).is_some());
+    assert!(Kept::new(day, Duration::from_secs(60 * 60 + 1)).is_none());
 }

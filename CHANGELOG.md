@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- NEAR mode: a passed proof is kept and used again for a chosen time, an
+  hour at most, none by default (`guest/near`, `Kept::new(max_age,
+  proof_age)`). A request under a kept proof still goes only on a
+  connection showing the gateway key that proof checked, sealed for the
+  model key it checked; the hardware was checked up to that long before,
+  not at the moment of sending. Another gateway key or a reply that does
+  not open forgets the proof. `Answered` says when its proof passed; the
+  probe gains `--proof-age` and `--repeat`. Live through Tor with Sean's
+  key (19 November): three "ping"s to `z-ai/glm-5.3-flash` on one check,
+  43 s, 28 s and 24 s, so the check is about 15 s and the model's
+  unstreamed answer the rest. Found the same evening: NEAR added a second
+  `Qwen/Qwen3.8-27B` server whose compose file differs from a pinned one
+  only by its server label and telemetry address, and it is refused;
+  every server's compose carries its own label, so pinning whole compose
+  hashes cannot last. And: every Intel fetch of one check shares one Tor
+  circuit, so one bad exit fails the check; on ten separate circuits
+  each, Intel's three hosts answered ten of ten.
+
 - NEAR mode, first real requests with the GPU check on (19 November,
   through Tor, Sean's key, "ping"): one of six was answered and opened
   (`z-ai/glm-5.3-flash`, 3 servers and 8 GPUs checked, 71 s). The other

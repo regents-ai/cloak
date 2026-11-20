@@ -1,6 +1,7 @@
-//! Slice 2: one chat request to NEAR AI Cloud, sent only after the proof
-//! check of the same call passes, the Intel quotes and Intel Trust
-//! Authority's verdict on the GPUs (slice 3). Every
+//! Slice 2: one chat request to NEAR AI Cloud, sent only under a proof that
+//! passed, the Intel quotes and Intel Trust Authority's verdict on the GPUs
+//! (slice 3): one checked in the same call, or one that passed for the same
+//! model no longer ago than the proof age the caller chose. Every
 //! field that holds the person's words is sealed for the model key the proof
 //! checked (NEAR's encryption, version 2, with `X-Encrypt-All-Fields`), it
 //! goes on a new connection whose gateway certificate key must be the one
@@ -9,6 +10,7 @@
 //! with a field the encryption does not cover is refused before anything is
 //! fetched, and a reply with a field that does not open is refused whole.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -24,6 +26,8 @@ use crate::{
 };
 
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+/// The longest a passed proof may be used again.
+const HOUR: Duration = Duration::from_secs(60 * 60);
 /// The largest reply taken; a sealed field is twice its text, in hex.
 const REPLY_LIMIT: usize = 8 << 20;
 /// How long the model may take: a reply that is not streamed comes only
@@ -92,30 +96,72 @@ impl fmt::Display for Stop {
 
 impl std::error::Error for Stop {}
 
-/// Intel's collateral and Intel Trust Authority's signing keys, kept
-/// between requests, each for at most the age chosen. The collateral is
-/// fetched again when it is older, or does not cover every platform family
-/// a new report's quotes name; the keys when they are older, or do not hold
-/// every key new tokens name.
+/// What is kept between requests.
+///
+/// Intel's collateral and Intel Trust Authority's signing keys, each for at
+/// most `max_age`. The collateral is fetched again when it is older, or does
+/// not cover every platform family a new report's quotes name; the keys when
+/// they are older, or do not hold every key new tokens name.
+///
+/// And for each model, the last proof that passed, with the gateway TLS key
+/// hash it was checked with and the second it passed, used again for at
+/// most `proof_age`. A request sent under a kept proof goes on hardware
+/// checked up to that long before, not at the moment of sending.
 pub struct Kept {
     max_age: u64,
+    proof_age: u64,
     collateral_at: u64,
     collateral: Vec<Collateral>,
     keys_at: u64,
     /// Intel Trust Authority's key list as it came.
     keys: Vec<u8>,
+    /// The last proof that passed for each model, by the model's name.
+    proofs: HashMap<String, Passed>,
+}
+
+/// A proof that passed, as [`Kept`] keeps it.
+#[derive(Clone)]
+struct Passed {
+    proof: Proof,
+    /// SHA-256 of the gateway's TLS key the proof was checked with: every
+    /// request sent under the proof goes on a connection showing this key.
+    spki_sha256: [u8; 32],
+    /// When the proof passed, in seconds since 1970.
+    at: u64,
 }
 
 impl Kept {
-    /// Nothing kept yet; None when `max_age` is over a day.
-    pub fn new(max_age: Duration) -> Option<Kept> {
-        (max_age <= DAY).then(|| Kept {
+    /// Nothing kept yet; None when `max_age` is over a day or `proof_age`
+    /// over an hour. A `proof_age` of zero keeps no proof: every request
+    /// fetches and checks its own.
+    pub fn new(max_age: Duration, proof_age: Duration) -> Option<Kept> {
+        (max_age <= DAY && proof_age <= HOUR).then(|| Kept {
             max_age: max_age.as_secs(),
+            proof_age: proof_age.as_secs(),
             collateral_at: 0,
             collateral: Vec::new(),
             keys_at: 0,
             keys: Vec::new(),
+            proofs: HashMap::new(),
         })
+    }
+
+    /// The proof kept for `model`, if it passed no longer than the proof age
+    /// before `now`. One that passed after `now`, as when the clock went
+    /// back, is taken as too old.
+    fn proof_for(&self, model: &str, now: u64) -> Option<Passed> {
+        self.proofs
+            .get(model)
+            .filter(|passed| passed.at <= now && now - passed.at <= self.proof_age)
+            .cloned()
+    }
+
+    /// Keeps `passed` as `model`'s proof, in place of the one before it;
+    /// nothing when the proof age is zero.
+    fn keep(&mut self, model: &str, passed: &Passed) {
+        if self.proof_age > 0 {
+            self.proofs.insert(model.to_owned(), passed.clone());
+        }
     }
 
     /// The collateral for `report`'s quotes at `now`.
@@ -154,6 +200,10 @@ impl Kept {
 #[derive(Debug)]
 pub struct Answered {
     pub proof: Proof,
+    /// When `proof` passed, in seconds since 1970: in this call, or in an
+    /// earlier one when [`Kept`] held it. The hardware was checked then, not
+    /// when the request was sent.
+    pub proof_passed_at: u64,
     /// The chat completion as NEAR's model gave it, every sealed field
     /// opened.
     pub reply: Value,
@@ -161,15 +211,17 @@ pub struct Answered {
 
 /// Sends one OpenAI-shaped chat request (`body`, not streamed) for `model`
 /// to NEAR AI Cloud with `api_key`, in this order and no other: the request
-/// is checked; a report is fetched under a fresh nonce on the `near` route;
-/// Intel's collateral is reused from `kept` or fetched on the `intel` route;
-/// the Intel quotes are checked against `pins`; Intel Trust Authority's
-/// tokens are fetched from NEAR's gateway under the same nonce on the `near`
-/// route, and the keys Intel signs them with are reused from `kept` or
-/// fetched on the `intel` route; the GPU side is checked; and only then,
-/// with both proofs, is the request sent. A failed step returns its
-/// [`Stop`], and nothing is sent. The key is used only in the request's
-/// Authorization header: never kept, logged or put in a [`Stop`].
+/// is checked; a proof is taken from `kept` if one passed for `model` no
+/// longer than the proof age ago, or else a new one is fetched and checked
+/// in full, in the order `prove` follows, and kept; and only then, under
+/// that proof, is the request sent, pinned to the gateway TLS key and sealed
+/// for the model key the proof checked. A step that fails before sending
+/// returns its [`Stop`], and nothing is sent.
+/// When the gateway shows another TLS key ([`Stop::Pin`]) or the reply does
+/// not open ([`Stop::Reply`]), the model's kept proof is forgotten, so the
+/// next call checks afresh; nothing is tried again in this one. The key is
+/// used only in the request's Authorization header: never kept, logged or
+/// put in a [`Stop`].
 pub fn ask(
     routes: &Routes,
     model: &str,
@@ -181,6 +233,46 @@ pub fn ask(
     // The same check `send` makes, here so that a request that cannot go
     // costs no fetch.
     checked(body, model, api_key)?;
+    let passed = match kept.proof_for(model, seconds()?) {
+        Some(passed) => passed,
+        None => {
+            let passed = prove(routes, model, pins, kept)?;
+            kept.keep(model, &passed);
+            passed
+        }
+    };
+    // Only now, holding a proof that passed, is the request sent.
+    let reply = send(
+        &passed.proof,
+        &passed.spki_sha256,
+        &routes.near,
+        &mozilla(),
+        model,
+        api_key,
+        body,
+    )
+    .inspect_err(|stop| {
+        // Another TLS key, or a reply that did not open: the proof is not
+        // used again.
+        if matches!(stop, Stop::Pin | Stop::Reply(_)) {
+            kept.proofs.remove(model);
+        }
+    })?;
+    Ok(Answered {
+        proof: passed.proof,
+        proof_passed_at: passed.at,
+        reply,
+    })
+}
+
+/// The full check, in this order: a report is fetched under a fresh nonce on
+/// the `near` route; Intel's collateral is reused from `kept` or fetched on
+/// the `intel` route; the Intel quotes are checked against `pins`; Intel
+/// Trust Authority's tokens are fetched from NEAR's gateway under the same
+/// nonce on the `near` route, and the keys Intel signs them with are reused
+/// from `kept` or fetched on the `intel` route; and the GPU side is checked.
+/// A proof with both halves, or the failed step's [`Stop`].
+fn prove(routes: &Routes, model: &str, pins: &Pins, kept: &mut Kept) -> Result<Passed, Stop> {
     let fetched = fetch_report(&routes.near, model).map_err(Stop::Fetch)?;
     let now = seconds()?;
     let collateral = kept.collateral_for(&routes.intel, &fetched.report, now)?;
@@ -201,17 +293,11 @@ pub fn ask(
     let keys = kept.keys_for(&routes.intel, &tokens, now)?;
     let gpu = verify_gpu(&tokens, &fetched.nonce, model, &intel, keys, pins, now)
         .map_err(Stop::Refused)?;
-    let proof = Proof { intel, gpu };
-    let reply = send(
-        &proof,
-        &fetched.spki_sha256,
-        &routes.near,
-        &mozilla(),
-        model,
-        api_key,
-        body,
-    )?;
-    Ok(Answered { proof, reply })
+    Ok(Passed {
+        proof: Proof { intel, gpu },
+        spki_sha256: fetched.spki_sha256,
+        at: now,
+    })
 }
 
 /// Seconds since 1970 by the system clock.
@@ -226,8 +312,8 @@ fn seconds() -> Result<u64, Stop> {
 /// connection to the gateway through `proxy` that is accepted only if its
 /// certificate passes the ordinary checks against `roots` and its key
 /// hashes to `pinned`, sends the request, and opens the reply with a key
-/// made for this request. Only [`ask`] calls it, with a proof it has just
-/// obtained.
+/// made for this request. Only [`ask`] calls it, with a proof that passed in
+/// the same call or that [`Kept`] held for the model within the proof age.
 pub(crate) fn send(
     proof: &Proof,
     pinned: &[u8; 32],
@@ -517,4 +603,123 @@ fn object<'a>(
     map.get_mut(name)
         .and_then(Value::as_object_mut)
         .ok_or_else(|| format!("`{name}` is not an object"))
+}
+
+/// The gate checks of the proof age, offline. A passed proof is put in
+/// `Kept` by hand, and `ask` is pointed at a proxy on this machine that
+/// closes every connection at once, so the first thing `ask` does fails and
+/// its `Stop` says what that was: `Stop::Fetch` when it went to fetch a new
+/// report, `Stop::Send` when it went straight to sending under the kept
+/// proof. Nothing leaves this machine.
+#[cfg(test)]
+mod proof_age {
+    use std::net::{SocketAddr, TcpListener};
+    use std::thread;
+    use std::time::Duration;
+
+    use serde_json::json;
+
+    use super::{ask, seconds, Kept, Passed, Stop, DAY, HOUR};
+    use crate::e2ee::ReplyKey;
+    use crate::{GpuProof, IntelProof, Pins, Proof, Proxy, Routes, TcbStatus};
+
+    const MODEL: &str = "z-ai/glm-5.3-flash";
+    const OTHER: &str = "Qwen/Qwen3.8-27B";
+
+    /// A proof that passed at `at`, with a model key that can be sealed for.
+    fn passed(at: u64) -> Passed {
+        Passed {
+            proof: Proof {
+                intel: IntelProof {
+                    gateway_key: [0; 32],
+                    gateway_tls_key: [7; 32],
+                    model_key: ReplyKey([0x42; 32]).public(),
+                    instances: 1,
+                    gateway_tcb: TcbStatus::UpToDate,
+                    model_tcb: vec![TcbStatus::UpToDate],
+                },
+                gpu: GpuProof { gpus: 8 },
+            },
+            spki_sha256: [7; 32],
+            at,
+        }
+    }
+
+    /// Whether `ask` for `model` went straight to sending under a kept
+    /// proof, rather than fetching a new report.
+    fn reuses(kept: &mut Kept, model: &str) -> bool {
+        let proxy = Proxy {
+            addr: closing_proxy(),
+            user: "proof",
+            password: "age",
+        };
+        let routes = Routes {
+            near: proxy,
+            intel: proxy,
+        };
+        let body = json!({"model": model, "messages": [{"role": "user", "content": "ping"}]});
+        let pins = Pins {
+            gateway: Vec::new(),
+            model: Vec::new(),
+        };
+        match ask(
+            &routes,
+            model,
+            "sk-stand-in",
+            body.to_string().as_bytes(),
+            &pins,
+            kept,
+        ) {
+            Err(Stop::Send(_)) => true,
+            Err(Stop::Fetch(_)) => false,
+            other => panic!("expected a failed connection, got {other:?}"),
+        }
+    }
+
+    /// A proxy on this machine that takes each connection and closes it.
+    fn closing_proxy() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for connection in listener.incoming() {
+                drop(connection);
+            }
+        });
+        addr
+    }
+
+    #[test]
+    fn a_proof_older_than_the_proof_age_is_not_used() {
+        let now = seconds().unwrap();
+        let mut kept = Kept::new(DAY, Duration::from_secs(600)).unwrap();
+        kept.keep(MODEL, &passed(now - 590));
+        assert!(reuses(&mut kept, MODEL));
+        kept.keep(MODEL, &passed(now - 601));
+        assert!(!reuses(&mut kept, MODEL));
+        // Passed after now, as when the clock went back: too old.
+        kept.keep(MODEL, &passed(now + 60));
+        assert!(!reuses(&mut kept, MODEL));
+
+        // The last second it is used, and the first it is not.
+        kept.keep(MODEL, &passed(1_000_000));
+        assert!(kept.proof_for(MODEL, 1_000_600).is_some());
+        assert!(kept.proof_for(MODEL, 1_000_601).is_none());
+        assert!(kept.proof_for(MODEL, 999_999).is_none());
+    }
+
+    #[test]
+    fn a_proof_kept_for_one_model_is_never_used_for_another() {
+        let mut kept = Kept::new(DAY, HOUR).unwrap();
+        kept.keep(MODEL, &passed(seconds().unwrap()));
+        assert!(!reuses(&mut kept, OTHER));
+        assert!(reuses(&mut kept, MODEL));
+    }
+
+    #[test]
+    fn a_proof_age_of_zero_keeps_nothing() {
+        let mut kept = Kept::new(DAY, Duration::ZERO).unwrap();
+        kept.keep(MODEL, &passed(seconds().unwrap()));
+        assert!(kept.proofs.is_empty());
+        assert!(!reuses(&mut kept, MODEL));
+    }
 }
