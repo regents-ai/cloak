@@ -285,7 +285,8 @@ public enum Remote {
 
     /// The answer in `completion`, a chat completion in OpenAI's shape: the
     /// first choice's text, when it has one and finished by stopping or at
-    /// its length. Shared by Development mode and NEAR mode (`Near`).
+    /// its length. Shared by V (`Payer`), Token Inference and NEAR Private AI
+    /// (`Near`).
     public static func content(of completion: Data) throws(RemoteStop) -> String {
         struct Completion: Decodable {
             let choices: [Choice]

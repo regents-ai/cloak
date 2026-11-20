@@ -3,14 +3,21 @@ import Foundation
 /// One chat: its messages, each as written and, unless it goes as written,
 /// as reworded, in the order they were sent, those not yet sent where they
 /// were added. Or, when its first turn is a task, a conversation with the
-/// agent (decision 12): its tasks in the order they ran. Or, when its first
-/// message went to NEAR, a NEAR Private AI conversation: each message as
-/// written. Or, when its first message went to the model on this Mac, a
-/// Local Llama conversation: each message as written and its answer.
+/// agent (decision 12): its tasks in the order they ran. A V conversation,
+/// chat or agent, is paid through zkAPI; one whose first message or task
+/// went the Token Inference way is paid from the Tempo wallet (decision 25).
+/// Or, when its first message went to NEAR, a NEAR Private AI conversation:
+/// each message as written. Or, when its first message went to the model on
+/// this Mac, a Local Llama conversation: each message as written and its
+/// answer.
 public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let created: Date
     public var turns: [Turn]
+    /// True once its first message or task went the Token Inference way,
+    /// paid from the Tempo wallet; absent otherwise, as in every V
+    /// conversation. Every later one goes that way too.
+    public var token: Bool?
     /// True once its first message went to NEAR (NEAR Private AI); absent
     /// otherwise. Every later message goes to NEAR too.
     public var near: Bool?
@@ -33,6 +40,12 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     /// A conversation with the agent: its first turn is a task.
     public var isAgent: Bool {
         turns.first?.steps != nil
+    }
+
+    /// A Token Inference conversation: its first message or task went that
+    /// way.
+    public var isToken: Bool {
+        token == true
     }
 
     /// A NEAR Private AI conversation: its first message went to NEAR.

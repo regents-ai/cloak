@@ -40,6 +40,10 @@ public enum Pay {
 
     public struct Failure: Error, CustomStringConvertible {
         public let description: String
+
+        public init(description: String) {
+            self.description = description
+        }
     }
 
     /// Sends `payload` as `ask` on `socket`, which it takes and closes, and
