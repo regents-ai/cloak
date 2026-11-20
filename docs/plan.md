@@ -2674,6 +2674,27 @@ candidates, so the split has to be re-declared before any holdout opens.
     read about twice what Cloak measured for today's model (69 against
     36.5 words a second on an M4 Max), so each model is measured on a
     real Mac before it is listed.
+- zkAPI steps 6 and 9, the design (Sean, 20 November 2026, of steps 4
+  to 9: "all of this work needs to be done asap"). Kept as
+  [zkapi-mac-side.md](zkapi-mac-side.md): the payer's states, the three
+  new frames (`C` for an allowlisted money call, `V` for the wallet and
+  one-block chain read, `H` for "held"), the one queue with the owner's
+  message first, the sheet, who signs, and the cutover's deletion list.
+  - The chief's choices on its section 7: the app switches at step 6,
+    in place, and no release is published until step 8 passes (hard
+    cutover; no second path beside it). A new key for every request
+    stays (Sean, 18 November); looked at again after step 7 measures a
+    real task. The third light goes at cutover; the pill's help says
+    each request is paid with a new key. Withdraw and Deposit each open
+    a review of amount, fee and destination, and its button signs. The
+    expiry warning starts 10 days ahead.
+  - Sean's to decide: where a withdrawal goes (23), and the money in
+    the Development wallet before its code is deleted (24).
+  - Checked against source by the chief: `claimExpired` has no pause
+    guard while `deposit` and `mutualClose` do, so a deposit that
+    expires during a pause can be taken while its owner cannot
+    withdraw; the daemon's default key window is 60 s and `cloak-pay`
+    sets 0.
 - Where this stopped, 20 November 2026 (Sean: "please reach a stopping
   point"): Sean's running copy is 0.5.4 built that afternoon, with the
   symbols, V, the Agent switch and the toolbar Cover, still named
