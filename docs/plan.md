@@ -3377,6 +3377,47 @@ candidates, so the split has to be re-declared before any holdout opens.
       still the Tempo path. At step 6 the Tempo path moves under the
       token mode and V takes the payer. Saved V chats stay V.
     - "Development" as a word, and its bar, still go at step 6.
+25. The token mode is named Token Inference (Sean, "25. a", 20
+    November 2026); see 24.
+26. The Agent switch is in both V and Token Inference. Decided 20
+    November 2026 (Sean, "26. a"). An agent task pays the way its chat
+    pays: from a V chat through zkAPI, from a Token Inference chat from
+    the Tempo wallet, where the provider can link its requests like the
+    rest of that mode. The door keeps its Tempo path for those tasks.
+    The chief's reading, told to Sean: other apps' requests through the
+    door pay through zkAPI.
+27. NEAR's line on regents.sh/cloak stays as Sean wrote it, and Cloak
+    gets trace sharing. Decided 20 November 2026 (Sean, "27. a - that
+    is part of what near does automatically, so we should have a
+    checkbox option in the near wallet menu that shares traces or not.
+    see https://gateway.near.ai/"). This reverses "Not taken: trace
+    collection or upload" of 19 November. What gateway.near.ai says,
+    read the same day: sharing is done by NEAR's Gateway Mac app, not
+    by NEAR's service on its own; it reads the coding tools' session
+    folders the person chooses, redacts on the Mac, shows each trace
+    before and after, and sends the redacted trace to the Trace Commons
+    (github.com/TraceCommons/trace-commons), where a trace accepted as
+    new and real work earns credit in the person's NEAR AI account. How
+    a Cloak chat could be shared the same way is being read by a helper
+    before anything is built; the checkbox starts off.
+28. Start opens Chat, and a first-time person sees a Modes page.
+    Decided 20 November 2026 (Sean: "clicking 'Start' should
+    automatically open Chat, and for a first time user, it can have a
+    special page describing the different mode options, with different
+    columns, the required tokens, and the features/benefits of that
+    mode. and that page can be opened again from the Details menu").
+    One page, one column per mode, replacing Welcome and the Modes
+    note; reopened from Details and from Chat's Modes button. The
+    AppleScript `start` does not open Chat. Built with step 6's Mac
+    half.
+
+Two more sections asked for by Sean on 20 November 2026, each with a
+helper in its own checkout and nothing merged yet: a Darkbloom serving
+window (his pasted review of Layr-Labs/d-inference v0.10.16; brief
+`/tmp/cloak-build/brief-darkbloom.md`), and Venice as a provider inside
+Token Inference, by the owner's own key or by USDC on Base (his pasted
+review; brief `/tmp/cloak-build/brief-venice.md`, first pass: the
+client, its checks and a joining plan, no interface yet).
 
 ## Gates
 
