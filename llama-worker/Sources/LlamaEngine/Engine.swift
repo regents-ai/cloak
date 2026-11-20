@@ -33,8 +33,9 @@ public final class Engine: @unchecked Sendable {
 
     private let engine: OpaquePointer
     /// The pinned reply grammar, reference/rewrite-reply.gbnf, built into
-    /// this worker (decision 9 in docs/plan.md).
-    private let grammar: String
+    /// this worker (decision 9 in docs/plan.md); nil for a model that never
+    /// rewords.
+    private let grammar: String?
     /// Cloak's details grammar, reference/details-reply.gbnf, built into this
     /// worker and part of no pin (decision 13).
     private let detailsGrammar = String(decoding: Data(PackageResources.details_reply_gbnf), as: UTF8.self)
@@ -43,25 +44,30 @@ public final class Engine: @unchecked Sendable {
     private let queue = DispatchQueue(label: "sh.regents.cloak.rewriter-llama")
 
     /// Loads the pin's one GGUF file with the pin's chat template file,
-    /// `chat_template.jinja`, and its frozen template settings. The pinned
+    /// `chat_template.jinja`, and its frozen template settings. A pinned
     /// grammar must be the one built into this worker, byte for byte.
     public init(pin: ModelPin, directory: URL) throws {
-        let built = Data(PackageResources.rewrite_reply_gbnf)
-        let digest = SHA256.hash(data: built).map { String(format: "%02x", $0) }.joined()
-        guard pin.grammar.file == "rewrite-reply.gbnf", pin.grammar.sha256 == digest else {
-            throw WorkerError("\(pin.name) pins a grammar this worker was not built with")
+        if let pinned = pin.grammar {
+            let built = Data(PackageResources.rewrite_reply_gbnf)
+            let digest = SHA256.hash(data: built).map { String(format: "%02x", $0) }.joined()
+            guard pinned.file == "rewrite-reply.gbnf", pinned.sha256 == digest else {
+                throw WorkerError("\(pin.name) pins a grammar this worker was not built with")
+            }
+            grammar = String(decoding: built, as: UTF8.self)
+        } else {
+            grammar = nil
         }
-        grammar = String(decoding: built, as: UTF8.self)
         let weights = pin.files.map(\.path).filter { $0.hasSuffix(".gguf") }
         guard weights.count == 1 else { throw WorkerError("\(pin.name) pins \(weights.count) GGUF files, not one") }
         let template = try String(contentsOf: directory.appending(path: "chat_template.jinja"), encoding: .utf8)
         let settings = pin.chatTemplateContext.sorted { $0.key < $1.key }
         let names = settings.map { strdup($0.key) }
-        defer { names.forEach { free($0) } }
+        let values = settings.map { strdup($0.value.json) }
+        defer { (names + values).forEach { free($0) } }
         var error = [CChar](repeating: 0, count: 1024)
         guard let loaded = cloak_engine_load(
             directory.appending(path: weights[0]).path, template, names.map { UnsafePointer($0) },
-            settings.map(\.value), settings.count, &error, error.count)
+            values.map { UnsafePointer($0) }, settings.count, &error, error.count)
         else {
             throw WorkerError(String(decoding: error.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self))
         }
@@ -87,8 +93,10 @@ public final class Engine: @unchecked Sendable {
     /// for exactly as many texts as the user message carries: the worker adds
     /// the grammar's `texts` rule, written out item by item, as llama.cpp
     /// repeats a rule at most 2000 times. For Cloak's `{"draft":"..."}`, the
-    /// details grammar as built in. Nil for any other user message.
+    /// details grammar as built in. Nil for any other user message, and for
+    /// any request at all to a model that never rewords.
     public func grammar(for request: ChatRequest) -> (ask: Ask, grammar: String)? {
+        guard let grammar else { return nil }
         let user = Data(request.user.utf8)
         if let message = try? JSONDecoder().decode([String: [String]].self, from: user),
             message.count == 1, let texts = message["texts"], !texts.isEmpty
@@ -109,7 +117,8 @@ public final class Engine: @unchecked Sendable {
 
     /// A Local Llama answer to `conversation`: at most `maxTokens` tokens,
     /// and `tooLong` when the conversation plus `maxTokens` exceeds
-    /// `maxContext` tokens.
+    /// `maxContext` tokens. The text is the answer alone; any thinking the
+    /// model wrote before it is dropped.
     public func answer(_ conversation: Conversation, maxTokens: Int32, maxContext: UInt32) async -> Rewrite {
         await run {
             let roles = conversation.messages.map { strdup($0.role) }

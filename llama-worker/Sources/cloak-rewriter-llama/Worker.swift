@@ -21,15 +21,9 @@ final class Worker: Sendable {
         case answering(Task<Void, Never>)
     }
 
-    /// A Local Llama request's cap, conversation plus answer, in tokens: the
-    /// largest context a rewrite has been measured to take (a 10,000-character
-    /// message, decision 6's limit: 2,849 prompt tokens plus the daemon's
-    /// 16,384, which llama.cpp rounds up to 19,456; evidence/stage3/
-    /// small-lead-gguf-grammar/feasibility-20261114T052945Z.json), so a chat
-    /// never holds more memory than a rewrite has been measured to hold.
-    static let chatContext: UInt32 = 19_456
-    /// The most tokens one Local Llama answer takes, leaving 15,360 tokens
-    /// of the cap for the conversation.
+    /// The most tokens one Local Llama answer takes, thinking and all; the
+    /// rest of the model's pinned context (`answers.context_tokens`) is
+    /// the conversation's.
     static let answerTokens: Int32 = 4_096
 
     let pin: ModelPin
@@ -92,7 +86,7 @@ final class Worker: Sendable {
         guard let request = try? JSONDecoder().decode(ChatRequest.self, from: body), request.model == pin.name,
             let (ask, grammar) = engine.grammar(for: request)
         else {
-            log.info("rejected a request that is neither the daemon's rewrite request nor Cloak's details request")
+            log.info("rejected a request that is neither the daemon's rewrite request nor Cloak's details request, or went to a model that never rewords")
             return (400, Reply.error("invalid request"))
         }
         let name = switch ask {
@@ -128,13 +122,14 @@ final class Worker: Sendable {
     /// llama.cpp's default sampling. Whatever the messages say, they are only
     /// ever a conversation: an `L` frame never takes the rewrite or details
     /// path. 413 when the conversation leaves no room for a whole answer
-    /// inside the cap; nothing is trimmed.
+    /// inside the model's pinned context; nothing is trimmed. A model pinned
+    /// with no `answers` answers nothing.
     private func respond(toConversation body: Data) async -> (UInt16, Data) {
-        guard let conversation = try? JSONDecoder().decode(Conversation.self, from: body) else {
-            log.info("rejected a conversation that is not a Local Llama chat")
+        guard let answers = pin.answers, let conversation = try? JSONDecoder().decode(Conversation.self, from: body) else {
+            log.info("rejected a conversation that is not a Local Llama chat, or went to a model that does not answer them")
             return (400, Reply.error("invalid request"))
         }
-        let answer = await engine.answer(conversation, maxTokens: Self.answerTokens, maxContext: Self.chatContext)
+        let answer = await engine.answer(conversation, maxTokens: Self.answerTokens, maxContext: answers.contextTokens)
         let finishReason: String
         switch answer.finish {
         case .stop: finishReason = "stop"

@@ -2,12 +2,15 @@
 cases in one boot (cloak-agent-check prints one result per case), or
 serving, as the app's guest does, with a stand-in for the app's door. The
 host's worker is the stand-in (fake_worker.py) and its tor the stand-in
-(fake_tor.py), but where a check names tor itself.
+(fake_tor.py), but where a check names tor itself. Every boot has a payment
+disk (guest/image/pay-disk), a new one in the boot's folder unless a check
+gives its own.
 """
 
 import json
 import os
 import secrets
+import shlex
 import shutil
 import socket
 import subprocess
@@ -16,6 +19,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from cover_list import NO_COVER, initrd
@@ -36,6 +40,65 @@ UNPLANNED = (b"HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nCo
 
 def sandbox(name: str, script: str) -> dict:
     return {"name": name, "sandbox": ["/bin/sh", "-c", script]}
+
+
+def pay(name: str, script: str) -> dict:
+    """A case run as the payer's user, outside the sandbox, in its home: the
+    payment disk."""
+    return {"name": name, "pay": ["/bin/sh", "-c", script]}
+
+
+@dataclass
+class Disk:
+    """A boot's payment disk: an image file, and the 32 bytes it is
+    encrypted under in a key file; new while the image is blank."""
+    image: Path
+    key: Path
+    new: bool
+
+    @classmethod
+    def blank(cls, folder: Path, name: str = "pay-disk") -> "Disk":
+        """A blank 64 MiB image, sparse, and a random key, in place of any
+        made before under the name."""
+        image, key = folder / f"{name}.img", folder / f"{name}.key"
+        with image.open("wb") as file:
+            file.truncate(64 << 20)
+        key.write_bytes(secrets.token_bytes(32))
+        return cls(image, key, True)
+
+    def args(self) -> list:
+        return ["--disk", self.image, "--disk-key", self.key, *(["--new-disk"] if self.new else [])]
+
+
+# The payer's home, the payment disk's mount point, and the files the payer's
+# programs keep there (docs/plan.md, "The encrypted disk"): the daemon's
+# payment address, which holds its signing key, and the companion's note,
+# which holds its note secret, and write-ahead journal.
+PAY_HOME = "/var/lib/cloak-pay"
+NOTE_DIR = ".config/zkapi-clientd/zkapi/mainnet/zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930"
+ADDRESS, NOTE, JOURNAL = (".config/zkapi-clientd/funding/mainnet/address-funding.json",
+                          f"{NOTE_DIR}/note_state.json", f"{NOTE_DIR}/pending_journal.json")
+
+
+def pay_files(marker: str) -> dict[str, str]:
+    """Stand-ins for the payment files, each holding the marker, the
+    journal in upstream's shape (zkapi-client's journal.rs at the pinned
+    protocol commit)."""
+    return {
+        ADDRESS: json.dumps({"version": 1, "address": "0x0", "private_key": f"{marker}-signing-key", "phase": "ready"}),
+        NOTE: json.dumps({"note_id": 7, "secret_s": f"{marker}-note-secret", "current_balance": 1000}),
+        JOURNAL: json.dumps({"exists": True, "client_request_id": f"{marker}-request", "nullifier": "0x2",
+                             "payload_hash": "0x3", "user_rerandomization": "0x1", "created_at_ms": 1}),
+    }
+
+
+def write_pay_files(name: str, files: dict[str, str]) -> dict:
+    """A pay case that writes each file to a temporary name and renames it
+    into place, as upstream writes them, with no fsync."""
+    folders = sorted({str(Path(path).parent) for path in files})
+    steps = [f"mkdir -p -m 0700 {' '.join(folders)}"]
+    steps += [f"printf %s {shlex.quote(data)} > {path}.tmp && mv {path}.tmp {path}" for path, data in files.items()]
+    return pay(name, " && ".join(steps))
 
 
 def launcher(folder: Path, name: str, body: str) -> Path:
@@ -61,26 +124,32 @@ def routes(tmp_path: Path) -> list[dict]:
     return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
-def host(tmp_path: Path, cases: list[dict], tor_launcher: Path) -> dict:
+def host(tmp_path: Path, cases: list[dict], tor_launcher: Path, disk: Disk | None = None) -> dict:
     """The host's command line and environment, to run the cases in one
-    guest boot, with tor's lasting folder in tmp_path. The guest boots with
-    cover off, an empty cover list laid over the image's (cover_list.py), so
-    the stand-in tor sees only what the cases cause."""
+    guest boot, with tor's lasting folder in tmp_path, and the disk given or
+    a new one there. The guest boots with cover off, an empty cover list laid
+    over the image's (cover_list.py), so the stand-in tor sees only what the
+    cases cause."""
     cases_file = tmp_path / "cases.jsonl"
     cases_file.write_text("".join(json.dumps(c) + "\n" for c in cases))
+    disk = disk or Disk.blank(tmp_path)
     return {"args": [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", initrd(tmp_path, NO_COVER),
                      "--cases", cases_file, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
-                     "--tor", tor_launcher, "--tor-data", tmp_path / "tor-data"],
+                     "--tor", tor_launcher, "--tor-data", tmp_path / "tor-data", *disk.args()],
             "env": os.environ | {"FAKE_WORKER_LOG": str(tmp_path)}}
 
 
-def boot(tmp_path: Path, cases: list[dict], tor_launcher: Path,
-         on_log: Callable[[str], None] = lambda line: None) -> tuple[dict[str, dict], str]:
-    """Runs the cases in one guest boot; returns each case's result and the
-    host's log, each line of which also goes to on_log as it comes."""
+def run(tmp_path: Path, cases: list[dict], tor_launcher: Path, on_log: Callable[[str], None] = lambda line: None,
+        disk: Disk | None = None, until: Callable[[str], bool] | None = None) -> tuple[str, str, int]:
+    """Runs one guest boot; returns the guest's console, the host's log,
+    each line of which also goes to on_log as it comes, and the host's exit
+    status. With `until`, the host is killed (SIGKILL, which ends its guest
+    with it, stopping nothing cleanly) as soon as `until` holds for the
+    console."""
     console = tmp_path / "console"
     with console.open("w") as stdout:
-        running = subprocess.Popen(**host(tmp_path, cases, tor_launcher), stdout=stdout, stderr=subprocess.PIPE, text=True)
+        running = subprocess.Popen(**host(tmp_path, cases, tor_launcher, disk), stdout=stdout, stderr=subprocess.PIPE,
+                                   text=True)
     lines = []
 
     def read() -> None:
@@ -91,12 +160,23 @@ def boot(tmp_path: Path, cases: list[dict], tor_launcher: Path,
     reader = threading.Thread(target=read)
     reader.start()
     try:
-        running.wait(timeout=900)
+        if until is None:
+            running.wait(timeout=900)
+        else:
+            wait_for(lambda: until(console.read_text()) or running.poll() is not None, 900, "the guest never got there")
     finally:
         running.kill()
+        running.wait()
         reader.join()
-    out, err = console.read_text(), "".join(lines)
-    assert running.returncode == 0, err
+    return console.read_text(), "".join(lines), running.returncode
+
+
+def boot(tmp_path: Path, cases: list[dict], tor_launcher: Path, on_log: Callable[[str], None] = lambda line: None,
+         disk: Disk | None = None) -> tuple[dict[str, dict], str]:
+    """Runs the cases in one guest boot; returns each case's result and the
+    host's log, each line of which also goes to on_log as it comes."""
+    out, err, returncode = run(tmp_path, cases, tor_launcher, on_log, disk)
+    assert returncode == 0, err
     assert "cloak-guest: agent check exited 0" in out, out + err
     results = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
     assert [r["name"] for r in results] == [c["name"] for c in cases]
@@ -193,7 +273,7 @@ class Serving:
             self.host = subprocess.Popen(
                 [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
                  "--cases", cases, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
-                 "--tor", fake_tor(tmp_path, "ready"), "--tor-data", tmp_path / "tor-data",
+                 "--tor", fake_tor(tmp_path, "ready"), "--tor-data", tmp_path / "tor-data", *Disk.blank(tmp_path).args(),
                  "--serve", "--door", self.sockets / "door", "--runner", self.runner],
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                 env=os.environ | {"FAKE_WORKER_LOG": str(tmp_path)})

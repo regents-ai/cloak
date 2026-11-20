@@ -1,6 +1,6 @@
 // The llama worker's use of llama.cpp. No inference code of its own: the
-// model, the Metal kernels, the chat template and the samplers are all
-// llama.cpp's. Every setting that could change a result or the memory a
+// model, the Metal kernels, the chat template, the samplers and the parser
+// that takes an answer apart from its thinking are all llama.cpp's. Every setting that could change a result or the memory a
 // request takes is written out below, and nothing falls back to another.
 
 #include "cloak_llama.h"
@@ -139,19 +139,34 @@ common_chat_msg message(const char * role, const char * content) {
     return msg;
 }
 
-// The model's chat template over the messages, rendered by common/chat and
-// tokenized as llama-server tokenizes a chat prompt: the vocabulary's own
-// start token added, and special tokens in the text read as special tokens.
-std::vector<llama_token> prompt_tokens(const cloak_engine & engine, std::vector<common_chat_msg> messages) {
+// What the model's chat template is given: the messages, a turn for the
+// model to answer, the pinned settings, and how a reply's thinking is told
+// apart from its answer when it is parsed.
+common_chat_templates_inputs template_inputs(const cloak_engine & engine, std::vector<common_chat_msg> messages,
+                                             common_reasoning_format reasoning) {
     common_chat_templates_inputs inputs;
     inputs.messages              = std::move(messages);
     inputs.use_jinja             = true;
     inputs.add_generation_prompt = true;
-    inputs.reasoning_format      = COMMON_REASONING_FORMAT_NONE;
+    inputs.reasoning_format      = reasoning;
     inputs.chat_template_kwargs  = engine.template_settings;
     inputs.enable_thinking       = engine.enable_thinking;
-    const common_chat_params params = common_chat_templates_apply(engine.templates.get(), inputs);
-    return common_tokenize(engine.vocab, params.prompt.str(), /* add_special */ true, /* parse_special */ true);
+    return inputs;
+}
+
+// A rendered prompt tokenized as llama-server tokenizes a chat prompt: the
+// vocabulary's own start token added, and special tokens in the text read as
+// special tokens.
+std::vector<llama_token> tokenize(const cloak_engine & engine, const std::string & prompt) {
+    return common_tokenize(engine.vocab, prompt, /* add_special */ true, /* parse_special */ true);
+}
+
+// The model's chat template over the messages, rendered by common/chat. A
+// rewrite's reply is never parsed: the reply grammar decides its shape.
+std::vector<llama_token> prompt_tokens(const cloak_engine & engine, std::vector<common_chat_msg> messages) {
+    const common_chat_params params = common_chat_templates_apply(
+        engine.templates.get(), template_inputs(engine, std::move(messages), COMMON_REASONING_FORMAT_NONE));
+    return tokenize(engine, params.prompt.str());
 }
 
 // Greedy's own choice when the grammar allows it; otherwise greedy over the
@@ -229,9 +244,7 @@ bool read_prompt(const cloak_engine & engine, reader & model, const std::vector<
     return true;
 }
 
-// The generated tokens as the result's text.
-void set_text(cloak_result & result, const cloak_engine & engine, const std::vector<llama_token> & output, bool special) {
-    const std::string text = common_detokenize(engine.vocab, output, special);
+void set_text(cloak_result & result, const std::string & text) {
     result.text        = static_cast<char *>(malloc(std::max<size_t>(text.size(), 1)));
     result.text_length = text.size();
     std::memcpy(result.text, text.data(), text.size());
@@ -248,7 +261,7 @@ void copy_error(char * error, size_t size, const std::string & text) {
 } // namespace
 
 extern "C" cloak_engine * cloak_engine_load(const char * model_path, const char * chat_template,
-                                            const char * const * setting_names, const bool * setting_values,
+                                            const char * const * setting_names, const char * const * setting_values,
                                             size_t setting_count, char * error, size_t error_size) {
     clear_environment_settings();
     // common/'s logger is never used; pausing it drops whatever is sent to it.
@@ -272,12 +285,18 @@ extern "C" cloak_engine * cloak_engine_load(const char * model_path, const char 
     }
     engine->vocab = llama_model_get_vocab(engine->model.get());
     // The pinned settings go in as llama-server takes chat_template_kwargs,
-    // each value as JSON; enable_thinking also sets the template machinery's
-    // own thinking switch, as llama-server does.
+    // each value as JSON text; enable_thinking, true or false, also sets the
+    // template machinery's own thinking switch, as llama-server does.
     for (size_t i = 0; i < setting_count; ++i) {
-        engine->template_settings[setting_names[i]] = setting_values[i] ? "true" : "false";
+        const std::string value = setting_values[i];
+        engine->template_settings[setting_names[i]] = value;
         if (std::strcmp(setting_names[i], "enable_thinking") == 0) {
-            engine->enable_thinking = setting_values[i];
+            if (value != "true" && value != "false") {
+                loading = false;
+                copy_error(error, error_size, "enable_thinking is pinned as " + value + ", not true or false");
+                return nullptr;
+            }
+            engine->enable_thinking = value == "true";
         }
     }
     try {
@@ -375,7 +394,7 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
 
     // The tokens as text, special tokens written out, so the reply holds
     // exactly what the model generated.
-    set_text(result, *engine, output, /* special */ true);
+    set_text(result, common_detokenize(engine->vocab, output, /* special */ true));
     return result;
 }
 
@@ -387,9 +406,17 @@ extern "C" cloak_result cloak_engine_answer(cloak_engine * engine, const char * 
     for (size_t i = 0; i < count; ++i) {
         messages.push_back(message(roles[i], contents[i]));
     }
+    // The conversation through the chat template, with llama.cpp's own
+    // parser for the template's reply format: the session llama-server
+    // answers a chat with, its thinking told apart from its answer as
+    // llama-server's default does (deepseek). The prompt is the one a rewrite
+    // would render for the same messages.
+    common_chat_session      chat;
     std::vector<llama_token> prompt;
     try {
-        prompt = prompt_tokens(*engine, std::move(messages));
+        chat   = common_chat_session(engine->templates.get(), engine->vocab,
+                                     template_inputs(*engine, std::move(messages), COMMON_REASONING_FORMAT_DEEPSEEK));
+        prompt = tokenize(*engine, chat.prompt().str());
     } catch (const std::exception &) {
         return failed(result, "template", 0);
     }
@@ -411,8 +438,12 @@ extern "C" cloak_result cloak_engine_answer(cloak_engine * engine, const char * 
     result.context_tokens = llama_n_ctx(context.get());
     // llama.cpp's sampler chain from its default parameters: top-k 40, top-p
     // 0.95, min-p 0.05 and temperature 0.8, then a draw with a fresh random
-    // seed; the samplers off by default do nothing.
+    // seed; the samplers off by default do nothing. The session adds what the
+    // template's format asks of sampling, as llama-server applies it: with no
+    // tools and no reply schema, no grammar, only the tokens the format
+    // marks as its own.
     common_params_sampling sampling;
+    chat.apply_sampling(sampling);
     common_sampler_ptr     sampler;
     try {
         sampler.reset(common_sampler_init(engine->model.get(), sampling));
@@ -428,7 +459,11 @@ extern "C" cloak_result cloak_engine_answer(cloak_engine * engine, const char * 
     result.prompt_seconds = seconds_since(started);
 
     started = std::chrono::steady_clock::now();
-    std::vector<llama_token> output;
+    // The reply as llama-server hands it to the parser: each token's text,
+    // the format's own tokens written out and any other special token left
+    // out.
+    common_chat_input reply;
+    int32_t           generated = 0;
     while (true) {
         if (engine->cancelled) {
             result.finish = CLOAK_FINISH_CANCELLED;
@@ -440,8 +475,8 @@ extern "C" cloak_result cloak_engine_answer(cloak_engine * engine, const char * 
             result.finish = CLOAK_FINISH_STOP;
             break;
         }
-        output.push_back(token);
-        if (output.size() == static_cast<size_t>(max_tokens)) {
+        reply.append(common_token_to_piece(engine->vocab, token, sampling.preserved_tokens.count(token) > 0), token);
+        if (++generated == max_tokens) {
             result.finish = CLOAK_FINISH_LENGTH;
             break;
         }
@@ -450,12 +485,23 @@ extern "C" cloak_result cloak_engine_answer(cloak_engine * engine, const char * 
         }
     }
     result.generate_seconds      = seconds_since(started);
-    result.generated_tokens      = static_cast<int32_t>(output.size());
+    result.generated_tokens      = generated;
     result.metal_allocated_bytes = cloak_metal_allocated_bytes();
 
-    // The answer as a person reads it: special tokens left out, as
-    // llama-server leaves them out by default.
-    set_text(result, *engine, output, /* special */ false);
+    // The whole reply parsed once, as llama-server's last parse is: the
+    // answer alone, any thinking dropped. A reply cut off at max_tokens
+    // parses as far as it goes. One with no answer in it, such as one cut
+    // off while thinking, is a failure, never an empty answer.
+    std::string answer;
+    try {
+        answer = chat.finish(reply).content;
+    } catch (const std::exception &) {
+        return failed(result, "parse", 0);
+    }
+    if (answer.empty()) {
+        return failed(result, "answer", 0);
+    }
+    set_text(result, answer);
     return result;
 }
 

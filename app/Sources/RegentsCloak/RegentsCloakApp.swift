@@ -6,7 +6,7 @@ import CloakSupervisor
 import os
 import SwiftUI
 
-/// The menu-bar app: one supervisor, the model's download, its menu, its
+/// The menu-bar app: one supervisor, each model's download, its menu, its
 /// Chat, Agents, Details and Settings windows, the quick prompt, a welcome
 /// on the first launch, NEAR mode's helper, the door other apps and the
 /// agent in the guest send through while Cloak is Running, its AppleScript
@@ -37,7 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) static var current: AppDelegate!
 
     let supervisor = Launch.supervisor
-    let download = ModelDownload(manifest: Launch.manifest, layout: Launch.layout)
+    /// One for each model that answers Local Llama chats, smallest first.
+    let downloads = Launch.manifest.answerModels.map { ModelDownload(model: $0, manifest: Launch.manifest, layout: Launch.layout) }
+    /// The download of the model that rewords, which every Start needs: the
+    /// one the menu and Details show.
+    var download: ModelDownload { downloads.first(where: \.rewords)! }
     /// NEAR mode's helper, pinned in the manifest; it starts at the first
     /// check or message.
     let near: Near = {
@@ -50,17 +54,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Made at its window's first show or the quick prompt's first Return.
     private lazy var conversations = Chat(
         supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
-        door: door, nearMode: nearMode, download: download)
+        door: door, nearMode: nearMode, downloads: downloads)
     private lazy var chat = AppWindow { [unowned self] in
-        ChatView.window(conversations, showDetails: { self.showDetails() }, showNearSettings: { self.showSettings(on: .near) })
+        ChatView.window(
+            conversations, showDetails: { self.showDetails() }, showNearSettings: { self.showSettings(on: .near) },
+            showLlamaSettings: { self.showSettings(on: .llama) })
     }
     private lazy var details = AppWindow { [supervisor, download] in DetailsView.window(supervisor, download) }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
     private let settingsSelection = SettingsView.Selection()
-    private lazy var settings = AppWindow { [supervisor, prompt, door, updates, nearMode, settingsSelection] in
+    private lazy var settings = AppWindow { [supervisor, prompt, door, updates, nearMode, downloads, settingsSelection] in
         SettingsView.window(
             .standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode,
-            selection: settingsSelection)
+            downloads: downloads, selection: settingsSelection)
     }
     private lazy var welcome = AppWindow { WelcomeView.window() }
     private lazy var prompt = QuickPrompt(settings: .standard) { [unowned self] text in
@@ -97,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // with no "quit" ended some other way (`app/log.sh`).
         logger.notice("opened \(Launch.manifest.release, privacy: .public) (\(Launch.manifest.build, privacy: .public))")
         menu = StatusMenu(
-            supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest), showChat: showChat,
+            supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest.rewordingModel), showChat: showChat,
             showAgents: showAgents, showDetails: showDetails, showSettings: showSettings,
             checkForUpdates: updates.check)
         // Made now, so the shortcut chosen works from launch.

@@ -34,7 +34,7 @@ public struct StatusDocument: Codable, Sendable, Equatable {
         self.detail = detail
     }
 
-    /// The model is exactly one, named in the app's manifest.
+    /// The one model that rewords, named in the app's manifest.
     public struct Model: Codable, Sendable, Equatable {
         public var name: String
         /// The model in plain words, such as "Qwen 3.5 9B".

@@ -75,10 +75,10 @@
       "name": "llama.cpp",
       "kind": "git",
       "url": "https://github.com/ggml-org/llama.cpp.git",
-      "ref": "b12556",
-      "commit": "50518b64c6f2191a116d2760042f106c4b3387d7",
+      "ref": "refs/pull/32694/head",
+      "commit": "d7cb78c913ca76062302e8ffb5996ba3a946e41b",
       "full_history": false,
-      "role": "The rewriter engine (decision 8), built from this source by llama-worker/build-llama.sh with Metal for macOS arm64. Build b12556, published 19 Nov 2026 23:12Z, 197 commits after release v1.0.0 (b1b770d9, 13 Nov 2026), which was pinned until 20 Nov 2026; the newest named release is still v1.0.0, and llama.cpp tags each merge to master as a numbered build. Moved at Sean's word, to update to the latest, for the fixes since in the code Cloak builds: Metal, the grammar sampler, the chat templates and the context's cells."
+      "role": "The rewriter engine (decision 8) and Local Llama's answers, built from this source by llama-worker/build-llama.sh with Metal for macOS arm64. This is the head of llama.cpp's pull request 32694, \"Inkling 2 Mini\" (its new `inkling2_loop` architecture), nine commits on top of master as of 20 Nov 2026 12:35Z, 22 commits after build b12556, which was pinned until 20 Nov 2026. Moved at Sean's word (20 Nov 2026: \"I want to urgently add in support for local mode to use the inkling mini model\"). When pinned the change was not yet merged: approved by a llama.cpp maintainer, all 28 of its checks passing. It moves to the first numbered build that holds the merge."
     },
     {
       "name": "mpp",

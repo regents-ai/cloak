@@ -34,7 +34,7 @@ struct DownloadSection: View {
                     .foregroundStyle(.secondary)
                 }
             }
-            if let note = note(host: host) {
+            if let note = Self.note(download) {
                 Label(note, systemImage: "exclamationmark.circle.fill")
                     .symbolRenderingMode(.multicolor)
                     .foregroundStyle(.secondary)
@@ -75,9 +75,11 @@ struct DownloadSection: View {
         }
     }
 
-    /// Why it stopped, said without claiming a cause it cannot know.
-    private func note(host: String) -> String? {
-        switch download.state {
+    /// Why `download` stopped, said without claiming a cause it cannot know:
+    /// here and under its row in Settings' Local Llama.
+    static func note(_ download: ModelDownload) -> String? {
+        let host = download.hosts.joined(separator: " and ")
+        return switch download.state {
         case .stopped(.mismatch):
             "A downloaded file didn't match the one Cloak expects, so it was deleted."
         case .stopped(.failed(let problem)):
@@ -102,7 +104,7 @@ struct DownloadSection: View {
         }
     }
 
-    private static func text(_ block: ModelDownload.Block) -> String {
+    static func text(_ block: ModelDownload.Block) -> String {
         switch block {
         case .mac: "This Mac can't run the model."
         case .disk(let needed, let free): "Needs \(text(needed)) of space; \(text(free)) is free."

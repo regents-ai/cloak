@@ -5,12 +5,15 @@ import Observation
 import os
 import Synchronization
 
-/// The model's download, in the app (release plan item 7 in docs/release.md;
+/// One model's download, in the app (release plan item 7 in docs/release.md;
 /// the transfer's shape is borrowed from the Llama app, decision 14 in
-/// docs/plan.md). It fetches exactly the files the manifest pins, at their
-/// pinned sizes and sha256, each from the one URL the manifest names for it,
-/// into the model's folder, and nothing else. Nothing downloads until the
-/// person asks (`start`), and the download never starts Cloak.
+/// docs/plan.md): one for each model that answers Local Llama chats, the one
+/// that rewords among them (decision 21), each on its own. It fetches exactly
+/// the files the manifest pins for its model, at their pinned sizes and
+/// sha256, each from the one URL the manifest names for it, into the model's
+/// folder, and nothing else. Nothing downloads until the person asks
+/// (`start`), and the download never starts Cloak. Any model but the one that
+/// rewords can be removed (`remove`).
 ///
 /// Each file streams into `<file>.part` beside its place with a running
 /// sha256, and only a file whose size and sha256 match its pin is renamed
@@ -34,6 +37,7 @@ import Synchronization
 ///     Downloading --other failure, no tries left--> Stopped (failed)
 ///     Downloading, Retrying, Waiting for network --pause--> Stopped (paused)
 ///     Stopped, Downloading, Retrying, Waiting for network --cancel--> Stopped, partials removed
+///     any state --remove--> Stopped, the model's folder removed   (not the model that rewords)
 ///
 /// The network is lost when the system says no path is up, or when a try
 /// fails as a lost connection does while no path is up; neither counts as a
@@ -80,8 +84,8 @@ public final class ModelDownload {
 
     /// Why a download now is certain to fail.
     public enum Block: Sendable, Equatable {
-        /// This Mac fails the Mac check (`Checks.hardwareCheck`), so it could
-        /// not run the model.
+        /// This Mac fails the model's Mac check (`Manifest.answerCheck`), so
+        /// it could not run the model.
         case mac
         /// The models folder's volume has `free` bytes; the download needs
         /// `needed`.
@@ -102,6 +106,11 @@ public final class ModelDownload {
     /// The free bytes on the models folder's volume, when they can be read.
     private var free: Int?
 
+    public let model: Manifest.Model
+    /// Whether this is the model that rewords, which is never removed.
+    public let rewords: Bool
+    /// Whether this Mac can run the model (`Manifest.answerCheck`).
+    public let fits: Bool
     public let total: Int
     /// The hosts the files come from, as the manifest names them.
     public let hosts: [String]
@@ -112,7 +121,6 @@ public final class ModelDownload {
 
     @ObservationIgnored private let files: [Manifest.Model.File]
     @ObservationIgnored private let folder: URL
-    @ObservationIgnored private let macPasses: Bool
     /// The wait before each try after a failed one; a failure with none
     /// left stops the download.
     private static let waits: [Duration] = [.seconds(2), .seconds(4), .seconds(8)]
@@ -124,11 +132,13 @@ public final class ModelDownload {
     @ObservationIgnored private var online = true
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "download")
 
-    public init(manifest: Manifest, layout: Layout) {
-        files = manifest.model.files
-        folder = layout.model(manifest)
-        macPasses = Checks.hardwareCheck(.current, model: manifest.modelMemory, cloak: manifest.cloakMemory).1 == nil
-        total = files.reduce(0) { $0 + $1.size }
+    public init(model: Manifest.Model, manifest: Manifest, layout: Layout) {
+        self.model = model
+        rewords = model.name == manifest.model
+        fits = manifest.answerCheck(model, hardware: .current).1 == nil
+        files = model.files
+        folder = layout.model(model)
+        total = model.size
         hosts = files.compactMap { $0.url.host() }.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         session = Self.session()
         state = .stopped(nil)
@@ -155,7 +165,7 @@ public final class ModelDownload {
     }
 
     public var blocked: Block? {
-        guard macPasses else { return .mac }
+        guard fits else { return .mac }
         let remaining = files.reduce(0) { $0 + (inPlace.contains($1.path) ? 0 : $1.size - min(partial[$1.path] ?? 0, $1.size)) }
         if let free, free < remaining + Self.diskSpare { return .disk(needed: remaining + Self.diskSpare, free: free) }
         return nil
@@ -198,6 +208,18 @@ public final class ModelDownload {
             for file in download.files where !download.inPlace.contains(file.path) {
                 try? FileManager.default.removeItem(at: Self.partial(for: file, in: download.folder))
             }
+            download.read()
+        }
+    }
+
+    /// Stops what is under way and removes the model's folder: its files and
+    /// partials. Never for the model that rewords, which every Start needs.
+    public func remove() {
+        precondition(!rewords, "the model that rewords is never removed")
+        work?.cancel()
+        state = .stopped(nil)
+        after { download in
+            try? FileManager.default.removeItem(at: download.folder)
             download.read()
         }
     }

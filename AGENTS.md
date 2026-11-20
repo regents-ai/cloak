@@ -30,8 +30,10 @@ The contract is [docs/spec-v0.4.md](docs/spec-v0.4.md). Read sections 1, 4, 7,
   through one authenticated adapter that carries the daemon's chat request and
   reply. The app asks it one thing besides: a draft's details, Cloak's own
   request under Cloak's own grammar (decision 13), never in place of a
-  rewrite. Exactly one model, loader and configuration ships: no model picker,
-  no switching by hardware, no second rewrite stage.
+  rewrite. Exactly one model, loader and configuration rewords: no model
+  picker, no switching by hardware, no second rewrite stage. Local Llama
+  chats alone may be answered by another pinned model the person chooses
+  (decision 21), which never rewords and never stands in for the chosen one.
 - The daemon's instruction bytes, request fields, reply checks and limits stay
   exactly as captured in `reference/rewriter-contract.md`, but for the input
   limit and call deadline Sean set in decision 6 of `docs/plan.md`, which

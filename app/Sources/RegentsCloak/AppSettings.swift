@@ -31,11 +31,13 @@ final class AppSettings {
         case savedChats
         case nearTor
         case proofFreshness
+        case answerModel
     }
 
     /// Each setting until it is chosen, and again after Restore Defaults.
     /// The quick prompt's shortcut has none; Never reword is off; Cover,
-    /// Review and Saved chats are on; Tor for NEAR is off.
+    /// Review and Saved chats are on; Tor for NEAR is off; Local Llama
+    /// answers with the model that rewords.
     nonisolated static let defaultFreeMemory = FreeMemory.fiveMinutes
     nonisolated static let defaultProofFreshness = ProofFreshness.tenMinutes
     nonisolated static let defaultDoorPort: UInt16 = 8742
@@ -169,6 +171,19 @@ final class AppSettings {
         }
     }
 
+    /// The name of the model Local Llama chats are answered with (decision
+    /// 21 in docs/plan.md); nil, the model that rewords. A name the manifest
+    /// no longer lists answers nothing until another is chosen.
+    var answerModel: String? {
+        get {
+            access(keyPath: \.answerModel)
+            return defaults.string(forKey: Key.answerModel.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.answerModel) { defaults.set(newValue, forKey: Key.answerModel.rawValue) }
+        }
+    }
+
     /// Why a port can't be the door's.
     enum PortRefusal: Error, Equatable {
         /// Not a whole number in `doorPorts`.
@@ -227,6 +242,7 @@ final class AppSettings {
             case .savedChats: withMutation(keyPath: \.savedChats, remove)
             case .nearTor: withMutation(keyPath: \.nearTor, remove)
             case .proofFreshness: withMutation(keyPath: \.proofFreshness, remove)
+            case .answerModel: withMutation(keyPath: \.answerModel, remove)
             }
         }
     }

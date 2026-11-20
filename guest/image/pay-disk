@@ -1,0 +1,62 @@
+#!/bin/busybox sh
+# The payment disk, run by the boot as root when the host attaches one: the
+# guest's only disk, an image file on the Mac, encrypted with LUKS2
+# (cryptsetup, dm-crypt) under the 32 bytes the host gives in a boot file,
+# holding one ext4 filesystem mounted for the payer's user (pay, 1009) alone.
+#
+#   pay-disk open   <device> <key file> <mount point>
+#   pay-disk create <device> <key file> <mount point>
+#
+# open opens a disk made before. create makes a new one, and the boot runs it
+# only when the host says the image is new: it formats only a device whose
+# first 16 MiB are zero, where LUKS2 keeps both copies of its header and its
+# keyslots, so a disk that ever held a header is refused, and a disk that
+# fails to open is never formatted. Either way a failure prints one line
+# saying why and exits 1. A failed open writes nothing: cryptsetup reads the
+# header and keyslots and stops, and nothing is mounted. An open that finds
+# one of the header's two copies damaged rewrites it from the other, which
+# is cryptsetup's own repair, and opens.
+#
+# The filesystem is mounted with sync: every write, rename and removal is on
+# the device before the call returns, so a payment file written and renamed
+# into place, as the payer writes its journal before a request leaves, is
+# kept by a guest killed the next moment, with no fsync of its own. ext4's
+# journal brings the filesystem back to a consistent state at the next mount
+# after any cut. dm-crypt passes the filesystem's flushes down to the disk,
+# where the host's attachment syncs them to the Mac's storage
+# (host/Sources/CloakHost/Guest.swift).
+set -u
+
+stop() {
+	echo "cloak-guest: payment disk did not open: $*"
+	exit 1
+}
+
+[ $# = 4 ] || stop "usage: pay-disk open|create <device> <key file> <mount point>"
+verb=$1 device=$2 key=$3 mount=$4
+name=cloak-pay
+# No udev runs in the guest: libdevmapper makes /dev/mapper/cloak-pay itself.
+export DM_DISABLE_UDEV=1
+
+case $verb in
+open) ;;
+create)
+	cmp -s -n 16777216 "$device" /dev/zero || stop "the new image is not blank"
+	# The key is 32 random bytes, not a passphrase, so it needs no
+	# stretching: PBKDF2 at cryptsetup's least cost, which keeps Argon2's
+	# memory out of the guest's 1 GiB.
+	out=$(/usr/sbin/cryptsetup luksFormat --type luks2 --batch-mode --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
+		--key-file "$key" "$device" 2>&1) || stop "$out"
+	;;
+*) stop "usage: pay-disk open|create <device> <key file> <mount point>" ;;
+esac
+
+out=$(/usr/sbin/cryptsetup open --type luks2 --key-file "$key" "$device" $name 2>&1) || stop "$out"
+if [ "$verb" = create ]; then
+	out=$(/usr/sbin/mke2fs -q -t ext4 /dev/mapper/$name 2>&1) || { /usr/sbin/cryptsetup close $name; stop "$out"; }
+fi
+out=$(mount -t ext4 -o sync,nodev,nosuid,noexec,errors=remount-ro /dev/mapper/$name "$mount" 2>&1) ||
+	{ /usr/sbin/cryptsetup close $name; stop "$out"; }
+if [ "$verb" = create ]; then
+	chown 1009:1009 "$mount" && chmod 0700 "$mount" || stop "cannot give the new disk to the payer"
+fi

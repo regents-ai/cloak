@@ -969,6 +969,24 @@ only, as before; nothing in the running product changes.
   restart is shown only with the stand-in (step 5). The hold's own
   settle failure reaches the host as a plain 502.
 
+**Step 4, the encrypted disk (20 November 2026).** Stand-ins only; the
+app attaches no disk until step 6. What it is, its checks and its known
+limits are in CHANGELOG.md.
+
+- **For step 5.** The payer's home is the disk (`/var/lib/cloak-pay`),
+  so upstream's defaults land there: the daemon's
+  `$HOME/.config/zkapi-clientd` and the companion's `zkapi/mainnet/…`
+  folder (note secret, journal, archive, leases). Start `cloak-pay`
+  after "cloak-guest: payment disk open". The disk is mounted `noexec`
+  and the guest has no network, so the real companion and the proving
+  keys ship read-only in the image. The companion's listener on
+  127.0.0.1:8790 is reachable from the agent's sandbox, which shares
+  the guest's network: settle that before `cloak-pay` starts at boot.
+  The proving keys' size and the archive's growth are not yet known.
+- **Left for later.** The disk is optional in the host until the app
+  passes one (step 6). `docs/plan.md`'s escape checks list the disk
+  attempts only here.
+
 ## Stage 3 so far
 
 - The feasibility kit is ready: `uv run scripts/stage3.py feasibility <name>`
@@ -3319,7 +3337,9 @@ candidates, so the split has to be re-declared before any holdout opens.
     (github.com/Andyyyy64/whichllm), run in a container that sees none
     of the Mac's files. Sean asked the same day about Inkling 2 Mini
     (Thinking Machines, released that day): a candidate for the large
-    slot if Cloak's pinned llama.cpp can load it. Not built yet.
+    slot if Cloak's pinned llama.cpp can load it. Built the same day
+    with two models, today's and Inkling 2 Mini, on llama.cpp's
+    unmerged Inkling change; see CHANGELOG.md.
 22. The public page and the film wait. Decided 20 November 2026 (Sean,
     "22. c - hold for now, as the app is undergoing changes. I need a
     release video when we are ready to share it"). regents.sh/cloak and

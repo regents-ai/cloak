@@ -27,15 +27,16 @@ import Synchronization
 /// they lay a list with no URLs over that one, and no cover worker starts
 /// in that run.
 ///
-/// A Local Llama chat's message (`answer`) goes straight to the model on
-/// this Mac, and is no phase. While a run is up it takes its turn at the
-/// run's worker. While none is, it goes to a relay of the app's own
-/// (`Local`): the first message starts its worker, after the checks of the
+/// A Local Llama chat's message (`answer`) goes straight to the chosen
+/// model on this Mac (decision 21 in docs/plan.md), and is no phase. When
+/// that is the model that rewords and a run is up, it takes its turn at the
+/// run's worker. Otherwise it goes to a relay of the app's own (`Local`) for
+/// that model: the first message starts its worker, after the checks of the
 /// Mac, the model's files and the worker a run makes, without tor or a
 /// guest, and the worker rests as a run's does. A failure there stops that
-/// message only. A Start, and the shutdown, end it first and wait for its
-/// worker to exit, so two workers never hold the model; a message it had
-/// stops as interrupted.
+/// message only. A message for another model, a Start and the shutdown end
+/// it first and wait for its worker to exit, so two workers never hold the
+/// same model; a message it had stops as interrupted.
 @MainActor
 @Observable
 public final class Supervisor {
@@ -94,9 +95,12 @@ public final class Supervisor {
         var tasks = AgentTasks()
     }
 
-    /// The relay for Local Llama chats while no run is up, made with the
-    /// first message after the last one ended, and what follows its changes.
+    /// The relay for Local Llama chats with one model, outside a run's, made
+    /// with the first message after the last one ended, and what follows its
+    /// changes.
     private struct Local {
+        /// The name of the model its worker loads.
+        let model: String
         let relay: Relay
         let ending: Ending
         let follower: Task<Void, Never>
@@ -224,7 +228,7 @@ public final class Supervisor {
         let started = ContinuousClock.now
         do {
             let reworded = try await Rewrite.run(
-                texts, model: manifest.model.name, relay: relay,
+                texts, model: manifest.model, relay: relay,
                 deadline: Rewrite.deadline(characters: Rewrite.characters(texts)))
             logger.info("rewrite reworded in \(started.duration(to: .now), privacy: .public)")
             return reworded
@@ -242,7 +246,7 @@ public final class Supervisor {
         guard case .running = phase, let relay = stack.relay else { throw .stopped }
         let started = ContinuousClock.now
         do {
-            let details = try await Details.run(draft, model: manifest.model.name, relay: relay, deadline: Details.deadline)
+            let details = try await Details.run(draft, model: manifest.model, relay: relay, deadline: Details.deadline)
             logger.info("details answered in \(started.duration(to: .now), privacy: .public)")
             return details
         } catch {
@@ -251,19 +255,20 @@ public final class Supervisor {
         }
     }
 
-    /// The model's answer to the last of `messages`, a Local Llama chat's
-    /// conversation so far (`LocalLlama`). While a run is up it takes its
-    /// turn at the run's worker, in order with rewording, and never gives
-    /// way; while none is, it goes to the local relay, whose worker it starts
-    /// when none is up. It waits while Cloak prepares or stops. Cancelling
-    /// the task stops it. The log has how it ended and how long it took,
-    /// never the text.
-    public func answer(_ messages: [String]) async throws(AnswerStop) -> String {
+    /// `model`'s answer to the last of `messages`, a Local Llama chat's
+    /// conversation so far (`LocalLlama`). For the model that rewords while a
+    /// run is up, it takes its turn at the run's worker, in order with
+    /// rewording, and never gives way; otherwise it goes to the local relay
+    /// for `model`, whose worker it starts when none is up. It waits while
+    /// Cloak prepares or stops. Cancelling the task stops it. The log has how
+    /// it ended and how long it took, never the text.
+    public func answer(_ messages: [String], with model: Manifest.Model) async throws(AnswerStop) -> String {
         guard let request = LocalLlama.request(messages) else { throw .tooLong }
         _ = await settled()
         guard !Task.isCancelled else { throw .stopped }
         // A run has its relay from before it is Running until it stops.
-        let (relay, ending): (Relay, Ending?) = phase == .running ? (stack.relay!, nil) : openLocal()
+        let (relay, ending): (Relay, Ending?) =
+            phase == .running && model.name == manifest.model ? (stack.relay!, nil) : openLocal(model)
         let started = ContinuousClock.now
         let answer = await relay.answer(to: request, as: .conversation)
         do {
@@ -292,13 +297,17 @@ public final class Supervisor {
         }
     }
 
-    /// The local relay, made when there is none. Its worker starts with the
-    /// first message, once the last local worker has exited, as a run's
-    /// does, with the Mac and the model's files checked and the pinned
-    /// worker put where it runs; a start that fails gives that message its
-    /// reason.
-    private func openLocal() -> (Relay, Ending?) {
-        if let local { return (local.relay, local.ending) }
+    /// The local relay for `model`, made when there is none for it; one open
+    /// for another model is ended first. Its worker starts with the first
+    /// message, once the last local worker has exited, as a run's does, with
+    /// the Mac (`Manifest.answerCheck`) and the model's files checked and the
+    /// pinned worker put where it runs; a start that fails gives that message
+    /// its reason.
+    private func openLocal(_ model: Manifest.Model) -> (Relay, Ending?) {
+        if let local {
+            if local.model == model.name { return (local.relay, local.ending) }
+            endLocal(.interrupted)
+        }
         let ending = Ending()
         let (changes, change) = AsyncStream.makeStream(of: LocalChange.self)
         let start: @Sendable () async throws -> WorkerChannel = {
@@ -307,8 +316,8 @@ public final class Supervisor {
             await before?.value
             do {
                 for case (_, let failure?) in [
-                    Checks.hardwareCheck(hardware, model: manifest.modelMemory, cloak: manifest.cloakMemory),
-                    Checks.modelCheck(manifest.model, in: layout.model(manifest)),
+                    manifest.answerCheck(model, hardware: hardware),
+                    Checks.modelCheck(model, in: layout.model(model)),
                 ] {
                     throw failure
                 }
@@ -316,7 +325,7 @@ public final class Supervisor {
                 try Task.checkCancellation()
                 do {
                     return try await WorkerChannel.start(
-                        executable: layout.worker, arguments: ["--name", manifest.model.name, "--dir", layout.model(manifest).path])
+                        executable: layout.worker, arguments: ["--name", model.name, "--dir", layout.model(model).path])
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
@@ -335,7 +344,7 @@ public final class Supervisor {
                 followLocal(change)
             }
         }
-        local = Local(relay: relay, ending: ending, follower: follower)
+        local = Local(model: model.name, relay: relay, ending: ending, follower: follower)
         return (relay, ending)
     }
 
@@ -464,7 +473,8 @@ public final class Supervisor {
         }
         lines.append(memory().detail)
         lines.append("release \(manifest.release), build \(manifest.build)")
-        lines.append("model: \(manifest.model.name), \(manifest.model.label), in \(layout.model(manifest).path)")
+        let model = manifest.rewordingModel
+        lines.append("model: \(model.name), \(model.label), in \(layout.model(model).path)")
         return lines.joined(separator: "\n")
     }
 
@@ -499,7 +509,7 @@ public final class Supervisor {
             // Every worker of the run, the first and each after a rest,
             // starts the same way.
             let start: @Sendable () async throws -> WorkerChannel = {
-                [executable = layout.worker, arguments = ["--name", manifest.model.name, "--dir", layout.model(manifest).path]] in
+                [executable = layout.worker, arguments = ["--name", manifest.model, "--dir", layout.model(manifest.rewordingModel).path]] in
                 try await WorkerChannel.start(executable: executable, arguments: arguments)
             }
             let worker: WorkerChannel
@@ -533,7 +543,7 @@ public final class Supervisor {
                                   bootFolder: layout.bootFiles)
                 let cover = wantsCover()
                 try guest.prepare(base: layout.url(.initrd, in: manifest), cases: Verification.cases,
-                                  model: manifest.model.name, relay: relay, tor: tor, cover: cover, serve: true, door: door)
+                                  model: manifest.model, relay: relay, tor: tor, cover: cover, serve: true, door: door)
                 self.cover = cover
                 stack.guest = guest
                 try await guest.start { verification.ended($0) }
@@ -671,11 +681,12 @@ public final class Supervisor {
 }
 
 extension Manifest {
-    /// The status document for `phase`: this release and model, and what the
-    /// phase means for automation.
+    /// The status document for `phase`: this release and the model that
+    /// rewords, and what the phase means for automation.
     func status(of phase: Phase, check: StatusDocument.Check?, detail: String) -> StatusDocument {
         StatusDocument(
             release: release, build: build, state: phase.state, status: phase.status, reason: phase.reason,
-            nextAction: phase.nextAction, model: .init(name: model.name, label: model.label), check: check, detail: detail)
+            nextAction: phase.nextAction, model: .init(name: rewordingModel.name, label: rewordingModel.label), check: check,
+            detail: detail)
     }
 }

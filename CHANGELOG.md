@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+- Local Llama answers from a model you choose, and Inkling 2 Mini is the
+  second on the list (Sean, 20 November 2026, "20. a - build now", then
+  "I want to urgently add in support for local mode to use the inkling
+  mini model"). `reference/models.json` marks the entries that can
+  answer (`answers`: label, memory, context): today's Qwen 3.5 9B, and
+  `inkling-mini-gguf`, ggml-org's IQ4_NL file of Thinking Machines'
+  Inkling 2 Mini (17.6 GB, checked file for file like today's). Settings
+  has a "Local Llama" pane: a row for each model with its size, "Best
+  for this Mac" under the largest that fits, rows that do not fit
+  dimmed, and symbols to download, pause and remove. The chosen model
+  runs in a second copy of the same worker beside the rewording one, so
+  its memory is counted on top of Qwen's. No fallback: a chosen model
+  that is missing, changed or too large stops the chat ("Choose a model
+  in Settings." / "This Mac can't run the chosen model." / "Download
+  the model to ask."), never another model's answer. Rewording is
+  unchanged: Qwen 3.5 9B under the reply grammar, always.
+  - An answer's thinking is told apart by llama.cpp's own reply parser
+    and dropped: not shown, not saved. A reply with no answer in it is a
+    failure, never an empty answer.
+  - `app/release.json` loses `model_label` and `model_memory_gib`; the
+    manifest carries `model` and `answer_models` from the pins.
+  - Proven by hand on Sean's Mac with the new worker: Qwen rewords under
+    the grammar (8 s with loading) and answers; Inkling 2 Mini loads in
+    16.5 s, answered a two-message chat with no thinking in either
+    answer (14.2 s and 3.6 s), and a rewrite sent to it is refused. With
+    llama.cpp's own tool it ran at 36.5 tokens a second using 16.8 GB.
+    Not yet seen: the new pane, and a Local Llama chat with Inkling in
+    the app.
+  - Known: Inkling thinks before every answer (365 tokens for a
+    greeting), and nothing shows while it does; its thinking effort is
+    still the template's default. A reply cut off while thinking shows
+    "The model stopped." with advice about memory, which is wrong for
+    that case. Counted beside Qwen it needs about 27 GiB, so a 32 GB Mac
+    will most likely show it dimmed.
+- llama.cpp moves from build b12556 to the head of its pull request
+  32694, "Inkling 2 Mini" (commit `d7cb78c9`), which adds the model's
+  looped architecture; no numbered build has it yet. The change was
+  approved by a llama.cpp maintainer with all 28 of its checks passing
+  when pinned, and it sits 22 commits after b12556 on master. Cloak
+  moves to the first numbered build that holds the merge.
+- zkAPI build step 4, the encrypted disk (stand-ins only; nothing in the
+  running product changes, and the app attaches no disk until step 6).
+  The host can attach one image file to the guest as its only disk,
+  fully synced, with a 32-byte key in the boot files; the guest opens it
+  with cryptsetup (LUKS2, AES-XTS), mounts ext4 with `sync` for the
+  payer's user alone, and deletes the key file (`guest/image/pay-disk`).
+  A blank image is formatted only when the host says it is new and its
+  first 16 MiB are zero; a disk that does not open stops the guest with
+  the reason and is never reformatted.
+  - Checks, run by the chief on the real guest: `sh
+    guest/image/pay-disk-check.sh` 10 of 10; `tests/test_pay_disk.py` 5
+    passed (files survive a killed host; a wrong key, two damaged
+    header copies and a used image called new each stop with the image
+    unchanged; the image holds none of the plaintext);
+    `tests/test_escape_path.py` 13 passed, with the sandbox's attempts
+    on the payment files, the raw disk, the mapper nodes, the key file
+    and the kernel's keys all failing; `sh guest/pay/check.sh` clean.
+  - Not proven: a Mac power cut (a killed host cannot tell full sync
+    from none, since macOS keeps the writes cached). Known: AES-XTS has
+    no integrity check, so a tampered image garbles or fails to mount
+    rather than being refused; one damaged header copy is repaired by
+    cryptsetup on open, which changes the image; the key sits in a 0600
+    boot file on the Mac for about a second at start.
 - Symbols in place of words across the app (Sean, 20 November 2026:
   "In general I want the UI to be as minimal in text as possible, with
   text on tooltips and dropdown texts. The UI should be 'Apple'-like,

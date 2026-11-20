@@ -11,8 +11,15 @@ on 13 November 2026; their GGUF files for llama.cpp (decision 8) later that
 day; the same files under the reply grammar (decision 9) on 14 November. On
 14 November llama.cpp with the grammar was chosen (decision 8), and the MLX
 conversions and the other candidates were deleted from this file; their
-records in `evidence/` stay as history. Every model the worker runs decodes
-under the file its `grammar` names, in this folder, pinned by its sha256.
+records in `evidence/` stay as history. On 20 November ggml-org's GGUF of
+Inkling 2 Mini and its vendor checkpoint were added (decision 21), to answer
+Local Llama chats only. Every model that rewords decodes under the file its
+`grammar` names, in this folder, pinned by its sha256; one model rewords,
+`small-lead-gguf-grammar`. Every model that answers Local Llama chats has
+`answers`: its name on screen (`label`), the memory the app's Mac check
+counts for it (`memory_gib`) and the most tokens a chat and its answer may
+take (`context_tokens`). A model with no grammar never rewords, and the
+worker refuses it a rewrite.
 
 | Name | Repository @ revision | Weights | Licence | Made from |
 | --- | --- | --- | --- | --- |
@@ -22,14 +29,22 @@ under the file its `grammar` names, in this folder, pinned by its sha256.
 | small-lead-gguf-grammar | `unsloth/Qwen3.5-9B-GGUF` @ `3885219b`, `Qwen3.5-9B-Q4_K_M.gguf` | 1 file, 5,680,522,464 bytes, Q4_K_M | apache-2.0 (Qwen's licence link) | `Qwen/Qwen3.5-9B` by Unsloth; vendor revision, tool version and calibration text not stated. Decoded under [rewrite-reply.gbnf](rewrite-reply.gbnf) |
 | small-challenger-gguf-grammar | `google/gemma-4-12B-it-qat-q4_0-gguf` @ `29d09777`, `gemma-4-12b-it-qat-q4_0.gguf` | 1 file, 6,975,879,296 bytes, Q4_0 | apache-2.0 (Gemma 4 licence link) | Google's own file, from `google/gemma-4-12B-it-qat-q4_0-unquantized`: quantization-aware training, not the plain instruct weights. Decoded under [rewrite-reply.gbnf](rewrite-reply.gbnf) |
 | standin-gguf-grammar | `unsloth/Qwen3.5-2B-GGUF` @ `f6d5376b`, `Qwen3.5-2B-Q4_K_M.gguf` | 1 file, 1,280,835,840 bytes, Q4_K_M | apache-2.0 (Qwen's licence link) | `Qwen/Qwen3.5-2B` by Unsloth. Decoded under [rewrite-reply.gbnf](rewrite-reply.gbnf); development only, never a candidate |
+| inkling-mini-base | `thinkingmachines/Inkling-2-Mini` @ `6e7c8248` | 14 files, 20.19 GB, NVFP4 | apache-2.0 | vendor. Pinned for provenance and its chat template only; its weights are never fetched |
+| inkling-mini-gguf | `ggml-org/Inkling-2-Mini-GGUF` @ `db61c5b4`, `Inkling-2-Mini-IQ4_NL.gguf` | 1 file, 17,627,940,768 bytes, IQ4_NL | none on ggml-org's card; its source, `inkling-mini-base`, is apache-2.0 | `thinkingmachines/Inkling-2-Mini` by ggml-org. Answers Local Llama chats only, so no grammar (decision 21). It thinks at its template's own effort (no `chat_template_context`), and the worker drops the thinking from each reply. Needs llama.cpp pull request 32694 (`inkling2_loop`), whose head is the worker's pinned llama.cpp ([sources.json](sources.json)) |
 
 None is gated. Each GGUF model takes one file of a repository that holds
-several quantizations (`only` in [models.json](models.json)), plus the vendor
-`chat_template.jinja` and `tokenizer.json` (decision 1); the stand-in takes
-those two from `standin-base` (`mlx-community/Qwen3.5-2B-4bit` @ `674aaa72`,
+several quantizations (`only` in [models.json](models.json)), plus vendor
+files (decision 1): `chat_template.jinja` and `tokenizer.json` for the
+models that reword or were candidates, `chat_template.jinja` alone for
+Inkling 2 Mini, from `inkling-mini-base`, since the pinned `tokenizer.json`
+serves only the kit's token counts (finding below). The stand-in takes
+its two from `standin-base` (`mlx-community/Qwen3.5-2B-4bit` @ `674aaa72`,
 pinned for provenance only), whose template is byte for byte Qwen's. Weight
 sizes are the files alone; the memory a running worker needs is measured in
-stage 3 (spec HW02, EVAL07), not inferred from these.
+stage 3 (spec HW02, EVAL07), not inferred from these. Inkling 2 Mini's
+17 GiB is from a run by hand on 20 November: llama.cpp's own
+`llama-completion` at a context of 19,456 tokens, all layers on Metal,
+peaked at 16.84e9 bytes resident.
 
 ## Findings
 

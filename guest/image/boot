@@ -1,6 +1,7 @@
 #!/bin/busybox sh
-# The guest's only process tree, after /init has moved the root: load vsock
-# and the entropy driver, start the adapter on loopback as its own user, the
+# The guest's only process tree, after /init has moved the root: load vsock,
+# the entropy driver and the disk's drivers, open the payment disk when the
+# host attaches one, start the adapter on loopback as its own user, the
 # Tor port (the one way out, to tor on the host) as another, the daemon's
 # local API as a third, run the daemon's rewrite checks as a fourth, then the
 # agent cases (Pi in the reference sandbox as the agent user), print the
@@ -12,10 +13,30 @@ mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 
-for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport virtio-rng; do
+# Each module after the ones it needs: the guest has no modprobe, so the
+# kernel loads nothing by itself. The disk's are the disk driver,
+# device-mapper and dm-crypt, AES-XTS on the CPU's AES instructions, and ext4
+# with its journal and checksums.
+for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport virtio-rng \
+	virtio_blk dm-mod dm-crypt xts aes-ce-cipher aes-ce-blk crc16 mbcache jbd2 crc32c_generic ext4; do
 	insmod /lib/modules/$module.ko || { echo "cloak-guest: cannot load $module"; poweroff -f; }
 done
 ip link set lo up
+
+# The payment disk, when the host attaches one (/dev/vda, its key in the
+# boot files): opened, or made when the host says the image is new, and
+# mounted for the payer alone (guest/image/pay-disk). The key's file is gone
+# once the disk is open. A disk that does not open ends the guest, with the
+# reason on the console.
+if [ -e /run/cloak/pay-disk-key ]; then
+	verb=open
+	[ -e /etc/cloak/pay-disk-new ] && verb=create
+	/usr/lib/cloak/pay-disk $verb /dev/vda /run/cloak/pay-disk-key /var/lib/cloak-pay
+	opened=$?
+	rm /run/cloak/pay-disk-key
+	[ $opened = 0 ] || poweroff -f
+	echo "cloak-guest: payment disk open"
+fi
 
 # The adapter, the Tor port and the daemon each print "ready" once they
 # listen. One that exits first ends its line empty.

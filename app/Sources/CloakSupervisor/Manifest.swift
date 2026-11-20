@@ -1,10 +1,12 @@
+import CloakControl
 import Foundation
 
 /// The app's manifest, written into the bundle by app/build.sh: the release
-/// and build, the one model (spec: no picker, no switching) with each of its
-/// files pinned and where it downloads from, the memory the model and all of
-/// Cloak need, and every part the supervisor runs, each in the bundle and
-/// pinned by its sha256.
+/// and build, the memory all of Cloak needs, the one model that rewords (spec:
+/// no picker, no switching, for rewording), every model that can answer Local
+/// Llama chats (decision 21 in docs/plan.md), the rewording one among them,
+/// each with its files pinned and where they download from, and every part
+/// the supervisor runs, each in the bundle and pinned by its sha256.
 public struct Manifest: Codable, Sendable, Equatable {
     public enum Part: String, Codable, Sendable, CaseIterable {
         /// The guest's kernel and base root.
@@ -51,39 +53,62 @@ public struct Manifest: Codable, Sendable, Equatable {
         }
 
         public var name: String
+        /// The model in plain words, such as "Qwen 3.5 9B".
         public var label: String
+        /// The bytes the model needs, which the graphics must hold.
+        public var memory: UInt64
         public var files: [File]
 
-        public init(name: String, label: String, files: [File]) {
+        public init(name: String, label: String, memory: UInt64, files: [File]) {
             self.name = name
             self.label = label
+            self.memory = memory
             self.files = files
         }
+
+        /// The bytes of its files: what a download fetches and the disk keeps.
+        public var size: Int { files.reduce(0) { $0 + $1.size } }
     }
 
     public var release: String
     public var build: String
-    /// The bytes the model needs, which the graphics must hold.
-    public var modelMemory: UInt64
-    /// The bytes everything Cloak runs needs, the model among it.
+    /// The bytes everything Cloak runs needs, the rewording model among it.
     public var cloakMemory: UInt64
-    public var model: Model
+    /// The name of the model that rewords, one of `answerModels`.
+    public var model: String
+    /// Every model that can answer Local Llama chats, the least memory first.
+    public var answerModels: [Model]
     public var pins: [Pin]
 
-    public init(release: String, build: String, modelMemory: UInt64, cloakMemory: UInt64, model: Model, pins: [Pin]) {
+    public init(release: String, build: String, cloakMemory: UInt64, model: String, answerModels: [Model], pins: [Pin]) {
         self.release = release
         self.build = build
-        self.modelMemory = modelMemory
         self.cloakMemory = cloakMemory
         self.model = model
+        self.answerModels = answerModels
         self.pins = pins
     }
 
-    /// The manifest in the app's bundle, which pins each part once.
+    /// The model that rewords. It answers Local Llama chats too, unless
+    /// another is chosen.
+    public var rewordingModel: Model { answerModels.first { $0.name == model }! }
+
+    /// Whether this Mac can run `model` for Local Llama: for the rewording
+    /// model, the check every Start makes; for any other, the same check with
+    /// both models' memory counted, as both can be loaded at once.
+    func answerCheck(_ model: Model, hardware: Checks.Hardware) -> (Finding, Failure?) {
+        let other = model.name == self.model ? 0 : model.memory
+        return Checks.hardwareCheck(hardware, model: rewordingModel.memory + other, cloak: cloakMemory + other)
+    }
+
+    /// The manifest in the app's bundle, which pins each part once and lists
+    /// the model that rewords among those that answer.
     public static func bundled() throws -> Manifest {
         let url = Bundle.main.resourceURL!.appending(path: "manifest.json")
         let manifest = try JSONDecoder.snakeCase.decode(Manifest.self, from: Data(contentsOf: url))
-        guard manifest.pins.map(\.part).sorted(by: { $0.rawValue < $1.rawValue }) == Part.allCases.sorted(by: { $0.rawValue < $1.rawValue }) else {
+        guard manifest.pins.map(\.part).sorted(by: { $0.rawValue < $1.rawValue }) == Part.allCases.sorted(by: { $0.rawValue < $1.rawValue }),
+            manifest.answerModels.contains(where: { $0.name == manifest.model })
+        else {
             throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: url.path])
         }
         return manifest
@@ -109,10 +134,10 @@ public struct Layout: Sendable {
         url(manifest.pins.first { $0.part == part }!)
     }
 
-    /// The model's folder: its files, which the worker checks against their
+    /// A model's folder: its files, which the worker checks against their
     /// pins at each start.
-    public func model(_ manifest: Manifest) -> URL {
-        support.appending(path: "models").appending(path: manifest.model.name)
+    public func model(_ model: Manifest.Model) -> URL {
+        support.appending(path: "models").appending(path: model.name)
     }
 
     /// NEAR mode's helper and its pin, which the app checks before each

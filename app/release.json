@@ -2,8 +2,6 @@
   "release": "0.5.4",
   "identity": "Developer ID Application: Sean Brennan (367G3Z7G3J)",
   "model": "small-lead-gguf-grammar",
-  "model_label": "Qwen 3.5 9B",
-  "model_memory_gib": 7,
   "cloak_memory_gib": 10,
   "update_feed": "https://raw.githubusercontent.com/regents-ai/cloak-releases/main/appcast.xml",
   "update_key": "Dw2edhocMd1y+8c+Q5Lm0kG15miKI4TX+zj7tYuomjk="

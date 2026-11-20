@@ -25,13 +25,14 @@ cp $image /out/Image
 mkdir -p $root/usr/bin $root/usr/sbin $root/usr/lib/$arch $root/usr/lib/modules $root/usr/lib/cloak \
 	$root/usr/local/bin $root/usr/local/lib/node_modules/@earendil-works \
 	$root/proc $root/sys $root/dev $root/tmp $root/newroot $root/run/cloak $root/home \
-	$root/etc/cloak $root/etc/alternatives $root/etc/ld.so.conf.d $root/opt/cloak
+	$root/etc/cloak $root/etc/alternatives $root/etc/ld.so.conf.d $root/opt/cloak $root/var/lib/cloak-pay
 ln -s usr/bin $root/bin
 ln -s usr/sbin $root/sbin
 ln -s usr/lib $root/lib
 
 cp /bin/busybox $root/usr/bin/busybox
-for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport virtio-rng; do
+for module in vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport virtio-rng \
+	virtio_blk dm-mod dm-crypt xts aes-ce-cipher aes-ce-blk crc16 mbcache jbd2 crc32c_generic ext4; do
 	xz -dc $(find /lib/modules/$kernel -name "$module.ko.xz") > $root/usr/lib/modules/$module.ko
 done
 install -m 0755 /out/cloak-adapter /out/cloak-port /out/cloak-rewrite-check /out/cloak-daemon /out/cloak-agent-check \
@@ -39,6 +40,15 @@ install -m 0755 /out/cloak-adapter /out/cloak-port /out/cloak-rewrite-check /out
 install -m 0444 /out/cover.json $root/etc/cloak/cover.json
 install -m 0755 /src/init $root/init
 install -m 0755 /src/boot $root/usr/lib/cloak/boot
+
+# The payment disk: cryptsetup for LUKS2, e2fsprogs' mke2fs for ext4 (busybox's
+# makes only ext2), and the program that opens or makes it. Its mount point is
+# root's alone until the disk is mounted over it, the payer's home, so nothing
+# the payer runs can keep its files anywhere but on the disk.
+install -m 0755 /usr/sbin/cryptsetup /usr/sbin/mke2fs $root/usr/sbin/
+install -m 0644 /etc/mke2fs.conf $root/etc/mke2fs.conf
+install -m 0755 /src/pay-disk $root/usr/lib/cloak/pay-disk
+chmod 0700 $root/var/lib/cloak-pay
 
 # The reference wrapper and what it runs: bash, bubblewrap, torsocks, the CA
 # certificates it binds, Node.js and Pi, installed where `npm install -g` puts it,
@@ -67,7 +77,8 @@ tar -xzf /pi/earendil-works-pi-coding-agent-1.3.0.tgz -C $pi --strip-components 
 ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js $root/usr/local/bin/pi
 
 # Shared libraries the dynamic programs need, from this image's glibc.
-for elf in /bin/bash /usr/bin/bwrap /usr/bin/curl $root/usr/local/bin/node /usr/lib/$arch/torsocks/libtorsocks.so $root/usr/bin/cloak-sender; do
+for elf in /bin/bash /usr/bin/bwrap /usr/bin/curl $root/usr/local/bin/node /usr/lib/$arch/torsocks/libtorsocks.so $root/usr/bin/cloak-sender \
+	/usr/sbin/cryptsetup /usr/sbin/mke2fs; do
 	ldd $elf | awk '/=>/ { print $3 } /ld-linux/ { print $1 }'
 done | sort -u | while read -r library; do
 	case $library in
@@ -88,7 +99,7 @@ agent:x:1005:1005:agent:/home/agent:/bin/sh
 torport:x:1006:1006:torport:/:/bin/sh
 sender:x:1007:1007:sender:/:/bin/sh
 door:x:1008:1008:door:/:/bin/sh
-pay:x:1009:1009:pay:/:/bin/sh
+pay:x:1009:1009:pay:/var/lib/cloak-pay:/bin/sh
 PASSWD
 cat > $root/etc/group <<GROUP
 root:x:0:
@@ -113,6 +124,9 @@ chmod 1777 $root/tmp
 	dpkg-query -W curl libcurl4t64 libssl3t64 libgnutls30t64 libunistring5 libp11-kit0 libkrb5-3 libzstd1 libgmp10 \
 		libgssapi-krb5-2 libldap2 libssh2-1t64 libhogweed6t64 libnettle8t64 libnghttp3-9 libnghttp2-14 libk5crypto3 \
 		libidn2-0 libbrotli1 librtmp1 libsasl2-2 libtasn1-6 libpsl5t64 zlib1g libffi8 libkrb5support0 libcom-err2 libkeyutils1
+	# The payment disk's tools and the libraries only they load.
+	dpkg-query -W cryptsetup-bin libcryptsetup12 libdevmapper1.02.1 libjson-c5 libpopt0 libuuid1 libblkid1 libudev1 \
+		e2fsprogs libext2fs2t64
 	(cd /node && sha256sum node-v24.22.2-linux-arm64.tar.xz)
 	(cd /pi && sha256sum earendil-works-pi-coding-agent-1.3.0.tgz)
 	cd /out && sha256sum Image initrd.gz cloak-adapter cloak-port cloak-rewrite-check cloak-daemon cloak-agent-check \

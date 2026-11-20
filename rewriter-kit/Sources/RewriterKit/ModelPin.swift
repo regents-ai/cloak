@@ -2,8 +2,9 @@ import CryptoKit
 import Foundation
 
 /// One model entry of `reference/models.json`, which is built into the worker:
-/// the files the worker may load and the chat template settings frozen with
-/// them.
+/// the files the worker may load, the chat template settings frozen with
+/// them, and what the model does: rewords, under its grammar, or answers
+/// Local Llama chats, or both.
 public struct ModelPin: Sendable {
     public struct File: Decodable, Sendable {
         public let path: String
@@ -18,31 +19,69 @@ public struct ModelPin: Sendable {
         public let sha256: String
     }
 
+    /// What the worker needs of a model that answers Local Llama chats
+    /// (decision 21): the most tokens a conversation and its answer take
+    /// together.
+    public struct Answers: Decodable, Sendable {
+        public let contextTokens: UInt32
+
+        enum CodingKeys: String, CodingKey {
+            case contextTokens = "context_tokens"
+        }
+    }
+
+    /// A chat template setting's value as JSON text, as llama.cpp takes
+    /// `chat_template_kwargs`: a boolean, a number or a string.
+    public struct Setting: Decodable, Sendable {
+        public let json: String
+
+        public init(from decoder: any Decoder) throws {
+            let value = try decoder.singleValueContainer()
+            let encoded =
+                if let bool = try? value.decode(Bool.self) {
+                    try JSONEncoder().encode(bool)
+                } else if let whole = try? value.decode(Int.self) {
+                    try JSONEncoder().encode(whole)
+                } else if let number = try? value.decode(Double.self) {
+                    try JSONEncoder().encode(number)
+                } else {
+                    try JSONEncoder().encode(value.decode(String.self))
+                }
+            json = String(decoding: encoded, as: UTF8.self)
+        }
+    }
+
     public let name: String
     public let files: [File]
-    public let chatTemplateContext: [String: Bool]
-    public let grammar: Grammar
+    public let chatTemplateContext: [String: Setting]
+    /// Nil for a model that never rewords.
+    public let grammar: Grammar?
+    /// Nil for a model that never answers Local Llama chats.
+    public let answers: Answers?
 
     /// Only models the worker runs carry frozen chat template settings
-    /// (`chat_template_context`) and a reply grammar; the reference model and
-    /// the checkpoints the models take files from are pinned for provenance
-    /// only.
+    /// (`chat_template_context`), and a reply grammar, what it needs to
+    /// answer Local Llama chats, or both; the reference model and the
+    /// checkpoints the models take files from are pinned for provenance only.
     public static func load(name: String) throws -> ModelPin {
         struct Entry: Decodable {
             let name: String
             let files: [File]
-            let chat_template_context: [String: Bool]?
+            let chat_template_context: [String: Setting]?
             let grammar: Grammar?
+            let answers: Answers?
         }
         struct Manifest: Decodable { let models: [Entry] }
         let models = try JSONDecoder().decode(Manifest.self, from: Data(PackageResources.models_json)).models
         guard let entry = models.first(where: { $0.name == name }) else {
             throw WorkerError("no pinned model named \(name)")
         }
-        guard let context = entry.chat_template_context, let grammar = entry.grammar else {
+        guard let context = entry.chat_template_context, entry.grammar != nil || entry.answers != nil else {
             throw WorkerError("\(name) is not a model the worker runs")
         }
-        return ModelPin(name: entry.name, files: entry.files, chatTemplateContext: context, grammar: grammar)
+        return ModelPin(
+            name: entry.name, files: entry.files, chatTemplateContext: context, grammar: entry.grammar,
+            answers: entry.answers)
     }
 
     /// The directory must hold exactly the pinned files, as regular files with

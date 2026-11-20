@@ -17,8 +17,12 @@ struct ChatView: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
     let showNearSettings: () -> Void
+    let showLlamaSettings: () -> Void
 
-    static func window(_ chat: Chat, showDetails: @escaping () -> Void, showNearSettings: @escaping () -> Void) -> NSWindow {
+    static func window(
+        _ chat: Chat, showDetails: @escaping () -> Void, showNearSettings: @escaping () -> Void,
+        showLlamaSettings: @escaping () -> Void
+    ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
@@ -26,7 +30,8 @@ struct ChatView: View {
         // Escape cancels a rewording here.
         window.closesOnEscape = false
         let content = NSHostingController(
-            rootView: ChatView(chat: chat, showDetails: showDetails, showNearSettings: showNearSettings))
+            rootView: ChatView(
+                chat: chat, showDetails: showDetails, showNearSettings: showNearSettings, showLlamaSettings: showLlamaSettings))
         content.sceneBridgingOptions = [.toolbars]
         content.sizingOptions = [.minSize]
         window.contentViewController = content
@@ -39,7 +44,7 @@ struct ChatView: View {
             Sidebar(chat: chat)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
-            Detail(chat: chat, showDetails: showDetails, showNearSettings: showNearSettings)
+            Detail(chat: chat, showDetails: showDetails, showNearSettings: showNearSettings, showLlamaSettings: showLlamaSettings)
         }
         .frame(minWidth: 760, minHeight: 460)
         .task { await chat.open() }
@@ -136,6 +141,7 @@ private struct Detail: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
     let showNearSettings: () -> Void
+    let showLlamaSettings: () -> Void
     @State private var showingWallet = false
 
     /// The conversation in front's kind; a V chat's while none is, as
@@ -198,7 +204,7 @@ private struct Detail: View {
                 VStack(spacing: 0) {
                     Turns(chat: chat, conversation: conversation)
                     Divider()
-                    Compose(chat: chat, showDetails: showDetails)
+                    Compose(chat: chat, showDetails: showDetails, showLlamaSettings: showLlamaSettings)
                 }
                 .background(Color(nsColor: .windowBackgroundColor))
             } else {
@@ -645,7 +651,7 @@ private struct LlamaCard: View {
                     HStack(spacing: 12) {
                         Spacer()
                         if let block = chat.llamaBlock {
-                            Text(block)
+                            Text(block.words)
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
@@ -879,10 +885,11 @@ extension View {
 /// the foot NEAR's Tor switch and what its hardware check last found. In a
 /// Local Llama conversation, it asks the model on this Mac, with Stop while
 /// the model answers, no details and no switches, and Cloak need not be
-/// running; without the model, the way to its download.
+/// running; when asking is certain to stop, why, and the way on.
 private struct Compose: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
+    let showLlamaSettings: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -909,8 +916,8 @@ private struct Compose: View {
             // NEAR's status line and Send say what Cloak not running stops;
             // Local Llama needs only the model.
             if llama {
-                if chat.llamaBlock != nil {
-                    ModelMissing(download: chat.download, showDetails: showDetails)
+                if let block = chat.llamaBlock {
+                    LlamaStop(block: block, showDetails: showDetails, showLlamaSettings: showLlamaSettings)
                 }
             } else if !near, chat.supervisor.phase != .running {
                 Waiting(supervisor: chat.supervisor, to: agent ? "run" : sends ? "send" : "reword", showDetails: showDetails)
@@ -1463,24 +1470,43 @@ private struct Waiting: View {
     }
 }
 
-/// Why a Local Llama chat can't ask: the model is not on this Mac yet. Its
-/// download, in Details, is the way on.
-private struct ModelMissing: View {
-    let download: ModelDownload
+/// Why a Local Llama chat can't ask (`Chat.LlamaBlock`), and the way on:
+/// for the model that rewords, its download in Details; for any other, the
+/// Local Llama settings, to download it or choose another. A Mac that can't
+/// run the model that rewords can run none, so that stop has no button.
+private struct LlamaStop: View {
+    let block: Chat.LlamaBlock
     let showDetails: () -> Void
+    let showLlamaSettings: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "arrow.down.circle")
+            Image(systemName: symbol)
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            Text("The model isn't on this Mac yet. Download it to ask.")
+            Text(block.words)
             Spacer()
-            Button(download.isUnderWay ? "Downloading Model…" : "Download Model…", action: showDetails)
+            switch block {
+            case .missing(let download):
+                Button(
+                    download.isUnderWay ? "Downloading Model…" : "Download Model…",
+                    action: download.rewords ? showDetails : showLlamaSettings)
+            case .mac(let download) where download.rewords:
+                EmptyView()
+            case .unknown, .mac:
+                Button("Choose Model…", action: showLlamaSettings)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var symbol: String {
+        switch block {
+        case .missing: "arrow.down.circle"
+        case .unknown, .mac: "laptopcomputer"
+        }
     }
 }
 

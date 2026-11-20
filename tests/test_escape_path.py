@@ -9,23 +9,27 @@ attempt fails or reaches only what the design gives it. docs/plan.md,
     host/build.sh
     uv run --with pytest==8.4.2 pytest tests/test_escape_path.py
 
-The file boots the guest twice, each boot shared by the checks that read it.
-The first runs plain commands in the sandbox, one case each, with cover off
-and the stand-in tor (fake_tor.py), which notes each connection's SOCKS
-identity and destination and refuses it, so its log lists only what the
-attempts cause. The second is a serving guest, whose runner runs Pi's tools in two
-conversations on the stand-in door's scripted answers
-(tests/door_answers.json).
+The file boots the guest twice, each boot shared by the checks that read it,
+and each with a payment disk of its own. The first has the payer's user
+write stand-ins for its files on the disk, then runs plain commands in the
+sandbox, one case each, with cover off and the stand-in tor (fake_tor.py),
+which notes each connection's SOCKS identity and destination and refuses it,
+so its log lists only what the attempts cause. The second is a serving
+guest, whose runner runs Pi's tools in two conversations on the stand-in
+door's scripted answers (tests/door_answers.json).
 """
 
 import hashlib
 import json
+import re
+import secrets
 import socket
 import threading
 from pathlib import Path
 
 import pytest
-from guest_boot import Serving, boot, box_pass, events, fake_tor, outputs, routes, sandbox, task, wait_for
+from guest_boot import (ADDRESS, JOURNAL, NOTE, PAY_HOME, Serving, boot, box_pass, events, fake_tor, outputs, pay,
+                        pay_files, routes, sandbox, task, wait_for, write_pay_files)
 
 OUTSIDE = "93.184.215.14"
 OUTSIDE_V6 = "2606:2800:21f:cb07:6820:80da:af6b:8b2c"
@@ -49,6 +53,20 @@ READS = ["/run/cloak/rewriter-key", "/run/cloak/adapter-token", "/etc/cloak/cove
 WRITES = ["/etc/ssl/certs/probe", "/etc/ca-certificates/probe", "/etc/alternatives/probe", "/etc/ld.so.cache",
           "/etc/cloak/cover.json", "/opt/cloak/wrapper/sandbox", "/opt/cloak/wrapper/probe", "/usr/bin/probe",
           "/usr/bin/busybox"]
+# The payment disk (guest/image/pay-disk): the payer's files on it, the raw
+# disk, the opened disk's device-mapper nodes, device-mapper's control and
+# the key's boot file; and the disk's mount point and device folders, listed.
+PAY_MARKER = "cloak-escape-" + secrets.token_hex(16)
+DISK_READS = [f"{PAY_HOME}/{path}" for path in (ADDRESS, NOTE, JOURNAL)] + [
+    "/dev/vda", "/dev/mapper/cloak-pay", "/dev/dm-0", "/dev/mapper/control", "/run/cloak/pay-disk-key"]
+DISK_LISTS = [PAY_HOME, "/dev/mapper", "/sys/block"]
+# A device node of the sandbox's own for the raw disk and the opened disk,
+# made from the numbers the kernel lists for each, then read.
+NODES = ("for disk in vda dm-0; do "
+         "set -- $(awk -v name=$disk '$4 == name { print $1, $2 }' /proc/partitions); "
+         'echo "listed $disk $1:$2"; '
+         'mknod /tmp/$disk b $1 $2 > /dev/null 2>&1; echo "mknod $disk $?"; '
+         'cat /tmp/$disk > /dev/null 2>&1; echo "read $disk $?"; done')
 
 
 def octal(data: bytes) -> str:
@@ -99,6 +117,10 @@ UDP = ("node -e 'const s = require(\"dgram\").createSocket(\"udp4\"); "
        f"s.on(\"error\", end); s.send(\"x\", 443, \"{OUTSIDE}\", end)'")
 
 ATTEMPTS = [
+    # The payer's user, outside the sandbox: its files written on the disk,
+    # then read back with the disk's line in the mount table.
+    write_pay_files("payment files", pay_files(PAY_MARKER)),
+    pay("payer reads", f"grep ' {PAY_HOME} ' /proc/mounts; for file in {ADDRESS} {NOTE} {JOURNAL}; do cat $file; echo; done"),
     # The guest's network, which the sandbox shares: what listens on it.
     sandbox("listeners", 'for t in tcp tcp6 udp udp6; do echo "== $t"; cat /proc/net/$t; done'),
     # The Tor port without torsocks: SOCKS5 by hand, with no identity, with
@@ -126,6 +148,10 @@ ATTEMPTS = [
     sandbox("writes", tried(WRITES, "(: >> {})")),
     sandbox("symlink", 'ln -s /run/cloak/rewriter-key /workspace/key; echo "link $?"; '
                        'cat /workspace/key > /dev/null 2>&1; echo "read $?"; rm /workspace/key'),
+    # The payment disk, and the keys the kernel holds that the sandbox can see.
+    sandbox("disk reads", tried(DISK_READS, "cat {}") + "; " + tried(DISK_LISTS, "ls {}")),
+    sandbox("disk nodes", NODES),
+    sandbox("keys", "cat /proc/keys"),
     # Other ways out.
     sandbox("dns over tcp", "busybox nc -w 3 8.8.8.8 53 < /dev/null 2>&1; echo $?"),
     sandbox("udp", f"{UDP}; env -u LD_PRELOAD {UDP}"),
@@ -214,6 +240,31 @@ def test_the_guests_secrets_settings_and_programs_cannot_be_read_or_changed(atte
     # A link made in the workspace leads nowhere the sandbox cannot already go.
     (_, link), (_, read) = statuses(out["symlink"])
     assert link == "0" and read != "0"
+
+
+def test_the_payment_disk_its_files_and_its_key_cannot_be_reached(attempts):
+    out, _, _ = attempts
+    # The payer's files are on the opened disk, mounted at its home, and
+    # hold the marker.
+    assert out["payment files"] == "", out["payment files"]
+    mount, *files = out["payer reads"].splitlines()
+    assert mount.startswith(f"/dev/mapper/cloak-pay {PAY_HOME} ext4 "), out["payer reads"]
+    assert files == list(pay_files(PAY_MARKER).values()), out["payer reads"]
+    # The sandbox reads and lists none of the disk, its devices or its key.
+    reads, lists = statuses(out["disk reads"])[:len(DISK_READS)], statuses(out["disk reads"])[len(DISK_READS):]
+    assert [path for path, _ in reads] == DISK_READS and [path for path, _ in lists] == DISK_LISTS
+    assert all(code != "0" for _, code in reads + lists), out["disk reads"]
+    # The kernel lists both disks' numbers, and the sandbox can make a node
+    # for neither, nor read one.
+    nodes = [line.split() for line in out["disk nodes"].splitlines()]
+    assert [line[:2] for line in nodes] == [[step, disk] for disk in ("vda", "dm-0")
+                                            for step in ("listed", "mknod", "read")], out["disk nodes"]
+    assert all(re.fullmatch(r"\d+:\d+", line[2]) for line in nodes if line[0] == "listed"), out["disk nodes"]
+    assert all(line[2] != "0" for line in nodes if line[0] != "listed"), out["disk nodes"]
+    # No key of cryptsetup's is in the keys the sandbox can see.
+    assert "cryptsetup" not in out["keys"], out["keys"]
+    # Nothing the sandbox printed holds the marker.
+    assert all(PAY_MARKER not in output for name, output in out.items() if name not in ("payment files", "payer reads"))
 
 
 def test_dns_over_tcp_udp_and_ipv6_reach_nothing(attempts):

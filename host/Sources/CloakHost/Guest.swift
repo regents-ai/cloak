@@ -1,14 +1,14 @@
 import Foundation
 import Virtualization
 
-/// The guest: two cores, 1 GiB, a console, the channel socket and an entropy
-/// source. No network device and no disk. The entropy device only carries
-/// random bytes into the guest; without it the guest kernel's random source
-/// never becomes ready, and the daemon, which makes its keys and Tor
-/// identities from it, waits forever. It reaches the host on two ports only:
-/// the rewrite relay's and the Tor port's, and on a third, the door port's,
-/// when it is given a door. A guest that serves also runs the sender and the
-/// runner, which the host connects to (`connect`).
+/// The guest: two cores, 1 GiB, a console, the channel socket, an entropy
+/// source and, when given one, the payment disk. No network device. The
+/// entropy device only carries random bytes into the guest; without it the
+/// guest kernel's random source never becomes ready, and the daemon, which
+/// makes its keys and Tor identities from it, waits forever. It reaches the
+/// host on two ports only: the rewrite relay's and the Tor port's, and on a
+/// third, the door port's, when it is given a door. A guest that serves also
+/// runs the sender and the runner, which the host connects to (`connect`).
 ///
 ///     made --prepare--> prepared --start--> running --power off or error--> ended
 ///                                              |
@@ -25,8 +25,27 @@ public final class Guest: NSObject {
     /// requests here.
     public static let doorPort: UInt32 = 8742
 
+    /// The payment disk: an image file on the Mac and the 32 random bytes it
+    /// is encrypted under, both the caller's. The guest opens it with that
+    /// key, and makes it, formatting the image, only when `isNew` says the
+    /// image is blank and new; a disk that does not open ends the guest
+    /// (guest/image/pay-disk).
+    public struct PaymentDisk: Sendable {
+        public let image: URL
+        public let key: Data
+        public let isNew: Bool
+
+        public init(image: URL, key: Data, isNew: Bool) throws {
+            guard key.count == 32 else { throw GuestError(description: "the payment disk's key is not 32 bytes") }
+            self.image = image
+            self.key = key
+            self.isNew = isNew
+        }
+    }
+
     private let configuration: VZVirtualMachineConfiguration
     private let bootDirectory: URL
+    private let disk: PaymentDisk?
     private let listener = VZVirtioSocketListener()
     private var machine: VZVirtualMachine?
     private var relays: (rewrite: Relay, tor: TorRelay, door: ((Int32) -> Void)?)?
@@ -34,8 +53,12 @@ public final class Guest: NSObject {
 
     /// Checks the guest's settings; nothing is written or started. The
     /// guest's console is written to `console`, and its boot files go in a
-    /// folder of its own in `bootFolder`, which must exist.
-    public init(kernel: URL, console: FileHandle, bootFolder: URL) throws {
+    /// folder of its own in `bootFolder`, which must exist. A `disk`'s image
+    /// is the guest's only disk, read and written in place; each flush the
+    /// guest makes reaches the Mac's storage before the guest goes on
+    /// (`.full`: an F_FULLFSYNC of the image), so a guest killed at any
+    /// moment leaves every write it flushed in the image.
+    public init(kernel: URL, console: FileHandle, bootFolder: URL, disk: PaymentDisk? = nil) throws {
         bootDirectory = bootFolder.appending(path: Self.bootPrefix + UUID().uuidString)
         let boot = VZLinuxBootLoader(kernelURL: kernel)
         boot.initialRamdiskURL = bootDirectory.appending(path: "initrd")
@@ -49,7 +72,13 @@ public final class Guest: NSObject {
         configuration.serialPorts = [serial]
         configuration.socketDevices = [VZVirtioSocketDeviceConfiguration()]
         configuration.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+        if let disk {
+            let image = try VZDiskImageStorageDeviceAttachment(
+                url: disk.image, readOnly: false, cachingMode: .automatic, synchronizationMode: .full)
+            configuration.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: image)]
+        }
         try configuration.validate()
+        self.disk = disk
         super.init()
         listener.delegate = self
     }
@@ -58,12 +87,16 @@ public final class Guest: NSObject {
     /// channel token, a fresh rewriter key, the check cases and the model's
     /// name; without `cover`, a cover list with no URLs in place of the
     /// image's, the daemon's own cleared setting, so its cover worker never
-    /// starts; and when it `serve`s, the mark that starts the door port, the
-    /// runner and the sender after the checks. The token and key exist only
-    /// in this process and the guest's memory; the file that carries them
-    /// exists only until `start` ends. With a `door`, the guest's connections
-    /// to the door port are handed to it, each as a socket it owns; without
-    /// one, that port is not open.
+    /// starts; when it `serve`s, the mark that starts the door port, the
+    /// runner and the sender after the checks; and with a payment disk, its
+    /// key, readable by the guest's root alone, which removes it once the
+    /// disk is open, and, for a new image, the mark that has the guest make
+    /// it. The token and the rewriter key exist only in this process and the
+    /// guest's memory, and the disk's key only there and where the caller
+    /// keeps it; the file that carries them, readable by this process's user
+    /// alone, exists only until `start` ends. With a `door`, the guest's
+    /// connections to the door port are handed to it, each as a socket it
+    /// owns; without one, that port is not open.
     public func prepare(
         base: URL, cases: Data, model: String, relay: Relay, tor: Tor, cover: Bool, serve: Bool,
         door: ((Int32) -> Void)?
@@ -79,6 +112,12 @@ public final class Guest: NSObject {
         }
         if serve {
             entries.append(.init(path: "etc/cloak/serve", mode: 0o444, uid: 0, gid: 0, data: Data()))
+        }
+        if let disk {
+            entries.append(.init(path: "run/cloak/pay-disk-key", mode: 0o400, uid: 0, gid: 0, data: disk.key))
+            if disk.isNew {
+                entries.append(.init(path: "etc/cloak/pay-disk-new", mode: 0o444, uid: 0, gid: 0, data: Data()))
+            }
         }
         let initrd = BootFiles.initrd(base: try Data(contentsOf: base), entries: entries)
         try FileManager.default.createDirectory(at: bootDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])

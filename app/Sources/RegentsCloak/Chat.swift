@@ -99,9 +99,10 @@ final class Chat {
     let folder: URL
     let wallet: Wallet
     let nearMode: NearMode
-    /// Read here for whether the model is on this Mac, which a Local Llama
-    /// chat needs.
-    let download: ModelDownload
+    /// One download for each model that answers Local Llama chats, the
+    /// least memory first: read here for whether the chosen one is on this
+    /// Mac, which a Local Llama chat needs.
+    let downloads: [ModelDownload]
     private(set) var access = Access.opening
     /// Newest first.
     private(set) var conversations: [Conversation] = []
@@ -161,14 +162,14 @@ final class Chat {
 
     init(
         supervisor: Supervisor, settings: AppSettings, folder: URL, wallet: URL, door: Door, nearMode: NearMode,
-        download: ModelDownload
+        downloads: [ModelDownload]
     ) {
         self.supervisor = supervisor
         self.settings = settings
         self.folder = folder
         self.wallet = Wallet(supervisor: supervisor, folder: wallet)
         self.nearMode = nearMode
-        self.download = download
+        self.downloads = downloads
         let agent = Agent(parts: Agent.Parts(
             run: { supervisor.run($0) }, pass: { door.pass(for: $0) }, reworded: { door.reworded(for: $0) }))
         self.agent = agent
@@ -203,8 +204,8 @@ final class Chat {
     /// its card then says why Send is off. A task runs unless running it is
     /// certain to stop, or one runs in its conversation already. A NEAR
     /// message goes unless sending it is certain to stop. A Local Llama
-    /// message is asked unless the model is not on this Mac, or the model is
-    /// answering in its conversation already.
+    /// message is asked unless asking is certain to stop (`llamaBlock`), or
+    /// the model is answering in its conversation already.
     var canSubmit: Bool {
         guard let selected, !Self.isBlank(draft) else { return false }
         if isAgent(selected) { return isOpen && runBlock == nil && agent.runs[selected.id] == nil }
@@ -231,11 +232,39 @@ final class Chat {
         conversation.turns.isEmpty ? kind == .llama : conversation.isLlama
     }
 
+    /// The download of the model chosen to answer Local Llama chats
+    /// (`AppSettings.answerModel`); nil when the name chosen is not one this
+    /// release lists.
+    var answerDownload: ModelDownload? {
+        let name = settings.answerModel ?? supervisor.manifest.model
+        return downloads.first { $0.model.name == name }
+    }
+
+    /// Why a Local Llama message is certain to stop if asked now.
+    enum LlamaBlock {
+        /// The model chosen is not one this release has.
+        case unknown
+        /// This Mac can't run the model chosen.
+        case mac(ModelDownload)
+        /// The model chosen is not on this Mac.
+        case missing(ModelDownload)
+
+        var words: String {
+            switch self {
+            case .unknown: "Choose a model in Settings."
+            case .mac: "This Mac can't run the chosen model."
+            case .missing: "Download the model to ask."
+            }
+        }
+    }
+
     /// Why a Local Llama message can't be asked now, or nil when it can: off
-    /// only while the model is not on this Mac, which is certain to stop it.
-    /// Cloak need not be running.
-    var llamaBlock: String? {
-        download.state == .installed ? nil : "Download the model to ask."
+    /// only where asking is certain to stop. Another model never answers in
+    /// the chosen one's place. Cloak need not be running.
+    var llamaBlock: LlamaBlock? {
+        guard let download = answerDownload else { return .unknown }
+        guard download.fits else { return .mac(download) }
+        return download.state == .installed ? nil : .missing(download)
     }
 
     /// Whether the agent of `conversation`, which has earlier tasks, starts
@@ -544,11 +573,13 @@ final class Chat {
         update(conversation)
     }
 
-    /// Asks the model on this Mac to answer a Local Llama conversation's
-    /// turn, after its earlier turns as written and answered, and keeps the
-    /// answer with it, or why none came. One at a time in a conversation.
+    /// Asks the chosen model on this Mac to answer a Local Llama
+    /// conversation's turn, after its earlier turns as written and answered,
+    /// and keeps the answer with it, or why none came. One at a time in a
+    /// conversation.
     func ask(_ turn: UUID, in id: UUID) {
-        guard answering[id] == nil, llamaBlock == nil, let conversation = conversations.first(where: { $0.id == id }),
+        guard answering[id] == nil, llamaBlock == nil, let model = answerDownload?.model,
+            let conversation = conversations.first(where: { $0.id == id }),
             let index = conversation.turns.firstIndex(where: { $0.id == turn })
         else { return }
         let messages = conversation.turns[..<index].flatMap { earlier in earlier.answer.map { [earlier.original, $0] } ?? [] }
@@ -557,7 +588,7 @@ final class Chat {
         let task = Task {
             let result: Result<String, AnswerStop>
             do throws(AnswerStop) {
-                result = .success(try await supervisor.answer(messages))
+                result = .success(try await supervisor.answer(messages, with: model))
             } catch {
                 result = .failure(error)
             }

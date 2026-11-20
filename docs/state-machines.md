@@ -24,9 +24,9 @@ idle --R or L--> answering --answer written--> idle
 R: request checked --> prompt rendered --> context made --> grammar made --> reading the prompt --> generating --> stop | length
    any step --> failed (template, context, grammar, prompt, generation): 500
    reading the prompt, generating --cancel--> cancelled: 499
-L: conversation checked --> prompt rendered --> fits the cap? --> context made --> sampler made --> reading the prompt --> generating --> stop | length
+L: conversation checked --> prompt rendered --> fits the cap? --> context made --> sampler made --> reading the prompt --> generating --> answer parsed --> stop | length
    does not fit --> too long: 413, before any context is made
-   any step --> failed (template, context, sampler, prompt, generation): 500
+   any step --> failed (template, context, sampler, prompt, generation, parse, answer): 500
    reading the prompt, generating --cancel--> cancelled: 499
 ```
 
@@ -36,7 +36,9 @@ L: conversation checked --> prompt rendered --> fits the cap? --> context made -
   (decision 9). And Cloak's details request (decision 13), the same keys
   with the user message `{"draft":"..."}`, which decodes under Cloak's
   details grammar (`reference/details-reply.gbnf`) instead. Anything else is
-  answered 400 and never reaches llama.cpp.
+  answered 400 and never reaches llama.cpp, and so is every `R` to a model
+  pinned with no grammar, one that only answers Local Llama chats
+  (decision 21).
 - **context made**: a context of the rewrite's own, sized for the prompt and
   `max_tokens`; nothing carries over from the rewrite before.
 - **grammar made**: llama.cpp's grammar sampler over the pinned grammar plus
@@ -54,18 +56,23 @@ L: conversation checked --> prompt rendered --> fits the cap? --> context made -
   tokens.
 - **conversation checked** (`L` only): exactly `{"messages":[...]}`, each
   message exactly `role` and `content`, an odd count, the roles alternating
-  `user` and `assistant` from `user`; anything else is answered 400. An `L`
+  `user` and `assistant` from `user`; anything else is answered 400, and so
+  is every `L` to a model whose pin has no `answers`. An `L`
   frame never takes the rewrite or details path, whatever its messages say:
   a message reading `{"texts":["a"]}` is answered as a chat message.
 - **prompt rendered** (`L`): the model's own chat template over the
-  conversation, with no system message.
+  conversation, with no system message, and the template settings its pin
+  holds (`chat_template_context`: Qwen's `enable_thinking` off; none for
+  Inkling 2 Mini, so its template's own thinking effort).
 - **fits the cap** (`L`): the prompt's tokens plus 4,096, the most one
-  answer takes, must fit 19,456 tokens, the largest context a rewrite has
+  answer takes, must fit the model's `answers.context_tokens`: 19,456 for
+  both models, the largest context a rewrite has
   been measured to take (a 10,000-character message, decision 6's limit:
   2,849 prompt tokens plus the daemon's 16,384, which llama.cpp rounds up
   to 19,456; `evidence/stage3/small-lead-gguf-grammar/feasibility-20261114T052945Z.json`),
-  so a chat never holds more memory than a rewrite. A conversation that does
-  not fit is answered 413 and nothing is trimmed.
+  so a chat on the model that rewords never holds more memory than a
+  rewrite. A conversation that does not fit is answered 413 and nothing is
+  trimmed.
 - **context made** (`L`): a context of its own, sized for the prompt and
   4,096 tokens.
 - **sampler made** (`L`): llama.cpp's `common_sampler` from default
@@ -77,6 +84,13 @@ L: conversation checked --> prompt rendered --> fits the cap? --> context made -
 - **generating** (`L`): ends with `stop` at the end of the turn, or
   `length` at 4,096 tokens. Cancel, the end of the channel and a protocol
   fault stop it as they stop a rewrite.
+- **answer parsed** (`L`): llama.cpp's own reader of the model's template
+  (`common_chat_session`, one path for every model) takes the reply apart
+  and only its answer is kept: a model's thinking is dropped. Qwen, with
+  thinking off, keeps its reply but for leading white space; Inkling 2
+  Mini's answer blocks are kept, joined as they came. It fails as `parse` if
+  the reader throws, and as `answer` when no answer text is left, as when a
+  reply reaches 4,096 tokens still thinking.
 - **idle**: a cancel here is one that crossed the answer, and does nothing.
   The worker goes idle before it writes the answer, because the host sends
   its next request as soon as it has read this one.
@@ -228,8 +242,9 @@ tells the supervisor of each rest and wake and of every exit it did not
 cause (`Change`). `finish` while resting starts nothing, and while waking
 stops the load at once. A relay made with `Relay(resting:)` starts as if
 its worker had rested: no worker runs until the first request wakes one.
-The app's supervisor uses one for Local Llama chats while no run is up
-(section 9). No check since 19 November.
+The app's supervisor uses one for Local Llama chats while no run is up,
+and, while one is, for a chat whose chosen model is not the one that
+rewords (section 9). No check since 19 November.
 
 The app's own requests (`answer(to:as:yielding:)`) take their turn with
 the connections, each as one call:
@@ -307,7 +322,12 @@ The boot files carry the per-boot channel token and rewriter key, and,
 in the app when its owner's Cover setting is off as they are written, a
 cover list with no URLs laid over the image's (`/etc/cloak/cover.json`),
 the daemon's own cleared setting, so no cover worker starts in that guest
-(section 9); `cloak-host` never lays one.
+(section 9); `cloak-host` never lays one. A guest given a payment disk
+(`cloak-host --disk`; the app gives none yet) has its image attached as its
+only disk, and its boot files also carry the disk's key, readable by the
+guest's root alone and removed there once the disk is open, and, for a new
+image, the mark that has the guest make the disk (section 6c). The host
+takes the image's path and the key from its caller; it makes neither.
 "Worker finished" closes the worker's channel and waits for it to exit; a
 busy worker first stops its rewrite (section 1), so the rewrite in progress
 fails and is not sent again. "Worker finished" and "Tor stopped" each wait
@@ -345,7 +365,8 @@ the start, and removed in one place when the start ends, whether it worked
 or not, or straight away if writing them fails.
 
 Limit: a host killed during the start (under a second) leaves them in its
-private temporary folder, readable only by the person. The stage 5 app
+private temporary folder, readable only by the person, with a payment
+disk's key among them when it has one. The stage 5 app
 writes its guests' boot files in a folder of its own instead, each guest's
 in `~/Library/Application Support/Regents Cloak/control/boot/cloak-<UUID>/`,
 and its supervisor removes every such `cloak-<UUID>` folder there at launch,
@@ -356,10 +377,14 @@ gone and exits. The stage 3 kit stops a boot over its time limit this way.
 ## 6. The guest's boot (`guest/image/init`, then `guest/image/boot`)
 
 ```
-root copied to tmpfs --> switched root --> mounts --> vsock and entropy modules --> loopback
-  --> adapter ready --> Tor port ready --> daemon ready --> daemon checks --> workspace made
-  --> agent cases --> power off
+root copied to tmpfs --> switched root --> mounts --> vsock, entropy and disk modules --> loopback
+  --> payment disk open, when the host gives one (section 6c) --> adapter ready --> Tor port ready
+  --> daemon ready --> daemon checks --> workspace made --> agent cases --> power off
 ```
+
+The guest has no modprobe, so the kernel loads no module by itself: the
+boot loads each, after the ones it needs, and a module that does not load
+powers the guest off with a line naming it.
 
 Before: "adapter ready" was guessed by scanning the kernel's socket table
 every 0.1 seconds for up to 5 seconds, so a slow boot could fail for no
@@ -397,8 +422,14 @@ stopped before the guest is stopped.
 ## 6a. One agent case (`guest/agent/main.go`)
 
 ```
-log offset noted --> case run as agent --> exited --> daemon log lines taken --> result printed
+log offset noted --> case run as agent in the sandbox, or as the payer in its home --> exited
+  --> daemon log lines taken --> result printed
 ```
+
+A pay case runs a command as the payer's user (1009), outside the sandbox,
+in its home, the payment disk (section 6c); the checks use it to write and
+read stand-ins for the payer's files. A case that cannot start, as a pay
+case does when no disk is mounted, prints why as its output.
 
 Before (12 November): the agent check also ran a route observer on the Tor
 port, which refused each SOCKS connection and recorded what it read. The Tor
@@ -407,6 +438,52 @@ tor (`tests/fake_tor.py`) does the same from the host, in the same steps
 (greeting, password, request, refusal), recording what it read whichever
 step the connection ends at. It says it has bootstrapped at once, later,
 never, or exits first, as each check needs.
+
+## 6c. The payment disk (`guest/image/pay-disk`, `guest/image/boot`, `host/Sources/CloakHost/Guest.swift`)
+
+```
+key in the boot files --> new image: first 16 MiB blank --> LUKS2 made --> opened --> ext4 made
+                          --> mounted --> given to the payer --> key's file removed --> open
+                      --> made before: opened --> mounted --> key's file removed --> open
+any step failing --> key's file removed --> one line saying why --> power off
+```
+
+The disk is the guest's only one, `/dev/vda`: an image file on the Mac,
+encrypted with LUKS2 (cryptsetup, dm-crypt, AES-XTS) under the 32 bytes
+the host gives, holding one ext4 filesystem mounted at
+`/var/lib/cloak-pay`, the payer's home, its own and mode 0700. Under the
+disk, that folder is root's and mode 0700, so a payer whose disk is not
+mounted can keep nothing anywhere; there is no other place for its files.
+The key goes to cryptsetup by file, never on a command line, and its file
+is removed once the disk is open or has failed to; cryptsetup hands the
+volume key to dm-crypt through the kernel keyring, as a key no program can
+read back.
+
+Only "new" formats, and only an image whose first 16 MiB, where LUKS2 keeps
+both copies of its header and its keyslots, are all zero; an image that
+fails to open is never formatted, and nothing falls back to a folder off
+the disk. A wrong key, both header copies damaged, a damaged keyslot or a
+damaged filesystem stops with cryptsetup's or mount's own reason and leaves
+the image unchanged. One damaged header copy is rewritten from the other
+as the disk opens, cryptsetup's own repair. Checks:
+`guest/image/pay-disk-check.sh` (Docker, on loop devices) and
+`tests/test_pay_disk.py` (the guest).
+
+A guest killed at any moment leaves a disk that opens with every payment
+file written before the kill, by three things in turn. The filesystem is
+mounted `sync` (`guest/image/pay-disk`), so each write, rename and removal
+is on the disk before it returns: the payer's programs write each file to
+a temporary name and rename it into place, before the request it records
+leaves, and the companion does so without an fsync of its own. ext4's
+journal (made by `mke2fs -t ext4`) brings the filesystem back to a
+consistent state at the next mount after any cut. And the host attaches the
+image with `.full` synchronization (`Guest.swift`), so each flush the guest
+sends, which dm-crypt passes down, is an F_FULLFSYNC of the image on the
+Mac. The guest's power-off is itself a cut: the boot unmounts nothing.
+
+The sandbox binds none of it: not the mount point, the raw disk, the
+device-mapper nodes or control, nor `/sys`; it cannot make a device node;
+and the key's file is gone before any case runs. Check: `tests/test_escape_path.py`.
 
 ## 7. One request in the guest adapter (`guest/adapter/main.go`)
 
@@ -580,11 +657,12 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
 
 - **Preparing** first ends the worker up for Local Llama chats, if any,
   and waits for it to exit (below). It then takes each step only once the
-  one before it is up: the checks (the Mac: Apple silicon, the model's memory within Metal's graphics
+  one before it is up: the checks (the Mac: Apple silicon, the memory of
+  the model that rewords within Metal's graphics
   limit less 1 GiB, and all of Cloak's within the memory less 4 GiB for
   macOS, both needs from the manifest, a graphics limit that cannot be read
   failing it; each part in the bundle against its SHA-256 in the bundle's
-  manifest; the model's files and sizes, whose hashes the worker checks
+  manifest; that model's files and sizes, whose hashes the worker checks
   itself), then the worker put where it runs,
   `worker/cloak-rewriter-llama` in the app's Application Support folder
   (its sandbox cannot start a program kept under `~/Documents` or
@@ -679,17 +757,25 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   whenever the phase, the rest or the download changes.
 
 - **Local Llama** (`Supervisor.answer`, `LocalLlama`) is no phase. A
-  Local Llama chat's message goes to the model on this Mac in an `L`
-  frame (section 1). While Running, it takes its turn at the run's relay,
+  Local Llama chat's message goes to the model chosen for it (section 9c,
+  decision 21) in an `L` frame (section 1). While Running, a message to the
+  model that rewords takes its turn at the run's relay,
   in order with rewording, and never gives way (section 3); a worker
-  failure then is the run's, as for any request. In every other settled
-  phase, Paused, Ready and Needs attention, it goes to a relay of the
-  supervisor's own (`Local`, made with `Relay(resting:)`, section 3); one
-  sent while Preparing or Stopping waits for the phase to settle. That
+  failure then is the run's, as for any request. Every other message, and
+  every one in the other settled
+  phases, Paused, Ready and Needs attention, goes to a relay of the
+  supervisor's own for that model (`Local`, made with `Relay(resting:)`,
+  section 3); one sent while Preparing or Stopping waits for the phase to
+  settle. There is one such relay at most: a message to another model than
+  the one it is for ends it first (`endLocal`), and a message it had stops
+  as interrupted. That
   relay's first message starts its worker: once the last local worker has
-  exited, the Mac and the model's files are checked, the pinned worker is
-  put where it runs and checked against its pin, as at Preparing, and the
-  worker starts with the same program and arguments as a run's, with no
+  exited, the Mac is checked for that model (`Manifest.answerCheck`: for a
+  model other than the one that rewords, its memory is counted beside that
+  one's, which a run keeps loaded) and the model's files are checked, the
+  pinned worker is put where it runs and checked against its pin, as at
+  Preparing, and the worker starts with the same program as a run's, given
+  that model's name and folder, with no
   tor, no guest, no wallet and no NEAR key. It rests after Free memory's
   time, as a run's does, and the next message starts a new one. A worker
   that cannot start stops that message with its reason
@@ -697,10 +783,10 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   ends by itself stops the message it had as `worker_stopped`. Either way
   the relay is dropped, so the next message starts afresh, and the phase
   never changes: nothing here moves the app to Needs attention. A Start,
-  and the shutdown, end that relay first (`endLocal`) and wait for its
-  worker to exit before anything else starts, so two workers never hold
-  the model; a message it had stops as interrupted, and the chat says to
-  ask again. While its worker is up or loading, the technical detail says
+  and the shutdown, end that relay first, whatever its model, and wait for
+  its worker to exit before anything else starts, so two workers never hold
+  the model that rewords; a message it had stops as interrupted, and the
+  chat says to ask again. While its worker is up or loading, the technical detail says
   so (`worker: process N, for Local Llama chats`), the Paused, Ready and
   Needs attention lines say only that worker runs, and the Memory row
   counts it, since it is one of the app's own processes. Nothing on this
@@ -728,12 +814,15 @@ The phase, supervisor, relay rest, control socket, menu header and settings
 checks were deleted on 19 November (decision 15 in `docs/plan.md`); nothing
 checks what they checked now.
 
-## 9a. The model's download (`app/Sources/CloakSupervisor/ModelDownload.swift`)
+## 9a. The models' downloads (`app/Sources/CloakSupervisor/ModelDownload.swift`)
 
-Release plan item 7. `ModelDownload` is the one owner of the download's
-state; the Details window, the menu and the chat window only read it and
-press its buttons. Nothing downloads until Download is pressed, and the
-download never starts Cloak.
+Release plan item 7. Each model that answers Local Llama chats has a
+`ModelDownload` of its own, the model that rewords among them (decision 21),
+and each is the one owner of its download's state; the Details window, the
+menu, the chat window and Settings' Local Llama pane only read it and press
+its buttons. The downloads are independent: each fetches its own model's
+files into its own folder, whatever the others are doing. Nothing downloads
+until Download is pressed, and no download starts Cloak.
 
 ```
 launch, refresh --> Installed when every file is in place, else Stopped
@@ -746,29 +835,38 @@ Downloading --other failure, tries left--> Retrying --wait over--> Downloading
 Downloading --other failure, no tries left--> Stopped (failed)
 Downloading, Retrying, Waiting for network --pause--> Stopped (paused)
 Stopped, Downloading, Retrying, Waiting for network --cancel--> Stopped, partials removed
+any state --remove--> Stopped, the model's folder removed   (not the model that rewords)
 ```
 
-- **What it fetches**: exactly the manifest's files, each at its pinned
-  size and sha256, from the one URL the manifest gives it. `app/manifest.py`
-  makes that URL from `reference/models.json`'s repository and revision with
-  `scripts/fetch_model.py`'s own `url`, so the script and the app fetch from
-  the same place. No other model, source or mirror.
+- **What it fetches**: exactly the manifest's files for its model, each at
+  its pinned size and sha256, from the one URL the manifest gives it.
+  `app/manifest.py` makes that URL from `reference/models.json`'s repository
+  and revision with `scripts/fetch_model.py`'s own `url`, so the script and
+  the app fetch from the same place. No other source or mirror.
 - **Installed** means every file is a regular file of its pinned size, as
   the start check counts it (`Checks.isInPlace`, section 9); the worker
   still checks every sha256 itself as it loads.
-- **Offered** in the Details window while some file is not in place, by a
+- **Offered**, for the model that rewords, in the Details window while some
+  file is not in place, by a
   Download Model item in the menu then (the menu looks at the files again
   each time it opens), and in the chat window when the reason is
   `model_missing`. While Cloak needs attention for `model_missing`, the
   menu's header offers it as the failure's button, in the item's place
   (section 9). Before the button, the window says the size,
   the host, and that this download goes straight from this Mac to that
-  host, which sees this Mac's address, unlike Cloak's messages.
+  host, which sees this Mac's address, unlike Cloak's messages. Every
+  model's download, that one's too, is offered in Settings' Local Llama
+  pane (section 9c), whose note says the same of the host: a symbol to
+  download or continue, a ring for its progress with Pause while under way,
+  and, for any model but the one that rewords, Remove. The pane looks at
+  every model's files again each time it shows.
 - **Blocked**: Download and Continue are disabled, with the reason beside
-  them, only when the download is certain to fail: this Mac fails the Mac
-  check (section 9), or the models folder's volume has less free than the
-  bytes still to fetch plus 1 GiB. Free space that cannot be read blocks
-  nothing.
+  them, only when the download is certain to fail: this Mac fails the
+  model's Mac check (`Manifest.answerCheck`, section 9), or the models
+  folder's volume has less free than the bytes still to fetch plus 1 GiB.
+  Free space that cannot be read blocks nothing. In the Local Llama pane,
+  a model this Mac can't run has its row dimmed, its help saying why, in
+  place of the words beside the button.
 - **One file at a time**, in the manifest's order. Each streams into
   `<file>.part` beside its place with a running sha256. At its pinned size
   its size and sha256 are compared with the pin, and only a match is synced
@@ -791,10 +889,12 @@ Stopped, Downloading, Retrying, Waiting for network --cancel--> Stopped, partial
   bytes starts the count again.
 - **Pause** stops the transfer and keeps the partial. **Cancel**, once
   confirmed, stops it and removes the partials of the files not in place;
-  files in place stay. Each waits for the work before it to end, so only
-  one piece of work touches the files at a time. **Quit** ends the transfer
-  with the app; the partial stays, and the next launch opens Stopped and
-  fetches nothing until asked.
+  files in place stay. **Remove**, once confirmed, and never for the model
+  that rewords, which every Start needs, stops it and removes the model's
+  folder, files in place and partials alike. Each waits for the work before
+  it to end, so only one piece of work touches the files at a time.
+  **Quit** ends the transfer with the app; the partial stays, and the next
+  launch opens Stopped and fetches nothing until asked.
 
 The download's checks were deleted on 19 November (decision 15 in
 `docs/plan.md`); nothing checks what they checked now.
@@ -863,9 +963,9 @@ test.
 
 ## 9c. A Local Llama chat (`app/Sources/RegentsCloak/Chat.swift`, `app/Sources/CloakSupervisor/Supervisor.swift`)
 
-A conversation whose first message went to the model on this Mac
+A conversation whose first message went to a model on this Mac
 (`Conversation.llama`, true from that message on and absent otherwise, so
-older saved chats read as before) asks it each message as written, with the
+older saved chats read as before) asks each message as written, with the
 conversation so far: each earlier message that has an answer, then that
 answer, then the message asked. One answer at a time in a conversation:
 
@@ -881,8 +981,29 @@ stopped, interrupted, failed --Ask Again, on the newest message--> answering
 How each ended is `Chat.answerStops[turn]`, in memory only; a message saved
 without an answer shows "Not answered" after a relaunch. Too long offers no
 Ask Again, since it is certain to stop again: the chat says to start a new
-one. Ask, and Ask Again, are off only while the model is not on this Mac
-(`ModelDownload.state` not installed), with a line pointing to its download;
+one.
+
+Each message goes to the model chosen in Settings' Local Llama pane
+(`AppSettings.answerModel`, decision 21), read as the message is asked:
+nil, the default and what Restore Defaults puts back, is the model that
+rewords. The pane is listed only while another model fits this Mac or one
+is chosen; its rows are the manifest's models that answer, smallest first,
+with "Best for this Mac" under the last that fits. No other model ever
+answers in the chosen one's place. Ask, and Ask Again, are off only where
+asking is certain to stop (`Chat.llamaBlock`), with a line saying why and a
+button to where it is fixed:
+
+- the name chosen is not a model this release has: "Choose a model in
+  Settings.", with Choose Model…, which opens the pane;
+- this Mac fails the model's Mac check (`ModelDownload.fits`): "This Mac
+  can't run the chosen model.", with Choose Model… for a model other than
+  the one that rewords, and no button for that one, which no choice
+  fixes;
+- the model is not on this Mac (`ModelDownload.state` not installed):
+  "Download the model to ask.", with Download Model… (Downloading Model…
+  while it is under way), which opens Details for the model that rewords
+  and the pane for another.
+
 Cloak need not be running. There is no rewording, no details row, no
 Review, no Send Original Text and no Tor switch. No deadline. No
 check.

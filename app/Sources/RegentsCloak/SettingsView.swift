@@ -12,9 +12,11 @@ import SwiftUI
 /// saves chats, whether the guest sends cover traffic, how long the model
 /// may go unused before it leaves memory, and whether the app checks for
 /// updates by itself), NEAR (the NEAR key, Tor, how
-/// long a passed check is used again, and the model), Shortcut (the
-/// quick prompt's), Door (its port on 127.0.0.1) and Advanced (how Cloak
-/// started its parts, this session's log, and Restore Defaults).
+/// long a passed check is used again, and the model), Local Llama (the
+/// model that answers its chats, and each model's download; listed only
+/// while there is a choice), Shortcut (the quick prompt's), Door (its port
+/// on 127.0.0.1) and Advanced (how Cloak started its parts, this session's
+/// log, and Restore Defaults).
 struct SettingsView: View {
     /// The pane shown, kept with the window, so the app can show it on one.
     @MainActor
@@ -29,11 +31,13 @@ struct SettingsView: View {
     let door: Door
     let updates: Updates
     let near: NearMode
+    /// One for each model that answers Local Llama chats, smallest first.
+    let downloads: [ModelDownload]
     @Bindable var selection: Selection
 
     static func window(
         _ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door, updates: Updates, near: NearMode,
-        selection: Selection
+        downloads: [ModelDownload], selection: Selection
     ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -41,7 +45,7 @@ struct SettingsView: View {
         let content = NSHostingController(
             rootView: SettingsView(
                 settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: near,
-                selection: selection))
+                downloads: downloads, selection: selection))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
         window.setContentSize(NSSize(width: 680, height: 500))
@@ -49,7 +53,7 @@ struct SettingsView: View {
     }
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general, near, shortcut, door, advanced
+        case general, near, llama, shortcut, door, advanced
 
         var id: Self { self }
 
@@ -57,6 +61,7 @@ struct SettingsView: View {
             switch self {
             case .general: "General"
             case .near: "NEAR"
+            case .llama: "Local Llama"
             case .shortcut: "Shortcut"
             case .door: "Door"
             case .advanced: "Advanced"
@@ -67,6 +72,7 @@ struct SettingsView: View {
             switch self {
             case .general: "gearshape"
             case .near: "cpu"
+            case .llama: "laptopcomputer"
             case .shortcut: "keyboard"
             case .door: "door.left.hand.open"
             case .advanced: "wrench.and.screwdriver"
@@ -77,8 +83,9 @@ struct SettingsView: View {
     var body: some View {
         // The sidebar's list can be left with nothing chosen.
         let shown = selection.pane ?? .general
+        let panes = Pane.allCases.filter { $0 != .llama || LlamaPane.isListed(settings, downloads: downloads) }
         NavigationSplitView {
-            List(Pane.allCases, selection: $selection.pane) { row in
+            List(panes, selection: $selection.pane) { row in
                 Label(row.title, systemImage: row.symbol)
                     .sidebarHover(selected: row == selection.pane)
             }
@@ -89,6 +96,7 @@ struct SettingsView: View {
                 switch shown {
                 case .general: GeneralPane(settings: settings, updates: updates)
                 case .near: NearPane(settings: settings, mode: near)
+                case .llama: LlamaPane(settings: settings, downloads: downloads, rewording: supervisor.manifest.rewordingModel)
                 case .shortcut: ShortcutPane(settings: settings, prompt: prompt)
                 case .door: DoorPane(settings: settings, door: door)
                 case .advanced: AdvancedPane(settings: settings, prompt: prompt, supervisor: supervisor, updates: updates)
@@ -301,6 +309,134 @@ private struct NearPane: View {
     }
 }
 
+/// The model that answers Local Llama chats (`AppSettings.answerModel`,
+/// decision 21 in docs/plan.md), one row for each model that can, smallest
+/// first, each with its own download. Rewording always uses the model that
+/// rewords, whichever is chosen. A model this Mac can't run is dimmed and
+/// can be neither chosen nor downloaded; any model but the one that rewords
+/// can be removed, once asked.
+private struct LlamaPane: View {
+    @Bindable var settings: AppSettings
+    let downloads: [ModelDownload]
+    let rewording: Manifest.Model
+
+    /// Whether the pane is in the sidebar: while a model other than the one
+    /// that rewords fits this Mac, or one is chosen.
+    static func isListed(_ settings: AppSettings, downloads: [ModelDownload]) -> Bool {
+        settings.answerModel != nil || downloads.contains { !$0.rewords && $0.fits }
+    }
+
+    var body: some View {
+        let chosen = settings.answerModel ?? rewording.name
+        let best = downloads.last(where: \.fits)?.model.name
+        let hosts = downloads.flatMap(\.hosts).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        let note = """
+            Rewording always uses \(rewording.label), whichever model answers. \
+            Each download goes straight from this Mac to \(hosts.joined(separator: " and ")) and its download servers, \
+            so they see this Mac's internet address.
+            """
+        Form {
+            Section {
+                ForEach(downloads, id: \.model.name) { download in
+                    ModelRow(download: download, chosen: download.model.name == chosen, best: download.model.name == best) {
+                        settings.answerModel = download.rewords ? nil : download.model.name
+                    }
+                }
+            } header: {
+                HStack(spacing: 2) {
+                    Text("Model")
+                    InfoButton("About Model", note: note)
+                }
+            }
+        }
+        .onAppear { downloads.forEach { $0.refresh() } }
+    }
+}
+
+/// One model in Local Llama: its radio mark, which chooses it, its name,
+/// "Best for this Mac" under the name of the last one that fits, why its
+/// download stopped, its download size, and its download's symbols:
+/// Download or Continue, progress and Pause while under way, and Remove.
+private struct ModelRow: View {
+    let download: ModelDownload
+    let chosen: Bool
+    let best: Bool
+    let choose: () -> Void
+    @State private var removing = false
+
+    var body: some View {
+        let label = download.model.label
+        let size = DownloadSection.text(download.total)
+        let unfit = "Needs more memory than this Mac has."
+        LabeledContent {
+            HStack(spacing: 2) {
+                Text(size)
+                    .monospacedDigit()
+                    .foregroundStyle(download.fits ? .secondary : .tertiary)
+                    .padding(.trailing, 4)
+                if download.isUnderWay {
+                    let progress = "\(DownloadSection.text(download.done)) of \(size)"
+                    ProgressView(value: Double(download.done), total: Double(max(download.total, 1)))
+                        .progressViewStyle(.circular)
+                        .controlSize(.small)
+                        .frame(width: 28, height: 28)
+                        .help(progress)
+                        .accessibilityLabel("Download")
+                        .accessibilityValue(progress)
+                    SymbolButton("Pause", symbol: "pause.circle") { download.pause() }
+                } else if download.state != .installed {
+                    SymbolButton(download.done > 0 ? "Continue" : "Download", symbol: "arrow.down.circle") { download.start() }
+                        .disabled(download.blocked != nil)
+                }
+                if !download.rewords, download.isUnderWay || download.done > 0 {
+                    SymbolButton("Remove", symbol: "trash") { removing = true }
+                }
+            }
+        } label: {
+            Button(action: choose) {
+                HStack(spacing: 8) {
+                    Image(systemName: chosen ? "largecircle.fill.circle" : "circle")
+                        .foregroundStyle(chosen ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(label)
+                        if best {
+                            Text("Best for this Mac")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let problem {
+                            Text(problem)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .disabled(!download.fits)
+            .accessibilityAddTraits(chosen ? .isSelected : [])
+            .accessibilityHint(download.fits ? "" : unfit)
+        }
+        .help(download.fits ? "" : unfit)
+        .alert("Remove \(label)?", isPresented: $removing) {
+            Button("Remove", role: .destructive) { download.remove() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its files are deleted from this Mac. You can download it again.")
+        }
+    }
+
+    /// Why the download stopped, or why it can't start for want of space.
+    private var problem: String? {
+        guard !download.isUnderWay else { return nil }
+        if let block = download.blocked, case .disk = block { return DownloadSection.text(block) }
+        return DownloadSection.note(download)
+    }
+}
+
 private struct ShortcutPane: View {
     let settings: AppSettings
     let prompt: QuickPrompt
@@ -471,7 +607,7 @@ private struct AdvancedPane: View {
                 }
             }
             Section {
-                let note = "Puts every setting in this window back. Your wallet, NEAR key, chats and model stay as they are."
+                let note = "Puts every setting in this window back. Your wallet, NEAR key, chats and downloaded models stay as they are."
                 HStack(spacing: 2) {
                     Spacer()
                     Button("Restore Defaults…") { restoring = true }
@@ -494,8 +630,9 @@ private struct AdvancedPane: View {
         """
         Launch at login, Updates and Tor for NEAR turn off, \
         rewording, Review, Saved chats and Cover traffic turn back on, \
-        Free memory goes back to “\(AppSettings.defaultFreeMemory.title)” \
-        and Freshness to “\(AppSettings.defaultProofFreshness.title)”, \
+        Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
+        Freshness to “\(AppSettings.defaultProofFreshness.title)” \
+        and Local Llama to \(supervisor.manifest.rewordingModel.label), \
         the quick prompt loses its shortcut, and the door goes back to port \(AppSettings.defaultDoorPort).
         """
     }

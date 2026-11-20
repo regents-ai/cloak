@@ -52,7 +52,7 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `rewriter-kit/` | The worker's protocol and pins: the frames to and from the host, the daemon's request, a Local Llama conversation, the replies and the model pins |
 | `host/` | The host library (tor, the worker's channel, the relay, the guest) and the `cloak-host` command the kits run |
 | `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build, and the scripts that release them (Release, below) |
-| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), the door port and the runner (the owner's agent tasks, decision 12), kernel and root build |
+| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), the door port and the runner (the owner's agent tasks, decision 12), the payment disk (`guest/image/pay-disk`), kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
 | `evidence/stage4/` | Stage 4 development records and every score, one folder per model |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
@@ -121,6 +121,15 @@ first answer after two seconds, as Stop does, then asks it again, and
 uv run scripts/drive_worker.py --name small-lead-gguf-grammar --chat "My cat is called Miso." "What is my cat called?"
 ```
 
+Inkling 2 Mini answers chats the same way once `uv run scripts/fetch_model.py
+inkling-mini-gguf` has fetched it; it has no grammar, so a rewrite request
+to it is refused with status 400:
+
+```bash
+uv run scripts/drive_worker.py --name inkling-mini-gguf --chat "My cat is called Miso." "What is my cat called?"
+uv run scripts/drive_worker.py --name inkling-mini-gguf "a text to rewrite"
+```
+
 Build the guest (Go cross-builds and a pinned Debian image in Docker, two
 cores), then the host supervisor, signed with the virtualization
 entitlement, with the pinned tor beside it (the Tor Project's own build,
@@ -158,14 +167,30 @@ uv run --with pytest==8.4.2 pytest tests/test_tor_path.py
 ```
 
 Check what a hostile agent in the sandbox can reach: the guest's loopback
-services, the Tor port by hand, vsock, the guest's files, other ways out,
-a process that tries to outlive its command, and another conversation's
-files. Two boots, both against the stand-in tor: the first with cover off,
-the second serving two conversations to the stand-in door
-(`docs/plan.md`, "Escape checks"):
+services, the Tor port by hand, vsock, the guest's files, the payment disk
+(its files, devices and key), other ways out, a process that tries to
+outlive its command, and another conversation's files. Two boots, both
+against the stand-in tor: the first with cover off, the second serving two
+conversations to the stand-in door (`docs/plan.md`, "Escape checks"):
 
 ```bash
 uv run --with pytest==8.4.2 pytest tests/test_escape_path.py
+```
+
+Check the payment disk, the guest's one disk: an image file on the Mac,
+encrypted under a key the host is given, mounted in the guest for the
+payer's user alone (`docs/state-machines.md`, section 6c). Every check here
+boots with a payment disk of its own, a temporary image and a random key.
+The first command checks the program that opens and makes it, in the guest
+build image on Docker's own loop devices (no network); the second boots the
+guest five times: the disk made, written and the host killed, opened again
+and read, then a wrong key, a damaged header and a made image called new,
+each a stop with the image unchanged; and the image searched for what was
+written inside it:
+
+```bash
+sh guest/image/pay-disk-check.sh
+uv run --with pytest==8.4.2 pytest tests/test_pay_disk.py
 ```
 
 ## Stage 3 commands
@@ -260,8 +285,9 @@ cover worker starts in that run. It needs a Mac with
 Apple silicon whose graphics limit (Metal's recommended working set) holds
 the model's 7 GiB with 1 GiB to spare, and whose memory holds all of
 Cloak's 10 GiB with 4 GiB kept for macOS: a 16 GB Mac passes, an 8 GB one
-does not, and one whose graphics limit cannot be read fails. The two needs
-are `model_memory_gib` and `cloak_memory_gib` in `app/release.json`.
+does not, and one whose graphics limit cannot be read fails. The model's
+need is its `answers.memory_gib` in `reference/models.json`, and all of
+Cloak's is `cloak_memory_gib` in `app/release.json`.
 Running means tor is up, the worker is up or resting, a startup check sent
 one rewrite through the guest, the daemon and the worker, and the guest's
 sender is ready. The worker rests,
@@ -352,7 +378,10 @@ words to copy for an agent that posts there. NEAR has the
 NEAR key (a field and Save; once saved, Saved with Replace and Remove,
 which asks first), Tor (off until turned on), Freshness (10 minutes until
 chosen, or Every message or 1 hour) and the model, Qwen3.8-27B, which
-can't be changed; see NEAR mode, below. Shortcut sets the quick prompt's
+can't be changed; see NEAR mode, below. Local Llama, listed only while
+another model fits this Mac or one is chosen, chooses the model that
+answers Local Llama chats, Qwen 3.5 9B until chosen, and holds each
+model's download; see Chat, below. Shortcut sets the quick prompt's
 keys, none until chosen; keys
 without Command, Option or Control are refused, as is a shortcut macOS
 won't take. Door sets the port Agents answer on (below), 8742 until
@@ -361,7 +390,7 @@ when it is saved, used from the next Start, and always on 127.0.0.1 only.
 Advanced shows exactly how the last start started tor and the worker, one
 command a line, and this session's lines of Cloak's log, each with Copy,
 and Restore Defaults, which puts these settings back and nothing else: not
-the wallet, the NEAR key, the chats or the model.
+the wallet, the NEAR key, the chats or the downloaded models.
 
 Updates come through Sparkle 2.8.1, from the feed and the update key's
 public half in `app/release.json`: the feed is `appcast.xml` in the
@@ -553,26 +582,44 @@ the log or to disk. After a rebuild, the Mac asks again whether the new
 build may use it. A NEAR conversation is kept like any other, marked in
 the list by a chip icon.
 
-Or pick Local Llama: the model on this Mac, the one that rewords, answers
+Or pick Local Llama: the model on this Mac chosen in Settings answers
 each message itself, as you wrote it, with the conversation so far, through
 llama.cpp and the model's own chat template, with no instructions added and
-llama.cpp's default sampling. Nothing leaves the Mac: no wallet, no Tor, no
+llama.cpp's default sampling. A model that thinks before it answers has its
+thinking dropped by llama.cpp's own reading of its reply, and only the
+answer shows. Nothing leaves the Mac: no wallet, no Tor, no
 NEAR key, and nothing to pay. Its answers are simpler than a remote
-model's. It needs only the model downloaded, not Start: while Cloak is
-Paused, Ready or needs attention, the first message starts the worker by
-itself, after the same checks of the Mac, the model's files and the worker
-as a Start makes, and it rests after Free memory's time as in a run; while
-Cloak is running, Local Llama messages wait their turn at the run's worker
-with the rewording. Each answer arrives whole; while the model answers,
+model's. Until another is chosen, the model that answers is the one that
+rewords, Qwen 3.5 9B (decision 21 in `docs/plan.md`); the other this
+release offers is Inkling 2 Mini (`inkling-mini-gguf`), which needs 17 GiB
+of its own beside the model that rewords, so this Mac's check counts both.
+Settings lists Local Llama only while another model fits this Mac or one is
+chosen: a row for each model, smallest first, with its radio mark, its
+download size and "Best for this Mac" under the last that fits; one this
+Mac can't run is dimmed, its help saying why. Each model downloads on its
+own, with its progress and Pause, and any but the one that rewords can be
+removed, once asked. Rewording always uses Qwen 3.5 9B, whichever answers.
+It needs only the chosen model downloaded, not Start: while Cloak is
+Paused, Ready or needs attention, the first message starts a worker for
+that model by itself, after the same checks of the Mac, the model's files
+and the worker as a Start makes, and it rests after Free memory's time as
+in a run; while Cloak is running, messages to the model that rewords wait
+their turn at the run's worker with the rewording, and another model
+answers in a worker of its own beside it. Asking another model than the
+one a worker is up for ends that worker first. Each answer arrives whole; while the model answers,
 the chat shows a spinner and a timer, with Stop (Command-period), and a message that
 stopped or failed can be asked again. Start, Pause, Stop and Quit end the
 worker an answer is on, and that message says to ask again. A chat and an
-answer may take at most 19,456 tokens together, the most a rewrite has been
-measured to take, with up to 4,096 tokens an answer; a chat that no longer
-fits says it is too long for the model on this Mac, to start a new one, and
-nothing is cut. Without the model, the chat says so and points to its
-download. There is no rewording, no details, no Review and no Send Original
-Text. A Local Llama conversation is kept like any other, marked in the
+answer may take at most 19,456 tokens together for either model, the most
+a rewrite has been measured to take, with up to 4,096 tokens an answer; a
+chat that no longer fits says it is too long for the model on this Mac, to
+start a new one, and nothing is cut. No other model ever answers in the
+chosen one's place: the chat says "Choose a model in Settings." when the
+model chosen is not in this release, "This Mac can't run the chosen
+model." when it does not fit, and "Download the model to ask." when it is
+not downloaded, with a button to where that is fixed (Details for the model
+that rewords, Settings' Local Llama for another). There is no rewording, no
+details, no Review and no Send Original Text. A Local Llama conversation is kept like any other, marked in the
 list by a laptop icon.
 
 The mode switch shows each of the three modes as its symbol (theatre

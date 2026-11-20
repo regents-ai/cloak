@@ -2,7 +2,7 @@
 // every setting pinned, turn messages into the model's prompt tokens with
 // llama.cpp's own chat template machinery (common/chat), and run one request
 // at a time: a greedy rewrite under the reply grammar, or an answer to a
-// Local Llama chat with llama.cpp's default sampling.
+// Local Llama chat with llama.cpp's default sampling and its own reply parser.
 // cloak_llama.cpp says what each setting is and why.
 
 #ifndef CLOAK_LLAMA_H
@@ -30,9 +30,9 @@ typedef enum {
 
 typedef struct {
     cloak_finish finish;
-    const char * failed_step;    ///< "template", "context", "grammar", "sampler", "prompt" or "generation"; NULL unless failed
+    const char * failed_step;    ///< "template", "context", "grammar", "sampler", "prompt", "generation", "parse" or "answer"; NULL unless failed
     int32_t      failed_code;    ///< llama_process's return code for "prompt" and "generation"; for "grammar", 0 when it does not parse, 1 when it allows no token
-    char *       text;           ///< the generated text (UTF-8, not terminated); free with cloak_result_free
+    char *       text;           ///< a rewrite's generated text, or an answer's text alone (UTF-8, not terminated); free with cloak_result_free
     size_t       text_length;
     int32_t      prompt_tokens;
     int32_t      generated_tokens;
@@ -44,10 +44,11 @@ typedef struct {
 
 /// Loads the GGUF model at `model_path` with `chat_template` (the template's
 /// source) in place of the one the model file carries, and the template
-/// settings `setting_names[i] = setting_values[i]`. Returns NULL on failure,
-/// with the reason in `error`.
+/// settings `setting_names[i] = setting_values[i]`, each value JSON text (a
+/// boolean, a number or a string); `enable_thinking`, when set, is true or
+/// false. Returns NULL on failure, with the reason in `error`.
 cloak_engine * cloak_engine_load(const char * model_path, const char * chat_template,
-                                 const char * const * setting_names, const bool * setting_values,
+                                 const char * const * setting_names, const char * const * setting_values,
                                  size_t setting_count, char * error, size_t error_size);
 
 /// Frees the model and its Metal buffers. ggml's Metal device checks at
@@ -77,8 +78,11 @@ cloak_result cloak_engine_rewrite(cloak_engine * engine, const char * system, co
 /// llama-cli and llama-server use with no flags) until the model ends its
 /// turn or `max_tokens` tokens are out. The context is sized for the prompt
 /// plus `max_tokens`; when that exceeds `max_context` the answer finishes
-/// CLOAK_FINISH_TOO_LONG before any context is made. The text leaves special
-/// tokens out.
+/// CLOAK_FINISH_TOO_LONG before any context is made. llama.cpp's own parser
+/// for the template's format (common_chat_session, as llama-server parses a
+/// chat reply) takes the answer apart from any thinking; the text is the
+/// answer alone, and thinking is dropped. A reply the parser refuses fails at
+/// "parse", and one with no answer in it at "answer".
 cloak_result cloak_engine_answer(cloak_engine * engine, const char * const * roles, const char * const * contents, size_t count,
                                  int32_t max_tokens, uint32_t max_context);
 

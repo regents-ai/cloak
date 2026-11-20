@@ -4,6 +4,7 @@ import Foundation
 // cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl>
 //            --worker <cloak-rewriter-llama> --name <model> --dir <model directory>
 //            --tor <tor> --tor-data <tor's folder>
+//            [--disk <image> --disk-key <key file> [--new-disk]]
 //            [--serve [--door <socket file>] [--runner <socket file>]]
 //
 // Starts the native worker and tor, waits for tor to open its SOCKS port and
@@ -15,6 +16,11 @@ import Foundation
 // is this process's standard output. The guest's cover traffic follows the
 // cover list in the root given (/etc/cloak/cover.json): this command never
 // lays an empty one over it, as the app does when its owner turns Cover off.
+//
+// With --disk the guest has its payment disk: the image file given, which
+// must exist, encrypted under the 32 bytes in the key file given; with
+// --new-disk the image is blank and the guest makes the disk in it. The guest
+// ends at once when the disk does not open, saying why on its console.
 //
 // With --serve the guest runs the sender after its checks (Development mode,
 // decision 10 in docs/plan.md) and its console goes to standard error: each
@@ -33,23 +39,30 @@ import Foundation
 // one last {"failed": <why>}. The client's end of the connection ends the
 // task.
 
-let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter-llama> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder> [--serve [--door <socket file>] [--runner <socket file>]]"
+let usage = "usage: cloak-host --kernel <Image> --initrd <initrd.gz> --cases <cases.jsonl> --worker <cloak-rewriter-llama> --name <model> --dir <model directory> --tor <tor> --tor-data <tor's folder> [--disk <image> --disk-key <key file> [--new-disk]] [--serve [--door <socket file>] [--runner <socket file>]]"
 let flags = ["--kernel", "--initrd", "--cases", "--worker", "--name", "--dir", "--tor", "--tor-data"]
+let diskFlags = ["--disk", "--disk-key"]
 let servingFlags = ["--door", "--runner"]
-let (arguments, serving) = {
+let (arguments, serving, newDisk) = {
     var parsed = [String: String]()
-    var serve = false
+    var serve = false, newDisk = false
     var rest = CommandLine.arguments.dropFirst()
     while let flag = rest.popFirst() {
         if flag == "--serve", !serve {
             serve = true
             continue
         }
-        guard (flags + servingFlags).contains(flag), parsed[flag] == nil, let value = rest.popFirst() else { fail(usage) }
+        if flag == "--new-disk", !newDisk {
+            newDisk = true
+            continue
+        }
+        guard (flags + diskFlags + servingFlags).contains(flag), parsed[flag] == nil, let value = rest.popFirst() else { fail(usage) }
         parsed[flag] = value
     }
-    guard flags.allSatisfy({ parsed[$0] != nil }), serve || servingFlags.allSatisfy({ parsed[$0] == nil }) else { fail(usage) }
-    return (parsed, serve)
+    let disk = diskFlags.allSatisfy { parsed[$0] != nil }
+    guard flags.allSatisfy({ parsed[$0] != nil }), serve || servingFlags.allSatisfy({ parsed[$0] == nil }),
+          disk || (diskFlags.allSatisfy({ parsed[$0] == nil }) && !newDisk) else { fail(usage) }
+    return (parsed, serve, newDisk)
 }()
 func path(_ flag: String) -> URL { URL(filePath: arguments[flag]!) }
 
@@ -81,8 +94,11 @@ let relay = Relay(worker: channel) { [worker, workerArguments] in
 
 let guest: Guest
 do {
+    let disk = try arguments["--disk"].map { image in
+        try Guest.PaymentDisk(image: URL(filePath: image), key: try Data(contentsOf: path("--disk-key")), isNew: newDisk)
+    }
     guest = try Guest(kernel: path("--kernel"), console: serving ? .standardError : .standardOutput,
-                      bootFolder: FileManager.default.temporaryDirectory)
+                      bootFolder: FileManager.default.temporaryDirectory, disk: disk)
 } catch {
     fail("invalid guest: \(error)")
 }

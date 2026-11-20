@@ -15,7 +15,7 @@ public struct Failure: Error, Sendable, Equatable {
 }
 
 /// The checks made before anything starts, in order: the Mac, each part
-/// against its pin, and the model's files. The worker checks the model's
+/// against its pin, and the rewording model's files. The worker checks a model's
 /// files against their sha256 pins itself as it loads them; here each pinned
 /// file must be present at its pinned size, so a missing or partial download
 /// is named before anything starts.
@@ -48,12 +48,14 @@ enum Checks {
     static let keptForMacOS: UInt64 = 4 << 30
 
     /// Each check's finding, and the failure it stands for when it failed.
+    /// The model is the one that rewords.
     static func run(_ manifest: Manifest, _ layout: Layout, hardware: Hardware) async -> [(Finding, Failure?)] {
-        var results = [hardwareCheck(hardware, model: manifest.modelMemory, cloak: manifest.cloakMemory)]
+        let model = manifest.rewordingModel
+        var results = [manifest.answerCheck(model, hardware: hardware)]
         for pin in manifest.pins {
             results.append(await pinCheck(pin, at: layout.url(pin)))
         }
-        results.append(modelCheck(manifest.model, in: layout.model(manifest)))
+        results.append(modelCheck(model, in: layout.model(model)))
         return results
     }
 
@@ -105,8 +107,7 @@ enum Checks {
             let detail = "\(directory.path): missing or incomplete: \(wrong.map(\.path).joined(separator: ", "))"
             return (Finding(name: "model", passed: false, detail: detail), Failure(.modelMissing, detail))
         }
-        let bytes = model.files.reduce(0) { $0 + $1.size }
-        return (Finding(name: "model", passed: true, detail: "\(model.name): \(model.files.count) files, \(bytes) bytes in \(directory.path)"), nil)
+        return (Finding(name: "model", passed: true, detail: "\(model.name): \(model.files.count) files, \(model.size) bytes in \(directory.path)"), nil)
     }
 
     /// The model's file is in its folder as a regular file of its pinned

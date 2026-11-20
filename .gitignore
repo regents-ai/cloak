@@ -11,6 +11,8 @@ reference/src/
 # Worker build output
 llama-worker/.llama/
 llama-worker/.xcode/
+llama-worker/.build/
+rewriter-kit/.build/
 
 # Guest and host build output
 guest/build/
