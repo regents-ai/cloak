@@ -3341,8 +3341,8 @@ candidates, so the split has to be re-declared before any holdout opens.
     tokens"). This replaces "Development mode is removed, not kept
     beside it" and the cutover's deletion of the sender, its host half
     and the Tempo wallet parts. What it means:
-    - Four modes: V, the token mode (working name "Token Inference";
-      its name is Sean's open question), NEAR Private AI, Local Llama.
+    - Four modes: V, Token Inference (Sean, "25. a", the same day),
+      NEAR Private AI, Local Llama.
     - The token mode is today's V path unchanged: reworded on the Mac,
       sent through Tor from the guest, cover traffic, paid from the one
       Tempo wallet. Its standing note is the one the Development bar
