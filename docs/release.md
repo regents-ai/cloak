@@ -314,7 +314,7 @@ Sean's answers, 18 November:
   is used for nothing public (changed 19 November: it signs the friends'
   build, below). No backup of the key is kept, by his
   choice: it can be replaced at Apple. The notarization sign-in is still
-  to come.
+  to come (saved 19 November as the keychain profile `cloak-notary`).
 - The key: made that day with `generate_keys --account cloak`, on his
   decision, in the login keychain of this Mac. Its public half is
   `Dw2edhocMd1y+8c+Q5Lm0kG15miKI4TX+zj7tYuomjk=`. The private half is
@@ -364,6 +364,20 @@ Then each release, by the chief alone, on this Mac:
    new release.
 4. Check from a Mac with the previous release that it finds the update,
    takes it, and opens Paused.
+
+Releases so far:
+
+- 0.5.0 (164), 19 November 2026, from commit `e19db9e`. Apple accepted
+  the app and the image; Gatekeeper accepts the image as downloaded from
+  `https://github.com/regents-ai/cloak-releases/releases/latest/download/Regents-Cloak.dmg`,
+  and the feed's signature of it matches the update key in the app. On
+  Sean's Mac the signed build starts and rewords (`cloak verify`). Not
+  yet shown: a first run on a Mac that never had Cloak, and an update
+  from one release to the next, which needs a second release.
+- Seen on Sean's Mac only: macOS asked once whether to open the worker,
+  as "(null)", because its sandbox folder there was made by ad hoc
+  builds and the worker is now signed by a team. A Mac that only ever
+  had released builds has no such folder and is not asked.
 
 **8. Memory and speed, measured.** One table: the model and its
 quantization; peak memory with the guest, tor, Pi, payment and the model

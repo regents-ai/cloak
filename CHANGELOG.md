@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The first release, 0.5.0 (164), made with `app/release.sh` and
+  published with `app/publish.sh` on 19 November 2026 from commit
+  `e19db9e`: Apple accepted the app and the disk image, Gatekeeper
+  accepts the image as downloaded from `regents-ai/cloak-releases`, the
+  feed's signature matches the update key in the app, and the signed
+  build starts and rewords on Sean's Mac. The notary sign-in is saved as
+  the keychain profile `cloak-notary`. `app/release.sh` now makes the
+  image with `diskutil image create from`, since this macOS marks
+  `hdiutil create` for removal. Not yet shown: a first run on a Mac that
+  never had Cloak, and an update from one release to the next.
+
 - A signed, notarized download of Regents Cloak, with updates, for the
   friends Sean invited (his answers of 19 November). `app/build.sh`
   takes one optional argument, a signing identity: with it, every part,
