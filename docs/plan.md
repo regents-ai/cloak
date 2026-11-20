@@ -3197,6 +3197,40 @@ candidates, so the split has to be re-declared before any holdout opens.
     their post. The links carry no share-tracking parts. What a saved
     chat holds and what the worker is sent keep their names (`near`,
     `llama`, the `L` frame), so chats already saved open as before.
+20. Symbols over words; V, with Agent inside it; Cover in the toolbar.
+    Decided 20 November 2026. Sean: "In general I want the UI to be as
+    minimal in text as possible, with text on tooltips and dropdown
+    texts. The UI should be 'Apple'-like, with symbols and minimalism.";
+    "rename in the app from Anon mode to V mode"; "if a user is on V
+    mode, then and only then they should also see 'Chat with local
+    agent?'"; "if the cover traffic toggle is on every mode, then it
+    should be extracted out to somewhere else in the UI, and on by
+    default". Decision 19's Anon is V, and its fourth mode, Agent, is a
+    switch shown only in a new V chat. The chief's own reading, not his
+    words: buttons that move money or delete keep a word; the switch is
+    named Agent, not "local agent", because a remote model does the
+    agent's thinking. A saved chat keeps what it holds (`agent` or not).
+21. Local Llama answers from a short list. Decided 20 November 2026
+    (Sean, "20. a - build now", to: a short list of about three local
+    models, each checked file for file as today's is; the app reads the
+    Mac's memory, marks which fit and which is best, and downloads the
+    one picked; rewording stays on the single tested model). This
+    relaxes AGENTS.md's "exactly one model" for Local Llama answers
+    only. No fallback: a chosen model that is missing or changed stops
+    the chat and points to its download, never another model's answer.
+    The list is chosen with whichllm's rankings
+    (github.com/Andyyyy64/whichllm), run in a container that sees none
+    of the Mac's files. Sean asked the same day about Inkling 2 Mini
+    (Thinking Machines, released that day): a candidate for the large
+    slot if Cloak's pinned llama.cpp can load it. Not built yet.
+22. The public page and the film wait. Decided 20 November 2026 (Sean,
+    "22. c - hold for now, as the app is undergoing changes. I need a
+    release video when we are ready to share it"). regents.sh/cloak and
+    the intro film keep "Anon" and four modes until he says; a release
+    video is owed when the app is ready to share. His tagline of the
+    same day ("Cloak your local AI. Always private, full anon is
+    optional.") is with the Regents chief, with the film's last frame
+    re-made for it.
 
 ## Gates
 

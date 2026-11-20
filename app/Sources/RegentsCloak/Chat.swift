@@ -413,7 +413,8 @@ final class Chat {
     }
 
     /// Rewords a turn again, or for the first time if it was to go as
-    /// written, from its original, until it is sent.
+    /// written, from its original, until it is sent. It never sends, Review
+    /// on or off.
     func reword(_ turn: Turn, in conversation: UUID) {
         guard canReword, turn.answer == nil, sending[turn.id] == nil else { return }
         start(conversation, turn.original, .again(turn.id))
@@ -660,9 +661,10 @@ final class Chat {
                 turn = new.id
             }
             update(conversation)
-            // With Review off it goes now, as if Send were pressed: through
-            // the same checks, so one certain to stop stays open, saying why.
-            if !settings.review { send(turn, in: id) }
+            // A new message, with Review off, goes now, as if Send were
+            // pressed: through the same checks, so one certain to stop stays
+            // open, saying why. A card's Reword only rewords.
+            if case .new = asked, !settings.review { send(turn, in: id) }
         case .failure(let reason):
             guard case .new(let written, let picked) = asked else {
                 stop = Stop(reason: reason, newMessage: false)

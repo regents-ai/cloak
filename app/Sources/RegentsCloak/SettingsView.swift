@@ -111,37 +111,38 @@ private struct GeneralPane: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Launch at login", isOn: Binding(get: { login }, set: { login = LoginItem.set($0) }))
-            } footer: {
-                Footnote("Cloak opens paused, so nothing runs until you press Start or ask something in a Local Llama chat.")
-            }
-            Section {
-                NeverReword(settings: settings)
-            } footer: {
-                Footnote("Chat then sends each message as you wrote it. Tasks, and what other apps send through the door, are always reworded.")
-            }
-            Section {
-                Toggle("Review", isOn: $settings.review)
-                    .disabled(settings.neverReword)
-            } footer: {
-                Footnote("Chat shows each reworded message for you to edit and send. Off, it's sent as soon as it's reworded. Not used while Never reword is on.")
-            }
-            Section {
-                Toggle("Saved chats", isOn: $settings.savedChats)
-            } footer: {
-                Footnote("Off, chats you start or continue aren't saved and are gone when Cloak quits. Chats already saved stay until you delete them.")
-            }
-            Section {
-                Toggle("Cover traffic", isOn: $settings.cover)
-            } footer: {
-                Footnote("Cloak visits ordinary public pages in the background, so your real requests stand out less. It uses some bandwidth. A change applies after Pause, then Start; Cloak itself stays open.")
-            }
-            Section {
-                Picker("Free memory", selection: $settings.freeMemory) {
-                    ForEach(FreeMemory.allCases) { Text($0.title).tag($0) }
+                Row("Launch at login", note: "Cloak opens paused, so nothing runs until you press Start or ask something in a Local Llama chat.") {
+                    Toggle("Launch at login", isOn: Binding(get: { login }, set: { login = LoginItem.set($0) }))
                 }
-            } footer: {
-                Footnote("The model leaves memory once it has had nothing to do for that long, and the next message takes a few seconds longer.")
+            }
+            // Never both on (`AppSettings`), so side by side.
+            Section {
+                Row(
+                    "Never reword text. Reduces your privacy.", about: "Never reword",
+                    note: "Chat then sends each message as you wrote it. Tasks, and what other apps send through the door, are always reworded. Turning this on turns Review off."
+                ) {
+                    NeverReword(settings: settings)
+                }
+                Row("Review", note: "Chat shows each reworded message for you to edit and send. Off, it's sent as soon as it's reworded. Turning this on turns Never reword off.") {
+                    Toggle("Review", isOn: $settings.review)
+                }
+            }
+            Section {
+                Row("Saved chats", note: "Off, chats you start or continue aren't saved and are gone when Cloak quits. Chats already saved stay until you delete them.") {
+                    Toggle("Saved chats", isOn: $settings.savedChats)
+                }
+            }
+            Section {
+                Row("Cover traffic", note: "Cloak visits ordinary public pages in the background, so your real requests stand out less. It uses some bandwidth. A change applies after Pause, then Start; Cloak itself stays open.") {
+                    Toggle("Cover traffic", isOn: $settings.cover)
+                }
+            }
+            Section {
+                Row("Free memory", note: "The model leaves memory once it has had nothing to do for that long, and the next message takes a few seconds longer.") {
+                    Picker("Free memory", selection: $settings.freeMemory) {
+                        ForEach(FreeMemory.allCases) { Text($0.title).tag($0) }
+                    }
+                }
             }
             UpdatesSection(updates: updates)
             FeedbackSection()
@@ -167,9 +168,9 @@ private struct UpdatesSection: View {
 
     var body: some View {
         Section {
-            Toggle("Updates", isOn: Binding(get: { checks }, set: { updates.checksAutomatically = $0; checks = $0 }))
-        } footer: {
-            Footnote("Each check goes straight from this Mac to the update server, which sees this Mac's internet address but nothing from your chats.")
+            Row("Updates", note: "Each check goes straight from this Mac to the update server, which sees this Mac's internet address but nothing from your chats.") {
+                Toggle("Updates", isOn: Binding(get: { checks }, set: { updates.checksAutomatically = $0; checks = $0 }))
+            }
         }
         // Sparkle's own question about checking can be answered while the
         // window is away, so the setting is read again when it comes back.
@@ -188,8 +189,9 @@ private struct FeedbackSection: View {
         Post my feedback about the Regents Cloak Mac app, version \(release), on Patchbay's board for regents.sh. \
         First read https://patchbay.help/regents.sh as Markdown and follow its Ask section: call ask_question with the site regents.sh. \
         Ask me what I was doing, what happened and what I expected, and post exactly that. \
-        Leave out anything private: keys, passwords, wallet addresses and what my chats said.
+        Leave out keys, passwords, wallet addresses and what my chats said.
         """
+    private static let note = "Posts there are public. Your agent needs pairing on patchbay.help once before it can post."
 
     var body: some View {
         Section {
@@ -208,36 +210,39 @@ private struct FeedbackSection: View {
                         NSPasteboard.general.setString(Self.words, forType: .string)
                     }
                     .accessibilityLabel("Copy Words")
+                    .accessibilityHint(Self.note)
                 }
             }
         } header: {
-            Text("Feedback and Help")
-        } footer: {
-            Footnote("Posts there are public. Your agent needs pairing on patchbay.help once before it can post.")
+            HStack(spacing: 2) {
+                Text("Help")
+                InfoButton("About Help", note: Self.note)
+            }
         }
     }
 }
 
-/// NEAR mode's key, kept in the keychain and never shown again; whether it
-/// goes through Tor; how long a passed check is used again; and its one
-/// model.
+/// NEAR mode's key, kept in the keychain and never shown again, removed
+/// only once asked; whether it goes through Tor; how long a passed check is
+/// used again; and its one model.
 private struct NearPane: View {
     @Bindable var settings: AppSettings
     let mode: NearMode
     @State private var key = ""
     @State private var replacing = false
+    @State private var removing = false
 
     var body: some View {
         Form {
             Section {
-                LabeledContent("Key") {
+                Row("Key", note: "Your API key from NEAR AI Cloud. You can create one at cloud.near.ai. It pays for the messages you send in NEAR Private AI chats, so NEAR can connect those messages to your account. Cloak keeps it in this Mac's keychain, and it can't be viewed here after you save it.") {
                     VStack(alignment: .trailing, spacing: 4) {
                         if mode.hasKey == true, !replacing {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 2) {
                                 Text("Saved")
                                     .foregroundStyle(.secondary)
-                                Button("Replace") { replacing = true }
-                                Button("Remove") { Task { await mode.remove() } }
+                                SymbolButton("Replace", symbol: "pencil") { replacing = true }
+                                SymbolButton("Remove", symbol: "trash") { removing = true }
                             }
                         } else {
                             HStack(spacing: 6) {
@@ -256,28 +261,33 @@ private struct NearPane: View {
                         }
                     }
                 }
-            } footer: {
-                Footnote("Your API key from NEAR AI Cloud. You can create one at cloud.near.ai. It pays for the messages you send in NEAR Private AI chats, so NEAR can connect those messages to your account. Cloak keeps it in this Mac's keychain, and it can't be viewed here after you save it.")
             }
             Section {
-                Toggle("Tor", isOn: $settings.nearTor)
-            } footer: {
-                Footnote("Sends your NEAR Private AI chats through the Tor network, so NEAR and Intel see a Tor address instead of your internet address. It's slower: checking NEAR's servers takes about half a minute, and Cloak needs to be started first.")
-            }
-            Section {
-                Picker("Freshness", selection: $settings.proofFreshness) {
-                    ForEach(ProofFreshness.allCases) { Text($0.title).tag($0) }
+                Row("Tor", note: "Sends your NEAR Private AI chats through the Tor network, so NEAR and Intel see a Tor address instead of your internet address. It's slower: checking NEAR's servers takes about half a minute, and Cloak needs to be started first.") {
+                    Toggle("Tor", isOn: $settings.nearTor)
                 }
-            } footer: {
-                Footnote("Before sending a message, Cloak checks proof from NEAR's servers, with Intel's help, that they are the hardware and software this version of Cloak accepts. This sets how long a successful check counts before Cloak checks again. “Every message” is the most careful and adds a few seconds to each one.")
             }
             Section {
-                LabeledContent("Model", value: "Qwen3.8-27B")
-            } footer: {
-                Footnote("The model that answers your NEAR Private AI chats. Cloak's check covers the servers it runs on, not the model software itself.")
+                Row("Freshness", note: "Before sending a message, Cloak checks proof from NEAR's servers, with Intel's help, that they are the hardware and software this version of Cloak accepts. This sets how long a successful check counts before Cloak checks again. “Every message” is the most careful and adds a few seconds to each one.") {
+                    Picker("Freshness", selection: $settings.proofFreshness) {
+                        ForEach(ProofFreshness.allCases) { Text($0.title).tag($0) }
+                    }
+                }
+            }
+            Section {
+                Row("Model", note: "The model that answers your NEAR Private AI chats. Cloak's check covers the servers it runs on, not the model software itself.") {
+                    Text("Qwen3.8-27B")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .task { await mode.find() }
+        .alert("Remove key?", isPresented: $removing) {
+            Button("Remove", role: .destructive) { Task { await mode.remove() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("NEAR Private AI chats can't send until you save a key again.")
+        }
     }
 
     /// Keeps the key typed, and clears the field at once.
@@ -298,11 +308,9 @@ private struct ShortcutPane: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("Quick prompt") {
+                Row("Quick prompt", note: "Opens a box over any app. Return takes what you wrote to a new chat, unsent.") {
                     ShortcutRecorder(shortcut: settings.shortcut, refusal: prompt.refusal, choose: prompt.choose)
                 }
-            } footer: {
-                Footnote("Opens a box over any app. Return takes what you wrote to a new chat, unsent.")
             }
         }
     }
@@ -378,7 +386,7 @@ private struct DoorPane: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("Port") {
+                Row("Port", note: "Only apps on this Mac can connect. A new port applies at the next Start.") {
                     VStack(alignment: .trailing, spacing: 4) {
                         HStack(spacing: 6) {
                             TextField("Port", text: $text, prompt: Text(String(AppSettings.defaultDoorPort)))
@@ -396,8 +404,6 @@ private struct DoorPane: View {
                         }
                     }
                 }
-            } footer: {
-                Footnote("Only apps on this Mac can connect. A new port applies at the next Start.")
             }
         }
         .onAppear { text = String(settings.doorPort) }
@@ -440,8 +446,7 @@ private struct AdvancedPane: View {
                 }
                 HStack {
                     Spacer()
-                    Button("Copy") { copy(commands) }
-                        .accessibilityLabel("Copy Commands")
+                    SymbolButton("Copy Commands", symbol: "doc.on.doc") { copy(commands) }
                         .disabled(commands.isEmpty)
                 }
             }
@@ -459,20 +464,20 @@ private struct AdvancedPane: View {
                 }
                 .defaultScrollAnchor(.bottom)
                 .frame(height: 180)
-                HStack {
+                HStack(spacing: 2) {
                     Spacer()
-                    Button("Refresh") { Task { await read() } }
-                    Button("Copy") { copy(lines) }
-                        .accessibilityLabel("Copy Log")
+                    SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await read() } }
+                    SymbolButton("Copy Log", symbol: "doc.on.doc") { copy(lines) }
                 }
             }
             Section {
-                HStack {
+                let note = "Puts every setting in this window back. Your wallet, NEAR key, chats and model stay as they are."
+                HStack(spacing: 2) {
                     Spacer()
                     Button("Restore Defaults…") { restoring = true }
+                        .accessibilityHint(note)
+                    InfoButton("About Restore Defaults", note: note)
                 }
-            } footer: {
-                Footnote("Puts every setting in this window back. Your wallet, NEAR key, chats and model stay as they are.")
             }
         }
         .task { await read() }
@@ -538,9 +543,10 @@ enum SessionLog {
     }
 }
 
-/// Never reword's one control, in General and in Chat's review area: off,
-/// each Chat message is reworded and shown before it goes; on, it goes as
-/// written (decision 11 in docs/plan.md).
+/// Never reword's one control, in General and in the drop-down beside a
+/// Chat card's Send: off, each Chat message is reworded first; on, it goes
+/// as written (decision 11 in docs/plan.md). Turning it on turns Review off
+/// (`AppSettings`).
 struct NeverReword: View {
     @Bindable var settings: AppSettings
 
@@ -549,18 +555,36 @@ struct NeverReword: View {
     }
 }
 
-/// A form section's footer: one plain line.
-private struct Footnote: View {
-    let text: String
+/// A setting's row: its name, with an `info.circle` at the name's right
+/// holding the note that explains it, and its control at the end, which
+/// reads that note as its hint.
+private struct Row<Control: View>: View {
+    let title: String
+    /// The info button's name: "About" and this, the title unless it is
+    /// long.
+    let about: String
+    let note: String
+    let control: Control
 
-    init(_ text: String) {
-        self.text = text
+    init(_ title: String, about: String? = nil, note: String, @ViewBuilder control: () -> Control) {
+        self.title = title
+        self.about = about ?? title
+        self.note = note
+        self.control = control()
     }
 
     var body: some View {
-        Text(text)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
+        LabeledContent {
+            control
+                .labelsHidden()
+                // What a grouped form draws a toggle as when it is the row.
+                .toggleStyle(.switch)
+                .accessibilityHint(note)
+        } label: {
+            HStack(spacing: 2) {
+                Text(title)
+                InfoButton("About \(about)", note: note)
+            }
+        }
     }
 }

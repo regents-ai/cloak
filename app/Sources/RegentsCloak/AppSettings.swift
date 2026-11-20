@@ -8,14 +8,13 @@ import ServiceManagement
 
 /// Cloak's settings, kept in the app's defaults: every key and its default
 /// is named here, once, and read and written only here. Only the Settings
-/// window sets them, and Never reword also Chat's review area, beside Send
-/// Original Text, and Cover and Tor for NEAR also their pills under Chat's
-/// message box. No
-/// setting can be set from a link, from the door, from AppleScript or from
-/// the guest: none of those reaches this type. Whether the app opens at
-/// login is the system's login item (`LoginItem`), and whether it checks
-/// for updates by itself is Sparkle's own setting (`Updates`); neither is a
-/// default kept here.
+/// window sets them, and Never reword also the drop-down beside a Chat
+/// card's Send, Cover also its toggle in Chat's toolbar, and Tor for NEAR
+/// also its pill under Chat's message box. No setting can be set from a
+/// link, from the door, from AppleScript or from the guest: none of those
+/// reaches this type. Whether the app opens at login is the system's login
+/// item (`LoginItem`), and whether it checks for updates by itself is
+/// Sparkle's own setting (`Updates`); neither is a default kept here.
 @MainActor
 @Observable
 final class AppSettings {
@@ -90,7 +89,8 @@ final class AppSettings {
     /// Whether Chat sends each message as written, at once, with no
     /// rewording and no review (decision 11 in docs/plan.md). Chat's own
     /// messages only: the door rewords whatever other apps and the agent
-    /// send.
+    /// send. It and Review are never both on: turning either on, from any
+    /// view, turns the other off here.
     var neverReword: Bool {
         get {
             access(keyPath: \.neverReword)
@@ -98,6 +98,7 @@ final class AppSettings {
         }
         set {
             withMutation(keyPath: \.neverReword) { defaults.set(newValue, forKey: Key.neverReword.rawValue) }
+            if newValue { review = false }
         }
     }
 
@@ -115,10 +116,11 @@ final class AppSettings {
         }
     }
 
-    /// Whether Chat shows each reworded message for its owner to edit and
-    /// send. Off, a message is sent as soon as its rewording finishes, as if
-    /// Send were pressed then. Never reword leaves nothing to review; the
-    /// agent's tasks and the door never have this step.
+    /// Whether Chat shows each new reworded message for its owner to edit
+    /// and send. Off, a new message is sent as soon as its rewording
+    /// finishes, as if Send were pressed then. Turning it on turns Never
+    /// reword off (`neverReword`). The agent's tasks and the door never have
+    /// this step.
     var review: Bool {
         get {
             access(keyPath: \.review)
@@ -126,6 +128,7 @@ final class AppSettings {
         }
         set {
             withMutation(keyPath: \.review) { defaults.set(newValue, forKey: Key.review.rawValue) }
+            if newValue { neverReword = false }
         }
     }
 

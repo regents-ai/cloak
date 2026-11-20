@@ -440,7 +440,7 @@ public final class Supervisor {
                     ? "Paused: nothing is running, and nothing starts by itself."
                     : "Paused: only the worker is running, for Local Llama chats, and nothing else starts by itself.")
         case .preparing:
-            lines.append("Preparing: checking the parts, then starting tor, the worker and the guest, which runs the startup check and then the sender.")
+            lines.append("Starting: checking the parts, then starting tor, the worker and the guest, which runs the startup check and then the sender.")
         case .stopping:
             lines.append("Stopping: the guest, the worker and tor, in that order.")
         case .needsAttention(let reason):

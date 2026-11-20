@@ -618,8 +618,10 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   read is `Supervisor.cover` from then until the shutdown starts stopping
   the run's parts, nil otherwise; the technical detail says which while
   Running. A change while
-  a guest is up waits for the next Start, and Chat says so under its
-  message box ("Cover changes after Pause, then Start.") while the two differ.
+  a guest is up waits for the next Start, and Chat says so on the Cover
+  toggle in its toolbar, a small clock on the symbol's corner and "Cover
+  changes after Pause, then Start." at the end of its help and its
+  VoiceOver hint, while the two differ.
   Nothing else in the run depends on it.
 - **Watches**: from its start until the run ends, tor exiting raises
   `tor_stopped`, and every worker exit the relay did not cause raises
@@ -662,8 +664,8 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
 - **The menu's header** (`app/Sources/RegentsCloak/Menu.swift`) only reads
   the phase. Its dot is the state now: green Running, yellow Paused or
   Ready, red Needs attention, grey while Preparing or Stopping. Its line is
-  the state now, in the menu's words: Starting through Preparing, Stopping
-  through Stopping, with "model unloaded" while Running and resting and
+  the state now, in the words Details uses too: Starting through
+  Preparing, Stopping through Stopping, with "model unloaded" while Running and resting and
   "downloading model" while the download is under way; the dot's tooltip
   and VoiceOver say the same word. Before (18 November): the line kept the
   last settled state's word through a start or stop, which takes 8 to 13
@@ -805,8 +807,10 @@ to NEAR AI Cloud through `cloak-near`, the helper in the app's bundle
 (`guest/near/README.md`, "The helper"). It never goes to the wallet's
 provider, and a Cloak conversation never goes to NEAR. What a new
 conversation is, is the mode picked under the message box (`Chat.kind`, in
-memory only, Anon at each launch): Anon (a Cloak conversation), NEAR
-Private AI (this one), Local Llama (section 9c) or Agent.
+memory only, V at each launch): one of three, V (a Cloak conversation),
+NEAR Private AI (this one) or Local Llama (section 9c). In V, a switch,
+Agent, makes each message a task (`Chat.Kind.agent`); it shows only while
+V is picked, and picking V again leaves it as it is.
 
 The helper's life is owned by the `Near` actor, which runs on a serial
 queue of its own and blocks on the helper's pipes with no suspension
@@ -829,12 +833,14 @@ read stops it with nothing written. `sent` is the helper's for its own
 stops and the app's for its own: false while the helper never had the
 whole line, true once it may have sent the request.
 
-The check line beside the Tor pill (`NearMode`) is one of: Tor needs
+The check mark beside the Tor pill (`NearMode`) is one of: Tor needs
 Cloak running (Tor on and no socket: `Supervisor.torSocket` is non-nil
 only while Running); checking (`checking`, from when the checks under way
-began until the last ends); passed (`proof`: when it passed, what it
-covered, and "Next message checks again." once it is older than the
-freshness chosen); or stopped (`checkStop`, with Check Again). A check
+began until the last ends: a spinner and a timer); passed (`proof`: a
+shield and its age, with when it passed and what it covered as help, and
+"Next message checks again." added, the shield grey, once it is older
+than the freshness chosen); or stopped (`checkStop`, its words, with
+Check Again). A check
 runs whenever a NEAR conversation is shown and whenever its route changes
 (`.task(id:)` on `NearMode.route`: direct, or tor with its socket and the
 launch's two names). A message that is answered sets `proof` to the check
@@ -878,9 +884,8 @@ Ask Again, since it is certain to stop again: the chat says to start a new
 one. Ask, and Ask Again, are off only while the model is not on this Mac
 (`ModelDownload.state` not installed), with a line pointing to its download;
 Cloak need not be running. There is no rewording, no details row, no
-Review, no Send Original Text and no Cover or Tor switch; under the box,
-one line says the model on this Mac answers and nothing is sent. No
-deadline. No check.
+Review, no Send Original Text and no Tor switch. No deadline. No
+check.
 
 ## 10. Stages still implied (found 15 November 2026)
 
@@ -904,10 +909,13 @@ its stages first.
   `Turn.reworded` is nil from then on. Send Original Text is sent on each
   press as Send is, so a press of it while the reworded text is still
   sending pays twice, and the turn is kept as sent as written. With Review
-  off (`AppSettings.review`), a rewording that finishes, a new message's or
-  a Reword's, sends the turn at once, as a press of Send would, through
-  the same checks: one that cannot go stays reworded and open, saying why,
-  so "reworded and open" is skipped only when the send can start. A NEAR
+  off (`AppSettings.review`), a new message's rewording that finishes
+  sends the turn at once, as a press of Send would, through the same
+  checks: one that cannot go stays reworded and open, saying why, so
+  "reworded and open" is skipped only when the send can start. A card's
+  Reword only rewords: its turn stays reworded and open, Review on or
+  off. Review and Never reword are never both on: turning either on turns
+  the other off (`AppSettings`). A NEAR
   conversation's card (section 9b) is never reworded, and its stop is
   `NearMode.sendStop`.
 - **One conversation on disk** (`Chat.update`, `Chat.unsaved`). Saved, each

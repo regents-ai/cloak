@@ -274,8 +274,8 @@ footprint Activity Monitor shows), read every 3 seconds while the window
 is on screen; it says it can't be measured when any part cannot be read,
 and the technical details, like `cloak status --json`, give each part's
 figure. Under Status, Details
-says what the two states mean: "Running: Tor is connected. Anon and Agent
-chats can send." and "Paused: Tor is off. Anon and Agent chats wait."
+says what the two states mean: "Running: Tor is connected. V chats can
+send." and "Paused: Tor is off. V chats wait."
 
 With the guest, the host's tor and the worker built (stage 2 commands),
 build `app/build/Regents Cloak.app`, with Sparkle.framework inside, signed
@@ -304,12 +304,13 @@ worker included, the worker into its sandbox. `app/release.sh` does that
 with the Developer ID (Release, below).
 
 The app opens Paused in the menu bar, and never starts by itself. On the
-first launch only, a Welcome window says what Cloak does and where it is,
-and starts nothing. The menu's top shows the state, as a coloured dot and
-in words, Starting or Stopping while it changes; when Cloak needs
-attention, it says what went wrong and what to do, with a button for the
-fix, or the way to it, when the app has one. The release and
-build are at the menu's foot. `cloak` is inside the app; `cloak start`
+first launch only, a Welcome window shows the Regents crown, whose help
+says what Cloak does, and says where Cloak is, and starts nothing. The
+menu's top shows the state, as a coloured dot and in words, Starting or
+Stopping while it changes; when Cloak needs attention, it says what went
+wrong and what to do, with a button for the fix, or the way to it, when
+the app has one. Each menu item has its symbol before its words. The
+release and build are at the menu's foot. `cloak` is inside the app; `cloak start`
 opens the app if it isn't open:
 
 ```bash
@@ -332,20 +333,26 @@ files, which hold its keys while it starts, are in `control/boot/`; each
 launch first removes any that a killed app left there.
 
 "Settings…" in the menu (Command-comma) is where the app's settings
-change, and the one place but for Never reword, which Chat's review area
-also has, Cover traffic, which Chat's Cover pill also turns on and off,
-and Tor for NEAR, which Chat's Tor pill in a NEAR conversation also turns
-on and off; no link, script, app or agent can set one. General has Launch
+change, and the one place but for Never reword, which the drop-down
+beside a Chat card's Send also has, Cover traffic, which the Cover toggle
+in Chat's toolbar also turns on and off, and Tor for NEAR, which Chat's
+Tor pill in a NEAR conversation also turns on and off; no link, script,
+app or agent can set one. What each setting does is behind the info
+button beside its name, shown when the pointer rests on it or on a click.
+General has Launch
 at login (off until turned on; the app still opens Paused), "Never reword
-text. Reduces your privacy." (off until ticked; see Chat, below), Review
-and Saved chats (on until turned off; see Chat, below), Cover traffic (on
-until turned off; used from the next Start), Free
-memory, Updates (below) and Feedback and Help: a link to Patchbay's board
-for regents.sh, and words to copy for an agent that posts there. NEAR has the
-NEAR key (a field and Save; once saved, Saved with Replace and Remove),
-Tor (off until turned on), Freshness (10 minutes until chosen, or Every
-message or 1 hour) and the model, Qwen3.8-27B, which can't be changed; see
-NEAR mode, below. Shortcut sets the quick prompt's keys, none until chosen; keys
+text. Reduces your privacy." (off until ticked; see Chat, below) and
+Review (on until turned off; see Chat, below), side by side since they are
+never both on: turning either on turns the other off, wherever it is
+turned on. Then Saved chats (on until turned off; see Chat, below), Cover
+traffic (on until turned off; used from the next Start), Free memory,
+Updates (below) and Help: a link to Patchbay's board for regents.sh, and
+words to copy for an agent that posts there. NEAR has the
+NEAR key (a field and Save; once saved, Saved with Replace and Remove,
+which asks first), Tor (off until turned on), Freshness (10 minutes until
+chosen, or Every message or 1 hour) and the model, Qwen3.8-27B, which
+can't be changed; see NEAR mode, below. Shortcut sets the quick prompt's
+keys, none until chosen; keys
 without Command, Option or Control are refused, as is a shortcut macOS
 won't take. Door sets the port Agents answer on (below), 8742 until
 chosen: a number from 1024 to 65535 that nothing on this Mac listens on
@@ -412,11 +419,12 @@ again.
 "Chat" in the menu opens a Chat window. While Cloak is running, each
 message is reworded on the Mac and shown beside the original, with the
 words taken out and put in marked; the reworded text can be edited until
-it is sent. With Review off (Settings, General), the box's button reads
-Send, and each message is sent as soon as it is reworded, through the
-same checks as Send: one that cannot go yet (no wallet, no funds) stays
-open, saying why. Review does nothing while Never reword is ticked, and
-the agent's tasks and the door never have this step. An answer's
+it is sent. With Review on, the box's button is Reword, a pencil. With
+Review off (Settings, General), it is Send, an arrow, and each new message
+is sent as soon as it is reworded, through the same checks as Send: one
+that cannot go yet (no wallet, no funds) stays open, saying why. A card's
+Reword, a pencil, rewords it again and never sends, Review on or off. The
+agent's tasks and the door never have this step. An answer's
 formatting is drawn (headings, lists, code,
 quotes, tables); its links show their address and never open, and its
 images are never loaded. Each conversation, answers included, is kept as
@@ -430,32 +438,38 @@ said in it since Saved chats went off is gone when Cloak quits. A
 conversation saved before keeps its file as it was; turning Saved chats
 off deletes nothing, and Delete still removes a file.
 
-Under the message box, three small pills show Cover, Tor and zkAPI, each
-with a dot, filled while on. Cover turns cover traffic on and off, as in
-Settings, and while Cloak is running with the other value it says "Cover
-changes after Pause, then Start." Tor is always on and zkAPI is off, since
-one wallet pays for everything; neither can be changed yet, and a press on
-either says so. Resting the pointer on a pill for a second shows what it
-controls. In a NEAR
-conversation, one pill, Tor for NEAR (below), takes their place; in a
-Local Llama conversation (below), one line: "The model on this Mac
-answers. Nothing is sent."
+Cover, in Chat's toolbar beside Wallet in every conversation, is a toggle
+shown as a fog cloud, filled while on. It turns cover traffic on and off,
+as in Settings, and resting the pointer on it says what cover traffic
+does. While Cloak is running with the other value, a small clock sits on
+the cloud's corner, and its help adds "Cover changes after Pause, then
+Start." Under the message box, two small pills show Tor and zkAPI, each by
+its symbol (three joined points, a ticket) with a dot, filled while on.
+Tor is always on and zkAPI is off, since one wallet pays for everything;
+neither can be changed yet, and a press on either says so. Resting the
+pointer on a pill for a second shows what it controls. In a NEAR
+conversation, one pill, Tor for NEAR (below), takes their place; a Local
+Llama conversation (below) has none.
 
 Send is Development mode (decision 10 in [docs/plan.md](docs/plan.md)),
-marked as such at the top of Chat (NEAR Private AI's or Local Llama's mark
-takes its place in those conversations), and never part of the public release (the technical
+marked as such by the Development pill at the top of Chat, whose help
+says the provider can link your chats (NEAR Private AI's or Local Llama's
+pill takes its place in those conversations), and never part of the public release (the technical
 preview for invited testers carries it, labelled;
 [docs/release.md](docs/release.md), stage 1): the
 reworded text, after the conversation's earlier sent and answered turns,
 goes from the guest's sender through Tor to a remote model at Boundless,
 paid through MPP on Tempo from one wallet, so the provider can link every
-chat. Beside Send, "Send Original Text" sends that message as written
-instead, still through Tor; its card then shows the Original alone and its
-Reworded light is off. Under them, "Never reword text. Reduces your
-privacy." (also in Settings, General) makes every Chat message go as
-written at once on Send, with no rewording and no review; while it is
-ticked, Chat says "Rewording is off" under the message box. It stays
-ticked across launches until unticked or Restore Defaults. The agent's
+chat. A card's Send is a round arrow, and the drop-down beside it holds
+"Send Original Text", which sends that message as written instead, still
+through Tor; its card then shows the Original alone and its Reworded
+light is off. The drop-down also holds "Never reword text. Reduces your
+privacy." (also in Settings, General), which makes every Chat message go
+as written at once on Send, with no rewording and no review, and turns
+Review off; while it is ticked, an orange warning sign under the message
+box says "Rewording is off. Messages go as you wrote them." as its help.
+It stays ticked across launches until unticked, Review is turned on, or
+Restore Defaults. The agent's
 tasks and apps sending through Agents (below) are always reworded. Wallet,
 in Chat's toolbar, makes the wallet
 when Create is pressed: its key is made in the guest and kept only in the
@@ -465,16 +479,17 @@ Its balance and deposit are read through the guest, so until Cloak has run
 since it opened they show a dash, whose help says "Start Cloak to load the
 wallet balance." (or "the deposit"): nothing leaves this Mac for the wallet
 while Cloak is paused. The model picker shows each
-model's price per million tokens as "in | out". In a NEAR Private AI
-conversation, Wallet shows instead that your NEAR key pays, with
-cloud.near.ai to sign up and add credit, whether a key is saved and Open
-Settings, which opens Settings on NEAR; in a Local Llama conversation,
-that there is nothing to pay. Neither uses the wallet.
+model's price per million tokens as "in | out", as its help says. In a
+NEAR Private AI conversation, Wallet shows instead whether a key is saved,
+with Open Settings, a gear, beside it, which opens Settings on NEAR, and
+that the key comes from cloud.near.ai; in a Local Llama conversation,
+"Nothing to pay." Neither uses the wallet.
 A small deposit, at the size the provider suggests (1 USDC.e), pays for chats and is topped up by
 that much when it cannot pay for the next one; Close ends it with the
 provider, which
 refunds what is unspent, and Withdraw asks the network to close it and,
-pressed again 15 minutes later, takes it back. The deposit's state is sealed in
+pressed again 15 minutes later, takes it back. Each says so as its help,
+and why either is off is beside them. The deposit's state is sealed in
 `~/Library/Application Support/Regents Cloak/wallet/` under the
 conversations' key. The key never reaches the log, the control socket,
 `cloak status` or `cloak doctor`, and no message text does either; the log
@@ -488,8 +503,9 @@ clean end, so a run with no "quit" was ended some other way. These lines
 carry no message text; the Mac keeps them for days, and the app's timing
 lines only for a short while.
 
-A new conversation can be the agent's (decision 12, Development mode too):
-before its first message, pick Agent under the message box. Each message
+A new V conversation can be the agent's (decision 12, Development mode
+too): before its first message, turn on Agent, the switch beside the mode
+switch under the message box, shown only while V is chosen. Each message
 is then a task. The agent, Pi, works on it inside Cloak's sealed guest, in
 the reference sandbox: it reaches the model only through Cloak, which
 rewords the task on this Mac and sends it through Tor from the one wallet,
@@ -503,8 +519,9 @@ the guest's memory, so after Cloak starts again it does not remember a
 conversation's earlier tasks, and the conversation says so.
 
 A new conversation can be NEAR's instead: before its first message, pick
-NEAR Private AI under the message box (Anon, NEAR Private AI, Local Llama or
-Agent; a new chat is Anon, Cloak's own, at each launch). Its messages then go as written, never reworded, to one
+NEAR Private AI under the message box (one of three modes: V, NEAR Private
+AI or Local Llama; a new chat is V, Cloak's own, at each launch, with
+Agent off). Its messages then go as written, never reworded, to one
 model on NEAR AI Cloud, `Qwen/Qwen3.8-27B`, paid by your own NEAR key, and
 its later messages go there too. A Cloak conversation never goes to NEAR,
 and a NEAR one never goes to the wallet's provider. Before a message
@@ -512,18 +529,19 @@ leaves, NEAR's hardware proof is checked: the Intel quotes of the model's
 servers and Intel Trust Authority's verdict on one server's GPUs. The
 helper that checks it and sends, `cloak-near` (see `guest/near`), is in
 the app, started at the first check or message once its file matches its
-pin. Showing a NEAR conversation runs the check; the line beside its Tor
-pill says it is under way, when it passed and what it covered ("Checked 2
-min ago: 1 server, 8 GPUs"), or why it stopped, with Check Again. A passed
-check is used again for the Freshness chosen in Settings, and the line
-says when the next message checks again. The Tor pill (off until turned
+pin. Showing a NEAR conversation runs the check; beside its Tor pill, a
+spinner and a timer show it under way, a shield and its age ("9 min")
+show it passed, with what it covered as help ("Checked 9 min ago: 1
+server, 8 GPUs"), and words say why it stopped, with Check Again. A passed
+check is used again for the Freshness chosen in Settings; after that the
+shield turns grey and its help says the next message checks again. The Tor pill (off until turned
 on) sends the check and the messages through Cloak's tor, NEAR's and
 Intel's connections each under a name of their own made at each launch,
 and needs Cloak running; off, NEAR and Intel see this Mac's internet
 address. Send is off only with no NEAR key saved ("Add your NEAR key in
 Settings.") or with Tor on while Cloak is not running ("Start Cloak to
-send through Tor."). Limits, at the top, lists what the check does not
-cover. A message that stops says why on its card, and whether it may have
+send through Tor."). Limits, the info button at the top, lists what the
+check does not cover. A message that stops says why on its card, and whether it may have
 reached NEAR, when sending again may be charged twice; nothing then goes
 another way. The helper takes one line at a time, so an answer under way
 holds later checks and messages; nothing cancels it but Quit, which ends
@@ -545,7 +563,7 @@ itself, after the same checks of the Mac, the model's files and the worker
 as a Start makes, and it rests after Free memory's time as in a run; while
 Cloak is running, Local Llama messages wait their turn at the run's worker
 with the rewording. Each answer arrives whole; while the model answers,
-the chat says Working, with Stop (Command-period), and a message that
+the chat shows a spinner and a timer, with Stop (Command-period), and a message that
 stopped or failed can be asked again. Start, Pause, Stop and Quit end the
 worker an answer is on, and that message says to ask again. A chat and an
 answer may take at most 19,456 tokens together, the most a rewrite has been
@@ -556,11 +574,16 @@ download. There is no rewording, no details, no Review and no Send Original
 Text. A Local Llama conversation is kept like any other, marked in the
 list by a laptop icon.
 
-Modes, the info button beside the mode switch, opens when the pointer
-rests on it or on a click. It says Anon is inspired by Vitalik's X post,
-and that in NEAR Private AI and Local Llama, Cloak is an alternate client
-to NEAR's and llama.cpp's own official ones. Each line links to its X
-post.
+The mode switch shows each of the three modes as its symbol (theatre
+masks, a chip, a laptop), the chosen one with its name too; resting the
+pointer on one says what it does and who pays. While V is chosen, Agent
+sits beside it, a pill with a hammer and a dot filled while on; resting
+the pointer on it says what it does, and pressing V again leaves it as it
+is. Modes, the info button after them, opens when the pointer rests on it
+or on a click. It says what each mode does, with Agent under V, that V is
+inspired by Vitalik's X post, and that in NEAR Private AI and Local
+Llama, Cloak is an alternate client to NEAR's and llama.cpp's own
+official ones, each with a link to its X post.
 
 While you write a message or a task, Cloak may suggest details it leaves
 open (decision 13). Once the draft has four words or more and has rested
@@ -579,7 +602,7 @@ waits for it.
 in Development mode too, as to any server that speaks OpenAI's chat
 format. While Cloak is running it answers at `http://127.0.0.1:8742/v1`,
 or the port chosen in Settings, on 127.0.0.1 only; if another app holds
-that port, Agents says so and nothing opens. Add gives an app a name and a pass, shown once with Copy;
+that port, Agents says so and nothing opens. Add, a plus, gives an app a name and a pass, shown once with Copy;
 Remove ends the pass at once. Point the app at the address with the pass as
 its key, for example with OpenAI's Python library:
 

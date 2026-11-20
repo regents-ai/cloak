@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- Symbols in place of words across the app (Sean, 20 November 2026:
+  "In general I want the UI to be as minimal in text as possible, with
+  text on tooltips and dropdown texts. The UI should be 'Apple'-like,
+  with symbols and minimalism."; his "18. a" to the 22 changes listed
+  for him). Reword and Send on a card are a pencil and an up arrow; Send
+  Original Text and Never reword are in a drop-down beside Send; the
+  three marks on a card, the Tor and zkAPI pills, Run Again, Ask Again,
+  Check Again, Refresh, Copy, the NEAR key's Replace and Remove, and
+  Agents' Add are symbols with their words as help and for VoiceOver;
+  every explanation under a setting is behind an info button; the menu
+  has a symbol beside each item; the empty chat's paragraph and the
+  Local Llama line under the box are gone, their words in the Modes
+  note; Welcome is the crown, one line and Done. Money buttons (Create,
+  Close, Withdraw), dialog buttons, failures and the two Details phrases
+  keep their words. New: `SymbolButton.swift`, `InfoButton.swift`.
+- Anon is V (Sean, 20 November 2026: "rename in the app from Anon mode
+  to V mode"), and Agent is a switch inside V, not a fourth mode (Sean:
+  "I wanted 'V mode' to fully cover both the external requests ... as
+  well as the internal agent in a box ... if a user is on V mode, then
+  and only then they should also see 'Chat with local agent?'"). The
+  mode switch has three segments, each its symbol, the chosen one its
+  name too; in a new V chat a hammer pill beside it turns Agent on. It
+  is named Agent, not "local agent", since a remote model does its
+  thinking, and its help says so. Saved chats are untouched.
+- Cover is one toggle in Chat's toolbar, in every mode (Sean,
+  20 November 2026: "if the cover traffic toggle is on every mode, then
+  it should be extracted out to somewhere else in the UI, and on by
+  default"). It was on by default already. A clock sits on it while a
+  change waits for Pause, then Start. Settings keeps its row.
+- Review and Never reword are never both on: turning either on turns
+  the other off, and they sit together in Settings, General (Sean,
+  "17. a - but maybe if the auto send is toggled, it auto-toggles the
+  other setting. and vis versa. so the two should be placed next to
+  each other in settings"). A card's Reword only rewords: with Review
+  off it used to send as well.
+- The NEAR key's Remove asks first. "Preparing" is "Starting"
+  everywhere, `cloak status` included. The Help words to copy no longer
+  use a word Cloak does not claim.
+- Seen on Sean's Mac, 20 November: the empty V chat with its switch,
+  Agent pill and toolbar Cover; Settings, General; Agents; Details. Not
+  yet seen: a card's symbols, the Wallet sheet, NEAR and Local Llama
+  chats, the Modes note, the menu, Welcome, the Cover clock.
 - Details says what Running and Paused each mean, under Status (Sean,
   20 November 2026: "its pretty unclear what the difference is between
   the app being paused vs running", then "can it be a short phrase for

@@ -96,26 +96,27 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         // The download itself, and what is said before it starts, are in
         // Details. A failure that the download fixes offers it in its place.
         if download.state != .installed, !shown.offersDownload {
-            menu.addItem(Action(download.isUnderWay ? "Downloading Model…" : "Download Model…", run: showDetails))
+            menu.addItem(
+                Action(download.isUnderWay ? "Downloading Model…" : "Download Model…", symbol: "arrow.down.circle", run: showDetails))
         }
         menu.addItem(.separator())
         switch phase {
         case .preparing, .running:
-            menu.addItem(Action("Pause", key: "p") { [supervisor] in supervisor.send(.pause) })
+            menu.addItem(Action("Pause", symbol: "pause.fill", key: "p") { [supervisor] in supervisor.send(.pause) })
         case .stopping:
-            let start = Action("Start") {}
+            let start = Action("Start", symbol: "play.fill") {}
             start.isEnabled = false
             menu.addItem(start)
         case .paused, .ready, .needsAttention:
-            menu.addItem(Action("Start", key: "s") { [supervisor] in supervisor.send(.start) })
+            menu.addItem(Action("Start", symbol: "play.fill", key: "s") { [supervisor] in supervisor.send(.start) })
         }
-        menu.addItem(Action("Chat", run: showChat))
-        menu.addItem(Action("Agents", run: showAgents))
-        menu.addItem(Action("Details", key: "d", run: showDetails))
-        menu.addItem(Action("Settings…", key: ",", run: showSettings))
+        menu.addItem(Action("Chat", symbol: "bubble.left", run: showChat))
+        menu.addItem(Action("Agents", symbol: "hammer", run: showAgents))
+        menu.addItem(Action("Details", symbol: "info.circle", key: "d", run: showDetails))
+        menu.addItem(Action("Settings…", symbol: "gearshape", key: ",", run: showSettings))
         menu.addItem(.separator())
-        menu.addItem(Action("Check for Updates…", run: checkForUpdates))
-        menu.addItem(Action("Quit", key: "q") { NSApp.terminate(nil) })
+        menu.addItem(Action("Check for Updates…", symbol: "arrow.down.circle", run: checkForUpdates))
+        menu.addItem(Action("Quit", symbol: "power", key: "q") { NSApp.terminate(nil) })
         menu.addItem(footer)
     }
 
@@ -131,13 +132,16 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }()
 }
 
-/// A menu item that runs its closure when chosen.
+/// A menu item, its symbol before its words as in the Mac's own menus, that
+/// runs its closure when chosen.
 private final class Action: NSMenuItem {
     private let run: () -> Void
 
-    init(_ title: String, key: String = "", run: @escaping () -> Void) {
+    init(_ title: String, symbol: String, key: String = "", run: @escaping () -> Void) {
         self.run = run
         super.init(title: title, action: #selector(choose), keyEquivalent: key)
+        // The words name it; the symbol adds nothing to read aloud.
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         target = self
     }
 
@@ -151,8 +155,8 @@ private final class Action: NSMenuItem {
 }
 
 /// What the menu's header says. Its dot is the state now, grey while Cloak
-/// starts or stops, and its line says the state now in the menu's words:
-/// Starting or Stopping meanwhile. A failure takes the line, with its remedy
+/// starts or stops, and its line says the state now, Starting or Stopping
+/// meanwhile. A failure takes the line, with its remedy
 /// and the one fix the menu can offer, once Cloak has stopped for it.
 struct MenuHeader: Equatable {
     enum Dot: Equatable {
@@ -190,12 +194,6 @@ struct MenuHeader: Equatable {
         } else {
             line = .state(phase.state, unloaded: phase == .running && resting, downloading: downloading)
         }
-    }
-
-    /// A state as the menu says it: Starting, not Preparing, since its Start
-    /// begins it.
-    static func word(_ state: State) -> String {
-        state == .preparing ? "Starting" : state.title
     }
 
     /// The fix the menu offers for a reason: the remedy's one step, or the
@@ -291,10 +289,10 @@ final class MenuHeaderView: NSView {
     }
 
     func show(_ header: MenuHeader) {
-        dot.show(header.dot, word: MenuHeader.word(header.state))
+        dot.show(header.dot, word: header.state.title)
         switch header.line {
         case .state(let state, let unloaded, let downloading):
-            line.stringValue = ([MenuHeader.word(state)] + (unloaded ? ["model unloaded"] : []) + (downloading ? ["downloading model"] : []))
+            line.stringValue = ([state.title] + (unloaded ? ["model unloaded"] : []) + (downloading ? ["downloading model"] : []))
                 .joined(separator: ", ")
             line.isHidden = false
             failure.isHidden = true
@@ -428,7 +426,7 @@ enum MenuBarIcon {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "Regents Cloak, \(MenuHeader.word(phase.state))"
+        image.accessibilityDescription = "Regents Cloak, \(phase.state.title)"
         return image
     }
 }

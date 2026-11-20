@@ -47,8 +47,8 @@ struct DetailsView: View {
                 // What Start and Pause change, both said, so the two can be
                 // told apart whichever Cloak is in.
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Running: Tor is connected. Anon and Agent chats can send.")
-                    Text("Paused: Tor is off. Anon and Agent chats wait.")
+                    Text("Running: Tor is connected. V chats can send.")
+                    Text("Paused: Tor is off. V chats wait.")
                 }
             }
             if download.state != .installed {

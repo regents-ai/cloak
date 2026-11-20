@@ -28,8 +28,13 @@ struct AgentsView: View {
             DevelopmentBar()
             Form {
                 Section {
-                    LabeledContent("Address") {
+                    LabeledContent {
                         Copyable(text: door.address)
+                    } label: {
+                        HStack(spacing: 2) {
+                            Text("Address")
+                            InfoButton("About Address", note: "Cloak rewords what you write on this Mac before it leaves; your apps' instructions, tools, tool results and the model's earlier answers go as the apps send them.")
+                        }
                     }
                     LabeledContent("Status") {
                         switch door.state {
@@ -44,9 +49,6 @@ struct AgentsView: View {
                                 .symbolRenderingMode(.multicolor)
                         }
                     }
-                } footer: {
-                    Text("Cloak rewords what you write on this Mac before it leaves; your apps' instructions, tools, tool results and the model's earlier answers go as the apps send them.")
-                        .foregroundStyle(.secondary)
                 }
                 if let problem = door.problem {
                     Section {
@@ -56,7 +58,7 @@ struct AgentsView: View {
                 }
                 Section("Apps") {
                     if door.apps.isEmpty {
-                        Text("No apps yet. Add one to give it a pass.")
+                        Text("No apps yet.")
                             .foregroundStyle(.secondary)
                     }
                     ForEach(door.apps) { app in
@@ -83,17 +85,16 @@ struct AgentsView: View {
                         }
                     }
                 } header: {
-                    Text("Activity")
-                } footer: {
-                    Text("Kept in memory only, and gone when Cloak quits.")
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 2) {
+                        Text("Activity")
+                        InfoButton("About Activity", note: "Kept in memory only, and gone when Cloak quits.")
+                    }
                 }
             }
             .formStyle(.grouped)
             HStack {
                 Spacer()
-                Button("Add") { adding = true }
-                    .buttonStyle(.borderedProminent)
+                SymbolButton("Add", symbol: "plus") { adding = true }
             }
             // Level with the form's boxes.
             .padding(.horizontal, 20)

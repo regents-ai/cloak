@@ -3,7 +3,7 @@ import CloakChat
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
-/// How the conversation in front is paid for. In an Anon or Agent chat,
+/// How the conversation in front is paid for. In a V chat, Agent on or off,
 /// Development mode's wallet: made here on Create, its address to add funds
 /// to, its balance, the deposit chats are paid from, and the model they go
 /// to. A button that reaches the network is off only where its request is
@@ -49,7 +49,7 @@ struct WalletView: View {
                 }
                 Spacer()
                 if paidByWallet {
-                    Button("Refresh") { Task { await wallet.refresh() } }
+                    SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await wallet.refresh() } }
                         .disabled(wallet.presence.address == nil || !running)
                 }
                 Button("Done") { dismiss() }
@@ -67,7 +67,7 @@ struct WalletView: View {
     }
 }
 
-/// The wallet that pays for Anon and Agent chats.
+/// The wallet that pays for V chats, Agent on or off.
 private struct WalletSections: View {
     let wallet: Wallet
     let running: Bool
@@ -137,23 +137,21 @@ private struct Unread: View {
 
 /// How a NEAR Private AI chat is paid for: the owner's own key from NEAR AI
 /// Cloud, whether one is saved, asked of the keychain as the NEAR pane asks
-/// it (never the key itself), and the way to that pane.
+/// it (never the key itself), with the way to that pane beside it.
 private struct NearPayment: View {
     let mode: NearMode
     let openSettings: () -> Void
 
     var body: some View {
         Section {
-            Text("NEAR Private AI chats are paid for with your NEAR key. Sign up and add credit at [cloud.near.ai](https://cloud.near.ai), then save the key in Settings.")
-            LabeledContent("Key", value: key)
-            HStack {
-                Spacer()
-                Button("Open Settings", action: openSettings)
+            LabeledContent("Key") {
+                HStack(spacing: 4) {
+                    Text(key)
+                    SymbolButton("Open Settings", symbol: "gearshape", action: openSettings)
+                }
             }
-        } header: {
-            Text("Payment")
         } footer: {
-            Text("The wallet on this Mac isn't used for these chats.")
+            Text("Paid with your NEAR key from [cloud.near.ai](https://cloud.near.ai).")
                 .foregroundStyle(.secondary)
         }
         .task { await mode.find() }
@@ -172,12 +170,7 @@ private struct NearPayment: View {
 private struct LlamaPayment: View {
     var body: some View {
         Section {
-            Text("Nothing to pay. The model on this Mac answers Local Llama chats, and nothing is sent.")
-        } header: {
-            Text("Payment")
-        } footer: {
-            Text("The wallet on this Mac isn't used for these chats.")
-                .foregroundStyle(.secondary)
+            Text("Nothing to pay.")
         }
     }
 }
@@ -303,7 +296,8 @@ enum QRCode {
 }
 
 /// The deposit chats are paid from, at the size the provider suggests: what
-/// it holds, and the two ways to end it.
+/// it holds, and the two ways to end it, side by side at the right. What
+/// each does is its help; why one is off is beside them.
 private struct Holding: View {
     let wallet: Wallet
     let running: Bool
@@ -323,35 +317,36 @@ private struct Holding: View {
                     Unread(running: running, what: "deposit")
                 }
             }
-            HStack {
-                Text(none ? "Nothing to refund." : "Refunds what's unspent.")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Close") { Task { await wallet.close() } }
-                    .disabled(!running || none)
-            }
             TimelineView(.everyMinute) { context in
                 let wait = deposit?.withdrawAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
                 let waiting = wait.map { context.date < $0 } ?? false
+                let withdraw = wait == nil
+                    ? "Without the provider: asks the network to close it, then takes it back 15 minutes later."
+                    : "Takes it back now."
                 HStack {
-                    Text(withdrawWords(none: none, wait: wait, waiting: waiting))
-                        .foregroundStyle(.secondary)
+                    if none {
+                        Text("Nothing to refund.")
+                            .foregroundStyle(.secondary)
+                    } else if waiting, let wait {
+                        Text("Ready at \(wait.formatted(date: .omitted, time: .shortened)).")
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
+                    Button("Close") { Task { await wallet.close() } }
+                        .disabled(!running || none)
+                        .help("Refunds what's unspent.")
+                        .accessibilityHint("Refunds what's unspent.")
                     Button("Withdraw") { Task { await wallet.withdraw() } }
                         .disabled(!running || none || waiting)
+                        .help(withdraw)
+                        .accessibilityHint(withdraw)
                 }
             }
         }
     }
-
-    private func withdrawWords(none: Bool, wait: Date?, waiting: Bool) -> String {
-        guard !none else { return "Nothing to take back." }
-        guard let wait else { return "Without the provider: asks the network to close it, then takes it back 15 minutes later." }
-        return waiting ? "Ready at \(wait.formatted(date: .omitted, time: .shortened))." : "Takes it back now."
-    }
 }
 
-/// The model chats go to, with its price.
+/// The model chats go to, with its price; which price is which is its help.
 private struct Models: View {
     @Bindable var wallet: Wallet
 
@@ -370,32 +365,40 @@ private struct Models: View {
                         .tag(model.id)
                 }
             }
-        } footer: {
-            Text("Prices per million tokens: in | out.")
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Prices per million tokens, in and out.")
+            .help("Prices per million tokens: in | out.")
+            .accessibilityHint("Prices per million tokens, in and out.")
         }
     }
 }
 
-/// The Development mark, with what it means for the person.
+/// A mode's name in a capsule of its colour, with what it means for the
+/// person as its help and as what VoiceOver reads after the name.
+struct ModePill: View {
+    let title: String
+    let help: String
+    let tint: Color
+
+    var body: some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(tint.opacity(0.2), in: Capsule())
+            .help(help)
+            .accessibilityHint(help)
+    }
+}
+
+/// The Development mark, with what it means for the person as its help.
 struct DevelopmentBar: View {
     var body: some View {
-        HStack(spacing: 10) {
-            Text("Development")
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(.orange.opacity(0.2), in: Capsule())
-            Text("The provider can link your chats, because one wallet pays for all of them.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        HStack {
+            ModePill(title: "Development", help: "The provider can link your chats, because one wallet pays for all of them.", tint: .orange)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.orange.opacity(0.06))
-        .accessibilityElement(children: .combine)
     }
 }
 

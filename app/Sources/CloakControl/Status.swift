@@ -70,7 +70,7 @@ public enum State: String, Codable, Sendable, CaseIterable {
 
     public var title: String {
         switch self {
-        case .preparing: "Preparing"
+        case .preparing: "Starting"
         case .ready: "Ready"
         case .running: "Running"
         case .paused: "Paused"
