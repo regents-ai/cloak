@@ -1085,7 +1085,9 @@ The switch is off with "Needs a newer Darkbloom" while `start --help`
 doesn't list `--me-first`. The key is read from the service only for Show
 Key or Copy Key and is forgotten when the window closes. A program Cloak
 runs ends when it ends, heard from its own termination handler, and one
-whose reader goes away first is stopped. Nothing here is under test.
+whose reader goes away first is stopped with all it started (its process
+group), as Darkbloom's own app stops its installer. Nothing here is under
+test.
 
 ## 10. Stages still implied (found 15 November 2026)
 

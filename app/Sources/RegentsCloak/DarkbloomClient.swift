@@ -21,7 +21,7 @@ enum Darkbloom {
     static let oldest = [0, 10, 16]
     /// What Darkbloom's own app requires of the command line before it runs
     /// it (desktop-app/src/main/backend.ts:20–21), and its installer of what it
-    /// installs (scripts/install.sh:39): Apple's chain, the identifier
+    /// installs (scripts/install.sh:38): Apple's chain, the identifier
     /// io.darkbloom.provider, Darkbloom's team SLDQ2GJ6TL, and that team's
     /// certificate itself.
     static let requirement = #"anchor apple generic and identifier "io.darkbloom.provider" and certificate leaf[subject.OU] = "SLDQ2GJ6TL" and certificate leaf = H"95b67556e04653f56ba5411d20d33dd263ef6e2a""#
@@ -147,10 +147,13 @@ enum Darkbloom {
     /// Runs `executable` with `arguments` and nothing on its input, handing
     /// back each line it writes on either output as it comes. It ends once
     /// the program has ended and its output is all read, throwing `Exit`
-    /// unless it ended well. Whoever stops reading first stops the program,
-    /// so none is left waiting on output nobody reads. The end is heard from
-    /// the process's own handler: `waitUntilExit` polls a run loop, and on
-    /// the thread a task resumes on it can wait forever.
+    /// unless it ended well. Whoever stops reading first stops the program
+    /// and all it started, its process group (Foundation gives each program
+    /// a group of its own), as Darkbloom's own app stops its installer with
+    /// its download (docs/developer/desktop-app.md:651–652); Darkbloom's
+    /// services run under launchd, not in it. The end is heard from the
+    /// process's own handler: `waitUntilExit` polls a run loop, and on the
+    /// thread a task resumes on it can wait forever.
     static func lines(
         _ executable: URL, _ arguments: [String], environment: [String: String]? = nil
     ) -> AsyncThrowingStream<String, any Error> {
@@ -188,7 +191,7 @@ enum Darkbloom {
             }
             continuation.onTermination = { _ in
                 task.cancel()
-                if process.isRunning { process.terminate() }
+                if process.isRunning { kill(-process.processIdentifier, SIGTERM) }
             }
         }
     }
