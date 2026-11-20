@@ -8,10 +8,11 @@ import os
 // The rewriter, on llama.cpp (decision 8 in docs/plan.md). It checks that the
 // directory holds exactly the pinned files, loads the pinned GGUF file with
 // llama.cpp and the pinned chat template, checks the pinned grammar against
-// the one built in, signals ready, then answers one rewrite request at a time
-// until the supervisor closes standard input or breaks the protocol. It then
-// stops the rewrite in progress, as a cancel does, and exits once that
-// rewrite's answer is written: with status 0 at the end of the channel, 2
+// the one built in, signals ready, then answers one request at a time (a
+// rewrite, a draft's details or a Llama Normal chat's next answer) until the
+// supervisor closes standard input or breaks the protocol. It then stops the
+// request in progress, as a cancel does, and exits once that request's
+// answer is written: with status 0 at the end of the channel, 2
 // after a protocol fault. It exits with status 3, before it is ready, when
 // the directory does not hold exactly the pinned files, and with 2 when
 // anything else stops it loading.

@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Made at its window's first show or the quick prompt's first Return.
     private lazy var conversations = Chat(
         supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
-        door: door, nearMode: nearMode)
+        door: door, nearMode: nearMode, download: download)
     private lazy var chat = AppWindow { [unowned self] in
         ChatView.window(conversations, showDetails: { self.showDetails() })
     }
@@ -106,7 +106,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if running { await door.open() } else { await door.close() }
             }
         }
-        // Sleep pauses, so a wake finds nothing running and starts nothing.
+        // Sleep pauses a run, so a wake finds none running and starts
+        // nothing. A worker up for Llama Normal chats stays, and rests as
+        // ever.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { [supervisor] _ in

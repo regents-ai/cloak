@@ -1,12 +1,13 @@
 // The llama worker's use of llama.cpp. No inference code of its own: the
-// model, the Metal kernels, the chat template and the sampler are all
+// model, the Metal kernels, the chat template and the samplers are all
 // llama.cpp's. Every setting that could change a result or the memory a
-// rewrite takes is written out below, and nothing falls back to another.
+// request takes is written out below, and nothing falls back to another.
 
 #include "cloak_llama.h"
 
 #include "chat.h"
 #include "common.h"
+#include "sampling.h"
 #include "ggml-backend.h"
 #include "llama-cpp.h"
 #include "log.h"
@@ -138,12 +139,12 @@ common_chat_msg message(const char * role, const char * content) {
     return msg;
 }
 
-// The model's chat template over the two messages, rendered by common/chat and
+// The model's chat template over the messages, rendered by common/chat and
 // tokenized as llama-server tokenizes a chat prompt: the vocabulary's own
 // start token added, and special tokens in the text read as special tokens.
-std::vector<llama_token> prompt_tokens(const cloak_engine & engine, const char * system, const char * user) {
+std::vector<llama_token> prompt_tokens(const cloak_engine & engine, std::vector<common_chat_msg> messages) {
     common_chat_templates_inputs inputs;
-    inputs.messages              = {message("system", system), message("user", user)};
+    inputs.messages              = std::move(messages);
     inputs.use_jinja             = true;
     inputs.add_generation_prompt = true;
     inputs.reasoning_format      = COMMON_REASONING_FORMAT_NONE;
@@ -175,6 +176,65 @@ llama_token allowed(llama_sampler * grammar, llama_sampler * greedy, llama_conte
     llama_sampler_apply(grammar, &all);
     llama_sampler_apply(greedy, &all);
     return all.data[all.selected].logit == -INFINITY ? LLAMA_TOKEN_NULL : all.data[all.selected].id;
+}
+
+// Feeds the model tokens at the positions after everything it has read, and
+// asks for its prediction after the last of them.
+class reader {
+  public:
+    explicit reader(llama_context * context) : context_(context), batch_(llama_batch_ext_init(context)) {}
+
+    // Zero, or llama.cpp's code.
+    int32_t read(const llama_token * tokens, int32_t count) {
+        llama_batch_ext_clear(batch_.get());
+        for (int32_t i = 0; i < count; ++i, ++position_) {
+            const int32_t at = llama_batch_ext_add_token(batch_.get(), 0, tokens[i]);
+            if (at < 0) {
+                return at;
+            }
+            llama_batch_ext_set_pos(batch_.get(), at, &position_);
+        }
+        llama_batch_ext_set_output_logits(batch_.get(), count - 1, true);
+        return llama_process(context_, LLAMA_PROCESS_TYPE_DECODE, batch_.get());
+    }
+
+  private:
+    llama_context *     context_;
+    llama_batch_ext_ptr batch_;
+    llama_pos           position_ = 0;
+};
+
+cloak_result failed(cloak_result result, const char * step, int32_t code) {
+    result.finish      = CLOAK_FINISH_FAILED;
+    result.failed_step = step;
+    result.failed_code = code;
+    return result;
+}
+
+// Reads the whole prompt in chunks, with a check for a cancel before each.
+// False when a cancel or llama.cpp stopped it, with `result` saying which.
+bool read_prompt(const cloak_engine & engine, reader & model, const std::vector<llama_token> & prompt,
+                 cloak_result & result) {
+    for (size_t at = 0; at < prompt.size(); at += prompt_chunk) {
+        if (engine.cancelled) {
+            result.finish = CLOAK_FINISH_CANCELLED;
+            return false;
+        }
+        const auto n = static_cast<int32_t>(std::min<size_t>(prompt_chunk, prompt.size() - at));
+        if (const int32_t code = model.read(prompt.data() + at, n)) {
+            result = failed(result, "prompt", code);
+            return false;
+        }
+    }
+    return true;
+}
+
+// The generated tokens as the result's text.
+void set_text(cloak_result & result, const cloak_engine & engine, const std::vector<llama_token> & output, bool special) {
+    const std::string text = common_detokenize(engine.vocab, output, special);
+    result.text        = static_cast<char *>(malloc(std::max<size_t>(text.size(), 1)));
+    result.text_length = text.size();
+    std::memcpy(result.text, text.data(), text.size());
 }
 
 double seconds_since(std::chrono::steady_clock::time_point start) {
@@ -223,7 +283,7 @@ extern "C" cloak_engine * cloak_engine_load(const char * model_path, const char 
     try {
         engine->templates = common_chat_templates_init(engine->model.get(), chat_template);
         // A template llama.cpp cannot apply fails here, not at every request.
-        prompt_tokens(*engine, "system", "user");
+        prompt_tokens(*engine, {message("system", "system"), message("user", "user")});
     } catch (const std::exception & e) {
         loading = false;
         copy_error(error, error_size, std::string("the chat template does not apply: ") + e.what());
@@ -248,18 +308,12 @@ extern "C" void cloak_engine_cancel(cloak_engine * engine) {
 extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char * system, const char * user, int32_t max_tokens,
                                              const char * grammar) {
     cloak_result result = {};
-    const auto fail = [&](const char * step, int32_t code) {
-        result.finish      = CLOAK_FINISH_FAILED;
-        result.failed_step = step;
-        result.failed_code = code;
-        return result;
-    };
 
     std::vector<llama_token> prompt;
     try {
-        prompt = prompt_tokens(*engine, system, user);
+        prompt = prompt_tokens(*engine, {message("system", system), message("user", user)});
     } catch (const std::exception &) {
-        return fail("template", 0);
+        return failed(result, "template", 0);
     }
     result.prompt_tokens = static_cast<int32_t>(prompt.size());
 
@@ -271,7 +325,7 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
     llama_context_ptr context(llama_init_from_model(
         engine->model.get(), context_params(static_cast<uint32_t>(prompt.size()) + static_cast<uint32_t>(max_tokens))));
     if (!context) {
-        return fail("context", 0);
+        return failed(result, "context", 0);
     }
     result.context_tokens = llama_n_ctx(context.get());
     llama_sampler_ptr greedy(llama_sampler_init_greedy());
@@ -279,36 +333,13 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
     // picks among the rest.
     llama_sampler_ptr constraint(llama_sampler_init_grammar(engine->vocab, grammar, "root"));
     if (!constraint) {
-        return fail("grammar", 0);
+        return failed(result, "grammar", 0);
     }
 
-    // The model reads these tokens next, at the positions after everything it
-    // has read, and predicts after the last of them. Zero, or llama.cpp's code.
-    llama_batch_ext_ptr batch(llama_batch_ext_init(context.get()));
-    llama_pos           position = 0;
-    const auto read = [&](const llama_token * tokens, int32_t count) -> int32_t {
-        llama_batch_ext_clear(batch.get());
-        for (int32_t i = 0; i < count; ++i, ++position) {
-            const int32_t at = llama_batch_ext_add_token(batch.get(), 0, tokens[i]);
-            if (at < 0) {
-                return at;
-            }
-            llama_batch_ext_set_pos(batch.get(), at, &position);
-        }
-        llama_batch_ext_set_output_logits(batch.get(), count - 1, true);
-        return llama_process(context.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get());
-    };
-
-    auto started = std::chrono::steady_clock::now();
-    for (size_t at = 0; at < prompt.size(); at += prompt_chunk) {
-        if (engine->cancelled) {
-            result.finish = CLOAK_FINISH_CANCELLED;
-            return result;
-        }
-        const auto n = static_cast<int32_t>(std::min<size_t>(prompt_chunk, prompt.size() - at));
-        if (const int32_t code = read(prompt.data() + at, n)) {
-            return fail("prompt", code);
-        }
+    reader model(context.get());
+    auto   started = std::chrono::steady_clock::now();
+    if (!read_prompt(*engine, model, prompt, result)) {
+        return result;
     }
     result.prompt_seconds = seconds_since(started);
 
@@ -322,7 +353,7 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
         llama_token token = allowed(constraint.get(), greedy.get(), context.get(), engine->vocab,
                                     llama_sampler_sample(greedy.get(), context.get(), -1));
         if (token == LLAMA_TOKEN_NULL) {
-            return fail("grammar", 1);
+            return failed(result, "grammar", 1);
         }
         llama_sampler_accept(constraint.get(), token);
         if (llama_vocab_is_eog(engine->vocab, token)) {
@@ -334,8 +365,8 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
             result.finish = CLOAK_FINISH_LENGTH;
             break;
         }
-        if (const int32_t code = read(&token, 1)) {
-            return fail("generation", code);
+        if (const int32_t code = model.read(&token, 1)) {
+            return failed(result, "generation", code);
         }
     }
     result.generate_seconds      = seconds_since(started);
@@ -344,10 +375,87 @@ extern "C" cloak_result cloak_engine_rewrite(cloak_engine * engine, const char *
 
     // The tokens as text, special tokens written out, so the reply holds
     // exactly what the model generated.
-    const std::string text = common_detokenize(engine->vocab, output, /* special */ true);
-    result.text        = static_cast<char *>(malloc(std::max<size_t>(text.size(), 1)));
-    result.text_length = text.size();
-    std::memcpy(result.text, text.data(), text.size());
+    set_text(result, *engine, output, /* special */ true);
+    return result;
+}
+
+extern "C" cloak_result cloak_engine_answer(cloak_engine * engine, const char * const * roles, const char * const * contents,
+                                            size_t count, int32_t max_tokens, uint32_t max_context) {
+    cloak_result result = {};
+
+    std::vector<common_chat_msg> messages;
+    for (size_t i = 0; i < count; ++i) {
+        messages.push_back(message(roles[i], contents[i]));
+    }
+    std::vector<llama_token> prompt;
+    try {
+        prompt = prompt_tokens(*engine, std::move(messages));
+    } catch (const std::exception &) {
+        return failed(result, "template", 0);
+    }
+    result.prompt_tokens = static_cast<int32_t>(prompt.size());
+    // The conversation is never trimmed: one that leaves no room for a whole
+    // answer inside the cap is not started.
+    if (prompt.size() + static_cast<size_t>(max_tokens) > max_context) {
+        result.finish = CLOAK_FINISH_TOO_LONG;
+        return result;
+    }
+
+    // A context of its own, as a rewrite has, sized for the prompt and the
+    // longest answer.
+    llama_context_ptr context(llama_init_from_model(
+        engine->model.get(), context_params(static_cast<uint32_t>(prompt.size()) + static_cast<uint32_t>(max_tokens))));
+    if (!context) {
+        return failed(result, "context", 0);
+    }
+    result.context_tokens = llama_n_ctx(context.get());
+    // llama.cpp's sampler chain from its default parameters: top-k 40, top-p
+    // 0.95, min-p 0.05 and temperature 0.8, then a draw with a fresh random
+    // seed; the samplers off by default do nothing.
+    common_params_sampling sampling;
+    common_sampler_ptr     sampler;
+    try {
+        sampler.reset(common_sampler_init(engine->model.get(), sampling));
+    } catch (const std::exception &) {
+        return failed(result, "sampler", 0);
+    }
+
+    reader model(context.get());
+    auto   started = std::chrono::steady_clock::now();
+    if (!read_prompt(*engine, model, prompt, result)) {
+        return result;
+    }
+    result.prompt_seconds = seconds_since(started);
+
+    started = std::chrono::steady_clock::now();
+    std::vector<llama_token> output;
+    while (true) {
+        if (engine->cancelled) {
+            result.finish = CLOAK_FINISH_CANCELLED;
+            return result;
+        }
+        const llama_token token = common_sampler_sample(sampler.get(), context.get(), -1);
+        common_sampler_accept(sampler.get(), token, /* is_generated */ true);
+        if (llama_vocab_is_eog(engine->vocab, token)) {
+            result.finish = CLOAK_FINISH_STOP;
+            break;
+        }
+        output.push_back(token);
+        if (output.size() == static_cast<size_t>(max_tokens)) {
+            result.finish = CLOAK_FINISH_LENGTH;
+            break;
+        }
+        if (const int32_t code = model.read(&token, 1)) {
+            return failed(result, "generation", code);
+        }
+    }
+    result.generate_seconds      = seconds_since(started);
+    result.generated_tokens      = static_cast<int32_t>(output.size());
+    result.metal_allocated_bytes = cloak_metal_allocated_bytes();
+
+    // The answer as a person reads it: special tokens left out, as
+    // llama-server leaves them out by default.
+    set_text(result, *engine, output, /* special */ false);
     return result;
 }
 

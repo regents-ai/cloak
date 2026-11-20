@@ -2,10 +2,12 @@ import Foundation
 import Synchronization
 
 /// The host end of the guest channel (spec section 7). Each guest connection
-/// carries one request: the 32-byte channel token, then an `R` frame. The
-/// answer goes back as an `A` frame and the connection closes. Connections,
-/// and the app's own requests (`answer(to:)`), are served one at a time, in
-/// order. A guest that closes its end once it has sent its request cancels the
+/// carries one request: the 32-byte channel token, then an `R` frame, which
+/// goes to the worker as an `R` frame and nothing else. The answer goes back
+/// as an `A` frame and the connection closes. Connections, and the app's own
+/// requests (`answer(to:as:yielding:)`), are served one at a time, in order.
+/// Only the app's own requests can be a Llama Normal conversation (`L`). A
+/// guest that closes its end once it has sent its request cancels the
 /// rewrite, including while the request is still being handed to the worker.
 /// An app's request may give way (decision 13 in docs/plan.md): the next
 /// request to arrive, the app's or a connection's, cancels it as its task's
@@ -140,6 +142,16 @@ public final class Relay: Sendable {
         state.withLock { arm(&$0) }
     }
 
+    /// A relay that starts as if its worker had rested: no worker runs until
+    /// the first request, which wakes one with `resting.start`, and from then
+    /// on it rests and wakes as `resting` says. The app's Llama Normal chats
+    /// use one while no run is up. A lost worker is followed by none.
+    public init(resting: Resting) {
+        state = Mutex(State(slot: .resting(Task {})))
+        afterLoss = { nil }
+        self.resting = resting
+    }
+
     /// Takes ownership of the socket.
     func accept(_ socket: Int32) {
         arrived()
@@ -152,21 +164,22 @@ public final class Relay: Sendable {
         }
     }
 
-    /// Answers one request from the app itself, in turn with the guest's
-    /// connections, so it never overlaps one. Nil when there is no worker or
-    /// it was lost on this request, as for a guest connection. Cancelling the
-    /// task cancels the request: before its turn it never reaches the worker;
-    /// at the worker, the worker is told to stop it, and the answer it then
-    /// gives is returned. A request before it that gives way is cancelled the
-    /// same way; with `yielding`, this one gives way to the next.
-    public func answer(to request: Data, yielding: Bool = false) async -> Data? {
+    /// Answers one request from the app itself, of this kind, in turn with
+    /// the guest's connections, so it never overlaps one. Nil when there is
+    /// no worker or it was lost on this request, as for a guest connection.
+    /// Cancelling the task cancels the request: before its turn it never
+    /// reaches the worker; at the worker, the worker is told to stop it, and
+    /// the answer it then gives is returned. A request before it that gives
+    /// way is cancelled the same way; with `yielding`, this one gives way to
+    /// the next.
+    public func answer(to request: Data, as kind: WorkerChannel.Kind = .request, yielding: Bool = false) async -> Data? {
         let call = Call()
         arrived()
         giveWay(to: yielding ? call : nil)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 queue.async { [self] in
-                    let (answer, lost) = serve(request, call)
+                    let (answer, lost) = serve(request, kind, call)
                     continuation.resume(returning: answer)
                     if let lost { replaceAfter(lost) }
                     answered()
@@ -196,10 +209,10 @@ public final class Relay: Sendable {
 
         /// Hands the request to the worker: nil when it was cancelled first,
         /// false when the worker is lost.
-        func send(_ request: Data, to worker: WorkerChannel) -> Bool? {
+        func send(_ request: Data, as kind: WorkerChannel.Kind, to worker: WorkerChannel) -> Bool? {
             state.withLock { state in
                 guard case .waiting = state else { return nil }
-                guard worker.send(request) else { return false }
+                guard worker.send(request, as: kind) else { return false }
                 state = .atWorker(worker)
                 return true
             }
@@ -396,7 +409,7 @@ public final class Relay: Sendable {
             log("no worker; closing the guest connection without an answer")
             return nil
         }
-        guard worker.send(request), let answer = cancellingOnClose(socket, worker) else {
+        guard worker.send(request, as: .request), let answer = cancellingOnClose(socket, worker) else {
             log("worker lost; closing the guest connection without an answer")
             return worker
         }
@@ -406,13 +419,13 @@ public final class Relay: Sendable {
 
     /// Serves one request from the app: its answer, and the worker when it
     /// was lost on it.
-    private func serve(_ request: Data, _ call: Call) -> (Data?, WorkerChannel?) {
+    private func serve(_ request: Data, _ kind: WorkerChannel.Kind, _ call: Call) -> (Data?, WorkerChannel?) {
         defer { call.finish() }
         guard let worker = worker() else {
             log("no worker; the app's request has no answer")
             return (nil, nil)
         }
-        guard let sent = call.send(request, to: worker) else { return (nil, nil) }
+        guard let sent = call.send(request, as: kind, to: worker) else { return (nil, nil) }
         guard sent, let answer = worker.answer() else {
             log("worker lost; the app's request has no answer")
             return (nil, worker)

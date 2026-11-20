@@ -9,18 +9,25 @@ implication hid are listed with the checks that show them fixed. Since
 where a fault's check was an ordinary unit check, it says so, and nothing
 checks that fault now.
 
-## 1. The worker's one rewrite (`llama-worker/Sources/cloak-rewriter-llama/Worker.swift`, `llama-worker/Sources/CLlama/cloak_llama.cpp`)
+## 1. The worker's one request (`llama-worker/Sources/cloak-rewriter-llama/Worker.swift`, `llama-worker/Sources/CLlama/cloak_llama.cpp`)
 
 The worker (llama.cpp, decision 8) holds two states, `idle` and
-`rewriting`, in one enum under one lock; the rewrite's steps are the order
-of `cloak_engine_rewrite`, which returns how it ended.
+`answering`, in one enum under one lock. A request is a rewrite or a
+draft's details (an `R` frame), whose steps are the order of
+`cloak_engine_rewrite`, or a Llama Normal chat's next answer (an `L`
+frame, section 4), whose steps are the order of `cloak_engine_answer`;
+each returns how it ended.
 
 ```
-idle --request--> rewriting --answer written--> idle
+idle --R or L--> answering --answer written--> idle
 
-rewriting: request checked --> prompt rendered --> context made --> grammar made --> reading the prompt --> generating --> stop | length
-           any step --> failed (template, context, grammar, prompt, generation): 500
-           reading the prompt, generating --cancel--> cancelled: 499
+R: request checked --> prompt rendered --> context made --> grammar made --> reading the prompt --> generating --> stop | length
+   any step --> failed (template, context, grammar, prompt, generation): 500
+   reading the prompt, generating --cancel--> cancelled: 499
+L: conversation checked --> prompt rendered --> fits the cap? --> context made --> sampler made --> reading the prompt --> generating --> stop | length
+   does not fit --> too long: 413, before any context is made
+   any step --> failed (template, context, sampler, prompt, generation): 500
+   reading the prompt, generating --cancel--> cancelled: 499
 ```
 
 - **request checked**: two requests for this model go on. The daemon's
@@ -45,14 +52,39 @@ rewriting: request checked --> prompt rendered --> context made --> grammar made
   and fails the rewrite as `grammar` (code 1) if it ever allows no token. It
   ends with `stop` at the end of the turn, or `length` at `max_tokens`
   tokens.
+- **conversation checked** (`L` only): exactly `{"messages":[...]}`, each
+  message exactly `role` and `content`, an odd count, the roles alternating
+  `user` and `assistant` from `user`; anything else is answered 400. An `L`
+  frame never takes the rewrite or details path, whatever its messages say:
+  a message reading `{"texts":["a"]}` is answered as a chat message.
+- **prompt rendered** (`L`): the model's own chat template over the
+  conversation, with no system message.
+- **fits the cap** (`L`): the prompt's tokens plus 4,096, the most one
+  answer takes, must fit 19,456 tokens, the largest context a rewrite has
+  been measured to take (a 10,000-character message, decision 6's limit:
+  2,849 prompt tokens plus the daemon's 16,384, which llama.cpp rounds up
+  to 19,456; `evidence/stage3/small-lead-gguf-grammar/feasibility-20261114T052945Z.json`),
+  so a chat never holds more memory than a rewrite. A conversation that does
+  not fit is answered 413 and nothing is trimmed.
+- **context made** (`L`): a context of its own, sized for the prompt and
+  4,096 tokens.
+- **sampler made** (`L`): llama.cpp's `common_sampler` from default
+  parameters, as `llama-cli` and `llama-server` use with no flags: top-k
+  40, top-p 0.95, min-p 0.05, temperature 0.8, then a draw with a random
+  seed, and no grammar (the pinned GGUF carries no sampling settings of its
+  own). It fails as `sampler` if llama.cpp cannot build it. The rewrite's
+  greedy decoding is untouched.
+- **generating** (`L`): ends with `stop` at the end of the turn, or
+  `length` at 4,096 tokens. Cancel, the end of the channel and a protocol
+  fault stop it as they stop a rewrite.
 - **idle**: a cancel here is one that crossed the answer, and does nothing.
   The worker goes idle before it writes the answer, because the host sends
   its next request as soon as it has read this one.
-- **End of the channel** (the host's shutdown closes it): a rewrite in
+- **End of the channel** (the host's shutdown closes it): a request in
   progress is cancelled as above and answered 499; the worker exits 0 once
   that answer is written, or at once when idle.
 - **Protocol fault** (a request while not idle, an unknown or oversized
-  frame, input cut inside a frame): no frame is read after it; a rewrite in
+  frame, input cut inside a frame): no frame is read after it; a request in
   progress is cancelled and answered 499 the same way, then the worker exits
   2.
 - **Before ready**: the worker exits 3 when the model folder is not exactly
@@ -183,7 +215,7 @@ none, every later connection closes without an answer, with no further
 tries. `finish` (the end of a run) waits out a replacement first, so it ends
 the worker that replacement started.
 
-Only the app's relay rests (`Resting`; `cloak-host`'s never does). Once no
+Only the app's relays rest (`Resting`; `cloak-host`'s never does). Once no
 request has been at the worker or waiting for it for the time the
 supervisor gives, counted from the last answer, the relay ends the worker
 as `finish` does, and the model is out of memory. The next request, in its
@@ -194,10 +226,13 @@ never sent. A new worker that cannot start leaves none, as above. A worker
 that exits by itself, idle or not, is a loss and never a rest: the relay
 tells the supervisor of each rest and wake and of every exit it did not
 cause (`Change`). `finish` while resting starts nothing, and while waking
-stops the load at once. No check since 19 November.
+stops the load at once. A relay made with `Relay(resting:)` starts as if
+its worker had rested: no worker runs until the first request wakes one.
+The app's supervisor uses one for Llama Normal chats while no run is up
+(section 9). No check since 19 November.
 
-The app's own requests (`answer(to:)`) take their turn with the
-connections, each as one call:
+The app's own requests (`answer(to:as:yielding:)`) take their turn with
+the connections, each as one call:
 
 ```
 waiting --its turn--> at the worker --answer--> finished
@@ -207,8 +242,14 @@ waiting, at the worker --its task cancelled--> cancelled
 A details request (decision 13) gives way: the next request to arrive, the
 app's or a connection's, cancels it as its task's cancel would, so a
 rewrite waits behind it no longer than the worker takes to stop (one token,
-or one 512-token chunk of the prompt). A rewrite never gives way. No check
-since 19 November.
+or one 512-token chunk of the prompt). A rewrite never gives way, and nor
+does a Llama Normal request, which waits its turn as a rewrite does: a
+rewrite behind it waits for its whole answer and never cancels it.
+
+Only the app's own requests can be a Llama Normal conversation (`L`). A
+guest connection's request is read only when its header is `R`, and it goes
+to the worker as `R` and nothing else, so nothing a guest sends reaches the
+worker as `L`. No check since 19 November.
 
 Before: the host never replaced a lost worker, so every later rewrite in
 that boot failed; only a new boot recovered. The spec asks that a worker
@@ -232,10 +273,14 @@ is seen at once, because its socket is already readable. Check:
 ## 4. The frames between host and worker (both sides)
 
 ```
-worker: Y once, then for each request: R in, A out; C may come in between;
-        the end of input, or a frame it cannot take, ends the worker, after
-        the A it owes
+worker: Y once, then for each request: R or L in, A out; C may come in
+        between; the end of input, or a frame it cannot take, ends the
+        worker, after the A it owes
 ```
+
+- `R` carries a rewrite or a draft's details; `L` carries a Llama Normal
+  chat's conversation (section 1). Only the app sends `L`; the relay
+  forwards a guest's request only as `R` (section 3).
 
 - A cancel may cross the answer and arrive when the worker is idle; both
   sides treat that as nothing.
@@ -533,8 +578,9 @@ any --quit--> Stopping (to quit) --stopped--> the app ends
 Stopping (to Paused, Ready or Needs attention) --stopped--> that state
 ```
 
-- **Preparing** takes each step only once the one before it is up: the
-  checks (the Mac: Apple silicon, the model's memory within Metal's graphics
+- **Preparing** first ends the worker up for Llama Normal chats, if any,
+  and waits for it to exit (below). It then takes each step only once the
+  one before it is up: the checks (the Mac: Apple silicon, the model's memory within Metal's graphics
   limit less 1 GiB, and all of Cloak's within the memory less 4 GiB for
   macOS, both needs from the manifest, a graphics limit that cannot be read
   failing it; each part in the bundle against its SHA-256 in the bundle's
@@ -581,8 +627,9 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   (section 3): a worker the relay loses is stopped, and its exit is the
   failure.
 - **Stopping** is the one shutdown, for every destination: it cancels the
-  preparation and the watches, waits for the preparation to end, then stops
-  the guest, the worker and tor, in that order, each within its limit
+  preparation and the watches, ends the worker for Llama Normal chats,
+  waits for the preparation and that worker to end, then stops the guest,
+  the worker and tor, in that order, each within its limit
   (section 2); a worker that rested is already gone, and one loading after a
   rest is stopped at once. An event from work being stopped (a watch seeing its part
   stopped, a late failure) does not apply, and is dropped. Each wait in
@@ -596,7 +643,8 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   model is tried (REF04).
 - **Refused**: any command while Stopping (`busy`), and `resume` anywhere but
   Paused (`not_paused`). A refused command changes nothing.
-- **Sleep** pauses, so a wake finds nothing running; a relaunch starts
+- **Sleep** pauses, so a wake finds no run; a worker up for Llama Normal
+  chats stays, and rests as ever. A relaunch starts
   Paused, having started nothing, the one after an update included
   (Sparkle installs it once the app has quit through its shutdown). So does the launch at login, which is
   off unless the Settings window's Launch at login switch turns it on (a
@@ -627,6 +675,35 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   reveals the model's folder and changes nothing in it, and none for the
   rest. The menu is rebuilt each time it opens, and while it is open
   whenever the phase, the rest or the download changes.
+
+- **Llama Normal** (`Supervisor.answer`, `LlamaNormal`) is no phase. A
+  Llama Normal chat's message goes to the model on this Mac in an `L`
+  frame (section 1). While Running, it takes its turn at the run's relay,
+  in order with rewording, and never gives way (section 3); a worker
+  failure then is the run's, as for any request. In every other settled
+  phase, Paused, Ready and Needs attention, it goes to a relay of the
+  supervisor's own (`Local`, made with `Relay(resting:)`, section 3); one
+  sent while Preparing or Stopping waits for the phase to settle. That
+  relay's first message starts its worker: once the last local worker has
+  exited, the Mac and the model's files are checked, the pinned worker is
+  put where it runs and checked against its pin, as at Preparing, and the
+  worker starts with the same program and arguments as a run's, with no
+  tor, no guest, no wallet and no NEAR key. It rests after Free memory's
+  time, as a run's does, and the next message starts a new one. A worker
+  that cannot start stops that message with its reason
+  (`AnswerStop.failed`, with the same reasons as at Preparing); one that
+  ends by itself stops the message it had as `worker_stopped`. Either way
+  the relay is dropped, so the next message starts afresh, and the phase
+  never changes: nothing here moves the app to Needs attention. A Start,
+  and the shutdown, end that relay first (`endLocal`) and wait for its
+  worker to exit before anything else starts, so two workers never hold
+  the model; a message it had stops as interrupted, and the chat says to
+  ask again. While its worker is up or loading, the technical detail says
+  so (`worker: process N, for Llama Normal chats`), the Paused, Ready and
+  Needs attention lines say only that worker runs, and the Memory row
+  counts it, since it is one of the app's own processes. Nothing on this
+  path makes a network request or touches the wallet, the door, NEAR or
+  Tor.
 
 What `cloak --json` prints for each phase (INS02):
 
@@ -727,8 +804,9 @@ from that message on and absent otherwise) sends each message as written
 to NEAR AI Cloud through `cloak-near`, the helper in the app's bundle
 (`guest/near/README.md`, "The helper"). It never goes to the wallet's
 provider, and a Cloak conversation never goes to NEAR. What a new
-conversation is, is the type picked under the message box (`Chat.kind`, in
-memory only, Cloak at each launch).
+conversation is, is the mode picked under the message box (`Chat.kind`, in
+memory only, Anon V at each launch): Anon V (a Cloak conversation), NEAR
+Privacy (this one), Llama Normal (section 9c) or Agent.
 
 The helper's life is owned by the `Near` actor, which runs on a serial
 queue of its own and blocks on the helper's pipes with no suspension
@@ -776,6 +854,33 @@ way.
 exactly the freshness chosen, in seconds, and the route chosen, against a
 stand-in helper pinned as the real one is. Nothing else here is under
 test.
+
+## 9c. A Llama Normal chat (`app/Sources/RegentsCloak/Chat.swift`, `app/Sources/CloakSupervisor/Supervisor.swift`)
+
+A conversation whose first message went to the model on this Mac
+(`Conversation.llama`, true from that message on and absent otherwise, so
+older saved chats read as before) asks it each message as written, with the
+conversation so far: each earlier message that has an answer, then that
+answer, then the message asked. One answer at a time in a conversation:
+
+```
+written --Ask--> answering (Chat.answering[conversation]) --answer--> answered (Turn.answer)
+answering --Stop, or ⌘.--> stopped
+answering --a Start, Pause, Stop or quit ends the worker--> interrupted
+answering --conversation and answer do not fit (413)--> too long
+answering --worker cannot start, or ends--> failed (reason)
+stopped, interrupted, failed --Ask Again, on the newest message--> answering
+```
+
+How each ended is `Chat.answerStops[turn]`, in memory only; a message saved
+without an answer shows "Not answered" after a relaunch. Too long offers no
+Ask Again, since it is certain to stop again: the chat says to start a new
+one. Ask, and Ask Again, are off only while the model is not on this Mac
+(`ModelDownload.state` not installed), with a line pointing to its download;
+Cloak need not be running. There is no rewording, no details row, no
+Review, no Send Original Text and no Cover or Tor switch; under the box,
+one line says the model on this Mac answers and nothing is sent. No
+deadline. No check.
 
 ## 10. Stages still implied (found 15 November 2026)
 

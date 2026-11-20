@@ -4,11 +4,14 @@ import Foundation
 import RewriterKit
 
 /// One loaded GGUF model and its pinned chat template (cloak_llama.h). The
-/// worker runs one rewrite at a time on it; `cancel` is safe from any thread.
+/// worker runs one request at a time on it, a rewrite or a Llama Normal
+/// answer; `cancel` is safe from any thread.
 public final class Engine: @unchecked Sendable {
-    /// How one rewrite ended, with llama.cpp's counts and timings.
+    /// How one rewrite or answer ended, with llama.cpp's counts and timings.
     public struct Rewrite: Sendable {
-        public enum Finish: Sendable { case stop, length, cancelled, failed(step: String, code: Int32) }
+        /// `tooLong` only for an answer: the conversation leaves no room for
+        /// a whole answer inside the cap, and nothing was computed.
+        public enum Finish: Sendable { case stop, length, cancelled, tooLong, failed(step: String, code: Int32) }
         public let finish: Finish
         public let text: String
         public let promptTokens: Int
@@ -35,7 +38,7 @@ public final class Engine: @unchecked Sendable {
     /// Cloak's details grammar, reference/details-reply.gbnf, built into this
     /// worker and part of no pin (decision 13).
     private let detailsGrammar = String(decoding: Data(PackageResources.details_reply_gbnf), as: UTF8.self)
-    /// Rewrites run here, off Swift's own threads, as llama.cpp blocks while
+    /// Requests run here, off Swift's own threads, as llama.cpp blocks while
     /// it computes.
     private let queue = DispatchQueue(label: "sh.regents.cloak.rewriter-llama")
 
@@ -101,16 +104,34 @@ public final class Engine: @unchecked Sendable {
     }
 
     public func rewrite(_ request: ChatRequest, grammar: String) async -> Rewrite {
+        await run { cloak_engine_rewrite(self.engine, request.system, request.user, Int32(request.maxTokens), grammar) }
+    }
+
+    /// A Llama Normal answer to `conversation`: at most `maxTokens` tokens,
+    /// and `tooLong` when the conversation plus `maxTokens` exceeds
+    /// `maxContext` tokens.
+    public func answer(_ conversation: Conversation, maxTokens: Int32, maxContext: UInt32) async -> Rewrite {
+        await run {
+            let roles = conversation.messages.map { strdup($0.role) }
+            let contents = conversation.messages.map { strdup($0.content) }
+            defer { (roles + contents).forEach { free($0) } }
+            return cloak_engine_answer(
+                self.engine, roles.map { UnsafePointer($0) }, contents.map { UnsafePointer($0) }, roles.count, maxTokens,
+                maxContext)
+        }
+    }
+
+    private func run(_ compute: @escaping @Sendable () -> cloak_result) async -> Rewrite {
         await withCheckedContinuation { continuation in
             queue.async {
-                var result = cloak_engine_rewrite(
-                    self.engine, request.system, request.user, Int32(request.maxTokens), grammar)
+                var result = compute()
                 defer { cloak_result_free(&result) }
                 let finish: Rewrite.Finish
                 switch result.finish {
                 case CLOAK_FINISH_STOP: finish = .stop
                 case CLOAK_FINISH_LENGTH: finish = .length
                 case CLOAK_FINISH_CANCELLED: finish = .cancelled
+                case CLOAK_FINISH_TOO_LONG: finish = .tooLong
                 default: finish = .failed(step: String(cString: result.failed_step), code: result.failed_code)
                 }
                 let text = result.text.map {

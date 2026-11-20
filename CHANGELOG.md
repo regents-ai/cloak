@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Llama Normal chats, and the modes renamed (decision 17, Sean's "5. a"
+  of 20 November 2026). A new chat's mode is one of Anon V, NEAR
+  Privacy, Llama Normal and Agent. In a Llama Normal chat the model on
+  the Mac answers each message as written, with the conversation so
+  far, through llama.cpp's chat template and default sampling; nothing
+  leaves the Mac, and it needs only the model downloaded, not Start, a
+  wallet or Tor. The worker takes a new kind of frame, `L`, for a
+  conversation, which only the app sends; the relay forwards a guest's
+  request as `R` alone. While no run is up the supervisor starts the
+  worker for the first message and ends it before a Start; during a run
+  messages take their turn at the run's worker. A chat and its answer
+  are capped at 19,456 tokens, the most a rewrite has been measured to
+  take, and a chat that no longer fits says so. Answers arrive whole.
+  `scripts/drive_worker.py` gains `--chat`, `--stop-after` and
+  `--worker`.
+
 - Every build on this Mac is signed with the Developer ID (decision 16,
   Sean's "8. a" of 20 November 2026): `llama-worker/install.sh` signs
   the worker so, into its sandbox, and `app/build.sh` signs every other

@@ -4,14 +4,19 @@ import Foundation
 /// as reworded, in the order they were sent, those not yet sent where they
 /// were added. Or, when its first turn is a task, a conversation with the
 /// agent (decision 12): its tasks in the order they ran. Or, when its first
-/// message went to NEAR, a NEAR conversation: each message as written.
+/// message went to NEAR, a NEAR Privacy conversation: each message as
+/// written. Or, when its first message went to the model on this Mac, a
+/// Llama Normal conversation: each message as written and its answer.
 public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let created: Date
     public var turns: [Turn]
-    /// True once its first message went to NEAR (NEAR mode); absent
+    /// True once its first message went to NEAR (NEAR Privacy); absent
     /// otherwise. Every later message goes to NEAR too.
     public var near: Bool?
+    /// True once its first message went to the model on this Mac (Llama
+    /// Normal); absent otherwise. Every later message goes there too.
+    public var llama: Bool?
 
     public init(id: UUID = UUID(), created: Date = .now, turns: [Turn] = []) {
         self.id = id
@@ -30,9 +35,15 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
         turns.first?.steps != nil
     }
 
-    /// A NEAR conversation: its first message went to NEAR.
+    /// A NEAR Privacy conversation: its first message went to NEAR.
     public var isNear: Bool {
         near == true
+    }
+
+    /// A Llama Normal conversation: its first message went to the model on
+    /// this Mac.
+    public var isLlama: Bool {
+        llama == true
     }
 }
 

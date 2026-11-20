@@ -48,8 +48,8 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `reference/stage4-dev-fidelity.json`, `stage4-dev-privacy.json` | Development sets for the stage 4 kit; never holdouts |
 | `reference/wrapper/` | The reconstructed Pi sandbox wrapper and its Tor settings |
 | `reference/host/` | The Linux reference host used for stage 1 |
-| `llama-worker/` | The native rewrite worker (decision 8): Swift over llama.cpp, built from its pinned source with Metal, its sandbox entitlements and install script |
-| `rewriter-kit/` | The worker's protocol and pins: the frames to and from the host, the daemon's request, the replies and the model pins |
+| `llama-worker/` | The native worker (decision 8), which rewords and answers Llama Normal chats: Swift over llama.cpp, built from its pinned source with Metal, its sandbox entitlements and install script |
+| `rewriter-kit/` | The worker's protocol and pins: the frames to and from the host, the daemon's request, a Llama Normal conversation, the replies and the model pins |
 | `host/` | The host library (tor, the worker's channel, the relay, the guest) and the `cloak-host` command the kits run |
 | `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build, and the scripts that release them (Release, below) |
 | `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), the door port and the runner (the owner's agent tasks, decision 12), kernel and root build |
@@ -110,6 +110,15 @@ builds it:
 
 ```bash
 uv run scripts/drive_worker.py --name standin-gguf-grammar "a text to rewrite"
+```
+
+Or send it a short Llama Normal chat, each text one message, each sent with
+the conversation so far as the app sends it; `--stop-after 2` stops the
+first answer after two seconds, as Stop does, then asks it again, and
+`--worker` runs another build of the worker, such as a check copy:
+
+```bash
+uv run scripts/drive_worker.py --name small-lead-gguf-grammar --chat "My cat is called Miso." "What is my cat called?"
 ```
 
 Build the guest (Go cross-builds and a pinned Debian image in Docker, two
@@ -256,7 +265,7 @@ are `model_memory_gib` and `cloak_memory_gib` in `app/release.json`.
 Running means tor is up, the worker is up or resting, a startup check sent
 one rewrite through the guest, the daemon and the worker, and the guest's
 sender is ready. The worker rests,
-and the model leaves memory, once Cloak has reworded nothing for the time
+and the model leaves memory, once it has had nothing to do for the time
 chosen as Free memory in the Settings window (5 minutes until chosen, or 15
 minutes, 1 hour or Never); the next request starts it again and waits a
 few seconds longer. The Details window's Memory row shows what all of Cloak holds
@@ -423,11 +432,13 @@ with a dot, filled while on. Cover turns cover traffic on and off, as in
 Settings, and while Cloak is running with the other value it says "Cover
 changes at the next Start." Tor is always on and zkAPI is off, since one
 wallet pays for everything; neither can be changed yet. In a NEAR
-conversation, one pill, Tor for NEAR (below), takes their place.
+conversation, one pill, Tor for NEAR (below), takes their place; in a
+Llama Normal conversation (below), one line: "The model on this Mac
+answers. Nothing is sent."
 
 Send is Development mode (decision 10 in [docs/plan.md](docs/plan.md)),
-marked as such at the top of Chat (NEAR's mark takes its place in a NEAR
-conversation), and never part of the public release (the technical
+marked as such at the top of Chat (NEAR Privacy's or Llama Normal's mark
+takes its place in those conversations), and never part of the public release (the technical
 preview for invited testers carries it, labelled;
 [docs/release.md](docs/release.md), stage 1): the
 reworded text, after the conversation's earlier sent and answered turns,
@@ -470,8 +481,8 @@ the guest's memory, so after Cloak starts again it does not remember a
 conversation's earlier tasks, and the conversation says so.
 
 A new conversation can be NEAR's instead: before its first message, pick
-NEAR under the message box (Cloak, NEAR or Agent; a new chat is Cloak's at
-each launch). Its messages then go as written, never reworded, to one
+NEAR Privacy under the message box (Anon V, NEAR Privacy, Llama Normal or
+Agent; a new chat is Anon V, Cloak's own, at each launch). Its messages then go as written, never reworded, to one
 model on NEAR AI Cloud, `Qwen/Qwen3.8-27B`, paid by your own NEAR key, and
 its later messages go there too. A Cloak conversation never goes to NEAR,
 and a NEAR one never goes to the wallet's provider. Before a message
@@ -500,6 +511,28 @@ a message is sent and goes to the helper with that message alone, never to
 the log or to disk. After a rebuild, the Mac asks again whether the new
 build may use it. A NEAR conversation is kept like any other, marked in
 the list by a chip icon.
+
+Or pick Llama Normal: the model on this Mac, the one that rewords, answers
+each message itself, as you wrote it, with the conversation so far, through
+llama.cpp and the model's own chat template, with no instructions added and
+llama.cpp's default sampling. Nothing leaves the Mac: no wallet, no Tor, no
+NEAR key, and nothing to pay. Its answers are simpler than a remote
+model's. It needs only the model downloaded, not Start: while Cloak is
+Paused, Ready or needs attention, the first message starts the worker by
+itself, after the same checks of the Mac, the model's files and the worker
+as a Start makes, and it rests after Free memory's time as in a run; while
+Cloak is running, Llama Normal messages wait their turn at the run's worker
+with the rewording. Each answer arrives whole; while the model answers,
+the chat says Working, with Stop (Command-period), and a message that
+stopped or failed can be asked again. Start, Pause, Stop and Quit end the
+worker an answer is on, and that message says to ask again. A chat and an
+answer may take at most 19,456 tokens together, the most a rewrite has been
+measured to take, with up to 4,096 tokens an answer; a chat that no longer
+fits says it is too long for the model on this Mac, to start a new one, and
+nothing is cut. Without the model, the chat says so and points to its
+download. There is no rewording, no details, no Review and no Send Original
+Text. A Llama Normal conversation is kept like any other, marked in the
+list by a laptop icon.
 
 While you write a message or a task, Cloak may suggest details it leaves
 open (decision 13). Once the draft has four words or more and has rested

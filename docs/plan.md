@@ -3076,6 +3076,54 @@ candidates, so the split has to be re-declared before any holdout opens.
     network, for Apple's timestamp, and the key in the login keychain.
     Tried the same day: the worker and the app rebuilt and signed so, and
     `cloak verify` passed with no question from macOS.
+17. Llama Normal, and the modes' names. Decided 20 November 2026 (Sean,
+    "5. a - make sure the UI can slide the modes between 'Anon V' 'NEAR
+    Privacy' and 'Llama Normal'"; 5a was a chat type that is near-pure
+    llama.cpp). A new chat's mode is picked on one segmented control:
+    Anon V (Cloak's own chat: reworded, through Tor), NEAR Privacy, Llama
+    Normal, Agent. The chief's readings, told to Sean the same day: Agent
+    stays as the fourth position, since it is a kind of conversation and
+    had nowhere else to start; a chat keeps the mode of its first message,
+    since changing it would send what was said to the model on the Mac
+    out to a remote one.
+    - A Llama Normal message goes as written, with the conversation so
+      far, to the one pinned model through the one worker (decision 8 and
+      the single-implementation rule stand: no second model, loader or
+      picker), by llama.cpp's chat template with no system message, no
+      grammar and llama.cpp's default sampling. Rewording keeps its
+      pinned greedy decoding. Nothing leaves the Mac, and no wallet, Tor,
+      guest or NEAR key is involved.
+    - It needs the model downloaded and nothing else. While no run is up,
+      the first message starts the worker by itself after a run's own
+      checks of the Mac, the model's files and the worker; a Start, Pause,
+      Stop or Quit ends that worker first, so two never hold the model,
+      and an answer under way says it was interrupted and can be asked
+      again. While a run is up, messages take their turn at the run's
+      worker with rewording. It is no phase, and a failure outside a run
+      stops only that message.
+    - The guest gains nothing: a conversation travels in a frame of its
+      own kind (`L`) that only the app's side of the relay sends, and a
+      guest's request is forwarded as a rewrite request (`R`) and nothing
+      else, so neither is ever read as the other.
+    - A chat and its answer take at most 19,456 tokens, the largest
+      context a rewrite has been measured to take (decision 6's limit;
+      `evidence/stage3/small-lead-gguf-grammar/feasibility-20261114T052945Z.json`),
+      with up to 4,096 tokens an answer. A chat that no longer fits says
+      so; nothing is trimmed.
+    - A rewrite asked for during a run waits its turn behind a Llama
+      Normal answer, and that wait counts against the rewrite's deadline
+      (the chief's choice): the longest answer measured takes about a
+      minute of the 90 seconds, and a clock that started only at the
+      worker would be one more moving part for a rare case.
+    - Answers arrive whole. Streaming is a later change of its own, with
+      NEAR's.
+    - Tried in the running app the same day, signed build: answered while
+      Paused with `cloak status` naming the worker; a follow-up that
+      needed the first answer; Start pressed mid-answer (Interrupted,
+      then Ask Again answered during the run, one worker throughout);
+      Stop. The helper showed with the real model that a rewrite gives
+      the same output as before the change and that a message reading
+      `{"texts":["a"]}` is answered as chat.
 
 ## Gates
 

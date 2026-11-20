@@ -17,8 +17,11 @@ import os
 /// (decision 12): each task runs when its owner presses Run, its model
 /// requests reworded at the door. A conversation whose first message went
 /// to NEAR is NEAR's (`NearMode`): each message goes there as written, at
-/// once, paid by the owner's NEAR key. With Saved chats off, a conversation
-/// started or continued is kept in memory only (`unsaved`).
+/// once, paid by the owner's NEAR key. A conversation whose first message
+/// went to the model on this Mac is Llama Normal's: each message goes there
+/// as written, with the conversation so far, and nothing leaves this Mac
+/// (`Supervisor.answer`). With Saved chats off, a conversation started or
+/// continued is kept in memory only (`unsaved`).
 @MainActor
 @Observable
 final class Chat {
@@ -74,10 +77,18 @@ final class Chat {
         let newMessage: Bool
     }
 
+    /// A Llama Normal answer under way.
+    struct Answering {
+        let turn: UUID
+        let started: Date
+        let task: Task<Void, Never>
+    }
+
     /// What a conversation is, fixed by its first message.
     enum Kind: Hashable {
         case chat
         case near
+        case llama
         case agent
     }
 
@@ -88,6 +99,9 @@ final class Chat {
     let folder: URL
     let wallet: Wallet
     let nearMode: NearMode
+    /// Read here for whether the model is on this Mac, which a Llama Normal
+    /// chat needs.
+    let download: ModelDownload
     private(set) var access = Access.opening
     /// Newest first.
     private(set) var conversations: [Conversation] = []
@@ -132,6 +146,12 @@ final class Chat {
     /// By turn.
     private(set) var sending: [UUID: Sending] = [:]
     var sendStop: SendStop?
+    /// The Llama Normal answer under way, by conversation: one at a time in
+    /// each.
+    private(set) var answering: [UUID: Answering] = [:]
+    /// Why each Llama Normal message last asked has no answer, by turn. In
+    /// memory only.
+    private(set) var answerStops: [UUID: AnswerStop] = [:]
     /// The last change to disk that failed.
     var problem: Problem?
     /// Each conversation's own Tor identity, so each has circuits of its
@@ -139,12 +159,16 @@ final class Chat {
     @ObservationIgnored private var identities: [UUID: String] = [:]
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "chat")
 
-    init(supervisor: Supervisor, settings: AppSettings, folder: URL, wallet: URL, door: Door, nearMode: NearMode) {
+    init(
+        supervisor: Supervisor, settings: AppSettings, folder: URL, wallet: URL, door: Door, nearMode: NearMode,
+        download: ModelDownload
+    ) {
         self.supervisor = supervisor
         self.settings = settings
         self.folder = folder
         self.wallet = Wallet(supervisor: supervisor, folder: wallet)
         self.nearMode = nearMode
+        self.download = download
         let agent = Agent(parts: Agent.Parts(
             run: { supervisor.run($0) }, pass: { door.pass(for: $0) }, reworded: { door.reworded(for: $0) }))
         self.agent = agent
@@ -178,11 +202,14 @@ final class Chat {
     /// With Never reword ticked, a message is added without Cloak running;
     /// its card then says why Send is off. A task runs unless running it is
     /// certain to stop, or one runs in its conversation already. A NEAR
-    /// message goes unless sending it is certain to stop.
+    /// message goes unless sending it is certain to stop. A Llama Normal
+    /// message is asked unless the model is not on this Mac, or the model is
+    /// answering in its conversation already.
     var canSubmit: Bool {
         guard let selected, !Self.isBlank(draft) else { return false }
         if isAgent(selected) { return isOpen && runBlock == nil && agent.runs[selected.id] == nil }
         if isNear(selected) { return isOpen && nearMode.sendBlock == nil }
+        if isLlama(selected) { return isOpen && llamaBlock == nil && answering[selected.id] == nil }
         return settings.neverReword ? canCompose : canReword
     }
 
@@ -196,6 +223,19 @@ final class Chat {
     /// while it has none, as chosen.
     func isNear(_ conversation: Conversation) -> Bool {
         conversation.turns.isEmpty ? kind == .near : conversation.isNear
+    }
+
+    /// Whether `conversation` is Llama Normal's: as its first message went,
+    /// or, while it has none, as chosen.
+    func isLlama(_ conversation: Conversation) -> Bool {
+        conversation.turns.isEmpty ? kind == .llama : conversation.isLlama
+    }
+
+    /// Why a Llama Normal message can't be asked now, or nil when it can: off
+    /// only while the model is not on this Mac, which is certain to stop it.
+    /// Cloak need not be running.
+    var llamaBlock: String? {
+        download.state == .installed ? nil : "Download the model to ask."
     }
 
     /// Whether the agent of `conversation`, which has earlier tasks, starts
@@ -312,6 +352,7 @@ final class Chat {
     func delete(_ id: UUID) {
         guard case .open(let store) = access, let conversation = conversations.first(where: { $0.id == id }) else { return }
         if rewording?.conversation == id { rewording?.task.cancel() }
+        answering[id]?.task.cancel()
         agent.stop(id)
         identities[id] = nil
         if !conversation.turns.isEmpty {
@@ -336,8 +377,10 @@ final class Chat {
     /// or, with Never reword ticked, adds it as written and sends it, the
     /// model on this Mac not asked; or, in the agent's conversation, runs it
     /// as its next task; or, in a NEAR conversation, adds it as written and
-    /// sends it to NEAR. The message goes with a line for each detail
-    /// picked, but to NEAR, which gets it as written.
+    /// sends it to NEAR; or, in a Llama Normal conversation, adds it as
+    /// written and asks the model on this Mac. The message goes with a line
+    /// for each detail picked, but to NEAR and Llama Normal, which get it as
+    /// written.
     func submit() {
         let (written, picked) = (draft, picks)
         let original = picked.message(written.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -352,6 +395,12 @@ final class Chat {
             opened = turn.id
             update(conversation)
             send(turn.id, in: conversation.id)
+        } else if isLlama(conversation) {
+            let turn = Turn(original: written.trimmingCharacters(in: .whitespacesAndNewlines), reworded: nil)
+            conversation.turns.append(turn)
+            conversation.llama = true
+            update(conversation)
+            ask(turn.id, in: conversation.id)
         } else if settings.neverReword {
             let turn = Turn(original: original, reworded: nil)
             conversation.turns.append(turn)
@@ -494,6 +543,49 @@ final class Chat {
         update(conversation)
     }
 
+    /// Asks the model on this Mac to answer a Llama Normal conversation's
+    /// turn, after its earlier turns as written and answered, and keeps the
+    /// answer with it, or why none came. One at a time in a conversation.
+    func ask(_ turn: UUID, in id: UUID) {
+        guard answering[id] == nil, llamaBlock == nil, let conversation = conversations.first(where: { $0.id == id }),
+            let index = conversation.turns.firstIndex(where: { $0.id == turn })
+        else { return }
+        let messages = conversation.turns[..<index].flatMap { earlier in earlier.answer.map { [earlier.original, $0] } ?? [] }
+            + [conversation.turns[index].original]
+        answerStops[turn] = nil
+        let task = Task {
+            let result: Result<String, AnswerStop>
+            do throws(AnswerStop) {
+                result = .success(try await supervisor.answer(messages))
+            } catch {
+                result = .failure(error)
+            }
+            answered(turn, in: id, result)
+        }
+        answering[id] = Answering(turn: turn, started: .now, task: task)
+    }
+
+    /// Stops the Llama Normal answer under way in the conversation.
+    func stopAnswer(in id: UUID) {
+        answering[id]?.task.cancel()
+    }
+
+    /// A Llama Normal answer ended: kept with its turn, or why it has none.
+    /// A conversation deleted meanwhile takes it with it.
+    private func answered(_ turn: UUID, in id: UUID, _ result: Result<String, AnswerStop>) {
+        answering[id] = nil
+        guard var conversation = conversations.first(where: { $0.id == id }),
+            let index = conversation.turns.firstIndex(where: { $0.id == turn })
+        else { return }
+        switch result {
+        case .success(let answer):
+            conversation.turns[index].answer = answer
+            update(conversation)
+        case .failure(let stop):
+            answerStops[turn] = stop
+        }
+    }
+
     /// 32 random bytes, as hex: Tor's user name for one conversation, or for
     /// NEAR's or Intel's connections in NEAR mode.
     static func newIdentity() -> String {
@@ -511,11 +603,11 @@ final class Chat {
     /// Once the draft has rested a moment, asks the model on this Mac for its
     /// details, in place of any request before. Not while something is
     /// picked, nor unless the draft has a few words, Cloak is running and
-    /// nothing is being reworded, nor in a NEAR conversation. An answer that
-    /// does not come shows nothing.
+    /// nothing is being reworded, nor in a NEAR or Llama Normal
+    /// conversation. An answer that does not come shows nothing.
     private func askDetails() {
         stopAskingDetails()
-        guard !picks.fixed, Details.enoughToAsk(draft), selected.map(isNear) != true else { return }
+        guard !picks.fixed, Details.enoughToAsk(draft), selected.map({ isNear($0) || isLlama($0) }) != true else { return }
         let draft = draft
         detailsAsk = Task {
             guard (try? await Task.sleep(for: Self.draftRest)) != nil, canReword, !picks.fixed else { return }

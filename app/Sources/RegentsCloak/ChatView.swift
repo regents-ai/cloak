@@ -8,9 +8,11 @@ import SwiftUI
 /// on the right, each message as written and as reworded, side by side (or
 /// as written alone when it goes so), and its answer once sent, with the box
 /// to write the next one at the bottom. In the agent's conversations, each
-/// task in place of a message, with the steps the agent took. In NEAR's
-/// conversations, each message as written and its answer. Development
-/// mode's mark is at the top, or NEAR mode's in a NEAR conversation.
+/// task in place of a message, with the steps the agent took. In NEAR
+/// Privacy's conversations, each message as written and its answer; in
+/// Llama Normal's, each message as written and the answer of the model on
+/// this Mac. Development mode's mark is at the top, or the mode's own in a
+/// NEAR Privacy or Llama Normal conversation.
 struct ChatView: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
@@ -51,11 +53,12 @@ private struct Sidebar: View {
             ForEach(chat.conversations) { conversation in
                 let agent = chat.isAgent(conversation)
                 let near = chat.isNear(conversation)
+                let llama = chat.isLlama(conversation)
                 let unsaved = chat.unsaved.contains(conversation.id)
                 HStack(spacing: 6) {
                     Text(agent && conversation.turns.isEmpty ? "New task" : conversation.title)
                         .lineLimit(1)
-                    if agent || near || unsaved {
+                    if agent || near || llama || unsaved {
                         Spacer(minLength: 0)
                     }
                     if unsaved {
@@ -75,7 +78,13 @@ private struct Sidebar: View {
                         Image(systemName: "cpu")
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
-                            .accessibilityLabel("NEAR")
+                            .accessibilityLabel("NEAR Privacy")
+                    }
+                    if llama {
+                        Image(systemName: "laptopcomputer")
+                            .imageScale(.small)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Llama Normal")
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -124,6 +133,8 @@ private struct Detail: View {
         VStack(spacing: 0) {
             if chat.selected.map(chat.isNear) == true {
                 NearBar(settings: chat.settings)
+            } else if chat.selected.map(chat.isLlama) == true {
+                LlamaBar()
             } else {
                 DevelopmentBar()
             }
@@ -186,6 +197,7 @@ private struct Turns: View {
         let rewording = chat.rewording?.conversation == conversation.id ? chat.rewording : nil
         let agent = chat.isAgent(conversation)
         let near = chat.isNear(conversation)
+        let llama = chat.isLlama(conversation)
         let run = chat.agent.runs[conversation.id]
         ScrollViewReader { proxy in
             ScrollView {
@@ -201,6 +213,11 @@ private struct Turns: View {
                                 Text("New chat")
                                     .font(.title3.weight(.semibold))
                                 Text("Each message goes to NEAR as you wrote it, once NEAR's hardware check passes.")
+                                    .foregroundStyle(.secondary)
+                            } else if llama {
+                                Text("New chat")
+                                    .font(.title3.weight(.semibold))
+                                Text("The model on this Mac answers each message as you wrote it, with the chat so far. Its answers are simpler than a remote model's.")
                                     .foregroundStyle(.secondary)
                             } else {
                                 Text("New chat")
@@ -222,6 +239,11 @@ private struct Turns: View {
                             let running = run?.turn.id == turn.id ? run : nil
                             TaskCard(
                                 chat: chat, conversation: conversation.id, turn: running?.turn ?? turn, run: running,
+                                newest: turn.id == conversation.turns.last?.id)
+                        } else if llama {
+                            LlamaCard(
+                                chat: chat, conversation: conversation.id, turn: turn,
+                                answering: chat.answering[conversation.id].flatMap { $0.turn == turn.id ? $0 : nil },
                                 newest: turn.id == conversation.turns.last?.id)
                         } else {
                             TurnCard(
@@ -465,7 +487,7 @@ private struct TaskCard: View {
             }
             if run == nil, turn.answer == nil {
                 if let end = chat.agent.ends[turn.id] {
-                    EndRow(end: end)
+                    EndRow(title: end.title, words: end.words)
                 } else {
                     Text("Not finished")
                         .font(.callout)
@@ -506,6 +528,59 @@ private struct TaskCard: View {
     }
 }
 
+/// One Llama Normal message: as written, then the answer of the model on
+/// this Mac. While the model answers, how long it has worked, and Stop. One
+/// without an answer says why and, as the newest, can be asked again,
+/// unless the chat has grown too long for the model.
+private struct LlamaCard: View {
+    let chat: Chat
+    let conversation: UUID
+    let turn: Turn
+    let answering: Chat.Answering?
+    let newest: Bool
+
+    var body: some View {
+        Card {
+            Pane(title: "Message", count: nil, mark: .removed) {
+                TextBox(text: .constant(turn.original), label: "Message", editable: false)
+            }
+            if let answer = turn.answer {
+                Pane(title: "Answer", count: nil, mark: .added) {
+                    AnswerText(text: answer)
+                }
+            } else if let answering {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Working")
+                    Text(timerInterval: answering.started...Date.distantFuture, countsDown: false)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Stop") { chat.stopAnswer(in: conversation) }
+                }
+                .accessibilityElement(children: .contain)
+            } else {
+                let stop = chat.answerStops[turn.id]
+                EndRow(title: stop?.title ?? "Not answered", words: stop?.words)
+                if newest, stop != .tooLong {
+                    HStack(spacing: 12) {
+                        Spacer()
+                        if let block = chat.llamaBlock {
+                            Text(block)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("Ask Again", systemImage: "arrow.clockwise") { chat.ask(turn.id, in: conversation) }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(chat.llamaBlock != nil)
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A task's steps, one a line: the tool, then the command or the file.
 private struct StepList: View {
     let steps: ArraySlice<Step>
@@ -536,9 +611,10 @@ private struct StepList: View {
     }
 }
 
-/// Why a task ended without an answer.
+/// Why a task, or a Llama Normal message, ended without an answer.
 private struct EndRow: View {
-    let end: Agent.End
+    let title: String
+    let words: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -546,9 +622,9 @@ private struct EndRow: View {
                 .foregroundStyle(.orange)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(end.title)
+                Text(title)
                     .fontWeight(.medium)
-                if let words = end.words {
+                if let words {
                     Text(words)
                         .foregroundStyle(.secondary)
                 }
@@ -707,11 +783,14 @@ extension View {
 /// Review off. In the agent's conversation, the box for the next task,
 /// with Run, or Stop while a task runs there, and a note when the agent
 /// starts without the earlier tasks. While the conversation is empty, what
-/// it is to be: Cloak's, NEAR's or the agent's. Above either box, its
-/// details; at the foot, the Cover, Tor and zkAPI switches. In a NEAR
-/// conversation, the box's button sends each message as written, with no
-/// details, and at the foot NEAR's Tor switch and what its hardware check
-/// last found.
+/// it is to be: Anon V (Cloak's), NEAR Privacy, Llama Normal or the
+/// agent's. Above either box, its details; at the foot, the Cover, Tor and
+/// zkAPI switches. In a NEAR Privacy conversation, the box's button sends
+/// each message as written, with no details, and at the foot NEAR's Tor
+/// switch and what its hardware check last found. In a Llama Normal
+/// conversation, it asks the model on this Mac, with Stop while the model
+/// answers, no details and no switches, and Cloak need not be running;
+/// without the model, the way to its download.
 private struct Compose: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
@@ -721,8 +800,10 @@ private struct Compose: View {
         let conversation = chat.selected
         let agent = conversation.map(chat.isAgent) ?? false
         let near = conversation.map(chat.isNear) ?? false
+        let llama = conversation.map(chat.isLlama) ?? false
         let running = conversation.flatMap { chat.agent.runs[$0.id] } != nil
-        let neverReword = !agent && !near && chat.settings.neverReword
+        let answering = conversation.flatMap { chat.answering[$0.id] } != nil
+        let neverReword = !agent && !near && !llama && chat.settings.neverReword
         let sends = neverReword || near || (!agent && !chat.settings.review)
         let label = agent ? "Task" : "Message"
         VStack(alignment: .leading, spacing: 10) {
@@ -736,11 +817,16 @@ private struct Compose: View {
                     chat.problem = nil
                 }
             }
-            // NEAR's status line and Send say what Cloak not running stops.
-            if !near, chat.supervisor.phase != .running {
+            // NEAR's status line and Send say what Cloak not running stops;
+            // Llama Normal needs only the model.
+            if llama {
+                if chat.llamaBlock != nil {
+                    ModelMissing(download: chat.download, showDetails: showDetails)
+                }
+            } else if !near, chat.supervisor.phase != .running {
                 Waiting(supervisor: chat.supervisor, to: agent ? "run" : sends ? "send" : "reword", showDetails: showDetails)
             }
-            if !near {
+            if !near, !llama {
                 DetailsRow(chat: chat)
             }
             HStack(alignment: .bottom, spacing: 10) {
@@ -760,8 +846,10 @@ private struct Compose: View {
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
                     .disabled(!chat.canCompose)
-                if running, let conversation {
-                    Button("Stop", systemImage: "stop.fill") { chat.agent.stop(conversation.id) }
+                if running || answering, let conversation {
+                    Button("Stop", systemImage: "stop.fill") {
+                        if llama { chat.stopAnswer(in: conversation.id) } else { chat.agent.stop(conversation.id) }
+                    }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderedProminent)
                         .buttonBorderShape(.circle)
@@ -770,7 +858,7 @@ private struct Compose: View {
                         .keyboardShortcut(".", modifiers: .command)
                         .padding(.bottom, 4)
                 } else {
-                    let title: LocalizedStringKey = agent ? "Run" : sends ? "Send" : "Reword"
+                    let title: LocalizedStringKey = agent ? "Run" : llama ? "Ask" : sends ? "Send" : "Reword"
                     Button(title, systemImage: "arrow.up") { chat.submit() }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderedProminent)
@@ -784,9 +872,10 @@ private struct Compose: View {
             }
             HStack(spacing: 16) {
                 if let conversation, conversation.turns.isEmpty, chat.rewording?.conversation != conversation.id {
-                    Picker("Type", selection: $chat.kind) {
-                        Text("Cloak").tag(Chat.Kind.chat)
-                        Text("NEAR").tag(Chat.Kind.near)
+                    Picker("Mode", selection: $chat.kind) {
+                        Text("Anon V").tag(Chat.Kind.chat)
+                        Text("NEAR Privacy").tag(Chat.Kind.near)
+                        Text("Llama Normal").tag(Chat.Kind.llama)
                         Text("Agent").tag(Chat.Kind.agent)
                     }
                     .pickerStyle(.segmented)
@@ -819,6 +908,10 @@ private struct Compose: View {
             .font(.callout)
             if near {
                 NearSwitches(settings: chat.settings, nearMode: chat.nearMode)
+            } else if llama {
+                Text("The model on this Mac answers. Nothing is sent.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             } else {
                 Switches(settings: chat.settings, supervisor: chat.supervisor)
             }
@@ -931,8 +1024,8 @@ private struct NearStatus: View {
     }
 }
 
-/// NEAR mode's mark, in place of Development mode's: what goes and who pays,
-/// and Limits, what NEAR's hardware check does not cover.
+/// NEAR Privacy's mark, in place of Development mode's: what goes and who
+/// pays, and Limits, what NEAR's hardware check does not cover.
 private struct NearBar: View {
     let settings: AppSettings
     @State private var showingLimits = false
@@ -940,7 +1033,7 @@ private struct NearBar: View {
     var body: some View {
         HStack(spacing: 10) {
             HStack(spacing: 10) {
-                Text("NEAR")
+                Text("NEAR Privacy")
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
@@ -957,6 +1050,28 @@ private struct NearBar: View {
                     Limits(settings: settings)
                 }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.06))
+    }
+}
+
+/// Llama Normal's mark, in place of Development mode's: where the answer
+/// comes from, and what it needs.
+private struct LlamaBar: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("Llama Normal")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Color.accentColor.opacity(0.2), in: Capsule())
+            Text("Answered on this Mac, with nothing to pay and no need to start Cloak.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(Color.accentColor.opacity(0.06))
@@ -1115,6 +1230,27 @@ private struct Waiting: View {
     }
 }
 
+/// Why a Llama Normal chat can't ask: the model is not on this Mac yet. Its
+/// download, in Details, is the way on.
+private struct ModelMissing: View {
+    let download: ModelDownload
+    let showDetails: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text("The model isn't on this Mac yet. Download it to ask.")
+            Spacer()
+            Button(download.isUnderWay ? "Downloading Model…" : "Download Model…", action: showDetails)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
 private struct Notice: View {
     let symbol: String
     let tint: Color
@@ -1245,6 +1381,26 @@ extension Agent.End {
         case .cloakStopped: "Cloak was paused or stopped, so the task ended."
         case .unreachable: "The agent couldn't reach Cloak. Agents says why."
         case .failed(let sentence): sentence ?? "The agent stopped before it finished."
+        }
+    }
+}
+
+extension AnswerStop {
+    var title: String {
+        switch self {
+        case .stopped: "Stopped"
+        case .interrupted: "Interrupted"
+        case .tooLong: "Too long"
+        case .failed: "No answer"
+        }
+    }
+
+    var words: String? {
+        switch self {
+        case .stopped: nil
+        case .interrupted: "Cloak started or stopped while the model was answering. Ask again."
+        case .tooLong: "This chat is too long for the model on this Mac. Start a new chat."
+        case .failed(let reason): "\(reason.title) Ask again."
         }
     }
 }

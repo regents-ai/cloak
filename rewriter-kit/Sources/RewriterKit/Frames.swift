@@ -4,14 +4,18 @@ import Foundation
 /// standard input and output: one kind byte, a 4-byte big-endian length, then
 /// the payload.
 ///
-/// In: `R` a request body, `C` cancel the request in progress.
+/// In: `R` a request body (a rewrite or a draft's details), `L` a Llama
+/// Normal chat's conversation (`Conversation`), `C` cancel the request in
+/// progress. Only the app sends `L`: the host's relay forwards a guest's
+/// request as `R` and nothing else, so what a guest sends is never read as a
+/// conversation, and a chat message is never read as a rewrite.
 /// Out: `Y` ready (empty), `A` an answer: 2-byte big-endian HTTP status, then
 /// the reply body.
 public enum Frames {
     static let maxPayload = 1 << 20
 
     public struct Incoming: Sendable {
-        public enum Kind: UInt8, Sendable { case request = 0x52, cancel = 0x43 }
+        public enum Kind: UInt8, Sendable { case request = 0x52, conversation = 0x4C, cancel = 0x43 }
         public let kind: Kind
         public let payload: Data
     }
@@ -44,7 +48,7 @@ public enum Frames {
     }
 
     /// Reads frames on a thread of their own, so a cancel arrives while a
-    /// rewrite runs. The stream ends when the supervisor closes the channel,
+    /// request runs. The stream ends when the supervisor closes the channel,
     /// and fails with a `ProtocolFault` at a frame the worker cannot take; no
     /// frame is read after either.
     public static func incoming() -> AsyncThrowingStream<Incoming, any Error> {
@@ -84,7 +88,7 @@ public enum Frames {
 }
 
 /// The supervisor broke the frame protocol. The worker stops for it, once
-/// the rewrite in progress has stopped.
+/// the request in progress has stopped.
 public struct ProtocolFault: Error, CustomStringConvertible {
     public let description: String
     public init(_ description: String) { self.description = description }

@@ -8,10 +8,18 @@ import Synchronization
 /// the worker to exit (`end`), killing it if it has not within
 /// `Child.exitLimit`, before anything takes its place.
 public final class WorkerChannel: Sendable {
-    /// The largest answer accepted. The worker's 16,384-token limit keeps real
+    /// The largest answer accepted. The worker's token limits keep real
     /// answers far below it; a larger one means the worker is broken. Answers
     /// over the daemon's own reply limit still pass, so the daemon refuses them.
     static let maxAnswer = 16 << 20
+
+    /// What a request is, by the frame it goes in: a rewrite or a draft's
+    /// details (`R`), or a Llama Normal chat's conversation (`L`), which only
+    /// the app sends (`Relay.answer(to:as:yielding:)`).
+    public enum Kind: UInt8, Sendable {
+        case request = 0x52
+        case conversation = 0x4C
+    }
 
     /// The one request at a time:
     ///
@@ -92,9 +100,10 @@ public final class WorkerChannel: Sendable {
         await child.exited()
     }
 
-    /// Hands a request to the idle worker. False when the worker is lost.
-    /// The request is written whole before a cancel can follow it.
-    func send(_ request: Data) -> Bool {
+    /// Hands a request of this kind to the idle worker. False when the
+    /// worker is lost. The request is written whole before a cancel can
+    /// follow it.
+    func send(_ request: Data, as kind: Kind) -> Bool {
         state.withLock { state in
             switch state {
             case .lost:
@@ -103,7 +112,7 @@ public final class WorkerChannel: Sendable {
                 preconditionFailure("a request while the worker has one")
             case .idle:
                 do {
-                    try input.write(contentsOf: Self.frame(0x52, request))
+                    try input.write(contentsOf: Self.frame(kind.rawValue, request))
                 } catch {
                     lose(&state)
                     return false
@@ -146,7 +155,7 @@ public final class WorkerChannel: Sendable {
     }
 
     /// Ends the worker by closing its input, and returns once it has exited.
-    /// A busy worker first stops its rewrite, which fails. One that has not
+    /// A busy worker first stops its request, which fails. One that has not
     /// exited within `Child.exitLimit` is killed.
     public func finish() async {
         try? input.close()

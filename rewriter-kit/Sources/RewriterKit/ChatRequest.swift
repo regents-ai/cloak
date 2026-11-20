@@ -52,14 +52,14 @@ public struct ChatRequest: Decodable, Sendable {
     }
 }
 
-private struct AnyKey: CodingKey {
+struct AnyKey: CodingKey {
     let stringValue: String
     var intValue: Int? { nil }
     init(stringValue: String) { self.stringValue = stringValue }
     init?(intValue: Int) { nil }
 }
 
-private func requireExactKeys<Keys: CodingKey & CaseIterable>(_ keys: Keys.Type, in decoder: any Decoder) throws {
+func requireExactKeys<Keys: CodingKey & CaseIterable>(_ keys: Keys.Type, in decoder: any Decoder) throws {
     let present = Set(try decoder.container(keyedBy: AnyKey.self).allKeys.map(\.stringValue))
     guard present == Set(Keys.allCases.map(\.stringValue)) else {
         throw WorkerError("unexpected fields \(present.symmetricDifference(Keys.allCases.map(\.stringValue)).sorted())")

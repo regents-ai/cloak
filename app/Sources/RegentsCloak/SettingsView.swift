@@ -103,7 +103,7 @@ private struct GeneralPane: View {
             Section {
                 Toggle("Launch at login", isOn: Binding(get: { login }, set: { login = LoginItem.set($0) }))
             } footer: {
-                Footnote("Cloak opens paused, so nothing runs until you press Start.")
+                Footnote("Cloak opens paused, so nothing runs until you press Start or ask something in a Llama Normal chat.")
             }
             Section {
                 NeverReword(settings: settings)
@@ -131,7 +131,7 @@ private struct GeneralPane: View {
                     ForEach(FreeMemory.allCases) { Text($0.title).tag($0) }
                 }
             } footer: {
-                Footnote("The model leaves memory once Cloak has reworded nothing for that long, and the next message takes a few seconds longer.")
+                Footnote("The model leaves memory once it has had nothing to do for that long, and the next message takes a few seconds longer.")
             }
             UpdatesSection(updates: updates)
         }
@@ -207,12 +207,12 @@ private struct NearPane: View {
                     }
                 }
             } footer: {
-                Footnote("Your API key from NEAR AI Cloud. You can create one at cloud.near.ai. It pays for the messages you send in NEAR chats, so NEAR can connect those messages to your account. Cloak keeps it in this Mac's keychain, and it can't be viewed here after you save it.")
+                Footnote("Your API key from NEAR AI Cloud. You can create one at cloud.near.ai. It pays for the messages you send in NEAR Privacy chats, so NEAR can connect those messages to your account. Cloak keeps it in this Mac's keychain, and it can't be viewed here after you save it.")
             }
             Section {
                 Toggle("Tor", isOn: $settings.nearTor)
             } footer: {
-                Footnote("Sends your NEAR chats through the Tor network, so NEAR and Intel see a Tor address instead of your internet address. It's slower: checking NEAR's servers takes about half a minute, and Cloak needs to be started first.")
+                Footnote("Sends your NEAR Privacy chats through the Tor network, so NEAR and Intel see a Tor address instead of your internet address. It's slower: checking NEAR's servers takes about half a minute, and Cloak needs to be started first.")
             }
             Section {
                 Picker("Freshness", selection: $settings.proofFreshness) {
@@ -224,7 +224,7 @@ private struct NearPane: View {
             Section {
                 LabeledContent("Model", value: "Qwen3.8-27B")
             } footer: {
-                Footnote("The model that answers your NEAR chats. Cloak's check covers the servers it runs on, not the model software itself.")
+                Footnote("The model that answers your NEAR Privacy chats. Cloak's check covers the servers it runs on, not the model software itself.")
             }
         }
         .task { await mode.find() }
