@@ -343,9 +343,44 @@ struct VeniceTests {
         }
 
         #expect(stop?.kind == .notUSDC)
-        #expect(stop?.sent == true)
+        #expect(stop?.sent == false)
         #expect(guest.read.isEmpty)
         #expect(standIn.sent.count == 1)
+    }
+
+    /// Terms that do not come, or do not read, stop Add before anything is
+    /// signed, and the stop says no payment went.
+    @Test(arguments: [(429, "{}"), (500, "{}"), (503, "{}"), (402, "{}"), (402, "not json"), (200, Self.taken)])
+    func termsThatDoNotReadPayNothing(status: Int, body: String) async throws {
+        let standIn = StandIn { _ in (status, [:], body) }
+        let guest = Guest()
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await Venice(auth: .wallet(guest.signer), transport: standIn.transport).add(Amount(units: 5_000_000), by: guest.signer)
+        }
+
+        #expect(stop?.sent == false)
+        #expect(guest.read.isEmpty)
+        #expect(standIn.sent.count == 1)
+    }
+
+    @Test
+    func termsThatDoNotComePayNothing() async throws {
+        let tries = Mutex(0)
+        let transport: VeniceTransport = { _ throws(VeniceUnreachable) in
+            tries.withLock { $0 += 1 }
+            throw VeniceUnreachable(sent: true)
+        }
+        let guest = Guest()
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await Venice(auth: .wallet(guest.signer), transport: transport).add(Amount(units: 5_000_000), by: guest.signer)
+        }
+
+        #expect(stop?.kind == .unreachable)
+        #expect(stop?.sent == false)
+        #expect(guest.read.isEmpty)
+        #expect(tries.withLock { $0 } == 1)
     }
 
     // MARK: Money

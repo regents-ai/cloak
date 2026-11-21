@@ -208,9 +208,16 @@ extension Venice {
 
     /// One press of Add: reads Venice's terms afresh, then buys exactly
     /// `amount` on them (`topUp`). One bare request, at most one signature,
-    /// one payment.
+    /// one payment. A stop is `sent` only when the payment may have gone.
     public func add(_ amount: Amount, by signer: VeniceSigner) async throws(VeniceStop) -> VeniceTopUp {
-        try await topUp(amount, on: try await topUpTerms(), by: signer)
+        let terms: VeniceTopUpTerms
+        do {
+            terms = try await topUpTerms()
+        } catch {
+            // Only the bare request went; no payment did.
+            throw VeniceStop(error.kind, sent: false, "the terms stopped: \(error.text)")
+        }
+        return try await topUp(amount, on: terms, by: signer)
     }
 
     /// Buys `amount` of Venice credit for `signer`'s wallet on `terms`: signs
