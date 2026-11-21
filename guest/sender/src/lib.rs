@@ -1,10 +1,11 @@
 //! The guest's sender, Development mode's one way to a remote model
 //! (decision 10 in docs/plan.md). The host connects to it on the guest's
 //! vsock port and, once it has its turn, sends one request; the sender pays
-//! for it through the official MPP toolkit and answers. Every connection it
-//! makes, to the provider and to the Tempo network alike, goes through the
-//! guest's Tor port with a SOCKS user name of its own, and names are resolved
-//! by Tor: the guest has no other way out.
+//! for it through the official MPP toolkit, or carries it to Venice, and
+//! answers. Every connection it makes, to the provider, to the Tempo network,
+//! to Venice's API and to Base alike, goes through the guest's Tor port with
+//! a SOCKS user name of its own, and names are resolved by Tor: the guest has
+//! no other way out.
 //!
 //! One connection, in frames of a kind byte, a four-byte big-endian length
 //! and the payload:
@@ -14,23 +15,29 @@
 //! host:   R <request>  JSON, below
 //! sender: S <deposit>  the deposit's new state (JSON, or null when gone),
 //! host:   K            once it is sealed on the Mac; zero or more of these
+//! sender: V <head>     a Venice answer's {"status", "headers"}, once
+//! sender: P <bytes>    its body as it arrives; zero or more of these
 //! sender: A <reply>    {"ok": ...} or {"stop": {"code", "detail"}}
 //! ```
 //!
 //! The host builds each request when its turn comes, from what it has kept,
 //! so a request never carries a deposit older than the last one kept. The
 //! wallet's key comes in the requests that sign and stays in this process's
-//! memory only while one runs.
+//! memory only while one runs. No key, signature or header value reaches a
+//! stop's words, nor the log, which has each request's name and outcome.
 
+use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use alloy::primitives::{Address, Bytes, TxKind, B256, U256};
+use alloy::primitives::{address, Address, Bytes, TxKind, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::rpc::client::ClientBuilder;
 use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::SignerSync;
+use alloy::sol_types::{Eip712Domain, SolStruct};
 use mpp::client::channel_ops::{
     encode_precompile_request_close_call, encode_precompile_withdraw_call,
 };
@@ -46,6 +53,7 @@ use mpp::protocol::core::{format_authorization, parse_www_authenticate_all_bytes
 use mpp::protocol::methods::tempo::session::{ChannelDescriptor, SettlementRoute};
 use mpp::protocol::methods::tempo::{CHAIN_ID, DEFAULT_RPC_URL, USDC};
 use mpp::MppError;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 use tempo_alloy::contracts::precompiles::{ITIP20, TIP20_CHANNEL_RESERVE_ADDRESS};
@@ -61,6 +69,8 @@ const REQUEST: u8 = b'R';
 const KEEP: u8 = b'S';
 const KEPT: u8 = b'K';
 const ANSWER: u8 = b'A';
+const HEAD: u8 = b'V';
+const PIECE: u8 = b'P';
 /// The largest frame either side takes.
 const MAX_FRAME: usize = 16 << 20;
 
@@ -75,12 +85,30 @@ const REQUEST_LIMIT: Duration = Duration::from_secs(180);
 /// challenge suggests, and at this size only when one suggests none.
 const DEPOSIT: u128 = 1_000_000;
 
+/// The only header names a Venice request carries: the key, the wallet's
+/// sign-in, a top-up's payment and the body's type.
+const VENICE_HEADERS: [&str; 4] = [
+    "authorization",
+    "sign-in-with-x",
+    "payment-signature",
+    "content-type",
+];
+/// The start of every message `venice_sign` signs: Venice's sign-in.
+const VENICE_SIGN_IN: &str = "api.venice.ai wants you to sign in with your Ethereum account:\n";
+/// USDC on Base, the one token `venice_typed` signs for and `venice_funds`
+/// reads.
+const BASE_USDC: Address = address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+const BASE_CHAIN: u64 = 8453;
+
 /// Where the sender's requests go: the provider's MPP root, the Tempo
-/// network's RPC and the guest's Tor port. Only tests name others.
+/// network's RPC, Venice's API origin, Base's RPC and the guest's Tor port.
+/// Only tests name others.
 #[derive(Clone)]
 pub struct Network {
     pub provider: String,
     pub rpc: String,
+    pub venice: String,
+    pub base: String,
     pub tor: SocketAddr,
 }
 
@@ -89,6 +117,8 @@ impl Network {
         Self {
             provider: "https://api.inference.boundless.network/mpp".into(),
             rpc: DEFAULT_RPC_URL.into(),
+            venice: "https://api.venice.ai".into(),
+            base: "https://mainnet.base.org".into(),
             tor: SocketAddr::from(([127, 0, 0, 1], 9050)),
         }
     }
@@ -159,9 +189,14 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// A conversation's SOCKS user name: 32 bytes of hex.
+fn is_identity(identity: &str) -> bool {
+    identity.len() == 64 && identity.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// What the host asks.
 #[derive(Deserialize)]
-#[serde(tag = "op", rename_all = "lowercase")]
+#[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     /// A new wallet key, made by the toolkit's own key code.
     Create,
@@ -187,6 +222,23 @@ pub enum Request {
         key: B256,
         deposit: Deposit,
     },
+    Venice(Venice),
+    /// The EIP-191 signature of a Venice sign-in by `key`. No network.
+    VeniceSign {
+        key: B256,
+        message: String,
+    },
+    /// The EIP-712 signature by `key` of `typed`, `eth_signTypedData_v4`
+    /// JSON for a transfer of USDC on Base (EIP-3009's
+    /// TransferWithAuthorization), and of nothing else. No network.
+    VeniceTyped {
+        key: B256,
+        typed: String,
+    },
+    /// The address's USDC on Base.
+    VeniceFunds {
+        address: Address,
+    },
 }
 
 impl Request {
@@ -198,8 +250,70 @@ impl Request {
             Self::Send(_) => "send",
             Self::Close { .. } => "close",
             Self::Withdraw { .. } => "withdraw",
+            Self::Venice(_) => "venice",
+            Self::VeniceSign { .. } => "venice_sign",
+            Self::VeniceTyped { .. } => "venice_typed",
+            Self::VeniceFunds { .. } => "venice_funds",
         }
     }
+}
+
+/// One request to Venice's API, as the Mac built it, sent through Tor as the
+/// conversation's identity. Its answer streams: `V`, `P` frames, then `A`.
+#[derive(Deserialize)]
+pub struct Venice {
+    identity: String,
+    method: VeniceMethod,
+    url: String,
+    headers: BTreeMap<String, String>,
+    /// JSON text, as the Mac built it.
+    body: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+enum VeniceMethod {
+    Get,
+    Post,
+}
+
+alloy::sol! {
+    /// EIP-3009's transfer, as USDC's typed data names it.
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TransferWithAuthorization {
+        address from;
+        address to;
+        uint256 value;
+        uint256 validAfter;
+        uint256 validBefore;
+        bytes32 nonce;
+    }
+
+    #[sol(rpc)]
+    interface IERC20 {
+        function balanceOf(address owner) external view returns (uint256);
+    }
+}
+
+/// What `venice_typed` takes: a TransferWithAuthorization in USDC's domain
+/// on Base, with these types.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Typed {
+    types: Value,
+    primary_type: String,
+    domain: TypedDomain,
+    message: TransferWithAuthorization,
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TypedDomain {
+    name: String,
+    version: String,
+    chain_id: u64,
+    verifying_contract: Address,
 }
 
 /// One chat request to the model. The Mac builds its body, with every user
@@ -354,6 +468,13 @@ impl From<reqwest::Error> for Stop {
     }
 }
 
+impl Stop {
+    /// A reqwest error from a Venice request, in words without its address.
+    fn venice(error: reqwest::Error) -> Self {
+        error.without_url().into()
+    }
+}
+
 impl From<MppError> for Stop {
     fn from(error: MppError) -> Self {
         let code = match &error {
@@ -467,9 +588,14 @@ pub fn serve<S: Read + Write + std::marker::Send + 'static>(
             request.name(),
             runtime.block_on(run(network, request, frames.clone())),
         ),
+        // Where it stopped reading, never what it read, which may be a key.
         Err(error) => (
             "unreadable",
-            Err(Stop::failed(format!("unreadable request: {error}"))),
+            Err(Stop::failed(format!(
+                "unreadable request at line {} column {}",
+                error.line(),
+                error.column()
+            ))),
         ),
     };
     let (outcome, reply) = match result {
@@ -518,7 +644,175 @@ async fn run<S: Read + Write + std::marker::Send + 'static>(
             model,
         } => close(network, key, deposit, &model, frames).await,
         Request::Withdraw { key, deposit } => withdraw(network, key, deposit).await,
+        Request::Venice(venice) => venice.run(network, frames).await,
+        Request::VeniceSign { key, message } => {
+            if !message.starts_with(VENICE_SIGN_IN) {
+                return Err(Stop::failed("the message is not a Venice sign-in"));
+            }
+            let signature = signer(key)?
+                .sign_message_sync(message.as_bytes())
+                .map_err(|e| Stop::failed(e.to_string()))?;
+            Ok(json!({ "signature": format!("0x{}", hex(&signature.as_bytes())) }))
+        }
+        Request::VeniceTyped { key, typed } => {
+            let typed = serde_json::from_str::<Typed>(&typed)
+                .ok()
+                .filter(Typed::is_usdc_transfer_on_base)
+                .ok_or_else(|| Stop::failed("the typed data is not a USDC transfer on Base"))?;
+            let hash = typed.message.eip712_signing_hash(&usdc_on_base());
+            let signature = signer(key)?
+                .sign_hash_sync(&hash)
+                .map_err(|e| Stop::failed(e.to_string()))?;
+            Ok(json!({ "signature": format!("0x{}", hex(&signature.as_bytes())) }))
+        }
+        Request::VeniceFunds { address } => funds(network, address).await,
     }
+}
+
+fn signer(key: B256) -> Result<PrivateKeySigner, Stop> {
+    PrivateKeySigner::from_bytes(&key).map_err(|e| Stop::failed(e.to_string()))
+}
+
+/// USDC's EIP-712 domain on Base.
+fn usdc_on_base() -> Eip712Domain {
+    Eip712Domain::new(
+        Some("USD Coin".into()),
+        Some("2".into()),
+        Some(U256::from(BASE_CHAIN)),
+        Some(BASE_USDC),
+        None,
+    )
+}
+
+impl Typed {
+    fn is_usdc_transfer_on_base(&self) -> bool {
+        self.primary_type == "TransferWithAuthorization"
+            && self.domain
+                == TypedDomain {
+                    name: "USD Coin".into(),
+                    version: "2".into(),
+                    chain_id: BASE_CHAIN,
+                    verifying_contract: BASE_USDC,
+                }
+            && self.types
+                == json!({
+                    "EIP712Domain": [
+                        { "name": "name", "type": "string" },
+                        { "name": "version", "type": "string" },
+                        { "name": "chainId", "type": "uint256" },
+                        { "name": "verifyingContract", "type": "address" },
+                    ],
+                    "TransferWithAuthorization": [
+                        { "name": "from", "type": "address" },
+                        { "name": "to", "type": "address" },
+                        { "name": "value", "type": "uint256" },
+                        { "name": "validAfter", "type": "uint256" },
+                        { "name": "validBefore", "type": "uint256" },
+                        { "name": "nonce", "type": "bytes32" },
+                    ],
+                })
+    }
+}
+
+/// The address's USDC on Base, read through Tor on an identity of its own.
+async fn funds(network: &Network, address: Address) -> Result<Value, Stop> {
+    let url = network
+        .base
+        .parse()
+        .map_err(|e| Stop::failed(format!("Base RPC address: {e}")))?;
+    let base: RootProvider = ProviderBuilder::default()
+        .connect_client(ClientBuilder::default().http_with_client(network.client(&fresh())?, url));
+    let balance = IERC20::new(BASE_USDC, &base)
+        .balanceOf(address)
+        .call()
+        .await?;
+    Ok(json!({ "balance": Amount(balance.to::<u128>()) }))
+}
+
+impl Venice {
+    /// The request, once it is one for Venice's API: the conversation's
+    /// identity, the network's Venice origin exactly (https to
+    /// api.venice.ai, its own port) with no user name, a path under
+    /// /api/v1/, and Venice's header names alone. Nothing has left yet.
+    fn request(&self, network: &Network) -> Result<reqwest::Request, Stop> {
+        if !is_identity(&self.identity) {
+            return Err(Stop::failed(
+                "the conversation's identity is not 32 bytes of hex",
+            ));
+        }
+        let venice = reqwest::Url::parse(&network.venice)
+            .map_err(|e| Stop::failed(format!("Venice's origin: {e}")))?;
+        let url = reqwest::Url::parse(&self.url)
+            .ok()
+            .filter(|url| {
+                url.origin() == venice.origin()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.path().starts_with("/api/v1/")
+            })
+            .ok_or_else(|| Stop::failed("the address is not Venice's API"))?;
+        let mut headers = HeaderMap::new();
+        for (name, value) in &self.headers {
+            let name = VENICE_HEADERS
+                .into_iter()
+                .find(|allowed| allowed == name)
+                .ok_or_else(|| Stop::failed("a header name Venice's requests do not carry"))?;
+            let mut value = HeaderValue::from_str(value)
+                .map_err(|_| Stop::failed(format!("the {name} header does not read")))?;
+            value.set_sensitive(true);
+            headers.insert(HeaderName::from_static(name), value);
+        }
+        let method = match self.method {
+            VeniceMethod::Get => reqwest::Method::GET,
+            VeniceMethod::Post => reqwest::Method::POST,
+        };
+        let mut request = reqwest::Request::new(method, url);
+        *request.headers_mut() = headers;
+        *request.body_mut() = self.body.clone().map(Into::into);
+        Ok(request)
+    }
+
+    /// Sends the request and hands on Venice's answer as it comes: its
+    /// status and headers, then its body. A frame the host does not take
+    /// means it has gone: the answer is dropped, which closes its Tor stream.
+    async fn run<S: Read + Write>(
+        self,
+        network: &Network,
+        frames: Arc<Mutex<Frames<S>>>,
+    ) -> Result<Value, Stop> {
+        let request = self.request(network)?;
+        let mut response = network
+            .client(&self.identity)?
+            .execute(request)
+            .await
+            .map_err(Stop::venice)?;
+        let mut headers = BTreeMap::<String, String>::new();
+        for (name, value) in response.headers() {
+            let value = String::from_utf8_lossy(value.as_bytes());
+            headers
+                .entry(name.as_str().to_owned())
+                .and_modify(|joined| *joined = format!("{joined}, {value}"))
+                .or_insert_with(|| value.into_owned());
+        }
+        let head = json!({ "status": response.status().as_u16(), "headers": headers });
+        hand_on(&frames, HEAD, head.to_string().as_bytes())?;
+        while let Some(chunk) = response.chunk().await.map_err(Stop::venice)? {
+            for piece in chunk.chunks(MAX_FRAME) {
+                hand_on(&frames, PIECE, piece)?;
+            }
+        }
+        Ok(json!({}))
+    }
+}
+
+/// One frame of an answer on its way.
+fn hand_on<S: Read + Write>(
+    frames: &Mutex<Frames<S>>,
+    kind: u8,
+    payload: &[u8],
+) -> Result<(), Stop> {
+    tokio::task::block_in_place(|| frames.lock().unwrap().write(kind, payload))
+        .map_err(|_| Stop::failed("the host has gone"))
 }
 
 async fn balance(rpc: &RootProvider<TempoNetwork>, owner: Address) -> Result<u128, Stop> {
@@ -617,13 +911,12 @@ impl Send {
         network: &Network,
         keep: Keep<S>,
     ) -> Result<Value, Stop> {
-        if self.identity.len() != 64 || !self.identity.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if !is_identity(&self.identity) {
             return Err(Stop::failed(
                 "the conversation's identity is not 32 bytes of hex",
             ));
         }
-        let signer =
-            PrivateKeySigner::from_bytes(&self.key).map_err(|e| Stop::failed(e.to_string()))?;
+        let signer = signer(self.key)?;
         let rpc = network.client(&fresh())?;
         // Without a kept deposit with something left, a new one needs the
         // balance: checked before anything reaches the provider.
@@ -697,7 +990,7 @@ async fn close<S: Read + Write + std::marker::Send + 'static>(
     model: &str,
     frames: Arc<Mutex<Frames<S>>>,
 ) -> Result<Value, Stop> {
-    let signer = PrivateKeySigner::from_bytes(&key).map_err(|e| Stop::failed(e.to_string()))?;
+    let signer = signer(key)?;
     let client = network.client(&fresh())?;
     let rpc = network.client(&fresh())?;
     let (channel, spent) = (deposit.channel_id.to_string(), deposit.cumulative_amount.0);
@@ -758,7 +1051,7 @@ async fn close<S: Read + Write + std::marker::Send + 'static>(
 /// been asked, takes it back. Nothing here waits for the grace period; the
 /// network refuses a withdrawal before it ends.
 async fn withdraw(network: &Network, key: B256, deposit: Deposit) -> Result<Value, Stop> {
-    let signer = PrivateKeySigner::from_bytes(&key).map_err(|e| Stop::failed(e.to_string()))?;
+    let signer = signer(key)?;
     let rpc = network.rpc(&network.client(&fresh())?)?;
     let state = read_on_chain_channel_state(&rpc, deposit.channel_id).await?;
     let (step, input) = if state.close_requested_at == 0 {
