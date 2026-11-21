@@ -585,11 +585,10 @@ private struct AdvancedPane: View {
                             .fixedSize()
                             .padding(.vertical, 2)
                     }
-                }
-                HStack {
-                    Spacer()
-                    SymbolButton("Copy Commands", symbol: "doc.on.doc") { copy(commands) }
-                        .disabled(commands.isEmpty)
+                    HStack {
+                        Spacer()
+                        SymbolButton("Copy Commands", symbol: "doc.on.doc") { copy(commands) }
+                    }
                 }
             }
             Section("Log") {

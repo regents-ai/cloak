@@ -429,7 +429,7 @@ private struct TurnCard: View {
                 .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             }
             if near, let stop = chat.nearMode.sendStop, stop.turn == turn.id {
-                NearStopRow(stop: stop.stop) { chat.nearMode.sendStop = nil }
+                NearStopRow(stop: stop.stop, showSettings: showNearSettings) { chat.nearMode.sendStop = nil }
                     .padding(12)
                     .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             }
@@ -1538,9 +1538,10 @@ private struct ModeColumn: View {
 }
 
 /// Why a NEAR message stopped, in plain words, and whether it may have
-/// reached NEAR.
+/// reached NEAR. A key NEAR refused comes with the way to replace it.
 private struct NearStopRow: View {
     let stop: NearStop
+    let showSettings: () -> Void
     let dismiss: () -> Void
 
     var body: some View {
@@ -1557,6 +1558,9 @@ private struct NearStopRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if stop.kind == .status, stop.code == 401 || stop.code == 403 {
+                Button("Settings…", action: showSettings)
+            }
             Button("Dismiss", systemImage: "xmark", action: dismiss)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)

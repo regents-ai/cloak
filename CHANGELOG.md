@@ -10,8 +10,9 @@
   where they could do nothing. In a chat, "Create a wallet to send",
   "Add funds to send" and "Deposit closed" come with Wallet…, a stopped
   request the wallet fixes (no funds, a model that can't be used) with
-  Wallet…, "Add your NEAR key to send" with Settings…, and a NEAR chat
-  that needs Tor with Start.
+  Wallet…, "Add your NEAR key to send" and a key NEAR refused with
+  Settings…, and a NEAR chat that needs Tor with Start. Settings' Copy
+  Commands shows only once there are commands to copy.
 - V's quote shows where the press was made: Deposit's in place of the
   amount, Withdraw's and Send Out's in place of their buttons. It used
   to open as a section at the top of the sheet, out of sight of someone
