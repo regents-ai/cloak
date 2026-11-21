@@ -88,15 +88,16 @@ final class NearMode {
     }
 
     /// Sends `turn` as written on `route`, once the check passes; returns
-    /// NEAR's answer, or nil when it stopped (`sendStop`).
-    func send(_ turn: UUID, in conversation: Conversation, route: NearRoute) async -> String? {
+    /// NEAR's answer and the tokens it counted for it, when its reply says,
+    /// or nil when it stopped (`sendStop`).
+    func send(_ turn: UUID, in conversation: Conversation, route: NearRoute) async -> (text: String, tokens: Tokens?)? {
         sendStop = nil
         do throws(NearStop) {
             let answer = try await near.ask(
                 route: route, proofAge: settings.proofFreshness, key: { try NearKeychain.key() }, turn: turn, in: conversation)
             proof = answer.proof
             checkStop = nil
-            return answer.text
+            return (answer.text, answer.tokens)
         } catch {
             logger.error("a NEAR message stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .private)")
             sendStop = SendStop(turn: turn, stop: error)

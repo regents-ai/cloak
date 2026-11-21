@@ -547,8 +547,10 @@ wallet balance." (or "the deposit"): nothing leaves this Mac for the wallet
 while Cloak is paused. The model picker shows each
 model's price per million tokens as "in | out", as its help says. In a
 NEAR Private AI conversation, Wallet shows instead whether a key is saved,
-with Open Settings, a gear, beside it, which opens Settings on NEAR, and
-that the key comes from cloud.near.ai; in a Local Llama conversation,
+with Open Settings, a gear, beside it, which opens Settings on NEAR, that
+the key comes from cloud.near.ai, and, once NEAR has counted any of the
+chat's answers, Tokens: its tokens in and out, added up ("12,040 in, 3,560
+out"); in a Local Llama conversation,
 "Nothing to pay." Neither uses the wallet.
 A small deposit, at the size the provider suggests (1 USDC.e), pays for chats and is topped up by
 that much when it cannot pay for the next one; Close ends it with the
@@ -609,7 +611,11 @@ and needs Cloak running; off, NEAR and Intel see this Mac's internet
 address. Send is off only with no NEAR key saved ("Add your NEAR key in
 Settings.") or with Tor on while Cloak is not running ("Start Cloak to
 send through Tor."). Limits, the info button at the top, lists what the
-check does not cover. A message that stops says why on its card, and whether it may have
+check does not cover. Each answer NEAR counted has a small numbered
+circle beside Answer, whose help says the tokens it took ("1,204 tokens in,
+356 out": in, the message with the chat before it; out, the answer), as
+NEAR's reply gives them; an answer whose reply gives none has no mark.
+Counts only, never a price. A message that stops says why on its card, and whether it may have
 reached NEAR, when sending again may be charged twice; nothing then goes
 another way. The helper takes one line at a time, so an answer under way
 holds later checks and messages; nothing cancels it but Quit, which ends

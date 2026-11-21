@@ -176,10 +176,12 @@ public actor Near {
 
     /// Sends `turn`'s text as written, after the conversation's earlier
     /// turns as sent and answered, once the check passes (within
-    /// `proofAge`). Returns the answer, trimmed, and the check it went on.
+    /// `proofAge`). Returns the answer, trimmed, the check it went on, and
+    /// the tokens NEAR counted for it: nil when the reply has no `usage`
+    /// that reads, which stops nothing.
     public func ask(
         route: NearRoute, proofAge: ProofFreshness, key: Key, turn: UUID, in conversation: Conversation
-    ) throws(NearStop) -> (text: String, proof: NearProof) {
+    ) throws(NearStop) -> (text: String, proof: NearProof, tokens: Tokens?) {
         guard let messages = Remote.messages(for: turn, in: conversation) else {
             throw NearStop(kind: .request, code: nil, sent: false, text: "the turn is not in the conversation")
         }
@@ -196,14 +198,32 @@ public actor Near {
             guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                 let reply = object["reply"] as? [String: Any], let completion = try? JSONSerialization.data(withJSONObject: reply)
             else { throw NearStop(kind: .helper, code: nil, sent: true, text: "the helper's reply did not read") }
+            let text: String
             do throws(RemoteStop) {
-                return (try Remote.content(of: completion).trimmingCharacters(in: .whitespacesAndNewlines), proof)
+                text = try Remote.content(of: completion).trimmingCharacters(in: .whitespacesAndNewlines)
             } catch {
                 throw NearStop(kind: .reply, code: nil, sent: true, text: error.detail)
             }
+            return (text, proof, Self.tokens(in: completion))
         case .stopped(let stop): throw stop
         case .passed: throw NearStop(kind: .helper, code: nil, sent: true, text: "the helper answered an ask with a check")
         }
+    }
+
+    /// The tokens in `completion`'s `usage`, in OpenAI's shape, as NEAR
+    /// counted them; nil when it has none, or one that does not read.
+    private static func tokens(in completion: Data) -> Tokens? {
+        struct Completion: Decodable {
+            let usage: Usage
+            struct Usage: Decodable {
+                let prompt_tokens: Int
+                let completion_tokens: Int
+            }
+        }
+        guard let usage = try? JSONDecoder().decode(Completion.self, from: completion).usage,
+            usage.prompt_tokens >= 0, usage.completion_tokens >= 0
+        else { return nil }
+        return Tokens(input: usage.prompt_tokens, output: usage.completion_tokens)
     }
 
     /// Ends the helper at once, a line under way or not: at quit.

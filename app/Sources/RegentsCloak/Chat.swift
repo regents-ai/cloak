@@ -618,7 +618,7 @@ final class Chat {
             press(turn, at: index, in: &conversation)
             Task { [conversation] in
                 let answer = await nearMode.send(turn, in: conversation, route: route)
-                sent(turn, in: id, answer: answer)
+                sent(turn, in: id, answer: answer?.text, tokens: answer?.tokens)
             }
             return
         }
@@ -672,7 +672,7 @@ final class Chat {
             logger.error("a send stopped: \(reason.code, privacy: .public) \(reason.detail, privacy: .private)")
             sendStop = SendStop(turn: turn, stop: reason)
         }
-        sent(turn, in: id, answer: try? result.get())
+        sent(turn, in: id, answer: try? result.get(), tokens: nil)
     }
 
     /// Moves a turn sent after later ones to the end, and counts the press.
@@ -685,14 +685,16 @@ final class Chat {
     }
 
     /// One press of Send on the turn ended; its answer, when one came, is
-    /// kept with it. A conversation deleted meanwhile takes its answer with
-    /// it.
-    private func sent(_ turn: UUID, in id: UUID, answer: String?) {
+    /// kept with it, and with it the tokens NEAR counted for that answer,
+    /// in place of an earlier answer's. A conversation deleted meanwhile
+    /// takes its answer with it.
+    private func sent(_ turn: UUID, in id: UUID, answer: String?, tokens: Tokens?) {
         if let presses = sending[turn]?.presses, presses > 1 { sending[turn]?.presses -= 1 } else { sending[turn] = nil }
         guard let answer, var conversation = conversations.first(where: { $0.id == id }),
             let index = conversation.turns.firstIndex(where: { $0.id == turn })
         else { return }
         conversation.turns[index].answer = answer
+        conversation.turns[index].tokens = tokens
         update(conversation)
     }
 

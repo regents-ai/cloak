@@ -1023,6 +1023,17 @@ with no key kept (`NearMode.hasKey` false) or with Tor on while Cloak is
 not running; every other press reaches the helper, behind any line under
 way.
 
+An answered message keeps, with its answer, the tokens NEAR counted for it
+(`Turn.tokens`, read by `Near.ask` from the reply's `usage`:
+`prompt_tokens` in, the message with the chat before it; `completion_tokens`
+out, the answer), sealed with the conversation as its other fields are. A
+reply with no `usage` that reads gives none, which stops nothing; no other
+mode's turn has any. A later answer to the same turn replaces both. The
+answer's mark (a numbered circle beside Answer) says them as its help; in
+Wallet, one Tokens row says the conversation's totals
+(`Conversation.tokens`), absent while no answer has counts. Counts only:
+Cloak knows no NEAR price. Nothing sent to NEAR changes for this.
+
 `app/Tests/CloakTests/NearTests.swift` checks that the `ask` line carries
 exactly the freshness chosen, in seconds, and the route chosen, against a
 stand-in helper pinned as the real one is. Nothing else here is under

@@ -12,9 +12,9 @@ import SwiftUI
 /// running, so nothing reaches the guest; no deposit, as the network last
 /// showed the wallet; or, for Withdraw, the network's waiting time still
 /// running. Never for a press under way. In a NEAR Private AI chat, the
-/// owner's NEAR key, whether one is saved, and the way to Settings' NEAR
-/// pane; in a Local Llama chat, nothing to pay. The wallet is read each
-/// time this opens on a chat it pays for.
+/// owner's NEAR key, whether one is saved, the way to Settings' NEAR pane,
+/// and the tokens NEAR counted for the chat; in a Local Llama chat, nothing
+/// to pay. The wallet is read each time this opens on a chat it pays for.
 struct WalletView: View {
     @Bindable var wallet: Wallet
     let payer: Payer
@@ -22,6 +22,9 @@ struct WalletView: View {
     let nearMode: NearMode
     /// The conversation in front's.
     let kind: Chat.Kind
+    /// The tokens NEAR counted for the conversation in front's answers,
+    /// added up; nil while none has counts, as in every other mode.
+    let tokens: Tokens?
     let showNearSettings: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -40,7 +43,7 @@ struct WalletView: View {
                 case .token:
                     WalletSections(wallet: wallet, running: running)
                 case .near:
-                    NearPayment(mode: nearMode) {
+                    NearPayment(mode: nearMode, tokens: tokens) {
                         dismiss()
                         showNearSettings()
                     }
@@ -160,9 +163,13 @@ private struct Unread: View {
 
 /// How a NEAR Private AI chat is paid for: the owner's own key from NEAR AI
 /// Cloud, whether one is saved, asked of the keychain as the NEAR pane asks
-/// it (never the key itself), with the way to that pane beside it.
+/// it (never the key itself), with the way to that pane beside it; and,
+/// once NEAR has counted any of its answers, the chat's tokens in and out,
+/// added up. Counts only, never a price.
 private struct NearPayment: View {
     let mode: NearMode
+    /// The chat's, added up; nil while no answer has counts.
+    let tokens: Tokens?
     let openSettings: () -> Void
 
     var body: some View {
@@ -172,6 +179,9 @@ private struct NearPayment: View {
                     Text(key)
                     SymbolButton("Open Settings", symbol: "gearshape", action: openSettings)
                 }
+            }
+            if let tokens {
+                LabeledContent("Tokens", value: String(localized: "\(tokens.input) in, \(tokens.output) out"))
             }
         } footer: {
             Text("Paid with your NEAR key from [cloud.near.ai](https://cloud.near.ai).")
