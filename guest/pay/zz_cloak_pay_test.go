@@ -10,14 +10,16 @@
 // notes, for each connection, the authentication methods offered, the user
 // name and the destination. It refuses every destination but the two a paid
 // request reaches through Tor, the model policy at the issuer and the
-// inference at OpenRouter, which it answers itself over TLS, with a
+// inference at OpenRouter, and, in the checks that ask for it, the Ethereum
+// RPC, a stand-in chain; it answers them itself over TLS, with a
 // certificate from an authority made for the test. That authority is the
 // only one this test binary trusts (the go:debug line above and
 // x509.SetFallbackRoots), so the daemon's own transport is used unchanged.
 // A stand-in companion on loopback answers the daemon's status, wallet,
-// lease and settlement calls from a wallet and journal that outlive its
-// process and cloak-pay's: each lease leaves its request pending until a
-// settlement installs the result.
+// funding configuration, lease and settlement calls from a wallet and
+// journal that outlive its process and cloak-pay's: each lease leaves its
+// request pending until a settlement installs the result. Payment keys are
+// made only in each check's own temporary folder.
 package main
 
 import (
@@ -42,6 +44,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
@@ -52,6 +55,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
 	"github.com/ethereum/zkapi/zkapi-clientd/internal/relay"
 	"github.com/ethereum/zkapi/zkapi-clientd/internal/zkapi"
@@ -69,6 +73,8 @@ type standInDeployment struct {
 	Contract string `json:"contract_address"`
 	Asset    string `json:"billing_asset"`
 	Unit     string `json:"billing_unit"`
+	Wei      string `json:"native_asset_wei_per_unit"`
+	RPC      string `json:"rpc_url"`
 	Proof    struct {
 		Circuit string `json:"circuit_id"`
 	} `json:"proof_setup"`
@@ -106,9 +112,11 @@ type torSeen struct {
 
 type standInTor struct {
 	listener net.Listener
-	answered map[string]bool // destinations it serves, host:port
+	rpc      string // the Ethereum RPC's destination, host:port
 	tls      chan net.Conn
 	mu       sync.Mutex
+	answered map[string]bool // destinations it serves, host:port
+	chain    *standInChain   // the chain it serves at rpc, once asked
 	seen     []torSeen
 	keys     []string // the provider keys the inferences carried
 	bodies   []string // the inference bodies as they arrived
@@ -158,14 +166,14 @@ func standInCertificate(t *testing.T, hosts ...string) tls.Certificate {
 }
 
 // startTor starts the stand-in Tor port; it serves issuer and inference over
-// TLS, as the destinations host:443.
-func startTor(t *testing.T, issuer, inference string) *standInTor {
-	leaf := standInCertificate(t, issuer, inference)
+// TLS, as the destinations host:443, and rpc once serveChain asks.
+func startTor(t *testing.T, issuer, inference, rpc string) *standInTor {
+	leaf := standInCertificate(t, issuer, inference, rpc)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &standInTor{listener: listener, tls: make(chan net.Conn),
+	s := &standInTor{listener: listener, rpc: net.JoinHostPort(rpc, "443"), tls: make(chan net.Conn),
 		answered: map[string]bool{net.JoinHostPort(issuer, "443"): true, net.JoinHostPort(inference, "443"): true}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+issuer+"/chat/model-tickets", func(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +190,12 @@ func startTor(t *testing.T, issuer, inference string) *standInTor {
 		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, standInAnswer)
+	})
+	mux.HandleFunc("POST "+rpc+"/", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		chain := s.chain
+		s.mu.Unlock()
+		chain.serve(w, r)
 	})
 	server := &http.Server{Handler: mux, ErrorLog: log.New(io.Discard, "", 0)}
 	go func() {
@@ -243,7 +257,10 @@ func (s *standInTor) handle(conn net.Conn) {
 	}
 	seen.destination = net.JoinHostPort(host, strconv.Itoa(int(binary.BigEndian.Uint16(read(2)))))
 	s.note(seen)
-	if !s.answered[seen.destination] {
+	s.mu.Lock()
+	served := s.answered[seen.destination]
+	s.mu.Unlock()
+	if !served {
 		conn.Write([]byte{5, 1, 0, 1, 0, 0, 0, 0, 0, 0})
 		conn.Close()
 		return
@@ -270,6 +287,128 @@ func (s *standInTor) inferred() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.keys)
+}
+
+// serveChain starts a stand-in chain and serves it as the Ethereum RPC.
+func (s *standInTor) serveChain() *standInChain {
+	chain := &standInChain{head: standInFirstBlock}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chain = chain
+	s.answered[s.rpc] = true
+	return chain
+}
+
+// The stand-in chain's first block, and the vault's selectors: paused()
+// (OpenZeppelin's Pausable) and notes(uint32).
+const (
+	standInFirstBlock = 23_000_000
+	standInPaused     = "0x5c975abb"
+)
+
+var standInNotes = "0x" + hex.EncodeToString(crypto.Keccak256([]byte("notes(uint32)"))[:4])
+
+// standInChain is the Ethereum RPC. Its head moves on a block at every call,
+// and every value it gives is chainAt's at the block it is read at, so values
+// read at two blocks never agree with one block. It notes each call: the
+// read, the block asked for ("latest", a number in hex, or none) and the
+// address read.
+type standInChain struct {
+	mu    sync.Mutex
+	head  uint64
+	fail  string // the read it answers with an error
+	calls []chainCall
+}
+
+type chainCall struct{ read, block, of string }
+
+// chainAt is the chain at block: the block's time, the vault's pause, the
+// funding address's balance and, with note, the vault's note 1.
+func chainAt(block uint64, note bool) zkapi.ChainView {
+	view := zkapi.ChainView{Block: block, Time: 1_794_000_000 + 12*(block-standInFirstBlock), Paused: block%2 == 1,
+		BalanceWei: strconv.FormatUint(block*1_000_000_007, 10)}
+	if note {
+		view.Note = &zkapi.ChainNote{Status: []string{"uninitialized", "active", "pending_withdrawal", "closed"}[block%4], ExpiryTs: 1_795_000_000 + block}
+	}
+	return view
+}
+
+func standInWord(n uint64) string { return fmt.Sprintf("%064x", n) }
+
+func (c *standInChain) serve(w http.ResponseWriter, r *http.Request) {
+	var call struct {
+		Method string            `json:"method"`
+		Params []json.RawMessage `json:"params"`
+	}
+	if json.NewDecoder(r.Body).Decode(&call) != nil {
+		http.Error(w, "{}", http.StatusBadRequest)
+		return
+	}
+	param := func(i int) string {
+		var value string
+		if i < len(call.Params) {
+			_ = json.Unmarshal(call.Params[i], &value)
+		}
+		return value
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	head := c.head
+	c.head++
+	seen := chainCall{read: call.Method}
+	at := func(i int) uint64 {
+		seen.block = param(i)
+		if seen.block == "latest" {
+			return head
+		}
+		block, _ := strconv.ParseUint(strings.TrimPrefix(seen.block, "0x"), 16, 64)
+		return block
+	}
+	var result any
+	switch call.Method {
+	case "eth_chainId":
+		result = "0x1"
+	case "eth_getBlockByNumber":
+		block := at(0)
+		result = map[string]string{"number": "0x" + strconv.FormatUint(block, 16), "timestamp": "0x" + strconv.FormatUint(chainAt(block, false).Time, 16)}
+	case "eth_getBalance":
+		seen.of = param(0)
+		balance, _ := new(big.Int).SetString(chainAt(at(1), false).BalanceWei, 10)
+		result = "0x" + balance.Text(16)
+	case "eth_call":
+		var tx struct{ To, Data string }
+		_ = json.Unmarshal(call.Params[0], &tx)
+		seen.of = tx.To
+		block := chainAt(at(1), true)
+		switch tx.Data {
+		case standInPaused:
+			seen.read = "paused"
+			result = "0x" + standInWord(block.Block%2)
+		case standInNotes + standInWord(1):
+			seen.read = "notes"
+			status := slices.Index([]string{"uninitialized", "active", "pending_withdrawal", "closed"}, block.Note.Status)
+			result = "0x" + strings.Repeat("ab", 32) + standInWord(1_000_000) + standInWord(block.Note.ExpiryTs) + standInWord(uint64(status))
+		}
+	}
+	c.calls = append(c.calls, seen)
+	w.Header().Set("Content-Type", "application/json")
+	if result == nil || seen.read == c.fail {
+		fmt.Fprint(w, `{"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "stand-in"}}`)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": result})
+}
+
+func (c *standInChain) failing(read string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fail = read
+}
+
+func (c *standInChain) seen() []chainCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.calls)
 }
 
 func testCertificates(hosts ...string) (*x509.Certificate, tls.Certificate, error) {
@@ -329,6 +468,8 @@ type companionOptions struct {
 	// goes first; settling gets the lease of each one that waits.
 	gate     chan struct{}
 	settling chan int
+	// The wallet has no note.
+	noNote bool
 }
 
 type companionState struct {
@@ -338,7 +479,8 @@ type companionState struct {
 }
 
 // startCompanion starts the stand-in companion: the status the daemon checks,
-// the wallet's state, a new lease for each request, and settlement.
+// the wallet's state, the funding configuration, a new lease for each
+// request, and settlement.
 func startCompanion(t *testing.T, bridge string, d standInDeployment) *standInCompanion {
 	s := &standInCompanion{attempts: map[int]int{}, settled: map[int]int{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -356,10 +498,20 @@ func startCompanion(t *testing.T, bridge string, d standInDeployment) *standInCo
 		case "GET /wallet/status":
 			s.mu.Lock()
 			s.calls = append(s.calls, "wallet")
-			pending := s.pending != 0
+			pending, noNote := s.pending != 0, s.options.noNote
 			s.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]any{"has_note": true, "pending_request": pending,
-				"note": map[string]any{"note_id": 1, "current_balance": 1000000}})
+			if noNote {
+				json.NewEncoder(w).Encode(map[string]any{"has_note": false, "pending_request": pending, "funding_url": "/funding"})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"has_note": true, "pending_request": pending, "funding_url": "/funding",
+				"note": map[string]any{"note_id": 1, "deposit_amount": 2000000, "current_balance": 1000000, "expiry_ts": 1795000000,
+					"is_genesis": false, "current_anchor": "0x01", "current_commitment_x": "0x02", "current_commitment_y": "0x03"}})
+		case "GET /funding/config":
+			s.note("funding config")
+			json.NewEncoder(w).Encode(map[string]any{"deployment_id": d.ID, "billing_asset": d.Asset, "billing_unit": d.Unit,
+				"native_asset_wei_per_unit": d.Wei, "chain_id": d.ChainID, "contract_address": d.Contract,
+				"demo_billing_token_address": "", "demo_rpc_url": d.RPC, "demo_mint_enabled": false})
 		case "GET /oa/v1/withdraw/status":
 			s.note("withdrawal")
 			fmt.Fprint(w, `{"phase": "none"}`)
@@ -511,7 +663,7 @@ func waitAsked(t *testing.T, companion *standInCompanion, want map[string]int) {
 // configuration with them as its route and its companion.
 func standIns(t *testing.T) (*standInTor, *standInCompanion, config.Config) {
 	d := pinnedMainnet(t)
-	tor := startTor(t, hostOf(t, d.Privacy.IssuerURL), hostOf(t, zkapi.DefaultInferenceBaseURL))
+	tor := startTor(t, hostOf(t, d.Privacy.IssuerURL), hostOf(t, zkapi.DefaultInferenceBaseURL), hostOf(t, d.RPC))
 	bridge := strings.Repeat("b", 64)
 	companion := startCompanion(t, bridge, d)
 	c, err := payConfig()
@@ -525,15 +677,21 @@ func standIns(t *testing.T) (*standInTor, *standInCompanion, config.Config) {
 }
 
 func startPay(t *testing.T, ctx context.Context, c config.Config) *pay {
-	p, err := newPay(ctx, c, t.TempDir(), log.New(io.Discard, "", 0))
+	return startPayIn(t, ctx, c, t.TempDir())
+}
+
+// startPayIn starts cloak-pay with dir as its home.
+func startPayIn(t *testing.T, ctx context.Context, c config.Config, dir string) *pay {
+	p, err := newPay(ctx, c, dir, log.New(io.Discard, "", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
 
-// sentFrame is a request frame sent on a connection of its own, its answer
-// still to read.
+// sentFrame is a frame sent on a connection of its own, what cloak-pay
+// writes back still to read. The pipe holds nothing: a frame cloak-pay
+// writes waits until the host reads it.
 type sentFrame struct {
 	host   net.Conn
 	served chan error // serve's result, when the test runs serve itself
@@ -541,30 +699,42 @@ type sentFrame struct {
 
 // send sends one request frame to p over a pipe.
 func send(t *testing.T, ctx context.Context, p *pay, request any) sentFrame {
+	return sendFrame(t, ctx, p, payRequest, request)
+}
+
+// sendFrame sends one frame of kind to p over a pipe.
+func sendFrame(t *testing.T, ctx context.Context, p *pay, kind byte, payload any) sentFrame {
 	host, guest := net.Pipe()
 	served := make(chan error, 1)
 	go func() { served <- p.serve(ctx, guest); guest.Close() }()
-	writeRequest(t, host, request)
+	writeFrame(t, host, kind, payload)
 	return sentFrame{host, served}
 }
 
-// writeRequest writes the frame, and returns once the guest has read it.
-func writeRequest(t *testing.T, host net.Conn, request any) {
-	payload, err := json.Marshal(request)
+// writeFrame writes the frame, and returns once the guest has read it.
+func writeFrame(t *testing.T, host net.Conn, kind byte, payload any) {
+	data, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writePayFrame(host, payRequest, payload); err != nil {
+	if err := writePayFrame(host, kind, data); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// answer reads the frame's answer and closes the connection.
-func (f sentFrame) answer(t *testing.T) payAnswerFrame {
+// next reads the next frame cloak-pay writes: for an H, what it holds; for
+// the answer, done and the answer, once the connection is closed and serve
+// has returned.
+func (f sentFrame) next(t *testing.T) (held, done bool, answer payAnswerFrame) {
 	t.Helper()
 	kind, data, err := readPayFrame(f.host)
-	if err != nil || kind != payAnswer {
-		t.Fatalf("answer %q %v", kind, err)
+	switch {
+	case err == nil && kind == payHeld && string(data) == `{"held":true}`:
+		return true, false, answer
+	case err == nil && kind == payHeld && string(data) == `{"held":false}`:
+		return false, false, answer
+	case err != nil || kind != payAnswer:
+		t.Fatalf("frame %q %s %v", kind, data, err)
 	}
 	f.host.Close()
 	if f.served != nil {
@@ -572,10 +742,30 @@ func (f sentFrame) answer(t *testing.T) payAnswerFrame {
 			t.Fatal(err)
 		}
 	}
-	var answer payAnswerFrame
 	if err := json.Unmarshal(data, &answer); err != nil {
 		t.Fatal(err)
 	}
+	return false, true, answer
+}
+
+// heard reads every frame cloak-pay writes, up to its answer, and gives the
+// answer and the H frames before it.
+func (f sentFrame) heard(t *testing.T) (payAnswerFrame, []bool) {
+	t.Helper()
+	var heard []bool
+	for {
+		held, done, answer := f.next(t)
+		if done {
+			return answer, heard
+		}
+		heard = append(heard, held)
+	}
+}
+
+// answer reads the frames cloak-pay writes and gives its answer.
+func (f sentFrame) answer(t *testing.T) payAnswerFrame {
+	t.Helper()
+	answer, _ := f.heard(t)
 	return answer
 }
 
@@ -639,8 +829,39 @@ func (l *pipeListener) Close() error {
 func (l *pipeListener) send(t *testing.T, request any) sentFrame {
 	host, guest := net.Pipe()
 	l.conns <- guest
-	writeRequest(t, host, request)
+	writeFrame(t, host, payRequest, request)
 	return sentFrame{host: host}
+}
+
+// callFrame sends a C to p and gives its answer, which no H comes before.
+func callFrame(t *testing.T, ctx context.Context, p *pay, method, path, body string) payAnswerFrame {
+	t.Helper()
+	answer, held := sendFrame(t, ctx, p, payCall, map[string]string{"method": method, "path": path, "body": body}).heard(t)
+	if len(held) != 0 {
+		t.Fatalf("%s %s: H frames %v", method, path, held)
+	}
+	return answer
+}
+
+// viewFrame sends a V to p and gives its answer, which no H comes before.
+func viewFrame(t *testing.T, ctx context.Context, p *pay, chain bool) payAnswerFrame {
+	t.Helper()
+	answer, held := sendFrame(t, ctx, p, payView, map[string]bool{"chain": chain}).heard(t)
+	if len(held) != 0 {
+		t.Fatalf("V: H frames %v", held)
+	}
+	return answer
+}
+
+// decoded is a JSON text as encoding/json reads it into an any, to compare
+// keys and values whatever their order.
+func decoded(t *testing.T, text string) any {
+	t.Helper()
+	var value any
+	if err := json.Unmarshal([]byte(text), &value); err != nil {
+		t.Fatalf("%v: %s", err, text)
+	}
+	return value
 }
 
 // waitFor waits, up to ten seconds, until done reports true.
@@ -721,9 +942,14 @@ func TestCloakPayFramesAndTorIdentities(t *testing.T) {
 	a, b := identity(t), identity(t)
 	sent := []string{chat("First conversation."), chat("Second conversation.")}
 	for i, identity := range []string{a, b} {
-		answer := exchange(t, ctx, p, map[string]string{"identity": identity, "body": sent[i]})
+		answer, heard := send(t, ctx, p, map[string]string{"identity": identity, "body": sent[i]}).heard(t)
 		if answer.Status != http.StatusOK || answer.Body != standInAnswer {
 			t.Fatalf("answer %d: %d %s", i, answer.Status, answer.Body)
+		}
+		// Nothing holds the first; the second is held only if the first's
+		// settlement is not yet installed.
+		if !(len(heard) == 0 || (i == 1 && slices.Equal(heard, []bool{true, false}))) {
+			t.Fatalf("answer %d came after H frames %v", i, heard)
 		}
 	}
 
@@ -865,7 +1091,9 @@ func begins(calls, want []string) bool {
 
 // Two frames sent together: the second is held until the first's settlement
 // is installed, here once automatic settlement's call has outlasted the
-// companion's wait, and both are answered.
+// companion's wait, and both are answered. Either may take the first turn;
+// the host hears the hold of the one that takes the second begin and end,
+// once each, and nothing for the other, which nothing held.
 func TestCloakPayHoldsTheNextRequest(t *testing.T) {
 	tor, companion, c := standIns(t)
 	companion.configure(companionOptions{unfinished: true})
@@ -874,10 +1102,17 @@ func TestCloakPayHoldsTheNextRequest(t *testing.T) {
 	p := startPay(t, ctx, c)
 	first := send(t, ctx, p, ask(identity(t), "First, sent with the second."))
 	second := send(t, ctx, p, ask(identity(t), "Second, sent with the first."))
+	var heard [][]bool
 	for i, frame := range []sentFrame{first, second} {
-		if answer := frame.answer(t); answer.Status != http.StatusOK || answer.Body != standInAnswer {
+		answer, held := frame.heard(t)
+		if answer.Status != http.StatusOK || answer.Body != standInAnswer {
 			t.Fatalf("answer %d: %d %s", i+1, answer.Status, answer.Body)
 		}
+		heard = append(heard, held)
+	}
+	slices.SortFunc(heard, func(a, b []bool) int { return len(a) - len(b) })
+	if len(heard[0]) != 0 || !slices.Equal(heard[1], []bool{true, false}) {
+		t.Fatalf("H frames %v, want none for one request and true then false for the other", heard)
 	}
 	want := []string{"lease 1", "settle 1 unfinished", "settle 1", "lease 2"}
 	if calls := paid(companion.state().calls); !begins(calls, want) {
@@ -891,7 +1126,10 @@ func TestCloakPayHoldsTheNextRequest(t *testing.T) {
 // A settlement an earlier run left unfinished: the first request is held,
 // with no key asked for and nothing sent, until the companion installs that
 // settlement, then answered. Asked for a key first, the restarted companion
-// would fail, as on the trip.
+// would fail, as on the trip. The host hears the hold begin before the
+// settlement, and its end once the settlement is installed, before any key
+// is asked for: the pipe holds nothing, so until the host reads that end,
+// cloak-pay can go no further.
 func TestCloakPayHoldsForAnEarlierRun(t *testing.T) {
 	tor, companion, c := standIns(t)
 	companion.leftPending(7)
@@ -901,21 +1139,25 @@ func TestCloakPayHoldsForAnEarlierRun(t *testing.T) {
 	defer cancel()
 	p := startPay(t, ctx, c)
 	first := send(t, ctx, p, ask(identity(t), "First after a restart."))
-	select {
-	case lease := <-settling:
-		if lease != 7 {
-			t.Fatalf("settling lease %d", lease)
-		}
-	case <-time.After(10 * time.Second):
-		answer := first.answer(t)
-		t.Fatalf("answered with no settlement: %d %s", answer.Status, answer.Body)
+	if began, done, answer := first.next(t); done || !began {
+		t.Fatalf("first frame: held %t, answer %d %s", began, answer.Status, answer.Body)
+	}
+	if lease := settlingLease(t, settling); lease != 7 {
+		t.Fatalf("settling lease %d", lease)
 	}
 	if s := companion.state(); s.leases != 7 || len(tor.connections()) != 0 {
 		t.Fatalf("while held, %d leases and %d connections to Tor", s.leases, len(tor.connections()))
 	}
 	close(gate)
-	if answer := first.answer(t); answer.Status != http.StatusOK || answer.Body != standInAnswer {
-		t.Fatalf("answer: %d %s", answer.Status, answer.Body)
+	waitFor(t, "the settlement to be installed", func() bool { return companion.state().settled[7] == 1 })
+	// Given time to ask for a key before the host has heard the hold end, it
+	// asks for none.
+	time.Sleep(100 * time.Millisecond)
+	if s := companion.state(); s.leases != 7 || len(tor.connections()) != 0 {
+		t.Fatalf("before the host heard the hold end, %d leases and %d connections to Tor", s.leases, len(tor.connections()))
+	}
+	if answer, heard := first.heard(t); answer.Status != http.StatusOK || answer.Body != standInAnswer || !slices.Equal(heard, []bool{false}) {
+		t.Fatalf("answer: %d %s, after H frames %v", answer.Status, answer.Body, heard)
 	}
 	s := companion.state()
 	if want := []string{"settle 7", "lease 8"}; !begins(paid(s.calls), want) || s.settled[7] != 1 {
@@ -952,8 +1194,9 @@ func TestCloakPayStopsOnSIGTERM(t *testing.T) {
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	if answer := held.answer(t); answer.Status != http.StatusRequestTimeout {
-		t.Fatalf("held request: %d %s", answer.Status, answer.Body)
+	// Its hold, if it began, never ends: no key is asked for.
+	if answer, heard := held.heard(t); answer.Status != http.StatusRequestTimeout || slices.Contains(heard, false) {
+		t.Fatalf("held request: %d %s, after H frames %v", answer.Status, answer.Body, heard)
 	}
 	select {
 	case err := <-ran:
@@ -1037,6 +1280,9 @@ func TestCloakPayDropsAHeldRequest(t *testing.T) {
 		defer cancel()
 		p := startPay(t, ctx, c)
 		held := send(t, ctx, p, ask(identity(t), "Held."))
+		if began, done, answer := held.next(t); done || !began {
+			t.Fatalf("first frame: held %t, answer %d %s", began, answer.Status, answer.Body)
+		}
 		if lease := settlingLease(t, settling); lease != 7 {
 			t.Fatalf("settling lease %d", lease)
 		}
@@ -1055,6 +1301,343 @@ func TestCloakPayDropsAHeldRequest(t *testing.T) {
 			t.Fatalf("settlements of the earlier request %d, inferences under %v", s.settled[7], tor.inferred())
 		}
 	})
+}
+
+// The C frame's routes, as docs/zkapi-mac-side.md lists them.
+var macRoutes = []payRoute{
+	{"GET", "/admin/funding/address"},
+	{"POST", "/admin/funding/quote"},
+	{"POST", "/admin/funding/approve"},
+	{"POST", "/admin/funding/deposit"},
+	{"GET", "/admin/withdrawal"},
+	{"POST", "/admin/withdrawal/quote"},
+	{"POST", "/admin/withdrawal/approve"},
+	{"POST", "/admin/withdrawal"},
+	{"GET", "/admin/return"},
+	{"POST", "/admin/return/quote"},
+	{"POST", "/admin/return/approve"},
+	{"POST", "/admin/return"},
+	{"GET", "/admin/funding/quote"},
+	{"GET", "/admin/withdrawal/quote"},
+	{"GET", "/admin/return/quote"},
+	{"GET", "/v1/models"},
+}
+
+// A C reaches the API for each of the Mac's routes, exactly as sent, with
+// the key and management token cloak-pay adds and a POST as JSON. Anything
+// else, a frame that does not read among it, is answered without reaching
+// the API: another method, a query, a path one character off, and the
+// paying chat route among them.
+func TestCloakPayCallsTheAllowlistOnly(t *testing.T) {
+	_, _, c := standIns(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := startPay(t, ctx, c)
+	type reached struct{ method, uri, key, token, contentType, body string }
+	var mu sync.Mutex
+	var got []reached
+	p.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		got = append(got, reached{r.Method, r.URL.RequestURI(), r.Header.Get("Authorization"), r.Header.Get("X-OA-Management-Token"), r.Header.Get("Content-Type"), string(body)})
+		mu.Unlock()
+		fmt.Fprint(w, `{"reached": true}`)
+	})
+	taken := func() []reached {
+		mu.Lock()
+		defer mu.Unlock()
+		taken := got
+		got = nil
+		return taken
+	}
+	allowed := map[payRoute]bool{}
+	for _, route := range macRoutes {
+		allowed[route] = true
+		body, contentType := "", ""
+		if route.method == http.MethodPost {
+			body, contentType = `{"quote_id": "q"}`, "application/json"
+		}
+		answer := callFrame(t, ctx, p, route.method, route.path, body)
+		want := []reached{{route.method, route.path, "Bearer " + c.APIKey, c.ManagementToken, contentType, body}}
+		if reached := taken(); answer.Status != http.StatusOK || answer.Body != `{"reached": true}` || !slices.Equal(reached, want) {
+			t.Fatalf("%s %s: %d %s, reached %v", route.method, route.path, answer.Status, answer.Body, reached)
+		}
+	}
+	if len(payRoutes) != len(allowed) {
+		t.Fatalf("cloak-pay allows %d routes, the Mac calls %d", len(payRoutes), len(allowed))
+	}
+
+	var refused []payRoute
+	refuse := func(method, path string) {
+		if !allowed[payRoute{method, path}] {
+			refused = append(refused, payRoute{method, path})
+		}
+	}
+	for _, route := range macRoutes {
+		refuse(map[string]string{"GET": "POST", "POST": "GET"}[route.method], route.path)
+		refuse(strings.ToLower(route.method), route.path)
+		refuse(http.MethodPut, route.path)
+		refuse(route.method, route.path+"?a=1")
+		refuse(route.method, route.path+"/")
+		refuse(route.method, route.path+"x")
+		refuse(route.method, route.path[:len(route.path)-1])
+		refuse(route.method, strings.ToUpper(route.path))
+		refuse(route.method, " "+route.path)
+		refuse(route.method, "/"+route.path)
+	}
+	refuse(http.MethodPost, "/v1/chat/completions")
+	refuse(http.MethodGet, "/admin/status")
+	refuse(http.MethodGet, "/admin/withdrawal/../return")
+	refuse(http.MethodGet, "http://127.0.0.1:8787/admin/withdrawal")
+	refuse(http.MethodGet, "")
+	refuse("", "")
+	if !slices.Contains(refused, payRoute{http.MethodGet, "/admin/funding/approve"}) {
+		t.Fatal("GET /admin/funding/approve is not among the refused")
+	}
+	for _, route := range refused {
+		if answer := callFrame(t, ctx, p, route.method, route.path, ""); answer.Status != http.StatusNotFound {
+			t.Fatalf("%q %q: %d %s", route.method, route.path, answer.Status, answer.Body)
+		}
+	}
+	for _, frame := range []any{
+		map[string]string{"method": "GET", "path": "/admin/withdrawal", "body": "", "token": "the host's"},
+		map[string]any{"method": "GET", "path": 1, "body": ""},
+		[]string{"GET", "/admin/withdrawal"},
+		"GET /admin/withdrawal",
+	} {
+		if answer, heard := sendFrame(t, ctx, p, payCall, frame).heard(t); answer.Status != http.StatusBadRequest || len(heard) != 0 {
+			t.Fatalf("%v: %d %s, after H frames %v", frame, answer.Status, answer.Body, heard)
+		}
+	}
+	if reached := taken(); len(reached) != 0 {
+		t.Fatalf("refused calls reached the API: %v", reached)
+	}
+}
+
+// fundingKey reads the funding address and its key from cloak-pay's home,
+// where its first read of the address made them.
+func fundingKey(t *testing.T, dir string) (address, key string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, "funding", "mainnet", "address-funding.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Address    string `json:"address"`
+		PrivateKey string `json:"private_key"`
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	return record.Address, record.PrivateKey
+}
+
+// Every one of the Mac's routes, called through the daemon's own handlers
+// against the stand-in chain, reaches a route the daemon knows, and no
+// answer carries the API's key, the management token, the companion's bridge
+// token or the funding address's key. With no quote approved, none of them
+// sends a transaction.
+func TestCloakPayCallsKeepTheSecrets(t *testing.T) {
+	tor, _, c := standIns(t)
+	chain := tor.serveChain()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dir := t.TempDir()
+	p := startPayIn(t, ctx, c, dir)
+	destination := "0x" + strings.Repeat("11", 20)
+	bodies := map[payRoute]string{
+		{"POST", "/admin/funding/quote"}:      `{"micro_usd": 1000000}`,
+		{"POST", "/admin/funding/approve"}:    `{"quote_id": "not a quote"}`,
+		{"POST", "/admin/funding/deposit"}:    `{"amount": 1}`,
+		{"POST", "/admin/withdrawal/quote"}:   fmt.Sprintf(`{"destination": %q, "note_id": 1}`, destination),
+		{"POST", "/admin/withdrawal/approve"}: `{"quote_id": "not a quote"}`,
+		{"POST", "/admin/withdrawal"}:         fmt.Sprintf(`{"destination": %q, "note_id": 1}`, destination),
+		{"POST", "/admin/return/quote"}:       fmt.Sprintf(`{"destination": %q, "amount_wei": ""}`, destination),
+		{"POST", "/admin/return/approve"}:     `{"quote_id": "not a quote"}`,
+	}
+	var answers []string
+	for _, route := range macRoutes {
+		answer := callFrame(t, ctx, p, route.method, route.path, bodies[route])
+		if answer.Status == http.StatusNotFound {
+			t.Fatalf("%s %s: the daemon has no such route: %s", route.method, route.path, answer.Body)
+		}
+		answers = append(answers, fmt.Sprintf("%s %s: %d %s", route.method, route.path, answer.Status, answer.Body))
+	}
+	_, key := fundingKey(t, dir)
+	secrets := []string{c.APIKey, c.ManagementToken, c.ZKAPI.BridgeToken, strings.TrimPrefix(key, "0x")}
+	for _, secret := range secrets {
+		if len(secret) < 32 {
+			t.Fatalf("a secret of %d characters", len(secret))
+		}
+	}
+	for _, answer := range answers {
+		for _, secret := range secrets {
+			if strings.Contains(strings.ToLower(answer), strings.ToLower(secret)) {
+				t.Fatalf("an answer carries a secret: %s", answer)
+			}
+		}
+	}
+	for _, call := range chain.seen() {
+		if strings.HasPrefix(call.read, "eth_send") {
+			t.Fatalf("a call sent a transaction: %v", call)
+		}
+	}
+}
+
+// A V's answer holds exactly the contract's keys: of the companion's wallet
+// status only the note's number and expiry and whether a settlement is
+// unfinished, and with "chain" the chain at one block, none without; with
+// no note, neither part has one. A V without "chain" reads no chain, and a
+// frame that does not read is answered 400.
+func TestCloakPayViewsTheDeposit(t *testing.T) {
+	tor, companion, c := standIns(t)
+	chain := tor.serveChain()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := startPay(t, ctx, c)
+	wallet := `{"has_note": true, "pending_request": false, "note": {"note_id": 1, "expiry_ts": 1795000000}}`
+	if answer := viewFrame(t, ctx, p, false); answer.Status != http.StatusOK || !reflect.DeepEqual(decoded(t, answer.Body), decoded(t, `{"wallet": `+wallet+`}`)) {
+		t.Fatalf("without chain: %d %s", answer.Status, answer.Body)
+	}
+	if calls := chain.seen(); len(calls) != 0 {
+		t.Fatalf("a V without chain read the chain: %v", calls)
+	}
+	block := func(body string) uint64 {
+		var read struct{ Chain struct{ Block uint64 } }
+		_ = json.Unmarshal([]byte(body), &read)
+		return read.Chain.Block
+	}
+
+	answer := viewFrame(t, ctx, p, true)
+	at := chainAt(block(answer.Body), true)
+	want := fmt.Sprintf(`{"wallet": %s, "chain": {"block": %d, "time": %d, "paused": %t, "balance_wei": %q, "note": {"status": %q, "expiry_ts": %d}}}`,
+		wallet, at.Block, at.Time, at.Paused, at.BalanceWei, at.Note.Status, at.Note.ExpiryTs)
+	if answer.Status != http.StatusOK || !reflect.DeepEqual(decoded(t, answer.Body), decoded(t, want)) {
+		t.Fatalf("with chain: %d %s, want %s", answer.Status, answer.Body, want)
+	}
+
+	companion.configure(companionOptions{noNote: true})
+	read := len(chain.seen())
+	answer = viewFrame(t, ctx, p, true)
+	at = chainAt(block(answer.Body), false)
+	want = fmt.Sprintf(`{"wallet": {"has_note": false, "pending_request": false}, "chain": {"block": %d, "time": %d, "paused": %t, "balance_wei": %q}}`,
+		at.Block, at.Time, at.Paused, at.BalanceWei)
+	if answer.Status != http.StatusOK || !reflect.DeepEqual(decoded(t, answer.Body), decoded(t, want)) {
+		t.Fatalf("without a note: %d %s, want %s", answer.Status, answer.Body, want)
+	}
+	for _, call := range chain.seen()[read:] {
+		if call.read == "notes" {
+			t.Fatal("a V without a note read the vault's notes")
+		}
+	}
+
+	for _, frame := range []any{map[string]any{"chain": true, "note": 1}, map[string]any{"chain": "yes"}, []bool{true}} {
+		if answer, heard := sendFrame(t, ctx, p, payView, frame).heard(t); answer.Status != http.StatusBadRequest || len(heard) != 0 {
+			t.Fatalf("%v: %d %s, after H frames %v", frame, answer.Status, answer.Body, heard)
+		}
+	}
+}
+
+// The chain read is pinned to the block "latest" gave: every read after it
+// asks for that block by number, of the vault or the funding address, and
+// the values all belong to that block, though the head moves on a block at
+// every call.
+func TestCloakPayReadsTheChainAtOneBlock(t *testing.T) {
+	tor, _, c := standIns(t)
+	chain := tor.serveChain()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dir := t.TempDir()
+	p := startPayIn(t, ctx, c, dir)
+	answer := viewFrame(t, ctx, p, true)
+	var view struct{ Chain zkapi.ChainView }
+	if err := json.Unmarshal([]byte(answer.Body), &view); err != nil || answer.Status != http.StatusOK {
+		t.Fatalf("%d %s", answer.Status, answer.Body)
+	}
+	if want := chainAt(view.Chain.Block, true); !reflect.DeepEqual(view.Chain, want) {
+		t.Fatalf("read %+v %+v, want the block's %+v %+v", view.Chain, view.Chain.Note, want, want.Note)
+	}
+	address, _ := fundingKey(t, dir)
+	vault := strings.ToLower(pinnedMainnet(t).Contract)
+	block := "0x" + strconv.FormatUint(view.Chain.Block, 16)
+	want := []chainCall{{"eth_chainId", "", ""}, {"eth_getBlockByNumber", "latest", ""},
+		{"paused", block, vault}, {"eth_getBalance", block, strings.ToLower(address)}, {"notes", block, vault}}
+	calls := chain.seen()
+	for i := range calls {
+		calls[i].of = strings.ToLower(calls[i].of)
+	}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("reads %v, want %v", calls, want)
+	}
+	chain.mu.Lock()
+	head := chain.head
+	chain.mu.Unlock()
+	if head != view.Chain.Block+uint64(len(want))-1 {
+		t.Fatalf("head %d after reading block %d", head, view.Chain.Block)
+	}
+}
+
+// When any one of the chain's reads fails, a V with "chain" answers 502 with
+// nothing of the deposit: no wallet part, no chain part, never a guess.
+func TestCloakPayFailsAChainReadWhole(t *testing.T) {
+	tor, _, c := standIns(t)
+	chain := tor.serveChain()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := startPay(t, ctx, c)
+	for _, read := range []string{"eth_chainId", "eth_getBlockByNumber", "paused", "eth_getBalance", "notes"} {
+		chain.failing(read)
+		answer := viewFrame(t, ctx, p, true)
+		var body map[string]any
+		if err := json.Unmarshal([]byte(answer.Body), &body); err != nil || answer.Status != http.StatusBadGateway || len(body) != 1 || body["error"] == nil {
+			t.Fatalf("%s failing: %d %s", read, answer.Status, answer.Body)
+		}
+	}
+	chain.failing("")
+	if answer := viewFrame(t, ctx, p, true); answer.Status != http.StatusOK {
+		t.Fatalf("nothing failing: %d %s", answer.Status, answer.Body)
+	}
+}
+
+// While a request is held, a C and two Vs are answered, each within ten
+// seconds: none waits for a turn, and the Vs read the settlement still
+// unfinished. Then the request is answered.
+func TestCloakPayAnswersCallsWhileHeld(t *testing.T) {
+	tor, companion, c := standIns(t)
+	tor.serveChain()
+	companion.leftPending(7)
+	gate, settling := make(chan struct{}), make(chan int, 4)
+	companion.configure(companionOptions{restarted: true, gate: gate, settling: settling})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := startPay(t, ctx, c)
+	held := send(t, ctx, p, ask(identity(t), "Held."))
+	if began, done, answer := held.next(t); done || !began {
+		t.Fatalf("first frame: held %t, answer %d %s", began, answer.Status, answer.Body)
+	}
+	if lease := settlingLease(t, settling); lease != 7 {
+		t.Fatalf("settling lease %d", lease)
+	}
+	// A call that waited past this would be closed unanswered.
+	calls, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	wallet := `{"has_note": true, "pending_request": true, "note": {"note_id": 1, "expiry_ts": 1795000000}}`
+	if answer := viewFrame(t, calls, p, false); answer.Status != http.StatusOK || !reflect.DeepEqual(decoded(t, answer.Body), decoded(t, `{"wallet": `+wallet+`}`)) {
+		t.Fatalf("V: %d %s", answer.Status, answer.Body)
+	}
+	if answer := viewFrame(t, calls, p, true); answer.Status != http.StatusOK {
+		t.Fatalf("V with chain: %d %s", answer.Status, answer.Body)
+	}
+	if answer := callFrame(t, calls, p, "GET", "/admin/funding/quote", ""); answer.Status != http.StatusOK || decoded(t, answer.Body) != nil {
+		t.Fatalf("C: %d %s", answer.Status, answer.Body)
+	}
+	if s := companion.state(); s.leases != 7 || turnsTaken(p) != 1 {
+		t.Fatalf("while held, %d leases and %d turns taken", s.leases, turnsTaken(p))
+	}
+	close(gate)
+	if answer, heard := held.heard(t); answer.Status != http.StatusOK || !slices.Equal(heard, []bool{false}) {
+		t.Fatalf("answer: %d %s, after H frames %v", answer.Status, answer.Body, heard)
+	}
 }
 
 // Turns go in the order asked for; one whose caller goes while it waits

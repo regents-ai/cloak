@@ -61,12 +61,21 @@ PAY_MARKER = pay_marker()
 DISK_READS = [f"{PAY_HOME}/{path}" for path in (ADDRESS, NOTE, DEPLOYMENT)] + [
     "/dev/vda", "/dev/mapper/cloak-pay", "/dev/dm-0", "/dev/mapper/control", "/run/cloak/pay-disk-key"]
 DISK_LISTS = [PAY_HOME, "/dev/mapper", "/sys/block"]
-# One whole request frame for cloak-pay, as the Mac would send it: kind R, a
-# four-byte big-endian length, then the payload (guest/pay/zz_cloak_pay.go).
-PAYLOAD = json.dumps({"identity": "0123456789abcdef" * 4,
-                      "body": json.dumps({"model": "stand-in/model",
-                                          "messages": [{"role": "user", "content": "Hello."}]})}).encode()
-FRAME = b"R" + len(PAYLOAD).to_bytes(4, "big") + PAYLOAD
+
+
+def frame(kind: bytes, payload: dict) -> bytes:
+    """A whole frame for cloak-pay, as the Mac would send it: the kind, a
+    four-byte big-endian length, then the payload (guest/pay/zz_cloak_pay.go)."""
+    data = json.dumps(payload).encode()
+    return kind + len(data).to_bytes(4, "big") + data
+
+
+# A chat request, a call to the money route that makes the payer's key, and
+# a read of the deposit and the chain.
+FRAMES = [frame(b"R", {"identity": "0123456789abcdef" * 4,
+                       "body": json.dumps({"model": "stand-in/model", "messages": [{"role": "user", "content": "Hello."}]})}),
+          frame(b"C", {"method": "GET", "path": "/admin/funding/address", "body": ""}),
+          frame(b"V", {"chain": True})]
 # The guest's own loopback vsock address, the host, and the address the Mac
 # gives the guest.
 CIDS = [1, 2, 3]
@@ -162,13 +171,13 @@ ATTEMPTS = [
         status("POST", "http://127.0.0.1:8787/admin/funding/deposit", PI_KEY, "X-OA-Management-Token: local"),
         status("POST", "http://127.0.0.1:8787/admin/withdrawal", PI_KEY, "X-OA-Management-Token: local")])),
     # The payer: its companion's port, with no token and with a guessed one,
-    # and cloak-pay's vsock port, with a whole request frame from each
-    # address the sandbox can try.
+    # and cloak-pay's vsock port, with a whole frame of each kind the Mac
+    # sends from each address the sandbox can try.
     sandbox("companion port", "; ".join([
         status("GET", "http://127.0.0.1:8790/wallet/status"),
         status("GET", "http://127.0.0.1:8790/wallet/status", BRIDGE_GUESS),
         status("POST", "http://127.0.0.1:8790/oa/v1/lease", BRIDGE_GUESS, "Content-Type: application/json")])),
-    sandbox("pay port", "; ".join(f"cloak-vsock-probe 8021 '{escaped(FRAME)}' {cid}" for cid in CIDS)),
+    sandbox("pay port", "; ".join(f"cloak-vsock-probe 8021 '{escaped(data)}' {cid}" for data in FRAMES for cid in CIDS)),
     # The Mac over vsock, on the door's port (open only while the guest
     # serves) and on the port numbers of the guest's own sender and runner.
     sandbox("vsock", "for port in 8742 8020 8030; do cloak-vsock-probe $port x; done"),
@@ -265,7 +274,7 @@ def test_the_sandbox_reaches_neither_the_companion_nor_cloak_pay(attempts):
     assert out["companion port"].split() == ["000"] * 3, out["companion port"]
     # Each frame to cloak-pay's vsock port was refused or closed unanswered.
     lines = out["pay port"].splitlines()
-    assert len(lines) == len(CIDS), lines
+    assert len(lines) == len(FRAMES) * len(CIDS), lines
     assert all(line.startswith(("refused", "closed, no answer")) for line in lines), lines
 
 

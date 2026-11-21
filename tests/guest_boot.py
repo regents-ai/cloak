@@ -264,10 +264,11 @@ class StandInDoor:
 
 
 class Serving:
-    """A serving guest: cloak-host --serve with the stand-in door and tor,
-    from the image as built (so with cover on), ready once the guest says
-    its sender is. Closing it ends the guest, as the end of the host's
-    standard input does."""
+    """A serving guest: cloak-host --serve with the stand-in door and tor and
+    a blank payment disk, and the host's socket for exchanges with the
+    guest's payer, from the image as built (so with cover on), ready once
+    the guest says its sender is, which it says after its payer. Closing it
+    ends the guest, as the end of the host's standard input does."""
 
     def __init__(self, tmp_path: Path):
         cases = tmp_path / "cases.jsonl"
@@ -284,7 +285,7 @@ class Serving:
                 [HOST, "--kernel", ROOT / "guest/build/Image", "--initrd", ROOT / "guest/build/initrd.gz",
                  "--cases", cases, "--worker", fake(tmp_path), "--name", NAME, "--dir", DEST / NAME,
                  "--tor", fake_tor(tmp_path, "ready"), "--tor-data", tmp_path / "tor-data", *Disk.blank(tmp_path).args(),
-                 "--serve", "--door", self.sockets / "door", "--runner", self.runner],
+                 "--serve", "--door", self.sockets / "door", "--runner", self.runner, "--pay", self.sockets / "pay"],
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                 env=os.environ | {"FAKE_WORKER_LOG": str(tmp_path)})
         except OSError:
@@ -316,6 +317,18 @@ class Serving:
         client = self.start(request)
         client.settimeout(timeout_s)
         return events(client)
+
+    def exchange(self, frame: str, payload: dict, timeout_s: float = 120) -> tuple[list[dict], dict]:
+        """One exchange with the guest's payer through the host: the frame,
+        "R", "C" or "V", with its payload; gives each H frame's payload, then
+        the host's last line, {"answer": <the A frame's payload>} or
+        {"failed": <why>}."""
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(timeout_s)
+        client.connect(str(self.sockets / "pay"))
+        client.sendall((json.dumps({"frame": frame, "payload": payload}) + "\n").encode())
+        *held, last = events(client)
+        return held, last
 
     def routes(self) -> list[dict]:
         return routes(self.tmp_path)
