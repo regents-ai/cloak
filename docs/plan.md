@@ -3631,6 +3631,32 @@ screens (branch `t3/add-venice-provider`, read by the chief and brought
 to main's level rows and amount box) and NEAR trace sharing merge after
 this release is out, not into it.
 
+NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
+November 2026), against stand-ins only: no sign-in, enrolment or upload
+has been made. An independent reader found 14 things and the helper
+fixed them; the chief ran its checks after (helper 34, app 40, no
+warnings). What the reading of the commons' and NEAR AI's public source
+settled, each of which Sean is told before a real share:
+
+- The readied request carries the whole chat so far, not one message,
+  without Cloak's end-to-end encryption. The chief reads this as inside
+  decision 38, since sharing sends the whole chat to the commons anyway.
+- The witness's hardware check does not cover the connection to it:
+  Phala, which hosts the witness, ends that connection and can read the
+  chat on its way. The commons' protocol has no binding to use.
+- What is uploaded holds no chat words (`message_text_included` false),
+  only a record of the call.
+- The NEAR AI token the sign-in yields can, for up to an hour, make
+  keys, set spend limits and move credits on the person's NEAR AI
+  account. The chief's choice: Cloak ends that NEAR AI session itself
+  as soon as enrolment is done, and says so if that fails.
+- The issuer and the witness are fixed names inside Cloak; if the
+  commons moves them, sharing stops until an update, as NEAR's pins do.
+
+Put to Sean as decisions 41 (record acceptance of the commons' terms,
+or keep the link) and 42 (the first real share). It merges after 0.6.0
+is out.
+
 ## Gates
 
 | ID | Test | State | Evidence |
