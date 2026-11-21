@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+- Four modes, and zkAPI step 6's Mac half (Sean, 20 November 2026:
+  "25. a", "26. a" and his own design for decision 28). Not in Sean's
+  running Cloak, and V cannot pay yet: the guest's payer does not answer
+  the new frames until step 6's guest half is built.
+  - Chat's modes are V, Token Inference, NEAR Private AI and Local
+    Llama. V pays only through zkAPI, with ETH on Ethereum, each request
+    with a new key. Token Inference is what V was until now: reworded on
+    the Mac, sent through Tor, paid from the one USDC.e wallet on Tempo,
+    with the line "The provider can link your chats, because one wallet
+    pays for all of them." A saved chat stays the mode it began in; a
+    chat saved before today reads as V.
+  - Agent is a switch in V and in Token Inference, and an agent pays the
+    way its chat pays. Other apps through the door pay from V's deposit,
+    behind Chat's own requests.
+  - V's wallet sheet: the payer's address with Copy and a code, ETH on
+    hand, Send Out…, the deposit with its balance and expiry, Deposit,
+    Withdraw (always to the payer's own address, decision 23) and the
+    model. Every money press asks the payer for a quote and shows it;
+    the review's button is the one place an approve is sent from, and an
+    expired quote is quoted again and shown, never approved unseen. A
+    money button is off only where the chain at the latest block read
+    shows the press certain to fail, with why beside it.
+  - Start opens Chat. A first-time owner sees the Modes page, four
+    columns with what each mode needs and gives; Details opens it again.
+    The old Welcome page is gone.
+  - Each run's guest gets the payment disk: a 1 GB sparse image under
+    the support folder's `pay/`, its key a new item in the login
+    keychain (`sh.regents.cloak.paydisk`). The Mac holds the disk's key
+    and no payment secret.
+  - The Mac's end of the payer: `host/Sources/CloakHost/Pay.swift`
+    (port 8021; frames `R`, `C`, `V`, `H`, `A`), `PayQueue` (one request
+    out at a time, Chat's before the door's), `Payer` (the wallet's
+    state from one read, never stored). The exact frames are in
+    `docs/zkapi-mac-side.md`, section 1, which the guest half is built
+    to.
+  - Checked by the chief after the merge: the app and the host build,
+    and 30 checks pass, nine of them new in
+    `app/Tests/CloakTests/PayTests.swift` against a stand-in payer
+    (money moves only on a press; opening, refreshing and following send
+    no quote and no approve; one request out at a time in its order;
+    nothing is sent before rewording; a hold that goes quiet ends with
+    nothing sent).
+  - Not yet seen on screen, and unproven against the real payer.
 - Venice (venice.ai), first pass, with nothing on screen yet (Sean, 20
   November 2026, his pasted review and "make a new subagent, as before,
   that works on this"). `app/Sources/CloakChat/Venice.swift` and

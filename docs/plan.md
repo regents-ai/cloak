@@ -994,10 +994,24 @@ of its own, which settles the companion's listener. `tests/test_pay_path.py`,
 named above as written but not run, is gone: its checks are in
 `tests/test_escape_path.py`.
 
+**Step 6, the Mac half (merged 21 November 2026).** Built by a worker on
+`t3/zkapi-token-inference-mac`, read and checked by the chief; what it is
+and its checks are in CHANGELOG.md. It carries decisions 25, 26 and 28:
+four modes, Agent in V and Token Inference, Start opens Chat with the
+Modes page. Where the worker corrected the design: a hold is two `H`
+frames (held, then released); a Withdraw press does not stop new
+requests (rule 11); the fee figure in dollars, the trial's times and the
+30-day claim stay off screen; the three-day notice became a mark on the
+Wallet button from ten days before the expiry; an empty amount on Send
+Out sends everything. The chief kept "Cards aren't accepted." on the
+Modes page, since "taken" already names a deposit anyone may claim.
+Until the guest half is in, a V chat cannot send; Sean's running Cloak
+is not rebuilt from this.
+
 - **For step 6, the guest half.** `cloak-pay` has the daemon's
   `FundingHandler` and the real companion client; the `C`, `V` and `H`
-  frames and the chain read are still to add, to the wire shapes the Mac
-  half writes into `docs/zkapi-mac-side.md`.
+  frames, the allowlist of money routes and the chain read are still to
+  add, to the wire shapes in `docs/zkapi-mac-side.md`, section 1.
 - **For step 7.** The companion's route through the payer's Tor port to
   the host's real tor; a call to the real service with no note,
   expecting 402; memory in the guest during a real proof; and what

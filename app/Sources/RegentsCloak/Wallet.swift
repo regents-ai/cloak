@@ -4,9 +4,10 @@ import Foundation
 import Observation
 import os
 
-/// Development mode's one wallet (decision 10 in docs/plan.md): made on this
-/// Mac when its owner presses Create, funded by him, and paying for every
-/// chat sent, so the provider can link them all. Its key is in the keychain
+/// Token Inference's one wallet (decisions 10 and 25 in docs/plan.md): made
+/// on this Mac when its owner presses Create, funded by its owner, and
+/// paying for every Token Inference chat sent, so the provider can link them
+/// all. Its key is in the keychain
 /// only (`WalletKeychain`); `look` is what the network and the provider show
 /// of it, read again after each request. Every press reaches the guest's
 /// sender, which takes one request at a time; none is refused here for one

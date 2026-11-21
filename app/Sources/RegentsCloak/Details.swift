@@ -8,20 +8,23 @@ import SwiftUI
 /// model's download while its files are not all in place, the release, the
 /// model and whether it is out of memory, what Cloak holds in memory now,
 /// the last check, and technical detail on demand, the build and each
-/// part's memory among it. Closing it leaves the supervisor, and the
-/// download, as they are. The settings are the Settings window's.
+/// part's memory among it, and the way to Chat's Modes page. Closing it
+/// leaves the supervisor, and the download, as they are. The settings are
+/// the Settings window's.
 struct DetailsView: View {
     let supervisor: Supervisor
     let download: ModelDownload
     let memory: MemoryWatch
+    let showModes: () -> Void
 
-    static func window(_ supervisor: Supervisor, _ download: ModelDownload) -> NSWindow {
+    static func window(_ supervisor: Supervisor, _ download: ModelDownload, showModes: @escaping () -> Void) -> NSWindow {
         let window = ClosingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Details"
         window.contentViewController = NSHostingController(
-            rootView: DetailsView(supervisor: supervisor, download: download, memory: MemoryWatch(supervisor, window: window)))
+            rootView: DetailsView(
+                supervisor: supervisor, download: download, memory: MemoryWatch(supervisor, window: window), showModes: showModes))
         return window
     }
 
@@ -47,8 +50,8 @@ struct DetailsView: View {
                 // What Start and Pause change, both said, so the two can be
                 // told apart whichever Cloak is in.
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Running: Tor is connected. V chats can send.")
-                    Text("Paused: Tor is off. V chats wait.")
+                    Text("Running: Tor is connected. V and Token Inference chats can send.")
+                    Text("Paused: Tor is off. V and Token Inference chats wait.")
                 }
             }
             if download.state != .installed {
@@ -59,6 +62,9 @@ struct DetailsView: View {
                 LabeledContent("Model", value: supervisor.resting ? "\(status.model.label), unloaded" : status.model.label)
                 LabeledContent("Memory", value: memory.reading.total.map(Memory.text) ?? "Can't be measured")
                 LabeledContent("Last check", value: lastCheck(status.check))
+                LabeledContent("Modes") {
+                    SymbolButton("Show Modes", symbol: "square.grid.2x2", action: showModes)
+                }
             }
             Section {
                 DisclosureGroup(isExpanded: $technical) {

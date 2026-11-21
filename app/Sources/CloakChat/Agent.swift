@@ -14,16 +14,16 @@ public final class Agent {
     public struct Parts {
         /// Runs a task in the guest (`Supervisor.run`).
         let run: @MainActor (Runner.Request) -> AsyncThrowingStream<Runner.Event, any Error>
-        /// A conversation's box pass (`Door.pass(for:)`): nil while the door
-        /// is not open.
-        let pass: @MainActor (UUID) -> String?
+        /// A conversation's box pass, its requests paid as given
+        /// (`Door.pass(for:paying:)`): nil while the door is not open.
+        let pass: @MainActor (UUID, Payment) -> String?
         /// A conversation's task as the door last reworded it
         /// (`Door.reworded(for:)`).
         let reworded: @MainActor (UUID) -> String?
 
         public init(
             run: @escaping @MainActor (Runner.Request) -> AsyncThrowingStream<Runner.Event, any Error>,
-            pass: @escaping @MainActor (UUID) -> String?, reworded: @escaping @MainActor (UUID) -> String?
+            pass: @escaping @MainActor (UUID, Payment) -> String?, reworded: @escaping @MainActor (UUID) -> String?
         ) {
             self.run = run
             self.pass = pass
@@ -71,19 +71,27 @@ public final class Agent {
         ran = []
     }
 
-    /// Runs `task` as a new turn of `conversation` with `model`, unless a
-    /// task runs there already, which the guest would refuse. `keep` takes
-    /// the turn as it starts, then as it ends.
-    public func run(_ task: String, in conversation: UUID, model: String, keep: @escaping (Turn) -> Void) {
+    /// Runs `task` as a new turn of `conversation` with `model`, its model
+    /// requests paid as `payment` says, unless a task runs there already,
+    /// which the guest would refuse. `keep` takes the turn as it starts,
+    /// then as it ends.
+    public func run(_ task: String, in conversation: UUID, model: String, paying payment: Payment, keep: @escaping (Turn) -> Void) {
         guard runs[conversation] == nil else { return }
-        let turn = Turn(original: task, reworded: nil, steps: [])
-        guard let pass = parts.pass(conversation) else {
-            ends[turn.id] = .unreachable
-            keep(turn)
+        guard let pass = parts.pass(conversation, payment) else {
+            refuse(task, .unreachable, keep: keep)
             return
         }
+        let turn = Turn(original: task, reworded: nil, steps: [])
         let events = parts.run(Runner.Request(task: task, session: conversation.uuidString, model: model, pass: pass))
         runs[conversation] = Run(turn: turn, started: .now, task: Task { await follow(events, in: conversation, keep: keep) })
+        keep(turn)
+    }
+
+    /// Keeps `task` as a new turn that ended as `end` before it ran: `keep`
+    /// takes it once.
+    public func refuse(_ task: String, _ end: End, keep: (Turn) -> Void) {
+        let turn = Turn(original: task, reworded: nil, steps: [])
+        ends[turn.id] = end
         keep(turn)
     }
 
@@ -144,13 +152,28 @@ public final class Agent {
 
 /// Why a request to the model is certain to stop if sent now, as Cloak and
 /// the wallet last showed: Cloak not running, so nothing is routed through
-/// Tor; no wallet; or, as the network last showed the wallet, no funds.
-/// Send and Run are held back for these only.
+/// Tor; in Token Inference, no wallet, or, as the network last showed the
+/// wallet, no funds; in V, the chain at the latest block read shows the
+/// deposit closed. Send and Run are held back for these only: a V request
+/// with no deposit goes, and the payer answers it.
 public enum Block: Sendable, Equatable {
     case notRunning
     case noWallet
     case noFunds
+    case closed
 
+    /// V's: through the payer.
+    public init?(running: Bool, closed: Bool) {
+        if !running {
+            self = .notRunning
+        } else if closed {
+            self = .closed
+        } else {
+            return nil
+        }
+    }
+
+    /// Token Inference's: from the Tempo wallet.
     public init?(running: Bool, hasWallet: Bool, lacksFunds: Bool) {
         if !running {
             self = .notRunning

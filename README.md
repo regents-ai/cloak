@@ -21,10 +21,13 @@ Stage 3 of 6: the feasibility kit is ready and waits for the candidates'
 weights, which Sean decides when to fetch. The stage 4 qualification kit is
 built and proven on development data only; its holdouts need people to
 write them. Stage 5 has started with a development build of the app's
-core, running the small lead, and a Chat window that rewords messages and,
-in a labelled Development mode (decision 10), sends the reworded text
-through Tor to a remote model, paid from one wallet on the Mac. Stages 1
-and 2 stay open in
+core, running the small lead, and a Chat window that rewords messages and
+sends the reworded text through Tor to a remote model, paid one of two
+ways: in V, through zkAPI, each request with a new key, from a deposit of
+ETH held by the guest's payer; in Token Inference, from one wallet on the
+Mac, so the provider can link the chats (decisions 10, 24 and 25). V's
+payment is built on the Mac and checked against a stand-in; the guest's
+half and a real deposit are not proven yet. Stages 1 and 2 stay open in
 [docs/plan.md](docs/plan.md). The one build meant to leave this Mac is the
 technical preview for invited testers ([docs/release.md](docs/release.md),
 stage 1), which claims no protection; nothing here is the public release,
@@ -52,7 +55,7 @@ is recorded in [docs/plan.md](docs/plan.md).
 | `rewriter-kit/` | The worker's protocol and pins: the frames to and from the host, the daemon's request, a Local Llama conversation, the replies and the model pins |
 | `host/` | The host library (tor, the worker's channel, the relay, the guest) and the `cloak-host` command the kits run |
 | `app/` | Stage 5: the supervisor, the menu-bar app and the `cloak` command, as a development build, and the scripts that release them (Release, below) |
-| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Development mode's way to a remote model), the door port and the runner (the owner's agent tasks, decision 12), the payment disk (`guest/image/pay-disk`) and the payer on it (`guest/pay/`, cloak-pay and its companion), kernel and root build |
+| `guest/` | The guest: adapter, the daemon's local API and rewrite check, the agent check (Pi in the wrapper), the sender (Token Inference's way to a remote model), the door port and the runner (the owner's agent tasks, decision 12), the payment disk (`guest/image/pay-disk`) and the payer on it (`guest/pay/`, cloak-pay and its companion, V's way to pay), kernel and root build |
 | `evidence/stage3/` | Stage 3 records, one folder per model |
 | `evidence/stage4/` | Stage 4 development records and every score, one folder per model |
 | `tests/` | Functional checks, run with `uv run --with pytest` |
@@ -335,8 +338,9 @@ worker included, the worker into its sandbox. `app/release.sh` does that
 with the Developer ID (Release, below).
 
 The app opens Paused in the menu bar, and never starts by itself. On the
-first launch only, a Welcome window shows the Regents crown, whose help
-says what Cloak does, and says where Cloak is, and starts nothing. The
+first launch only, Chat opens on the Modes page (Chat, below), which
+starts nothing. Start, in the menu or at its top, also opens Chat;
+AppleScript's `start` does not. The
 menu's top shows the state, as a coloured dot and in words, Starting or
 Stopping while it changes; when Cloak needs attention, it says what went
 wrong and what to do, with a button for the fix, or the way to it, when
@@ -457,7 +461,8 @@ words taken out and put in marked; the reworded text can be edited until
 it is sent. With Review on, the box's button is Reword, a pencil. With
 Review off (Settings, General), it is Send, an arrow, and each new message
 is sent as soon as it is reworded, through the same checks as Send: one
-that cannot go yet (no wallet, no funds) stays open, saying why. A card's
+that cannot go yet (in Token Inference, no wallet or no funds; in V, a
+deposit the chain shows closed) stays open, saying why. A card's
 Reword, a pencil, rewords it again and never sends, Review on or off. The
 agent's tasks and the door never have this step. An answer's
 formatting is drawn (headings, lists, code,
@@ -480,22 +485,25 @@ does. While Cloak is running with the other value, a small clock sits on
 the cloud's corner, and its help adds "Cover changes after Pause, then
 Start." Under the message box, two small pills show Tor and zkAPI, each by
 its symbol (three joined points, a ticket) with a dot, filled while on.
-Tor is always on and zkAPI is off, since one wallet pays for everything;
-neither can be changed yet, and a press on either says so. Resting the
+Tor is always on. zkAPI is on in V, which pays each request with a new
+key, and off in Token Inference, which pays from one wallet; neither can
+be changed, and a press on either says so. Resting the
 pointer on a pill for a second shows what it controls. In a NEAR
 conversation, one pill, Tor for NEAR (below), takes their place; a Local
 Llama conversation (below) has none.
 
-Send is Development mode (decision 10 in [docs/plan.md](docs/plan.md)),
-marked as such by the Development pill at the top of Chat, whose help
-says the provider can link your chats (NEAR Private AI's or Local Llama's
-pill takes its place in those conversations), and never part of the public release (the technical
-preview for invited testers carries it, labelled;
-[docs/release.md](docs/release.md), stage 1): the
+Send goes one of two ways, by the conversation's mode, which its pill at
+the top of Chat names, with what it means for you as its help (NEAR
+Private AI's or Local Llama's pill takes its place in those
+conversations). In V (decision 24 in [docs/plan.md](docs/plan.md)), the
 reworded text, after the conversation's earlier sent and answered turns,
-goes from the guest's sender through Tor to a remote model at Boundless,
-paid through MPP on Tempo from one wallet, so the provider can link every
-chat. A card's Send is a round arrow, and the drop-down beside it holds
+goes to the guest's payer (`guest/pay`), which pays for it through zkAPI
+with a new key and sends it through Tor. In Token Inference (decisions 10
+and 25), it goes from the guest's sender through Tor to a remote model at
+Boundless, paid through MPP on Tempo from one wallet, so the provider can
+link every chat; a third light on its cards, a link, always orange, says
+so. The technical preview for invited testers carries both
+([docs/release.md](docs/release.md), stage 1). A card's Send is a round arrow, and the drop-down beside it holds
 "Send Original Text", which sends that message as written instead, still
 through Tor; its card then shows the Original alone and its Reworded
 light is off. The drop-down also holds "Never reword text. Reduces your
@@ -505,9 +513,32 @@ Review off; while it is ticked, an orange warning sign under the message
 box says "Rewording is off. Messages go as you wrote them." as its help.
 It stays ticked across launches until unticked, Review is turned on, or
 Restore Defaults. The agent's
-tasks and apps sending through Agents (below) are always reworded. Wallet,
-in Chat's toolbar, makes the wallet
-when Create is pressed: its key is made in the guest and kept only in the
+tasks and apps sending through Agents (below) are always reworded.
+
+Wallet, in Chat's toolbar, shows the wallet of the conversation in front.
+In V it is the guest's payer's, read through the guest, so it waits for
+Start: its own Ethereum address, with Copy and the QR button, on Ethereum,
+taking ETH, and the ETH on hand; Send Out… sends all of that ETH to an
+address you type. Deposit takes an amount in dollars (over $50, it says to
+deposit only what you'll spend). The deposit then shows its balance in
+ETH, whether the last request is still settling, and its expiry, after
+which anyone can send it to the service's operator: from 10 days before,
+a line says to withdraw, orange and then red, and a mark sits on Wallet's
+symbol. Withdraw brings the whole deposit back to the address above.
+Deposit, Withdraw and Send Out each show a review first, with the amounts
+and fee in ETH and how long the quote holds; only the review's button
+sends it, and a quote past its time is quoted again and shown, never sent.
+A button is off only where the chain, read at the latest block, shows it
+is certain to fail, with a few words why. Model lists the service's
+models, each with the most a request can cost; until one is picked, V
+uses the one that costs least at most, and the pick is kept. A V Send or
+Run is never held back for want of a deposit: the guest answers it, and
+the card says "Deposit to send." with Wallet…. The payer's key and the
+deposit's secrets stay in the guest, on its encrypted disk; the Mac keeps
+only the model picked and the deposit's expiry, to warn while Cloak is
+paused.
+
+In Token Inference, Wallet makes the wallet when Create is pressed: its key is made in the guest and kept only in the
 login keychain, this Mac only; the address to fund takes USDC.e on Tempo,
 and the QR button beside Copy shows it as a code for a phone's wallet.
 Its balance and deposit are read through the guest, so until Cloak has run
@@ -538,13 +569,15 @@ clean end, so a run with no "quit" was ended some other way. These lines
 carry no message text; the Mac keeps them for days, and the app's timing
 lines only for a short while.
 
-A new V conversation can be the agent's (decision 12, Development mode
-too): before its first message, turn on Agent, the switch beside the mode
-switch under the message box, shown only while V is chosen. Each message
-is then a task. The agent, Pi, works on it inside Cloak's sealed guest, in
-the reference sandbox: it reaches the model only through Cloak, which
-rewords the task on this Mac and sends it through Tor from the one wallet,
-and its tools reach the web only through Tor. What its tools read goes to
+A new V or Token Inference conversation can be the agent's (decision 12):
+before its first message, turn on Agent, the switch beside the mode
+switch under the message box, shown only while one of those two is
+chosen. Each message is then a task. The agent, Pi, works on it inside
+Cloak's sealed guest, in the reference sandbox: it reaches the model only
+through Cloak, which rewords the task on this Mac and sends it through
+Tor, paid as its chat pays (a V task's requests through the payer, after
+your own messages; a Token Inference task's from the one wallet), and its
+tools reach the web only through Tor. What its tools read goes to
 the model as it is; only your own words are reworded. A task's card shows
 it as written and as reworded, each step the agent takes, and its answer.
 Stop ends a task and everything it started, as do Pause, Stop and Quit in
@@ -554,12 +587,12 @@ the guest's memory, so after Cloak starts again it does not remember a
 conversation's earlier tasks, and the conversation says so.
 
 A new conversation can be NEAR's instead: before its first message, pick
-NEAR Private AI under the message box (one of three modes: V, NEAR Private
-AI or Local Llama; a new chat is V, Cloak's own, at each launch, with
-Agent off). Its messages then go as written, never reworded, to one
+NEAR Private AI under the message box (one of four modes: V, Token
+Inference, NEAR Private AI or Local Llama; a new chat is V at each launch,
+with Agent off). Its messages then go as written, never reworded, to one
 model on NEAR AI Cloud, `Qwen/Qwen3.8-27B`, paid by your own NEAR key, and
-its later messages go there too. A Cloak conversation never goes to NEAR,
-and a NEAR one never goes to the wallet's provider. Before a message
+its later messages go there too. A V or Token Inference conversation never
+goes to NEAR, and a NEAR one never goes to either's provider. Before a message
 leaves, NEAR's hardware proof is checked: the Intel quotes of the model's
 servers and Intel Trust Authority's verdict on one server's GPUs. The
 helper that checks it and sends, `cloak-near` (see `guest/near`), is in
@@ -627,16 +660,20 @@ that rewords, Settings' Local Llama for another). There is no rewording, no
 details, no Review and no Send Original Text. A Local Llama conversation is kept like any other, marked in the
 list by a laptop icon.
 
-The mode switch shows each of the three modes as its symbol (theatre
-masks, a chip, a laptop), the chosen one with its name too; resting the
-pointer on one says what it does and who pays. While V is chosen, Agent
-sits beside it, a pill with a hammer and a dot filled while on; resting
-the pointer on it says what it does, and pressing V again leaves it as it
-is. Modes, the info button after them, opens when the pointer rests on it
-or on a click. It says what each mode does, with Agent under V, that V is
-inspired by Vitalik's X post, and that in NEAR Private AI and Local
-Llama, Cloak is an alternate client to NEAR's and llama.cpp's own
-official ones, each with a link to its X post.
+The mode switch shows each of the four modes as its symbol (theatre
+masks, a dollar sign, a chip, a laptop), the chosen one with its name
+too; resting the pointer on one says what it does and who pays. While V
+or Token Inference is chosen, Agent sits beside it, a pill with a hammer
+and a dot filled while on; resting the pointer on it says what it does,
+and it stays as it is across a change of mode. Modes, the info button
+after them, opens the Modes page: a column for each mode, with its symbol
+and name, what pays for it, and what Cloak does in it (V and Token
+Inference say cards aren't accepted), and under three of them where the
+mode comes from: V is inspired by Vitalik's X post, and in NEAR Private
+AI and Local Llama, Cloak is an alternate client to NEAR's and
+llama.cpp's own official ones, each with a link to its X post. Pressing a
+column makes the new chat that mode and closes the page. It also opens
+from Details, by the grid button beside Modes, and on the first launch.
 
 While you write a message or a task, Cloak may suggest details it leaves
 open (decision 13). Once the draft has four words or more and has rested
@@ -652,8 +689,9 @@ its details reach the log. It needs Cloak running, and a rewording never
 waits for it.
 
 "Agents" in the menu lets your other apps on this Mac send through Cloak,
-in Development mode too, as to any server that speaks OpenAI's chat
-format. While Cloak is running it answers at `http://127.0.0.1:8742/v1`,
+as to any server that speaks OpenAI's chat format, each request paid as
+V's are, through the guest's payer with a new key, after your own
+messages. While Cloak is running it answers at `http://127.0.0.1:8742/v1`,
 or the port chosen in Settings, on 127.0.0.1 only; if another app holds
 that port, Agents says so and nothing opens. Add, a plus, gives an app a name and a pass, shown once with Copy;
 Remove ends the pass at once. Point the app at the address with the pass as
@@ -663,13 +701,14 @@ its key, for example with OpenAI's Python library:
 from openai import OpenAI
 
 client = OpenAI(base_url="http://127.0.0.1:8742/v1", api_key="<the pass>")
+model = client.models.list().data[0].id
 client.chat.completions.create(
-    model="deepseek/deepseek-v4-flash-0731",
+    model=model,
     messages=[{"role": "user", "content": "Say hello to the team."}],
 )
 ```
 
-Only `POST /v1/chat/completions` and `GET /v1/models` (the provider's own
+Only `POST /v1/chat/completions` and `GET /v1/models` (the service's own
 list) answer, each with `Authorization: Bearer` and the pass; a request
 from a web page (with an `Origin` header) is refused. Each user message's
 text is reworded on this Mac first, as Chat and the pinned daemon do it:
@@ -696,9 +735,12 @@ results and the model's answers are not shown. Up to 200 requests are held
 in memory until Cloak quits, never on disk, and only the latest 20 keep
 their text. No request's text is ever logged or written to disk.
 
-Run the app's checks (the send path with the deposit kept sealed, whether
-this Mac holds the wallet, and that NEAR mode's line to its helper carries
-the freshness and route chosen):
+Run the app's checks (Token Inference's send path with the deposit kept
+sealed, whether this Mac holds the wallet, that NEAR mode's line to its
+helper carries the freshness and route chosen, and V's payment against a
+stand-in payer: no money moves but on a press, one request is out at a
+time, yours ahead of the agent's and the apps', and nothing is sent that
+was not reworded):
 
 ```bash
 swift test --package-path app

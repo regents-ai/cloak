@@ -104,11 +104,14 @@ enum Pass {
 
 /// The door: the owner's other apps on this Mac send chat requests in
 /// OpenAI's shape to one address, 127.0.0.1 only, each with a pass of its
-/// own, and each request goes on as Chat's do: every user message reworded
-/// on this Mac (`Memory`), then sent through the guest's sender, Tor and
-/// the one wallet (decision 10 in docs/plan.md). The owner's agent in the
-/// guest sends its requests the same way, from the guest's door port, each
-/// conversation with a box pass of its own (`pass(for:)`, decision 12).
+/// own, and each request goes on as a V chat's does: every user message
+/// reworded on this Mac (`Memory`), then paid through zkAPI by the guest's
+/// payer, behind any of Chat's own (`PayQueue`, rank `door`; decision 24 in
+/// docs/plan.md). The owner's agent in the guest sends its requests the same
+/// way, from the guest's door port, each conversation with a box pass of its
+/// own (`pass(for:paying:)`, decision 12), and each paid as its chat is: a
+/// V chat's through the payer, a Token Inference chat's through the guest's
+/// sender, Tor and the one Tempo wallet (decisions 10, 25 and 26).
 /// Open only while Cloak is Running. No message's text is logged or written
 /// to disk: an app's requests are counted, and its last one timed, and the
 /// latest chat requests are listed with their counts and times, the newest
@@ -128,6 +131,8 @@ public final class Door {
     /// keychain's.
     public struct Parts: Sendable {
         let reword: @Sendable ([String]) async throws(RewriteStop) -> [String]
+        /// The one way to the guest's payer, shared with Chat.
+        let queue: PayQueue
         let exchange: Exchange
         /// The wallet's address; nil when there is none.
         let wallet: @Sendable () async throws -> String?
@@ -136,11 +141,12 @@ public final class Door {
         let sealing: @Sendable () async throws -> SymmetricKey?
 
         public init(
-            reword: @escaping @Sendable ([String]) async throws(RewriteStop) -> [String], exchange: @escaping Exchange,
-            wallet: @escaping @Sendable () async throws -> String?, key: @escaping Remote.Key,
+            reword: @escaping @Sendable ([String]) async throws(RewriteStop) -> [String], queue: PayQueue,
+            exchange: @escaping Exchange, wallet: @escaping @Sendable () async throws -> String?, key: @escaping Remote.Key,
             sealing: @escaping @Sendable () async throws -> SymmetricKey?
         ) {
             self.reword = reword
+            self.queue = queue
             self.exchange = exchange
             self.wallet = wallet
             self.key = key
@@ -181,8 +187,9 @@ public final class Door {
     @ObservationIgnored private var serving: [UUID: Task<Void, Never>] = [:]
     /// By app, and by the agent's conversation.
     @ObservationIgnored private var memories: [UUID: Memory] = [:]
-    /// The box passes, by the agent's conversation, until the door closes.
-    @ObservationIgnored private var boxes: [UUID: (pass: String, fingerprint: Data)] = [:]
+    /// The box passes, by the agent's conversation, and how each
+    /// conversation pays, until the door closes.
+    @ObservationIgnored private var boxes: [UUID: (pass: String, fingerprint: Data, payment: Payment)] = [:]
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "door")
 
     /// Where a request comes from: an app on this Mac, on 127.0.0.1, or the
@@ -361,12 +368,13 @@ public final class Door {
     /// first time it is asked for: the agent sends that conversation's
     /// requests with it, from the guest, and the door takes it there only.
     /// It is kept in memory only, never with the apps, and dropped when the
-    /// door closes; nil while the door is not open.
-    public func pass(for conversation: UUID) -> String? {
+    /// door closes; nil while the door is not open. The conversation's
+    /// requests are paid as `payment` says, which its first task fixed.
+    public func pass(for conversation: UUID, paying payment: Payment) -> String? {
         guard state == .open else { return nil }
         if let box = boxes[conversation] { return box.pass }
         let pass = Pass.make()
-        boxes[conversation] = (pass, Pass.fingerprint(pass))
+        boxes[conversation] = (pass, Pass.fingerprint(pass), payment)
         return pass
     }
 
@@ -433,10 +441,10 @@ public final class Door {
         let response: HTTPResponse
         do {
             let (request, after) = try await HTTPRequest.head(connection)
-            let app = try admit(request, from: side)
+            let (app, payment) = try admit(request, from: side)
             let body = try await request.body(after: after, from: connection)
             limit.cancel()
-            response = await route(request, body: body, for: app, from: side)
+            response = await route(request, body: body, for: app, paying: payment, from: side)
         } catch let failure as Failure {
             limit.cancel()
             response = failure.response
@@ -454,15 +462,17 @@ public final class Door {
     /// Refuses a request from a web page, then one without a pass of this
     /// side's, as the daemon does (`ServeHTTP`, internal/server/server.go:70-97):
     /// from the Mac, an app's pass, and the app's request is counted; from the
-    /// guest, a box pass. Returns the app, or the agent's conversation.
-    private func admit(_ request: HTTPRequest, from side: Side) throws(Failure) -> UUID {
+    /// guest, a box pass. Returns the app, or the agent's conversation, and
+    /// how its requests are paid: an app's through zkAPI, a conversation's
+    /// as its box says.
+    private func admit(_ request: HTTPRequest, from side: Side) throws(Failure) -> (UUID, Payment) {
         guard request.headers["origin"] == nil, request.headers["sec-fetch-site"] != "cross-site" else { throw .origin }
         guard let header = request.headers["authorization"], header.hasPrefix("Bearer ") else { throw .pass }
         let presented = Pass.fingerprint(header.dropFirst("Bearer ".count))
         if case .guest = side {
-            var found: UUID?
+            var found: (UUID, Payment)?
             for (conversation, box) in boxes where Pass.same(box.fingerprint, presented) {
-                found = conversation
+                found = (conversation, box.payment)
             }
             guard let found else { throw .pass }
             return found
@@ -476,16 +486,16 @@ public final class Door {
         apps[found].requests += 1
         apps[found].lastUsed = .now
         _ = keep(apps, key: key)
-        return apps[found].id
+        return (apps[found].id, .zkapi)
     }
 
     /// Answers one request. A chat request is listed in `requests` from here
     /// until it is answered or stopped.
-    private func route(_ request: HTTPRequest, body: [UInt8], for app: UUID, from side: Side) async -> HTTPResponse {
+    private func route(_ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side) async -> HTTPResponse {
         do throws(Failure) {
             switch (request.method, request.target) {
             case ("GET", "/v1/models"):
-                let list = try await models()
+                let list = try await models(paying: payment)
                 guard (try? GoJSON.read([UInt8](list)))?.members != nil else { throw Self.unreadable }
                 return HTTPResponse(status: 200, body: list)
             case ("POST", "/v1/chat/completions"):
@@ -495,7 +505,7 @@ public final class Door {
                 // The one this pushed out of the newest drops its texts.
                 if requests.count > Self.latest { requests[Self.latest].messages = [] }
                 do throws(Failure) {
-                    let response = try await complete(request, body: body, for: app, listed: listed.id)
+                    let response = try await complete(request, body: body, for: app, paying: payment, listed: listed.id)
                     note(listed.id) { $0.end(.answered) }
                     return response
                 } catch {
@@ -514,25 +524,37 @@ public final class Door {
 
     private static let unreadable = Failure(502, "invalid_upstream_response", "The provider's answer did not read.")
 
-    /// The provider's list of models, as it gives it.
-    private func models() async throws(Failure) -> Data {
-        do {
-            return try await Remote.models(exchange: parts.exchange)
-        } catch {
-            throw Failure(error)
+    /// The provider's list of models, as it gives it: the zkAPI service's
+    /// through the payer, or the Tempo wallet's provider's through the
+    /// sender.
+    private func models(paying payment: Payment) async throws(Failure) -> Data {
+        switch payment {
+        case .zkapi:
+            do {
+                return try await parts.queue.call("GET", "/v1/models")
+            } catch {
+                throw Failure(error)
+            }
+        case .tempo:
+            do {
+                return try await Remote.models(exchange: parts.exchange)
+            } catch {
+                throw Failure(error)
+            }
         }
     }
 
     /// Checks the request, then the model against the provider's list, then
-    /// rewords each user message on this Mac, then sends it from the wallet.
-    /// Nothing leaves this Mac before every user message is reworded.
+    /// rewords each user message on this Mac, then sends it: through the
+    /// payer, in its turn, or from the Tempo wallet. Nothing leaves this Mac
+    /// before every user message is reworded.
     private func complete(
-        _ request: HTTPRequest, body: [UInt8], for app: UUID, listed: AgentRequest.ID
+        _ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, listed: AgentRequest.ID
     ) async throws(Failure) -> HTTPResponse {
         try Asked.check(type: request.headers["content-type"])
         let asked = try await Asked.read(body)
         note(listed) { $0.model = asked.model }
-        guard let ids = Self.ids(try await models()) else { throw Self.unreadable }
+        guard let ids = Self.ids(try await models(paying: payment)) else { throw Self.unreadable }
         guard ids.contains(asked.model) else {
             throw Failure(404, "model_not_found", "The provider has no model \(asked.model).")
         }
@@ -548,6 +570,17 @@ public final class Door {
         let pairs = await Self.pairs(asked, sent: messages)
         if let index = requests.firstIndex(where: { $0.id == listed }), index < Self.latest {
             requests[index].messages = pairs
+        }
+        guard case .tempo = payment else {
+            guard !Task.isCancelled else { throw .stopped }
+            let completion: Data
+            do {
+                completion = try await parts.queue.complete(asked.body(messages), identity: identity, rank: .door)
+            } catch {
+                logger.error("door payment stopped: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .private)")
+                throw Failure(error)
+            }
+            return try Asked.answer(completion, streaming: asked.streaming)
         }
         let key = try await sealing()
         do {

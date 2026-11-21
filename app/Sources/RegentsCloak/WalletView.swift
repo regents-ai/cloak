@@ -4,17 +4,21 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 /// How the conversation in front is paid for. In a V chat, Agent on or off,
-/// Development mode's wallet: made here on Create, its address to add funds
-/// to, its balance, the deposit chats are paid from, and the model they go
-/// to. A button that reaches the network is off only where its request is
-/// certain to stop: Cloak not running, so nothing reaches the guest; no
-/// deposit, as the network last showed the wallet; or, for Withdraw, the
-/// network's waiting time still running. Never for a press under way. In a
-/// NEAR Private AI chat, the owner's NEAR key, whether one is saved, and the
-/// way to Settings' NEAR pane; in a Local Llama chat, nothing to pay. The
-/// wallet is read each time this opens on a chat it pays for.
+/// V's wallet (`VWallet`): the deposit each request is paid from with a new
+/// key. In a Token Inference chat, Agent on or off, its one wallet: made
+/// here on Create, its address to add funds to, its balance, the deposit
+/// chats are paid from, and the model they go to. A button that reaches the
+/// network is off only where its request is certain to stop: Cloak not
+/// running, so nothing reaches the guest; no deposit, as the network last
+/// showed the wallet; or, for Withdraw, the network's waiting time still
+/// running. Never for a press under way. In a NEAR Private AI chat, the
+/// owner's NEAR key, whether one is saved, and the way to Settings' NEAR
+/// pane; in a Local Llama chat, nothing to pay. The wallet is read each
+/// time this opens on a chat it pays for.
 struct WalletView: View {
     @Bindable var wallet: Wallet
+    let payer: Payer
+    let settings: AppSettings
     let nearMode: NearMode
     /// The conversation in front's.
     let kind: Chat.Kind
@@ -23,14 +27,17 @@ struct WalletView: View {
 
     var body: some View {
         let running = wallet.supervisor.phase == .running
-        let paidByWallet = kind == .chat || kind == .agent
         VStack(spacing: 0) {
-            if paidByWallet {
-                DevelopmentBar()
+            switch kind {
+            case .v: VBar()
+            case .token: TokenBar()
+            case .near, .llama: EmptyView()
             }
             Form {
                 switch kind {
-                case .chat, .agent:
+                case .v:
+                    VWallet(payer: payer, settings: settings, running: running)
+                case .token:
                     WalletSections(wallet: wallet, running: running)
                 case .near:
                     NearPayment(mode: nearMode) {
@@ -43,14 +50,24 @@ struct WalletView: View {
             }
             .formStyle(.grouped)
             HStack(spacing: 10) {
-                if paidByWallet, wallet.working > 0 || wallet.presence == .creating {
+                if kind == .token, wallet.working > 0 || wallet.presence == .creating {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                if kind == .v, payer.working > 0 {
                     ProgressView()
                         .controlSize(.small)
                 }
                 Spacer()
-                if paidByWallet {
+                switch kind {
+                case .v:
+                    SymbolButton("Refresh", symbol: "arrow.clockwise") { payer.follow() }
+                        .disabled(!running)
+                case .token:
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await wallet.refresh() } }
                         .disabled(wallet.presence.address == nil || !running)
+                case .near, .llama:
+                    EmptyView()
                 }
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -63,11 +80,17 @@ struct WalletView: View {
         // the room the Chat window leaves a sheet, the form scrolls.
         .frame(width: 540)
         .frame(maxHeight: 640)
-        .task { if paidByWallet { await wallet.refresh() } }
+        .task {
+            switch kind {
+            case .v: payer.follow()
+            case .token: await wallet.refresh()
+            case .near, .llama: break
+            }
+        }
     }
 }
 
-/// The wallet that pays for V chats, Agent on or off.
+/// The wallet that pays for Token Inference chats, Agent on or off.
 private struct WalletSections: View {
     let wallet: Wallet
     let running: Bool
@@ -190,19 +213,7 @@ private struct Account: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(address, forType: .string)
-                    } label: {
-                        // A larger target than the icon alone.
-                        Label("Copy", systemImage: "doc.on.doc")
-                            .labelStyle(.iconOnly)
-                            .frame(width: 24, height: 24)
-                            .contentShape(.rect)
-                    }
-                    .buttonStyle(.borderless)
-                    .hover(Circle())
-                    .help("Copy")
+                    CopyButton(text: address)
                     CodeButton(address: address)
                 }
             }
@@ -227,7 +238,7 @@ private struct Account: View {
 /// The address as a QR code, for a phone's wallet to scan, in a popover
 /// from the button beside Copy, with the address in full under it to check
 /// against. Shown only.
-private struct CodeButton: View {
+struct CodeButton: View {
     let address: String
     @State private var open = false
 
@@ -389,11 +400,26 @@ struct ModePill: View {
     }
 }
 
-/// The Development mark, with what it means for the person as its help.
-struct DevelopmentBar: View {
+/// V's mark, with what it means for the person as its help.
+struct VBar: View {
     var body: some View {
         HStack {
-            ModePill(title: "Development", help: "The provider can link your chats, because one wallet pays for all of them.", tint: .orange)
+            ModePill(
+                title: "V", help: "Reworded on this Mac and sent through Tor. Each request is paid with a new key.",
+                tint: .accentColor)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.06))
+    }
+}
+
+/// Token Inference's mark, with what it means for the person as its help.
+struct TokenBar: View {
+    var body: some View {
+        HStack {
+            ModePill(title: "Token Inference", help: "The provider can link your chats, because one wallet pays for all of them.", tint: .orange)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
@@ -447,7 +473,7 @@ extension RemoteStop {
         case .modelUnavailable: "This model can't be used now. Pick another in Wallet."
         case .torDown: "Cloak couldn't reach the network through Tor. Try again."
         case .answerRefused: "The model declined to answer."
-        case .failed: "Something went wrong. Try again."
+        case .failed: "The request did not go through. Try again."
         case .unreachable: "Start Cloak, then try again."
         }
     }

@@ -8,7 +8,8 @@ import Virtualization
 /// makes its keys and Tor identities from it, waits forever. It reaches the
 /// host on two ports only: the rewrite relay's and the Tor port's, and on a
 /// third, the door port's, when it is given a door. A guest that serves also
-/// runs the sender and the runner, which the host connects to (`connect`).
+/// runs the sender and the runner, and with its payment disk the payer, which
+/// the host connects to (`connect`).
 ///
 ///     made --prepare--> prepared --start--> running --power off or error--> ended
 ///                                              |

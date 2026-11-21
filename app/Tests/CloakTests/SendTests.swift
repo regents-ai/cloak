@@ -4,7 +4,7 @@ import CryptoKit
 import Foundation
 import Testing
 
-/// Development mode's send path on the Mac, against a stand-in for the
+/// Token Inference's send path on the Mac, against a stand-in for the
 /// guest's sender on the other end of a socket pair: the request built when
 /// the turn comes, the deposit kept sealed before the sender goes on, the
 /// answer back, and each way it stops. Test-only keys and folders; never the
