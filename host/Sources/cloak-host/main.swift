@@ -22,8 +22,8 @@ import Foundation
 // --new-disk the image is blank and the guest makes the disk in it. The guest
 // ends at once when the disk does not open, saying why on its console.
 //
-// With --serve the guest runs the sender after its checks (Development mode,
-// decision 10 in docs/plan.md) and its console goes to standard error: each
+// With --serve the guest runs the sender after its checks (Token Inference,
+// decisions 10 and 25 in docs/plan.md) and its console goes to standard error: each
 // line read from standard input is one request to the sender, and its answer
 // is one line on standard output, after a line {"keep": <deposit>} for each
 // deposit change the sender reports, which this kit does not keep. The guest
