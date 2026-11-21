@@ -455,7 +455,14 @@ public struct Venice: Sendable {
     public func ask(
         _ chat: VeniceChat, turn: UUID, in conversation: Conversation, partial: @Sendable (String) -> Void
     ) async throws(VeniceStop) -> VeniceAnswer {
-        try chat.check(in: try await Self.models(transport: transport))
+        let models: [VeniceModel]
+        do {
+            models = try await Self.models(transport: transport)
+        } catch {
+            // Only the list went; the message did not.
+            throw VeniceStop(error.kind, sent: false, "the list stopped: \(error.text)")
+        }
+        try chat.check(in: models)
         guard let messages = Remote.messages(for: turn, in: conversation) else {
             throw VeniceStop(.failed, sent: false, "the turn is not in the conversation")
         }

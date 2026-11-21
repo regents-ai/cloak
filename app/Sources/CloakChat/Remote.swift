@@ -480,13 +480,17 @@ public enum Remote {
                 }
             }
             feed.onTermination = { _ in forward.cancel() }
-            // Nil when this task is cancelled first.
             var first = heads.makeAsyncIterator()
-            guard case .success(let (status, headers))? = await first.next() else {
+            switch await first.next() {
+            case .success(let (status, headers))?:
+                return VeniceResponse(status: status, headers: headers, body: body)
+            case .failure(let unreachable)?:
+                throw unreachable
+            case nil:
+                // This task was cancelled first.
                 forward.cancel()
                 throw VeniceUnreachable(sent: true)
             }
-            return VeniceResponse(status: status, headers: headers, body: body)
         }
     }
 

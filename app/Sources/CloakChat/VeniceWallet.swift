@@ -236,7 +236,10 @@ extension Venice {
         let response = try await Self.carry(request, transport)
         let body = try await Self.whole(response)
         guard response.status == 200 else {
-            guard [400, 401, 402].contains(response.status) else { throw VeniceStop.answered(response.status, body, auth: nil) }
+            // Venice said it did not take the payment; for anything else, it
+            // may have, so the stop is never one that asks to wait and send
+            // again (`failed`, which the sheet says may have gone through).
+            guard [400, 401, 402].contains(response.status) else { throw VeniceStop(.failed, sent: true, "status \(response.status) to the top-up") }
             throw VeniceStop(.paymentRefused, sent: true, "status \(response.status) to the top-up")
         }
         struct Taken: Decodable {
