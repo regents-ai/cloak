@@ -80,12 +80,28 @@ public final class Payer {
         case nothingToSend
     }
 
-    /// What a call to the payer that stopped had asked for. The words for a
-    /// stop follow it: a read or a quote sends nothing, an approve may have.
-    public enum Ask: Sendable, Equatable {
-        case read
-        case quote
-        case approve
+    /// A press that stopped, as one value: what it had asked for, and why.
+    /// Its words follow what it asked: a quote sends nothing, an approve may
+    /// have sent a transaction.
+    public enum Stop: Sendable, Equatable {
+        /// A quote was asked for.
+        case quote(PayStop)
+        /// An approve was sent.
+        case approve(PayStop)
+        /// Withdraw was pressed with no deposit read, so nothing was asked.
+        /// The next read answers it.
+        case unread
+    }
+
+    /// Where V's reads are: one round at a time, in one loop.
+    private enum Reads: Equatable {
+        /// No loop.
+        case idle
+        /// A round under way; `again` when a read was asked for meanwhile,
+        /// which starts as soon as the round ends.
+        case reading(again: Bool)
+        /// Waiting to read again; ending `nap` reads at once.
+        case waiting(nap: Task<Void, Never>)
     }
 
     /// How far ahead of the expiry the warning starts.
@@ -104,9 +120,7 @@ public final class Payer {
     /// Why the last read stopped; nil once one works.
     public private(set) var readStop: PayStop?
     /// Why the last press stopped; nil once one works.
-    public private(set) var stop: PayStop?
-    /// What the press that stopped had asked for.
-    public private(set) var stopAsk = Ask.quote
+    public private(set) var stop: Stop?
     /// The expiry kept on the Mac, for while Cloak is paused.
     public private(set) var savedExpiry: Date?
     /// Presses under way: quotes and approves.
@@ -114,7 +128,11 @@ public final class Payer {
     @ObservationIgnored private let running: @MainActor () -> Bool
     @ObservationIgnored private let keep: @MainActor (Date?) -> Void
     @ObservationIgnored private let chosen: @MainActor () -> String?
-    @ObservationIgnored private var following: Task<Void, Never>?
+    private var reads = Reads.idle
+    /// Approves answered so far. A read lands only if none was answered
+    /// while it was out: what it read may be older than what the approve
+    /// set.
+    @ObservationIgnored private var approved = 0
 
     /// `running` says whether Cloak is running; `expiry` is the expiry kept,
     /// and `keep` keeps a new one (nil, none); `chosen` is the model its
@@ -135,8 +153,11 @@ public final class Payer {
     /// Reads the deposit, the chain at one block, the funding address, the
     /// withdrawal and the leftover ETH, then makes the follow calls that
     /// carry a deposit, a withdrawal or a send on, as the payer allows them:
-    /// with the amount and destination it saved, never a new one.
+    /// with the amount and destination it saved, never a new one. What it
+    /// read lands only if no approve was answered while it was out.
     public func refresh() async {
+        // A press that stopped for want of a read is answered by this one.
+        if stop == .unread { stop = nil }
         guard running() else {
             state = .unread
             (funding, withdrawal, returning, view, readStop) = (nil, nil, nil, nil, nil)
@@ -144,11 +165,14 @@ public final class Payer {
             review = nil
             return
         }
+        let approved = approved
         do throws(PayStop) {
             let view = try await queue.view(chain: true)
             let funding: FundingStatus = try decode(await queue.call("GET", "/admin/funding/address"))
             let withdrawal: WithdrawalStatus = try decode(await queue.call("GET", "/admin/withdrawal"))
             let returning: ReturnStatus = try decode(await queue.call("GET", "/admin/return"))
+            // The approve asked for a read of its own, which comes after.
+            guard self.approved == approved else { return }
             (self.view, self.funding, self.withdrawal, self.returning, readStop) = (view, funding, withdrawal, returning, nil)
             settle()
             let expiry = view.wallet.note.map { Date(timeIntervalSince1970: TimeInterval($0.expiryTs)) }
@@ -205,20 +229,28 @@ public final class Payer {
     /// The follow calls the last read allows: a deposit sent or confirming,
     /// with its saved amount; a withdrawal sent or confirming, with its saved
     /// destination and note; a send of the leftover ETH under way. A follow
-    /// call never signs anew.
+    /// call never signs anew. Each answer lands only if no approve was
+    /// answered while it was out.
     private func carryOn() async {
+        let approved = approved
         do throws(PayStop) {
             if let funding, ["deposit_pending", "confirming"].contains(funding.phase), let amount = funding.amount {
-                self.funding = try decode(await queue.call("POST", "/admin/funding/deposit", body: json(["amount": amount])))
+                let answer: FundingStatus = try decode(await queue.call("POST", "/admin/funding/deposit", body: json(["amount": amount])))
+                guard self.approved == approved else { return }
+                self.funding = answer
             }
             if let withdrawal, ["withdrawal_pending", "confirming"].contains(withdrawal.phase),
                 let destination = withdrawal.destination, let note = withdrawal.noteId
             {
-                self.withdrawal = try decode(
+                let answer: WithdrawalStatus = try decode(
                     await queue.call("POST", "/admin/withdrawal", body: json(["destination": destination, "note_id": note])))
+                guard self.approved == approved else { return }
+                self.withdrawal = answer
             }
             if returning?.phase == "return_pending" {
-                returning = try decode(await queue.call("POST", "/admin/return"))
+                let answer: ReturnStatus = try decode(await queue.call("POST", "/admin/return"))
+                guard self.approved == approved else { return }
+                returning = answer
             }
             settle()
         } catch {
@@ -226,18 +258,43 @@ public final class Payer {
         }
     }
 
-    /// Reads again, and again every 10 seconds while a deposit, a
-    /// withdrawal, a settlement or a send is on its way, or a quote is under
-    /// review; one round at a time.
+    /// Reads now, and again every 10 seconds while a deposit, a withdrawal,
+    /// a settlement or a send is on its way, or a quote is under review; one
+    /// round at a time, in one loop. Asked while a round is under way, it
+    /// reads again as soon as that round ends; asked while the loop waits,
+    /// it cuts the wait short.
     public func follow() {
-        guard following == nil else { return }
-        following = Task {
-            while true {
-                await refresh()
-                guard moving, (try? await Task.sleep(for: .seconds(10))) != nil else { break }
-            }
-            following = nil
+        switch reads {
+        case .idle:
+            reads = .reading(again: false)
+            Task { await loop() }
+        case .reading:
+            reads = .reading(again: true)
+        case .waiting(let nap):
+            nap.cancel()
         }
+    }
+
+    private func loop() async {
+        while true {
+            await refresh()
+            if reads == .reading(again: true) {
+                reads = .reading(again: false)
+            } else if moving {
+                let nap = Task { _ = try? await Task.sleep(for: .seconds(10)) }
+                reads = .waiting(nap: nap)
+                await nap.value
+                reads = .reading(again: false)
+            } else {
+                reads = .idle
+                return
+            }
+        }
+    }
+
+    /// A round of reads is under way.
+    public var reading: Bool {
+        if case .reading = reads { true } else { false }
     }
 
     /// A quote under review counts while it holds: what its button waits
@@ -268,11 +325,11 @@ public final class Payer {
     }
 
     /// Quotes the withdrawal of the whole deposit to the payer's own funding
-    /// address (decision 23), and shows it for review.
+    /// address (decision 23), and shows it for review. With no deposit read,
+    /// nothing is asked, and the stop says so.
     public func quoteWithdrawal() async {
         guard let address = funding?.address, let note = view?.wallet.note?.noteId else {
-            stop = PayStop(.failed, "no address or note read to withdraw")
-            stopAsk = .quote
+            stop = .unread
             return
         }
         await quote { () throws(PayStop) in
@@ -292,14 +349,13 @@ public final class Payer {
 
     private func quote(_ make: () async throws(PayStop) -> Review) async {
         stop = nil
-        stopAsk = .quote
         working += 1
         defer { working -= 1 }
         do {
             review = try await make()
             follow()
         } catch {
-            stop = error
+            stop = .quote(error)
         }
     }
 
@@ -318,7 +374,6 @@ public final class Payer {
             return
         }
         stop = nil
-        stopAsk = .approve
         working += 1
         defer { working -= 1 }
         do throws(PayStop) {
@@ -329,10 +384,11 @@ public final class Payer {
             case .withdrawal: withdrawal = try decode(answer)
             case .sendOut: returning = try decode(answer)
             }
+            approved += 1
             if self.review == review { self.review = nil }
             settle()
         } catch {
-            stop = error
+            stop = .approve(error)
         }
         follow()
     }
@@ -342,10 +398,10 @@ public final class Payer {
         review = nil
     }
 
-    /// Clears why the last press and the last read stopped.
+    /// Clears why the last press stopped. Why the last read stopped stays
+    /// until a read works.
     public func dismiss() {
         stop = nil
-        readStop = nil
     }
 
     // MARK: Buttons

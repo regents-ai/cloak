@@ -59,6 +59,11 @@ struct PayTests {
             send("A", ["status": status, "body": body])
         }
 
+        /// Ends the exchange with no answer.
+        func end() {
+            shutdown(socket, SHUT_RDWR)
+        }
+
         /// Returns once the Mac has closed its end.
         func hungUp() async {
             await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
@@ -104,6 +109,11 @@ struct PayTests {
 
         func set(_ route: String, _ answer: String) {
             answers.withLock { $0[route] = answer }
+        }
+
+        /// Hands on the route's next exchanges, for the check to answer.
+        func unset(_ route: String) {
+            answers.withLock { $0[route] = nil }
         }
 
         var line: PayLine {
@@ -251,6 +261,131 @@ struct PayTests {
         #expect(approves.count == 1)
         #expect(standIn.routes.count { $0 == "POST /admin/funding/quote" } == quotes + 1)
         #expect(payer.review?.quote.expired(at: .now) == true)
+    }
+
+    /// A quote pressed while an approve is out leaves the approve's stop its
+    /// own: one that got no answer may have sent a transaction.
+    @Test func aStopIsAboutItsOwnPress() async throws {
+        var answers = Self.atRest
+        answers["POST /admin/funding/quote"] = Self.quote(expires: Int64(Date.now.timeIntervalSince1970 * 1000) + 30_000)
+        let standIn = StandIn(answers: answers)
+        let payer = Self.payer(standIn)
+        var pending = standIn.pending.makeAsyncIterator()
+
+        await payer.quoteDeposit(microUSD: 20_000_000)
+        let confirming = Task { await payer.confirm() }
+        let approve = try #require(await pending.next())
+        #expect(approve.route == "POST /admin/funding/approve")
+
+        await payer.quoteDeposit(microUSD: 20_000_000)
+        #expect(payer.stop == nil)
+        approve.end()
+        await confirming.value
+        if case .approve(let stop)? = payer.stop {
+            #expect(stop.code == .ended)
+        } else {
+            Issue.record("the approve stopped as \(String(describing: payer.stop))")
+        }
+
+        // A quote that stops is a quote's.
+        standIn.unset("POST /admin/funding/quote")
+        let quoting = Task { await payer.quoteDeposit(microUSD: 20_000_000) }
+        let quote = try #require(await pending.next())
+        quote.end()
+        await quoting.value
+        if case .quote(let stop)? = payer.stop {
+            #expect(stop.code == .ended)
+        } else {
+            Issue.record("the quote stopped as \(String(describing: payer.stop))")
+        }
+        payer.cancelReview()
+    }
+
+    /// Refresh, and the read asked for as Cloak starts or pauses, read now.
+    /// One asked for while a round is out reads as soon as it ends; one asked
+    /// for while the loop waits cuts the wait short. One round at a time.
+    @Test func aCallToReadNowCutsTheWaitShortOneRoundAtATime() async throws {
+        // Every read but the deposit's, which the check answers, so each
+        // round shows as it goes; the deposit on its way keeps the loop on.
+        let standIn = StandIn(answers: [
+            "GET /admin/funding/address": Self.funding("deposit_pending"), "GET /admin/withdrawal": Self.withdrawal("no_note"),
+            "GET /admin/return": Self.returning("ready"), "POST /admin/funding/deposit": Self.funding("deposit_pending"),
+        ])
+        let payer = Self.payer(standIn)
+        var pending = standIn.pending.makeAsyncIterator()
+        var rounds: Int { standIn.routes.count { $0 == "V" } }
+
+        // Well inside the 10 seconds the loop waits.
+        let soon = Duration.seconds(5)
+        payer.follow()
+        let first = try #require(await pending.next())
+        payer.follow()
+        payer.follow()
+        var asked = ContinuousClock.now
+        first.answer(Self.view(note: false))
+        let second = try #require(await pending.next())
+        #expect(ContinuousClock.now - asked < soon)
+        second.answer(Self.view(note: false))
+        await Self.until { !payer.reading }
+        #expect(rounds == 2)
+        #expect(payer.state == .depositing("finalizing"))
+
+        asked = ContinuousClock.now
+        payer.follow()
+        let third = try #require(await pending.next())
+        #expect(ContinuousClock.now - asked < soon)
+        #expect(rounds == 3)
+
+        // At rest, the loop ends.
+        standIn.set("GET /admin/funding/address", Self.funding("ready"))
+        third.answer(Self.view(note: false))
+        await Self.until { !payer.reading }
+        #expect(payer.state == .none)
+        #expect(rounds == 3)
+    }
+
+    /// A round's reads begun before an approve's answer can't put back the
+    /// funding the approve replaced; the approve's own read comes after.
+    @Test func aReadBegunBeforeAnApprovesAnswerDoesNotLandOverIt() async throws {
+        var answers = Self.atRest
+        answers["POST /admin/funding/quote"] = Self.quote(expires: Int64(Date.now.timeIntervalSince1970 * 1000) + 30_000)
+        let standIn = StandIn(answers: answers)
+        let payer = Self.payer(standIn)
+        var pending = standIn.pending.makeAsyncIterator()
+
+        await payer.quoteDeposit(microUSD: 20_000_000)
+        await Self.until { !payer.reading }
+        #expect(payer.state == .none)
+
+        // The next round's funding read waits for the check.
+        standIn.unset("GET /admin/funding/address")
+        payer.follow()
+        let older = try #require(await pending.next())
+        #expect(older.route == "GET /admin/funding/address")
+        // Reads from here show the deposit sent; the round after waits on
+        // its "V" for the check.
+        standIn.set("GET /admin/funding/address", Self.funding("deposit_pending"))
+        standIn.set("POST /admin/funding/deposit", Self.funding("deposit_pending"))
+        standIn.unset("V")
+
+        let confirming = Task { await payer.confirm() }
+        let approve = try #require(await pending.next())
+        #expect(approve.route == "POST /admin/funding/approve")
+        approve.answer(Self.funding("deposit_pending"))
+        await confirming.value
+        #expect(payer.state == .depositing("finalizing"))
+
+        older.answer(Self.funding("ready"))
+        let next = try #require(await pending.next())
+        #expect(next.route == "V")
+        #expect(payer.funding?.phase == "deposit_pending")
+        #expect(payer.state == .depositing("finalizing"))
+
+        // At rest, the loop ends.
+        standIn.set("GET /admin/funding/address", Self.funding("ready"))
+        standIn.set("V", Self.view(note: false))
+        next.answer(Self.view(note: false))
+        await Self.until { !payer.reading }
     }
 
     @Test func aDepositsFeeAndTotalAreShownInDollarsAtTheQuotesOwnRate() async {

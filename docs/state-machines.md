@@ -1206,12 +1206,36 @@ funding is `deposit_pending` or `confirming`; the withdrawal's
 destination and note while it is `withdrawal_pending` or `confirming`;
 the send while the return is `return_pending`. A follow call never signs.
 `follow` reads at once and again every 10 seconds while the state is
-`depositing`, `withdrawing` or `settling`, or a send is under way, one
-round at a time (a `Task.sleep` loop in one task, `Payer.following`). It
-runs at each change between Running and not, when the Wallet sheet
-opens, on its Refresh, after each approve, and after each V Send or task.
-A read that fails keeps `readStop`, clears the chain read, and blocks
-nothing.
+`depositing`, `withdrawing` or `settling`, a send is under way, or a
+quote is under review and has not expired, one round at a time, in one
+loop. Where the reads are is one value, `Payer.reads`:
+
+```
+idle --follow--> reading
+reading --round ends, a read asked for meanwhile--> reading, at once
+reading --round ends, still moving--> waiting (one Task.sleep of 10 s, in its own task, the nap)
+reading --round ends, at rest--> idle
+waiting --10 s, or follow, which cancels the nap--> reading
+```
+
+It runs at each change between Running and not, when the Wallet sheet
+opens, on its Refresh, after each quote and each approve, on a read's
+Try Again, and after each V Send or task. A call while a round is out
+reads again as soon as that round ends; a call while the loop waits cuts
+the wait short. A read that fails keeps `readStop`, clears the chain
+read, and blocks nothing. Its row in the sheet says why, with Try Again
+(a spinner in its place while a round is out), and stays until a read
+works; Dismiss clears only a press's stop. While nothing has been read,
+the sheet shows a spinner until a read stops.
+
+A round's reads, and each of its follow calls, land only if no approve
+was answered while they were out (`Payer.approved` counts the approves
+answered). What they read may be older than what the approve set, so
+they are dropped, and the read the approve asks for, which starts as
+soon as the round ends, reads afresh. Reads and approves cannot be put in
+order by waiting, since an approve is never held back and may take 11
+minutes, and the payer's answers carry nothing to compare; the order in
+which they land on the Mac is the sound one.
 
 Beside the state, the expiry has a band (`Payer.band(at:)`): `far`;
 `near`, within 10 days of it (`Payer.warning`); `due`, past it, when
@@ -1235,13 +1259,20 @@ review --Cancel--> nothing approved
 `Payer.confirm` is the only place an approve is sent from, and only for
 the quote the review shows. Withdraw's destination is always the funding
 address itself (decision 23a). Each press is sent; `working` counts
-those under way, shown as a spinner, and blocks nothing. A button is off only where the chain,
+those under way, shown as a spinner, and blocks nothing. A press that
+stops keeps why as one value, `Payer.stop`, set where the stop is
+recorded, so its words are about it alone: `quote` (nothing was sent),
+`approve` (a transaction may have been sent), or `unread` (Withdraw
+pressed before the deposit was read: nothing was asked; its row carries
+Try Again, and the next read clears it). Each press clears the last
+stop, and Dismiss clears it. A button is off only where the chain,
 read at the latest block, shows it certain to fail, with a few words
 beside it: Deposit while the vault is paused or a note is `active`;
 Withdraw while paused or no note is `active`; Send Out while the address
 holds no ETH; the review's button while paused, or while the address
 holds less than the quote needs (the total for a deposit, the fee for a
-withdrawal).
+withdrawal). Return in the Amount box does what Deposit does, so nothing
+while Deposit is off.
 
 A V chat request (`Payer.send`, then `PayQueue.complete`) goes to the
 model the owner picked in Wallet (`AppSettings.vModel`) while the service
@@ -1279,8 +1310,12 @@ by `confirm`, and an expired quote is quoted again instead; two presses
 send two requests; one request is out at a time and the owner's go
 first; a request out is not cut for another; a hold that goes quiet ends
 at its limit with nothing sent; a phase the Mac does not know makes no
-call; an `R` frame carries only the identity and the reworded body; and a
-rewording that stops sends no request through the door.
+call; an `R` frame carries only the identity and the reworded body; a
+rewording that stops sends no request through the door; an approve's stop
+stays an approve's though a quote was pressed while it was out; a call to
+read now reads as soon as the round out ends and cuts the 10-second wait
+short, one round at a time; and a round's read begun before an approve's
+answer does not land over it.
 
 ## 9e. Darkbloom (`app/Sources/RegentsCloak/DarkbloomClient.swift`, `app/Sources/RegentsCloak/DarkbloomMode.swift`)
 
@@ -1521,7 +1556,8 @@ not yet merged (`t3/near-trace-sharing`, `t3/add-venice-provider`), for
 every place a stage is read off several fields. Section 10's entries
 still hold except where a line here says otherwise. Each entry gives what
 holds the stage, then the faults found in it, each traced in the code
-unless it says "likely". None is fixed yet; none has a check.
+unless it says "likely". None was fixed when found, and none had a check;
+an entry that says "Now" has been fixed since.
 
 ### The menu and the app's shell
 
@@ -1619,26 +1655,45 @@ unless it says "likely". None is fixed yet; none has a check.
 
 ### The wallets
 
-- **V's reads** (`Payer.following`, `moving`, `readStop`). Idle, reading,
-  waiting 10 seconds, ended. A first read that fails leaves the state
-  unread: a spinner for good under a stop that says "Try again" with no
-  button. Refresh, and the read a pause asks for, do nothing while the
-  loop waits. An older read can land over an approve's answer (likely).
-  The loop also runs while a quote is under review, and after each quote
-  and each Try Again, which section 9d does not say.
-- **V's quote** (`review`, `working`, `stop`, `stopAsk`). Asked, shown,
-  expired, approving, approved, stopped, cancelled. `stopAsk` is set at
-  the press and shared, so a quote pressed while an approve is out makes
-  that approve's stop read "Nothing was sent." A stop shows at the top of
-  the sheet, not where the press was made. Withdraw stays on with no note
-  read, and every press then stops as "Failed".
-- **V's Amount field** (`text`, `wrong`). Return quotes while Deposit is
-  off. The red line outlives the text it was about.
-- **V's failed and taken states.** Failed hides the address and Send Out.
-  Taken shows no button.
+- **V's reads** (`Payer.reads`, `moving`, `readStop`). Idle, reading,
+  waiting 10 seconds. Before (21 November): the stage was read off
+  `Payer.following` and `readStop`. A first read that failed left the
+  state unread: a spinner for good under a stop that said "Try again"
+  with no button. Refresh, and the read a pause asks for, did nothing
+  while the loop waited. An older read could land over an approve's
+  answer, since traced in the code. The loop also ran while a quote was
+  under review, and after each quote and each Try Again, which section 9d
+  did not say. Now the stage is one value, `Payer.reads`, and section 9d
+  says when the loop runs; a read that has stopped shows no spinner, and
+  its row carries Try Again; a read asked for while the loop waits cuts
+  the wait short, and one asked for during a round reads as soon as it
+  ends; and a read lands only if no approve was answered while it was
+  out. Checks: `aCallToReadNowCutsTheWaitShortOneRoundAtATime` and
+  `aReadBegunBeforeAnApprovesAnswerDoesNotLandOverIt` in
+  `app/Tests/CloakTests/PayTests.swift`.
+- **V's quote** (`review`, `working`, `stop`). Asked, shown, expired,
+  approving, approved, stopped, cancelled. A stop shows at the top of the
+  sheet, not where the press was made. Before (21 November): what a stop
+  had asked for was `stopAsk`, set at the press and shared, so a quote
+  pressed while an approve was out made that approve's stop read "Nothing
+  was sent."; and Withdraw stayed on with no note read, every press then
+  stopping as "Failed", which hid the read's own stop. Now a stop is one
+  value, `Payer.Stop`, carrying its own ask, set where it is recorded;
+  Withdraw stays on, and with nothing read it stops as "Not read", with
+  Try Again for the read. Check: `aStopIsAboutItsOwnPress`.
+- **V's Amount field** (`text`, `wrong`). Before (21 November): Return
+  quoted while Deposit was off, and the red line outlived the text it was
+  about, hiding the warning over $50. Now Return does nothing while
+  Deposit is off, and the red line goes as soon as the text changes. No
+  check: the sheet is not under test.
+- **V's failed and taken states.** Taken shows no button. Before (21
+  November): Failed hid the address and Send Out. Now the address, On
+  hand and Send Out… show in it whenever the funding is read. No check.
 - **V's Send Out** (`returning.phase`). Not a case of `Payer.State`; a
   phase other than `return_pending` is not read.
-- **V's model list** (`Payer.models`). A read that fails spins for good.
+- **V's model list** (`Payer.models`). Before (21 November): a read that
+  failed spun for good. Now the row says "Couldn't load the list", with
+  Try Again. No check.
 - **Token Inference's wallet.** As section 10. One stop row for the press
   and the read, both cleared by Dismiss; Close and Withdraw are on before
   any read.

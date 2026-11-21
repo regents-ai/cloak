@@ -187,12 +187,13 @@ It keeps today's frame (540 wide, grouped form, the Refresh symbol and Done) and
 | `withdrawing` | An up-arrow symbol, "Withdrawing", "About 7 minutes", the destination, and the transaction hash with Copy once there is one. |
 | After withdrawal | **On hand** with the leftover ETH and **Send Out…**, which takes an address (the daemon's "return"). |
 | `taken` | "This deposit was taken on 19 Dec." No money button. |
-| `failed` | A triangle, one or two words by fault, the detail on demand, and Try Again where the daemon allows a resume. |
+| `failed` | A triangle, one or two words by fault, the detail on demand, and Try Again where the daemon allows a resume. Under it, while the address is read: **Address**, **On hand** and **Send Out…**, so ETH there can still be seen and sent out. |
 
 - The info symbol beside **Expires** carries the long words: "After this day anyone can send this deposit to the service's operator, spent or not."
 - The vault rounds expiry up to a UTC day boundary (`ZkApiVault.sol:116-119`), so the sheet shows local date and time, not a bare day that could be off by one.
 - Outside the sheet, the Wallet toolbar button takes a warning badge in `near`, and Chat shows its existing `Notice` in the last three days.
-- The model picker shows each model's cap ("up to $1.00 a request"), because the list has no token prices.
+- The model picker shows each model's cap ("up to $1.00 a request"), because the list has no token prices. A read of the list that stops says so in the row, with Try Again.
+- A read of the wallet that stops says why at the top of the sheet, with Try Again, until a read works; while nothing has been read, the sheet shows a spinner only until a read stops. Withdraw pressed before the deposit was read stays on and stops as "Not read", with Try Again for the read.
 
 **Disabled buttons, from the chain read at the latest block only:**
 

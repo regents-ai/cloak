@@ -22,22 +22,27 @@ struct VWallet: View {
     var body: some View {
         if let stop = payer.stop {
             Section {
-                PayStopRow(stop: stop, ask: payer.stopAsk, dismiss: payer.dismiss)
+                PressStopRow(payer: payer, stop: stop)
             }
         } else if let stop = payer.readStop {
             Section {
-                PayStopRow(stop: stop, ask: .read, dismiss: payer.dismiss)
+                ReadStopRow(payer: payer, stop: stop)
             }
         }
         switch payer.state {
         case .unread:
-            if running {
+            // Until a read stops; then its row says why, with Try Again.
+            if running, payer.readStop == nil {
                 ProgressView()
                     .frame(maxWidth: .infinity)
             }
         case .failed(let fault):
             Section {
                 Failed(payer: payer, fault: fault)
+            }
+            // The ETH on the address can still be seen and sent out.
+            if let funding = payer.funding {
+                AddressSection(payer: payer, funding: funding)
             }
         default:
             if let funding = payer.funding {
@@ -325,7 +330,8 @@ private struct WithdrawRow: View {
 
 /// The amount to deposit, in dollars, which the payer prices in ETH, and
 /// Deposit, which asks it for the quote. The amount is checked as Deposit
-/// is pressed.
+/// is pressed, and Return in the box does what Deposit does. Why an amount
+/// was turned away shows until the text changes.
 private struct Amount: View {
     let payer: Payer
     @State private var text = ""
@@ -340,7 +346,11 @@ private struct Amount: View {
                 TextField("Amount", text: $text, prompt: Text("20"))
                     .labelsHidden()
                     .fixedSize()
-                    .onSubmit(deposit)
+                    .onSubmit {
+                        // Nothing while Deposit is off.
+                        if payer.depositBlock == nil { deposit() }
+                    }
+                    .onChange(of: text) { wrong = false }
             }
         }
         if wrong {
@@ -479,10 +489,14 @@ private struct Failed: View {
 }
 
 /// The model V chats go to, from the service's list, each with the most one
-/// request to it may cost. The choice is kept in Settings' defaults.
+/// request to it may cost. The choice is kept in Settings' defaults. A read
+/// of the list that stops says so in the row, with Try Again.
 private struct ModelSection: View {
     let payer: Payer
     @Bindable var settings: AppSettings
+    /// The last read of the list from here stopped; false while one is
+    /// under way.
+    @State private var stopped = false
 
     var body: some View {
         Section {
@@ -495,19 +509,35 @@ private struct ModelSection: View {
                 }
             } else {
                 LabeledContent("Model") {
-                    if payer.models == nil {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
+                    if payer.models != nil {
                         Text("None listed")
                             .foregroundStyle(.secondary)
+                    } else if stopped {
+                        HStack(spacing: 8) {
+                            Text("Couldn't load the list")
+                                .foregroundStyle(.secondary)
+                            Button("Try Again") { Task { await load() } }
+                        }
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
                     }
                 }
             }
         }
         .task(id: payer.state == .unread) {
             guard payer.state != .unread else { return }
-            try? await payer.loadModels()
+            await load()
+        }
+    }
+
+    /// Reads the service's models through the payer.
+    private func load() async {
+        stopped = false
+        do {
+            try await payer.loadModels()
+        } catch {
+            stopped = true
         }
     }
 
@@ -558,17 +588,77 @@ struct CopyButton: View {
     }
 }
 
-/// Why a request to V's payer stopped, in plain words. A chat request with
-/// no deposit says to deposit; that one, and one whose model the service
-/// can't use, come with the way to the wallet.
+/// Why a press in V's wallet stopped, in plain words, with Dismiss. One
+/// that stopped for want of a read carries Try Again, which reads.
+private struct PressStopRow: View {
+    let payer: Payer
+    let stop: Payer.Stop
+
+    var body: some View {
+        StopLine(title: stop.title, words: stop.words) {
+            if stop == .unread {
+                ReadAgain(payer: payer)
+            }
+            DismissButton(action: payer.dismiss)
+        }
+    }
+}
+
+/// Why the last read of V's wallet stopped, in plain words, with Try Again.
+/// It stays until a read works.
+private struct ReadStopRow: View {
+    let payer: Payer
+    let stop: PayStop
+
+    var body: some View {
+        StopLine(title: stop.title, words: stop.readWords) {
+            ReadAgain(payer: payer)
+        }
+    }
+}
+
+/// Try Again on a read that stopped: reads now. A spinner in its place
+/// while a read is under way.
+private struct ReadAgain: View {
+    let payer: Payer
+
+    var body: some View {
+        if payer.reading {
+            ProgressView()
+                .controlSize(.small)
+        } else {
+            Button("Try Again", action: payer.follow)
+        }
+    }
+}
+
+/// Why a chat request to V's payer stopped, in plain words. One with no
+/// deposit says to deposit; that one, and one whose model the service can't
+/// use, come with the way to the wallet.
 struct PayStopRow: View {
     let stop: PayStop
     /// What the stopped request was to do: send or run.
     var verb = "send"
-    /// What a call from the wallet had asked for; nil for a chat request.
-    var ask: Payer.Ask?
     var showWallet: (() -> Void)?
     let dismiss: () -> Void
+
+    var body: some View {
+        let noDeposit = stop.code == .noDeposit
+        StopLine(title: noDeposit ? "Deposit to \(verb)." : stop.title, words: noDeposit ? nil : stop.words) {
+            if noDeposit || stop.code == .modelUnavailable, let showWallet {
+                Button("Wallet…", action: showWallet)
+            }
+            DismissButton(action: dismiss)
+        }
+    }
+}
+
+/// A stop's row: its mark, what stopped and what to do, and the ways on at
+/// the right.
+private struct StopLine<Actions: View>: View {
+    let title: String
+    let words: String?
+    @ViewBuilder let actions: Actions
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -576,25 +666,52 @@ struct PayStopRow: View {
                 .foregroundStyle(.orange)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                if stop.code == .noDeposit {
-                    Text("Deposit to \(verb).")
-                        .fontWeight(.medium)
-                } else {
-                    Text(stop.title)
-                        .fontWeight(.medium)
-                    Text(stop.words(for: ask))
+                Text(title)
+                    .fontWeight(.medium)
+                if let words {
+                    Text(words)
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer()
-            if stop.code == .noDeposit || stop.code == .modelUnavailable, let showWallet {
-                Button("Wallet…", action: showWallet)
-            }
-            Button("Dismiss", systemImage: "xmark", action: dismiss)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .hover(Circle(), outset: 4)
-                .help("Dismiss")
+            actions
+        }
+    }
+}
+
+/// Dismiss, as a symbol.
+private struct DismissButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button("Dismiss", systemImage: "xmark", action: action)
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .hover(Circle(), outset: 4)
+            .help("Dismiss")
+    }
+}
+
+extension Payer.Stop {
+    var title: String {
+        switch self {
+        case .quote(let stop), .approve(let stop): stop.title
+        case .unread: "Not read"
+        }
+    }
+
+    /// What happened and what to do. A quote sends nothing, so one that got
+    /// no answer says so; an approve may have been sent.
+    var words: String {
+        switch self {
+        case .quote(let stop) where stop.unanswered:
+            "No quote came. Nothing was sent. Try again."
+        case .approve(let stop) where stop.unanswered:
+            "No answer came. It may have been sent: the Wallet shows it once the chain does."
+        case .quote(let stop), .approve(let stop):
+            stop.words
+        case .unread:
+            "Cloak hasn't read the deposit, so nothing was sent. Try again."
         }
     }
 }
@@ -619,23 +736,23 @@ extension PayStop {
         }
     }
 
-    /// What happened and what to do, for a chat request (`ask` nil) or a
-    /// call from the wallet. A read or a quote sends nothing, so one that
-    /// got no answer says so; an approve may have been sent.
-    func words(for ask: Payer.Ask?) -> String {
-        switch (code, ask) {
-        case (.timedOut, .read?), (.ended, .read?), (.providerFailed, .read?):
-            "Cloak couldn't read V's wallet. Nothing was sent. Try again."
-        case (.timedOut, .quote?), (.ended, .quote?), (.providerFailed, .quote?):
-            "No quote came. Nothing was sent. Try again."
-        case (.timedOut, .approve?), (.ended, .approve?), (.providerFailed, .approve?):
-            "No answer came. It may have been sent: the Wallet shows it once the chain does."
-        default:
-            words
+    /// For a read of V's wallet. A read sends nothing, so one that got no
+    /// answer says so.
+    var readWords: String {
+        unanswered ? "Cloak couldn't read V's wallet. Nothing was sent. Try again." : words
+    }
+
+    /// No answer came: in time, before the connection ended, or from the
+    /// provider.
+    fileprivate var unanswered: Bool {
+        switch code {
+        case .timedOut, .ended, .providerFailed: true
+        default: false
         }
     }
 
-    private var words: String {
+    /// What happened and what to do, for a chat request.
+    var words: String {
         switch code {
         case .unreachable: "Cloak couldn't reach V's wallet. Pause and start Cloak, then try again."
         case .noDeposit: "Make a deposit in Wallet, then try again."
