@@ -9,8 +9,9 @@ import ServiceManagement
 /// Cloak's settings, kept in the app's defaults: every key and its default
 /// is named here, once, and read and written only here. Only the Settings
 /// window sets them, and Never reword also the drop-down beside a Chat
-/// card's Send, Cover also its toggle in Chat's toolbar, and Tor for NEAR
-/// also its pill under Chat's message box. No setting can be set from a
+/// card's Send, Cover also its toggle in Chat's toolbar, Tor for NEAR also
+/// its pill under Chat's message box, and Share Traces only its switch in
+/// NEAR's Wallet sheet. No setting can be set from a
 /// link, from the door, from AppleScript or from the guest: none of those
 /// reaches this type. Whether the app opens at login is the system's login
 /// item (`LoginItem`), and whether it checks for updates by itself is
@@ -32,6 +33,7 @@ final class AppSettings {
         case savedChats
         case nearTor
         case proofFreshness
+        case shareTraces
         case answerModel
         case vModel
         case depositExpires
@@ -39,7 +41,8 @@ final class AppSettings {
 
     /// Each setting until it is chosen, and again after Restore Defaults.
     /// The quick prompt's shortcut has none; Never reword is off; Cover,
-    /// Review and Saved chats are on; Tor for NEAR is off; Local Llama
+    /// Review and Saved chats are on; Tor for NEAR and Share Traces are
+    /// off; Local Llama
     /// answers with the model that rewords.
     nonisolated static let defaultFreeMemory = FreeMemory.fiveMinutes
     nonisolated static let defaultProofFreshness = ProofFreshness.tenMinutes
@@ -174,6 +177,18 @@ final class AppSettings {
         }
     }
 
+    /// Whether NEAR chats can be shared with the commons (`TraceShare`).
+    /// Off, nothing about sharing runs.
+    var shareTraces: Bool {
+        get {
+            access(keyPath: \.shareTraces)
+            return defaults.bool(forKey: Key.shareTraces.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.shareTraces) { defaults.set(newValue, forKey: Key.shareTraces.rawValue) }
+        }
+    }
+
     /// The name of the model Local Llama chats are answered with (decision
     /// 21 in docs/plan.md); nil, the model that rewords. A name the manifest
     /// no longer lists answers nothing until another is chosen.
@@ -273,6 +288,7 @@ final class AppSettings {
             case .savedChats: withMutation(keyPath: \.savedChats, remove)
             case .nearTor: withMutation(keyPath: \.nearTor, remove)
             case .proofFreshness: withMutation(keyPath: \.proofFreshness, remove)
+            case .shareTraces: withMutation(keyPath: \.shareTraces, remove)
             case .answerModel: withMutation(keyPath: \.answerModel, remove)
             case .vModel: withMutation(keyPath: \.vModel, remove)
             case .depositExpires: break

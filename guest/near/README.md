@@ -591,8 +591,10 @@ Every field is required, and any other field is refused.
   submission ids): a claim for the account's full grant, then the commons'
   status of each. Answer `reported`: `commons`, as it came.
 - `withdraw` (`route`, `session`, `submission`): withdraws one submission
-  under the account session. Answer `withdrawn`, with `session` and
-  `session_expires_at` when the commons renewed the session.
+  under the account session. Answer `withdrawn`: `commons`, the commons'
+  answer as it came, which says how far the trace had gone
+  (`distribution_reach`), and `session` and `session_expires_at` when the
+  commons renewed the session.
 
 `scopes` are the commons' consent scopes: `debugging_evaluation` always,
 and any of `benchmark_only`, `ranking_training`, `model_training` and

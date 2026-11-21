@@ -1760,6 +1760,8 @@ extension NearStop {
         case .helper: "Damaged"
         case .ended: "Stopped"
         case .key: "Key unreadable"
+        case .signin: "Not signed in"
+        case .claim: "No claim"
         }
     }
 
@@ -1782,6 +1784,8 @@ extension NearStop {
         case .helper: "Reinstall Cloak."
         case .ended: "The part of Cloak that talks to NEAR quit."
         case .key: "The keychain didn't give Cloak your NEAR key."
+        case .signin: "The sign-in in your browser didn't finish."
+        case .claim: "The commons didn't give Cloak a claim to upload with, so nothing went."
         }
     }
 }

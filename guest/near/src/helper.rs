@@ -219,9 +219,11 @@ enum Answer {
     Uploaded { sent: bool, commons: Value },
     /// A `status` was read: the commons' answer as it came.
     Reported { sent: bool, commons: Value },
-    /// A `withdraw` was taken, and the account session if it was renewed.
+    /// A `withdraw` was taken: the commons' answer as it came, and the
+    /// account session if it was renewed.
     Withdrawn {
         sent: bool,
+        commons: Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         session: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -478,6 +480,7 @@ impl Helper {
             } => share::withdraw(&self.net(&route.routes()), &session, &submission)
                 .map(|withdrawn| Answer::Withdrawn {
                     sent: true,
+                    commons: withdrawn.commons,
                     session: withdrawn.session,
                     session_expires_at: withdrawn.session_expires_at,
                 })

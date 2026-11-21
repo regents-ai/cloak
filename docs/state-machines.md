@@ -1350,6 +1350,72 @@ whose reader goes away first is stopped with all it started (its process
 group), as Darkbloom's own app stops its installer. Nothing here is under
 test.
 
+## 9f. Trace sharing (`app/Sources/CloakChat/TraceShare.swift`, `app/Sources/CloakChat/Traces.swift`, `guest/near/src/share.rs`)
+
+Share Traces, a switch in NEAR's Wallet sheet (`AppSettings.shareTraces`,
+off at first), lets one NEAR Private AI chat at a time be shared with the
+commons (`docs/near-share.md`, section 7). `TraceShare` is its one model,
+and `TraceShare.state` its one named state. `NearMode` follows the switch
+(`Observations` on `AppSettings.shareTraces`, which Restore Defaults turns
+off too):
+
+```
+off --switch on--> opening (the keychain item read)
+opening --no item--> signedOut
+opening --an item--> signedIn(idle)
+opening --the keychain fails--> opening, with `stop` (switch on again reads again)
+signedOut, signedIn(any) --Sign In--> signingIn (listen; the browser opened; enrol waits for it)
+signingIn --the browser hands back a session, enrolled, item written--> signedIn(idle)
+signingIn --stops, or Cancel--> signedIn(idle) with an item, else signedOut
+signedIn(any) --Ready on a NEAR chat (a claim, then the challenge)--> signedIn(readied(chat))
+readied(chat) --that chat's next Send, its challenge not ended--> sending(chat, turn)
+sending --answered--> answered(chat, turn, exchange)
+sending --stopped before reaching NEAR--> readied(chat)
+sending --stopped, may have reached NEAR--> idle
+answered, reviewed --Review: the witness's quote checked, then the exchange sent to it--> reviewed(answered, envelope)
+reviewed --Share: the envelope's bytes uploaded, exactly--> idle, the trace kept
+any --switch off--> off (the sharing helper ended at once)
+```
+
+- **Two helpers.** The readied message goes on the chat's helper
+  (`Near.readied`, behind any NEAR line under way). Every other sharing
+  step goes on a helper of its own, the same file under the same pin
+  (`AppDelegate.traces`), since `enrol` holds its helper until the browser
+  hands back a session. Cancel, a second Sign In, the switch going off and
+  Quit end that helper at once, a step under way or not.
+- **Sealed unless readied.** `TraceShare.send` sends a message as
+  `Near.ask` always has, byte for byte, unless Share Traces is on, signed
+  in, the message's chat is the one readied, the chat is NEAR's and not an
+  agent's, and its challenge has not ended. Only then does it go as
+  `readied`, without Cloak's encryption and carrying the challenge. Only the
+  first message after Ready does; one that stopped before reaching NEAR
+  leaves the chat readied. Ready on another chat replaces the one readied,
+  and whatever came of it.
+- **Every step a press.** Ready, Review, Share, Refresh and Withdraw each
+  write one line, at their press, and no press waits for another: the
+  helper takes them one at a time. A press certain to fail writes nothing:
+  Ready on a chat of another mode or an agent's, or while not signed in;
+  Review on an exchange with no receipt; Share before a review. Status is
+  read only at Refresh, never by itself.
+- **Kept.** One keychain item, `sh.regents.cloak.traces`
+  (`TracesKeychain`): the device key's 32-byte seed (made with CryptoKit at
+  the first sign-in, and used again at each later one), the account the
+  commons enrolled, its session, the provider last signed in with, the
+  scopes granted, and each trace shared with its chat, its message, the
+  commons' ids and its last status. Read when the switch turns on, and
+  written after each change, one write after another
+  (`TraceShare.keep`). NEAR AI's own session is the helper's alone and is
+  dropped once the enrolment is sent. What was readied, answered or
+  reviewed is in memory only.
+- **Late answers.** `epoch` counts each turn of the switch and each sign-in;
+  an answer from before one changes nothing, except that an upload or a
+  withdrawal the commons took is kept whatever happened since.
+- **Stops.** `stop` holds the last step that stopped (the helper's own
+  stop, with whether its request may have reached its host, or `key` for
+  the keychain), until the next press or it is dismissed.
+
+Nothing here is under test yet.
+
 ## 10. Stages still implied (found 15 November 2026)
 
 A second read, of everything built since section 9: the chat window, the

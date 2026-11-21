@@ -11,7 +11,9 @@ import os
 /// address, NEAR's connections and Intel's each under a name of their own,
 /// new at each launch. The key is in the keychain only (`NearKeychain`).
 /// Every press of Send reaches the helper, which takes one line at a time;
-/// none is refused here for one already under way.
+/// none is refused here for one already under way. Each message goes by
+/// `TraceShare`, which sends it as it always goes unless its chat is the one
+/// readied for sharing; `share` follows the Share Traces switch.
 @MainActor
 @Observable
 final class NearMode {
@@ -22,6 +24,7 @@ final class NearMode {
     }
 
     let near: Near
+    let share: TraceShare
     let supervisor: Supervisor
     let settings: AppSettings
     /// Whether a NEAR key is kept, as the keychain last answered; nil until
@@ -44,11 +47,15 @@ final class NearMode {
     private let intelIdentity = Chat.newIdentity()
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "near")
 
-    init(near: Near, supervisor: Supervisor, settings: AppSettings) {
+    init(near: Near, share: TraceShare, supervisor: Supervisor, settings: AppSettings) {
         self.near = near
+        self.share = share
         self.supervisor = supervisor
         self.settings = settings
         Task { await find() }
+        Task {
+            for await on in Observations({ settings.shareTraces }) { await share.turn(on: on) }
+        }
     }
 
     /// How the helper goes now: direct, or through Cloak's tor while Cloak
@@ -87,14 +94,15 @@ final class NearMode {
         }
     }
 
-    /// Sends `turn` as written on `route`, once the check passes; returns
-    /// NEAR's answer and the tokens it counted for it, when its reply says,
-    /// or nil when it stopped (`sendStop`).
+    /// Sends `turn` as written on `route`, once the check passes, sealed
+    /// unless its chat is readied for sharing; returns NEAR's answer and the
+    /// tokens it counted for it, when its reply says, or nil when it stopped
+    /// (`sendStop`).
     func send(_ turn: UUID, in conversation: Conversation, route: NearRoute) async -> (text: String, tokens: Tokens?)? {
         sendStop = nil
         do throws(NearStop) {
-            let answer = try await near.ask(
-                route: route, proofAge: settings.proofFreshness, key: { try NearKeychain.key() }, turn: turn, in: conversation)
+            let answer = try await share.send(
+                turn, in: conversation, on: near, route: route, proofAge: settings.proofFreshness, key: { try NearKeychain.key() })
             proof = answer.proof
             checkStop = nil
             return (answer.text, answer.tokens)
@@ -107,7 +115,7 @@ final class NearMode {
             case .fetch, .refused, .pin, .reply, .helper, .ended:
                 proof = nil
                 checkStop = error
-            case .line, .request, .connect, .send, .status, .key: break
+            case .line, .request, .connect, .send, .status, .key, .signin, .claim: break
             }
             return nil
         }

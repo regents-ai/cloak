@@ -49,9 +49,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let near = Launch.layout.near(Launch.manifest)
         return Near(helper: near.helper, sha256: near.sha256)
     }()
+    /// Trace sharing's own helper, the same file under the same pin: a
+    /// sign-in holds it while it waits for the browser.
+    let traces: TraceShare = {
+        let near = Launch.layout.near(Launch.manifest)
+        return TraceShare(
+            sharing: Near(helper: near.helper, sha256: near.sha256), vault: .keychain,
+            version: Bundle.main.infoDictionary!["CFBundleShortVersionString"] as! String)
+    }()
     /// Made at the first show of Chat or Settings, or the quick prompt's
     /// first Return.
-    private lazy var nearMode = NearMode(near: near, supervisor: supervisor, settings: .standard)
+    private lazy var nearMode = NearMode(near: near, share: traces, supervisor: supervisor, settings: .standard)
     /// Made at its window's first show or the quick prompt's first Return.
     private lazy var conversations = Chat(
         supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
@@ -197,9 +205,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Quit, from the menu or the system, goes through the one shutdown,
     /// and ends once every app with a request under way has been answered.
-    /// NEAR mode's helper ends at once, a message under way or not.
+    /// NEAR mode's helpers end at once, a message or a sharing step under
+    /// way or not.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         near.stop()
+        traces.end()
         supervisor.quit { [server, door, logger] in
             server?.close()
             Task {

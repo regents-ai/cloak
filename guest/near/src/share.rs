@@ -1185,8 +1185,10 @@ pub(crate) fn status(
     reply_json(&answer)
 }
 
-/// The account session after a withdrawal, when the commons renewed it.
+/// The commons' answer to a withdrawal, as it came, and the account
+/// session, when the commons renewed it.
 pub(crate) struct Withdrawn {
+    pub commons: Value,
     pub session: Option<String>,
     /// RFC 3339, as the commons sent it.
     pub session_expires_at: Option<String>,
@@ -1218,6 +1220,7 @@ pub(crate) fn withdraw(net: &Net, session: &str, submission: &str) -> Result<Wit
     };
     let session = renewed("x-trace-commons-session-token");
     Ok(Withdrawn {
+        commons: reply_json(&answer)?,
         session_expires_at: session
             .as_ref()
             .and(renewed("x-trace-commons-session-expires-at")),

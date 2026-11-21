@@ -8,6 +8,7 @@ import Synchronization
 // paid by the owner's own NEAR key, once NEAR's hardware proof passes. The
 // proof and the request are the helper's, cloak-near (guest/near, "The
 // helper"); this side starts it, writes it one line, and reads its answer.
+// Trace sharing's lines are in Traces.swift.
 
 /// How NEAR mode's helper reaches NEAR and Intel.
 public enum NearRoute: Sendable, Equatable {
@@ -50,8 +51,12 @@ public struct NearProof: Sendable, Equatable, Decodable {
 /// reached NEAR.
 public struct NearStop: Error, Sendable, Equatable {
     public enum Kind: String, Sendable, Decodable {
-        /// The helper's own steps (guest/near, "Answers").
+        /// The helper's own steps (guest/near, "Answers" and "Trace
+        /// sharing's lines").
         case line, request, fetch, refused, connect, pin, send, status, reply
+        /// Trace sharing's own: the browser sign-in did not finish, or the
+        /// issuer gave no upload claim.
+        case signin, claim
         /// The helper does not match its pin, or cannot start, or its answer
         /// did not read.
         case helper
@@ -164,7 +169,7 @@ public actor Near {
     /// Checks NEAR's hardware, or finds a check that passed within
     /// `proofAge`; sends nothing to the model.
     public func check(route: NearRoute, proofAge: ProofFreshness) throws(NearStop) -> NearProof {
-        let line = try exchange(asking: false) { () throws(NearStop) -> [String: Any] in
+        let line = try exchange(sends: false) { () throws(NearStop) -> [String: Any] in
             ["request": "check", "model": Self.model, "route": route.line, "proof_age": proofAge.rawValue]
         }
         switch try answer(line, asking: false) {
@@ -185,29 +190,40 @@ public actor Near {
         guard let messages = Remote.messages(for: turn, in: conversation) else {
             throw NearStop(kind: .request, code: nil, sent: false, text: "the turn is not in the conversation")
         }
-        let line = try exchange(asking: true) { () throws(NearStop) -> [String: Any] in
-            let secret: String
-            do { secret = try key() } catch { throw NearStop(kind: .key, code: nil, sent: false, text: "\(error)") }
-            return [
-                "request": "ask", "model": Self.model, "route": route.line, "proof_age": proofAge.rawValue, "key": secret,
+        let line = try exchange(sends: true) { () throws(NearStop) -> [String: Any] in
+            [
+                "request": "ask", "model": Self.model, "route": route.line, "proof_age": proofAge.rawValue, "key": try Self.read(key),
                 "body": ["model": Self.model, "messages": messages] as [String: Any],
             ]
         }
         switch try answer(line, asking: true) {
         case .replied(let proof):
-            guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                let reply = object["reply"] as? [String: Any], let completion = try? JSONSerialization.data(withJSONObject: reply)
-            else { throw NearStop(kind: .helper, code: nil, sent: true, text: "the helper's reply did not read") }
-            let text: String
-            do throws(RemoteStop) {
-                text = try Remote.content(of: completion).trimmingCharacters(in: .whitespacesAndNewlines)
-            } catch {
-                throw NearStop(kind: .reply, code: nil, sent: true, text: error.detail)
-            }
-            return (text, proof, Self.tokens(in: completion))
+            let (text, tokens) = try Self.reply(in: line)
+            return (text, proof, tokens)
         case .stopped(let stop): throw stop
         case .passed: throw NearStop(kind: .helper, code: nil, sent: true, text: "the helper answered an ask with a check")
         }
+    }
+
+    /// The NEAR key, for a line being built; one that cannot be read stops
+    /// the line with nothing written.
+    static func read(_ key: Key) throws(NearStop) -> String {
+        do { return try key() } catch { throw NearStop(kind: .key, code: nil, sent: false, text: "\(error)") }
+    }
+
+    /// The answer to a message, trimmed, and the tokens NEAR counted for
+    /// it, from the `reply` of the helper's answer `line`.
+    static func reply(in line: Data) throws(NearStop) -> (text: String, tokens: Tokens?) {
+        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+            let reply = object["reply"] as? [String: Any], let completion = try? JSONSerialization.data(withJSONObject: reply)
+        else { throw NearStop(kind: .helper, code: nil, sent: true, text: "the helper's reply did not read") }
+        let text: String
+        do throws(RemoteStop) {
+            text = try Remote.content(of: completion).trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            throw NearStop(kind: .reply, code: nil, sent: true, text: error.detail)
+        }
+        return (text, tokens(in: completion))
     }
 
     /// The tokens in `completion`'s `usage`, in OpenAI's shape, as NEAR
@@ -234,9 +250,9 @@ public actor Near {
     }
 
     /// Starts the helper if none runs, writes the line `build` makes, and
-    /// reads the helper's answer line. `asking`: the line is an `ask`, which
-    /// may have reached NEAR once the helper has it all.
-    private func exchange(asking: Bool, build: () throws(NearStop) -> [String: Any]) throws(NearStop) -> Data {
+    /// reads the helper's answer line. `sends`: the line may reach a host
+    /// once the helper has it all, as an `ask` or a sharing step does.
+    func exchange(sends: Bool, build: () throws(NearStop) -> [String: Any]) throws(NearStop) -> Data {
         let running = try start()
         let request = try build()
         guard var line = try? JSONSerialization.data(withJSONObject: request, options: .withoutEscapingSlashes) else {
@@ -252,16 +268,43 @@ public actor Near {
         }
         guard let answer = running.line() else {
             drop()
-            throw NearStop(kind: .ended, code: nil, sent: asking, text: "the helper quit")
+            throw NearStop(kind: .ended, code: nil, sent: sends, text: "the helper quit")
         }
         return answer
     }
 
-    private func answer(_ line: Data, asking: Bool) throws(NearStop) -> Answer {
+    /// A sharing step's answer `T`, read from an answer line named `name`,
+    /// or the step's stop. One that does not read ends the helper, as
+    /// `answer` does.
+    func answer<T: Decodable>(_ line: Data, named name: String, sends: Bool) throws(NearStop) -> T {
+        let decoder = Self.decoder
+        let head = (try? decoder.decode(Head.self, from: line))?.answer
+        if head == "stopped", case .stopped(let stop)? = try? decoder.decode(Answer.self, from: line) {
+            throw stop
+        }
+        guard head == name, let value = try? decoder.decode(T.self, from: line) else {
+            drop()
+            throw NearStop(kind: .helper, code: nil, sent: sends, text: "the helper's answer did not read")
+        }
+        return value
+    }
+
+    /// An answer line's name alone.
+    private struct Head: Decodable {
+        let answer: String
+    }
+
+    /// How an answer line reads: its names in snake case, its times in
+    /// seconds since 1970, its bytes in standard base64.
+    static var decoder: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .secondsSince1970
-        guard let answer = try? decoder.decode(Answer.self, from: line) else {
+        return decoder
+    }
+
+    private func answer(_ line: Data, asking: Bool) throws(NearStop) -> Answer {
+        guard let answer = try? Self.decoder.decode(Answer.self, from: line) else {
             drop()
             throw NearStop(kind: .helper, code: nil, sent: asking, text: "the helper's answer did not read")
         }
