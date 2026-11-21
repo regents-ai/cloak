@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Venice's carrying part, with no caller in the app yet. The guest's
+  sender takes four new requests: `venice` (one request to Venice's
+  API through Tor as the conversation's identity, its answer handed on
+  as it arrives in frames `L`, `P` and `A`), `venice_sign` (signs a
+  Venice sign-in and nothing else), `venice_typed` (signs a transfer of
+  USDC on Base and nothing else) and `venice_funds` (reads the
+  address's USDC on Base through Tor). The host's `Sender.stream`
+  carries the answer to the Mac, and ending it closes Venice's Tor
+  stream.
+  - Before anything leaves: the address must be https to api.venice.ai
+    under /api/v1/ with no user name; only four header names pass; GET
+    or POST only; no redirect is followed. No key, signature or header
+    value reaches a stop's words or the log.
+  - Found against Venice's four saved real answers: a 402 that carries
+    Venice's sign-in challenge is a refused key or sign-in, not a low
+    balance, and now reads so.
+  - Checked by the chief after the merge: the sender's 18 checks pass
+    in the pinned Rust image with no network, the app's 33 checks pass,
+    and the host builds. The guest image is not rebuilt yet.
+  - Unproven until a key or money is used: a key sent from a Tor exit,
+    Venice taking Cloak's signed sign-in, Base's public address through
+    Tor, a $5 top-up settling, and what a cut stream is charged.
 - NEAR Private AI answers show the tokens NEAR counted for them (the
   public page's "See where your tokens go"; the chief's choice of 20
   November 2026: counts only, never a price). A small mark at the end of

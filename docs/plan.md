@@ -3534,8 +3534,10 @@ same day). The chief's choices: Venice is a provider inside Token
 Inference, on that mode's route (reworded, from the guest's sender
 through Tor); only models Venice calls Private or TEE are listed until
 the owner turns on All tiers; a chat keeps its model and tier and stops
-if either changes. Next, with the same helper: the sender's Venice
-requests in the guest and the host's stream. Waiting on Sean: which
+if either changes. The sender's Venice requests in the guest and the host's stream
+are merged too (21 November 2026; CHANGELOG.md), with the head frame
+named `L` since the payer uses `V`. Next, with the same helper: the
+screens, per `docs/venice.md`. Waiting on Sean: which
 wallet pays (a separate key is assumed), whether to ask Venice about
 its terms (clauses 7.1, 7.3 and 12(d)), and a real try with his key and
 about $5 of USDC on Base.

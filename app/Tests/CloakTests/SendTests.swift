@@ -279,6 +279,38 @@ struct SendTests {
         func set(_ key: Data, _ address: String) { value = (key, address) }
     }
 
+    /// A Venice answer the Mac stops reading closes the connection to the
+    /// sender, which the sender takes as the end of the request: the
+    /// stand-in, waiting on the socket after the head and one piece, finds
+    /// it closed.
+    @Test(.timeLimit(.minutes(1))) func aVeniceAnswerTheMacStopsReadingClosesItsConnection() async throws {
+        var pair: [Int32] = [0, 0]
+        #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
+        let other = FileHandle(fileDescriptor: pair[1], closeOnDealloc: true)
+        let (closed, ended) = AsyncStream.makeStream(of: Bool.self)
+        Thread {
+            let frame = { (kind: Character, payload: String) in
+                let length = UInt32(payload.utf8.count).bigEndian
+                try? other.write(contentsOf: Data([kind.asciiValue!]) + withUnsafeBytes(of: length) { Data($0) } + Data(payload.utf8))
+            }
+            frame("Y", "")
+            let request = StandIn.frame(other)
+            frame("L", #"{"status":200,"headers":{"content-type":"text/event-stream"}}"#)
+            frame("P", "data: {}\n\n")
+            ended.yield(request?.0 == UInt8(ascii: "R") && StandIn.frame(other) == nil)
+            ended.finish()
+        }.start()
+
+        var pieces = [Sender.Piece]()
+        for try await piece in Sender.stream(pair[0], request: Data(#"{"op":"venice"}"#.utf8)) {
+            pieces.append(piece)
+            if case .body = piece { break }
+        }
+
+        #expect(pieces == [.head(status: 200, headers: ["content-type": "text/event-stream"]), .body(Data("data: {}\n\n".utf8))])
+        #expect(await closed.first { _ in true } == true)
+    }
+
     @Test func answersAreSealedWithTheirConversation() throws {
         defer { remove() }
         let store = ConversationStore(folder: folder.appending(path: "conversations"), key: key)

@@ -265,20 +265,25 @@ public struct VeniceStop: Error, Sendable, Equatable {
         self.text = text
     }
 
-    /// The stop for a status other than 200, from the status and the
-    /// documented `code` alone, never Venice's message
-    /// (docs.venice.ai/api-reference/error-codes).
-    /// `auth` is nil for the model list, which goes without either.
-    static func answered(_ status: Int, _ code: VeniceCode?, auth: VeniceAuth?) -> VeniceStop {
+    /// The stop for a status other than 200, from the status, the
+    /// documented `code` and whether the body is Venice's challenge for
+    /// credentials, never Venice's message
+    /// (docs.venice.ai/api-reference/error-codes). `auth` is nil for the
+    /// model list and a top-up, which go without either.
+    static func answered(_ status: Int, _ body: Data, auth: VeniceAuth?) -> VeniceStop {
+        let failure = VeniceFailure(body)
+        let refusedAuth: Kind =
+            switch auth {
+            case .key?: .key
+            case .wallet?: .signIn
+            case nil: .failed
+            }
         let kind: Kind =
-            switch (status, code) {
+            switch (status, failure.code) {
             case (401, .proOnly?): .refused
-            case (401, _):
-                switch auth {
-                case .key?: .key
-                case .wallet?: .signIn
-                case nil: .failed
-                }
+            case (401, _): refusedAuth
+            // Venice took no credentials from the request, whatever it sent.
+            case (402, _) where failure.challenge: refusedAuth
             case (402, .usdLimit?), (402, .diemLimit?): .spendLimit
             case (402, _): .noBalance
             case (403, _): .refused
@@ -289,7 +294,8 @@ public struct VeniceStop: Error, Sendable, Equatable {
             case (503, _): .busy
             default: .failed
             }
-        return VeniceStop(kind, sent: true, "status \(status)" + (code.map { " \($0.rawValue)" } ?? ""))
+        return VeniceStop(
+            kind, sent: true, "status \(status)" + (failure.code.map { " \($0.rawValue)" } ?? "") + (failure.challenge ? " asking for credentials" : ""))
     }
 
     /// The stop for an error Venice sent after the answer began.
@@ -301,6 +307,35 @@ public struct VeniceStop: Error, Sendable, Equatable {
             default: .failed
             }
         return VeniceStop(kind, sent: true, "error in the stream" + (code.map { " \($0.rawValue)" } ?? ""))
+    }
+}
+
+/// What in an error body changes which stop a status gives.
+struct VeniceFailure: Decodable {
+    /// The documented `code`, at the body's top or in its `error` object;
+    /// nil for a code that changes no stop.
+    let code: VeniceCode?
+    /// The body is Venice's challenge to a request it took no credentials
+    /// from: it names the ways to authenticate (`authOptions`).
+    let challenge: Bool
+
+    enum Keys: String, CodingKey { case code, error, authOptions }
+
+    init(_ body: Data) {
+        self = (try? JSONDecoder().decode(Self.self, from: body)) ?? VeniceFailure(code: nil, challenge: false)
+    }
+
+    private init(code: VeniceCode?, challenge: Bool) {
+        self.code = code
+        self.challenge = challenge
+    }
+
+    init(from decoder: any Decoder) throws {
+        let top = try decoder.container(keyedBy: Keys.self)
+        let inner = try? top.nestedContainer(keyedBy: Keys.self, forKey: .error)
+        let text = (try? top.decode(String.self, forKey: .code)) ?? (try? inner?.decode(String.self, forKey: .code))
+        code = text.flatMap(VeniceCode.init(rawValue:))
+        challenge = top.contains(.authOptions)
     }
 }
 
@@ -348,7 +383,7 @@ public struct Venice: Sendable {
         let request = VeniceRequest(method: "GET", url: URL(string: base + "models?type=text")!, headers: [:], body: nil)
         let response = try await carry(request, transport)
         let body = try await whole(response)
-        guard response.status == 200 else { throw VeniceStop.answered(response.status, code(in: body), auth: nil) }
+        guard response.status == 200 else { throw VeniceStop.answered(response.status, body, auth: nil) }
         do {
             return try JSONDecoder().decode(Listed.self, from: body).models
         } catch {
@@ -362,7 +397,7 @@ public struct Venice: Sendable {
         case .key:
             let response = try await Self.carry(try await request("GET", "api_keys/rate_limits"), transport)
             let body = try await Self.whole(response)
-            guard response.status == 200 else { throw VeniceStop.answered(response.status, Self.code(in: body), auth: auth) }
+            guard response.status == 200 else { throw VeniceStop.answered(response.status, body, auth: auth) }
             struct Limits: Decodable {
                 let data: Account
                 struct Account: Decodable {
@@ -381,7 +416,7 @@ public struct Venice: Sendable {
         case .wallet(let signer):
             let response = try await Self.carry(try await request("GET", "x402/balance/\(signer.address)"), transport)
             let body = try await Self.whole(response)
-            guard response.status == 200 else { throw VeniceStop.answered(response.status, Self.code(in: body), auth: auth) }
+            guard response.status == 200 else { throw VeniceStop.answered(response.status, body, auth: auth) }
             struct Balance: Decodable {
                 let data: Wallet
                 struct Wallet: Decodable {
@@ -409,7 +444,7 @@ public struct Venice: Sendable {
         }
         let response = try await Self.carry(try await request("POST", "chat/completions", body: Self.body(model: chat.model, messages: messages)), transport)
         guard response.status == 200 else {
-            throw VeniceStop.answered(response.status, Self.code(in: try await Self.whole(response)), auth: auth)
+            throw VeniceStop.answered(response.status, try await Self.whole(response), auth: auth)
         }
         return try await Self.read(response, model: chat.model, partial: partial)
     }
@@ -476,24 +511,6 @@ public struct Venice: Sendable {
         }
         guard !Task.isCancelled else { throw VeniceStop(.cancelled, sent: true, "cancelled while reading") }
         return body
-    }
-
-    /// The documented `code` in an error body, at its top or in its
-    /// `error` object; nil for a code that changes no stop.
-    static func code(in body: Data) -> VeniceCode? {
-        struct Failure: Decodable {
-            let code: VeniceCode?
-
-            enum Keys: String, CodingKey { case code, error }
-
-            init(from decoder: any Decoder) throws {
-                let top = try decoder.container(keyedBy: Keys.self)
-                let inner = try? top.nestedContainer(keyedBy: Keys.self, forKey: .error)
-                let text = (try? top.decode(String.self, forKey: .code)) ?? (try? inner?.decode(String.self, forKey: .code))
-                code = text.flatMap(VeniceCode.init(rawValue:))
-            }
-        }
-        return (try? JSONDecoder().decode(Failure.self, from: body))?.code
     }
 
     /// A streamed answer, read to Venice's `[DONE]`.

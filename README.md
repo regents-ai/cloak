@@ -796,9 +796,10 @@ was not reworded):
 swift test --package-path app
 ```
 
-Run the sender's checks against stand-ins for Tor, the provider and the
-network (Rust 1.97.1, which `guest/sender/rust-toolchain.toml` names; the
-guest build uses the pinned Rust image instead):
+Run the sender's checks against stand-ins for Tor, the provider, the
+Tempo network, Venice's API and Base's network (Rust 1.97.1, which
+`guest/sender/rust-toolchain.toml` names; the guest build uses the pinned
+Rust image instead):
 
 ```bash
 (cd guest/sender && cargo test)

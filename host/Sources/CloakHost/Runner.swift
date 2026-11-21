@@ -131,7 +131,8 @@ public enum Runner {
     }
 }
 
-/// A guest connection's socket, the runner's or the payer's: shut only while
+/// A guest connection's socket, the runner's, the payer's or a Venice
+/// stream's: shut only while
 /// it is open, and closed once, under one lock, so that a shut never reaches
 /// a socket number reused since.
 final class Connection: Sendable {

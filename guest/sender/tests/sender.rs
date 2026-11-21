@@ -1,11 +1,15 @@
 //! Functional checks of the sender against stand-ins, test-only: a SOCKS5
 //! stand-in for the guest's Tor port, which records each connection's user
 //! name and destination and passes it to the local server named for that
-//! destination; the provider's MPP root; and the Tempo network's RPC. They
-//! cover what happens after payment (the completion and the ways it stops),
-//! the check of the balance before anything reaches the provider, a deposit
-//! whose opening may not have landed, the body and headers that go out, the
-//! provider's list of models, and the Tor identities each connection uses.
+//! destination; the provider's MPP root; the Tempo network's RPC, which also
+//! stands in for Base's; and Venice's API. They cover what happens after
+//! payment (the completion and the ways it stops), the check of the balance
+//! before anything reaches the provider, a deposit whose opening may not have
+//! landed, the body and headers that go out, the provider's list of models,
+//! the Tor identities each connection uses, and for Venice: that nothing
+//! leaves for anywhere but its API with its header names, the signatures,
+//! the end of an answer the host stops taking, and no key in a stop or the
+//! log.
 //!
 //!     cargo test --manifest-path guest/sender/Cargo.toml
 
@@ -13,6 +17,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::State;
@@ -27,6 +32,8 @@ use tokio::net::{TcpListener, TcpStream};
 
 const PROVIDER: &str = "provider.test";
 const RPC: &str = "rpc.test";
+const VENICE: &str = "venice.test";
+const BASE: &str = "base.test";
 /// The network's channel reserve, which the sender asks for a channel's state.
 const RESERVE: &str = "0x4d50500000000000000000000000000000000000";
 
@@ -46,11 +53,23 @@ struct Request {
     body: Bytes,
 }
 
+/// One request the Venice stand-in took, as it came.
+#[derive(Clone, Debug)]
+struct Asked {
+    line: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
 #[derive(Clone)]
 struct Seen {
     connections: Arc<Mutex<Vec<Connection>>>,
     requests: Arc<Mutex<Vec<Request>>>,
     rpc: Arc<Mutex<Vec<String>>>,
+    venice: Arc<Mutex<Vec<Asked>>>,
+    /// The Venice stand-in could not write an answer on: the sender's
+    /// connection had ended.
+    cut: Arc<Mutex<bool>>,
 }
 
 /// What the provider stand-in answers a chat request with.
@@ -92,6 +111,8 @@ impl Stage {
             connections: Default::default(),
             requests: Default::default(),
             rpc: Default::default(),
+            venice: Default::default(),
+            cut: Default::default(),
         };
         let channel = Arc::new(Mutex::new(0));
         let tor = stand_ins.block_on(async {
@@ -120,9 +141,15 @@ impl Stage {
                 balance,
                 channel: channel.clone(),
             });
+            let rpc = listen(rpc).await;
+            let venice_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let venice_address = venice_listener.local_addr().unwrap();
+            tokio::spawn(venice(venice_listener, seen.clone()));
             let routes = HashMap::from([
                 (PROVIDER.to_owned(), listen(provider).await),
-                (RPC.to_owned(), listen(rpc).await),
+                (RPC.to_owned(), rpc),
+                (BASE.to_owned(), rpc),
+                (VENICE.to_owned(), venice_address),
             ]);
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let tor = listener.local_addr().unwrap();
@@ -137,6 +164,8 @@ impl Stage {
         let network = Network {
             provider: format!("http://{PROVIDER}/mpp"),
             rpc: format!("http://{RPC}/"),
+            venice: format!("http://{VENICE}"),
+            base: format!("http://{BASE}/"),
             tor,
         };
         Self {
@@ -151,6 +180,13 @@ impl Stage {
     /// One request as the host makes it: waits for the turn, sends it, keeps
     /// each deposit reported, and returns the answer and what was kept.
     fn ask(&self, request: Value) -> (Value, Vec<Value>) {
+        let exchanged = self.exchange(request);
+        assert!(exchanged.head.is_none() && exchanged.body.is_empty());
+        (exchanged.reply, exchanged.kept)
+    }
+
+    /// As `ask`, also taking a Venice answer's head and body as they come.
+    fn exchange(&self, request: Value) -> Exchanged {
         let (sender, host) = UnixStream::pair().unwrap();
         std::thread::scope(|scope| {
             let served = scope.spawn(|| serve(&self.sender, &self.network, sender).unwrap());
@@ -159,7 +195,7 @@ impl Stage {
             frames
                 .write(b'R', &serde_json::to_vec(&request).unwrap())
                 .unwrap();
-            let mut kept = vec![];
+            let (mut kept, mut head, mut body) = (vec![], None, vec![]);
             loop {
                 let (kind, payload) = frames.read().unwrap().unwrap();
                 match kind {
@@ -167,9 +203,22 @@ impl Stage {
                         kept.push(serde_json::from_slice(&payload).unwrap());
                         frames.write(b'K', &[]).unwrap();
                     }
+                    b'L' => {
+                        assert!(head.is_none(), "a second head");
+                        head = Some(serde_json::from_slice(&payload).unwrap());
+                    }
+                    b'P' => {
+                        assert!(head.is_some(), "a piece before the head");
+                        body.extend(payload);
+                    }
                     b'A' => {
-                        served.join().unwrap();
-                        return (serde_json::from_slice(&payload).unwrap(), kept);
+                        return Exchanged {
+                            reply: serde_json::from_slice(&payload).unwrap(),
+                            kept,
+                            head,
+                            body,
+                            logged: served.join().unwrap(),
+                        };
                     }
                     other => panic!("unexpected frame {other}"),
                 }
@@ -179,6 +228,99 @@ impl Stage {
 
     fn connections(&self) -> Vec<Connection> {
         self.seen.connections.lock().unwrap().clone()
+    }
+}
+
+/// What one request brought the host.
+struct Exchanged {
+    reply: Value,
+    kept: Vec<Value>,
+    head: Option<Value>,
+    body: Vec<u8>,
+    /// The request's name and outcome, which are all the log has of it.
+    logged: (&'static str, &'static str),
+}
+
+/// A chat's answer from the Venice stand-in, event by event.
+const EVENTS: [&str; 3] = [
+    "data: {\"choices\":[{\"delta\":{\"content\":\"Sage\"}}]}\n\n",
+    "data: {\"choices\":[{\"delta\":{\"content\":\" green.\"}}]}\n\n",
+    "data: [DONE]\n\n",
+];
+
+/// Venice's API as the sender sees it, by hand so that a test sees what came
+/// byte for byte and when the sender's connection ends. Each connection takes
+/// one request. /api/v1/chat/completions streams `EVENTS`, and
+/// /api/v1/endless an event every 20 ms until it cannot write on.
+async fn venice(listener: TcpListener, seen: Seen) {
+    loop {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let seen = seen.clone();
+        tokio::spawn(async move {
+            let mut taken = vec![];
+            let end = loop {
+                if let Some(end) = taken.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break end;
+                }
+                let mut buffer = [0; 4096];
+                let read = stream.read(&mut buffer).await?;
+                if read == 0 {
+                    return Ok(());
+                }
+                taken.extend_from_slice(&buffer[..read]);
+            };
+            let head = String::from_utf8(taken[..end].to_vec()).unwrap();
+            let mut lines = head.split("\r\n");
+            let line = lines.next().unwrap().to_owned();
+            let headers: Vec<(String, String)> = lines
+                .map(|line| {
+                    let (name, value) = line.split_once(": ").unwrap();
+                    (name.to_owned(), value.to_owned())
+                })
+                .collect();
+            let length = headers
+                .iter()
+                .find(|(name, _)| name == "content-length")
+                .map_or(0, |(_, value)| value.parse().unwrap());
+            let mut body = taken[end + 4..].to_vec();
+            while body.len() < length {
+                let mut buffer = [0; 4096];
+                let read = stream.read(&mut buffer).await?;
+                body.extend_from_slice(&buffer[..read]);
+            }
+            let path = line.split(' ').nth(1).unwrap().to_owned();
+            seen.venice.lock().unwrap().push(Asked {
+                line,
+                headers,
+                body,
+            });
+            let chunk = |event: &str| format!("{:x}\r\n{event}\r\n", event.len());
+            let streaming = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n";
+            match path.as_str() {
+                "/api/v1/chat/completions" => {
+                    stream.write_all(streaming.as_bytes()).await?;
+                    for event in EVENTS {
+                        stream.write_all(chunk(event).as_bytes()).await?;
+                    }
+                    stream.write_all(b"0\r\n\r\n").await
+                }
+                "/api/v1/endless" => {
+                    stream.write_all(streaming.as_bytes()).await?;
+                    loop {
+                        if stream.write_all(chunk(EVENTS[0]).as_bytes()).await.is_err() {
+                            *seen.cut.lock().unwrap() = true;
+                            return Ok(());
+                        }
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                }
+                _ => {
+                    stream
+                        .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
+                        .await
+                }
+            }
+        });
     }
 }
 
@@ -537,6 +679,8 @@ fn a_tor_port_that_refuses_is_tor_down() {
         json!({ "op": "models" }),
         send(&"ab".repeat(32), Value::Null),
         send(&"ab".repeat(32), usable()),
+        venice_chat(&format!("http://{VENICE}/api/v1/chat/completions")),
+        json!({ "op": "venice_funds", "address": "0x0000000000000000000000000000000000000001" }),
     ] {
         let (reply, _) = stage.ask(request.clone());
         assert_eq!(reply["stop"]["code"], "tor_down", "{request}: {reply}");
@@ -594,4 +738,304 @@ fn a_request_that_does_not_read_stops_without_a_connection() {
         assert_eq!(reply["stop"]["code"], "failed");
     }
     assert!(stage.connections().is_empty());
+}
+
+/// The public test key of web3.js's documentation, and its address.
+const TEST_KEY: &str = "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
+const TEST_ADDRESS: &str = "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23";
+
+/// A Venice key as a test stands it in; never a real one.
+const VENICE_KEY: &str = "VENICE-INFERENCE-KEY-test-only";
+
+/// A Venice chat request as the Mac builds it, to `url`.
+fn venice_chat(url: &str) -> Value {
+    json!({
+        "op": "venice", "identity": "ab".repeat(32), "method": "POST", "url": url,
+        "headers": { "authorization": format!("Bearer {VENICE_KEY}"), "content-type": "application/json" },
+        "body": r#"{"messages":[{"content":"Name a calm colour.","role":"user"}],"model":"m","stream":true}"#,
+    })
+}
+
+/// Everything that is not a request for Venice's API, with its header
+/// names, leaves nothing: other hosts, schemes, ports, user names and paths,
+/// header names, a header value that would add a header, other methods, and
+/// an identity that is not one. Against the live addresses, with only the Tor
+/// port stood in: the one request for Venice's API, and the one for the
+/// wallet's funds, leave for api.venice.ai and mainnet.base.org by name, and
+/// nothing else leaves. Through the stand-ins, what reaches Venice is the
+/// Mac's body and headers and HTTP's own, and its answer comes back as it
+/// came.
+#[test]
+fn venice_requests_leave_for_venices_api_alone_with_its_header_names() {
+    let mut stage = Stage::new(200, json!({}), 0);
+    let live = Network {
+        tor: stage.network.tor,
+        ..Network::live()
+    };
+    let stood_in = std::mem::replace(&mut stage.network, live);
+    let good = venice_chat("https://api.venice.ai/api/v1/chat/completions");
+    let mut refused = vec![];
+    for url in [
+        "http://api.venice.ai/api/v1/chat/completions",
+        "https://api.venice.ai.example/api/v1/chat/completions",
+        "https://example.com/api/v1/chat/completions",
+        "https://api.venice.ai:8443/api/v1/chat/completions",
+        "https://cloak@api.venice.ai/api/v1/chat/completions",
+        "https://api.venice.ai./api/v1/chat/completions",
+        "https://api.venice.ai/api/v2/chat/completions",
+        "https://api.venice.ai/api/v1",
+        "https://api.venice.ai/api/v1/../v2/x",
+        "https://api.venice.ai/api/v1/%2e%2e/x",
+        "https://api.venice.ai/",
+        "api.venice.ai/api/v1/chat/completions",
+    ] {
+        let mut request = good.clone();
+        request["url"] = json!(url);
+        refused.push(request);
+    }
+    for (name, value) in [
+        ("cookie", "a=b"),
+        ("x-venice-version", "1"),
+        ("Authorization", "Bearer x"),
+        ("host", "example.com"),
+        (
+            "content-type",
+            "application/json\r\nx-forwarded-for: 1.2.3.4",
+        ),
+    ] {
+        let mut request = good.clone();
+        request["headers"][name] = json!(value);
+        refused.push(request);
+    }
+    for (field, value) in [
+        ("method", json!("PUT")),
+        ("method", json!("CONNECT")),
+        ("identity", json!("not-hex")),
+        ("identity", json!("ab".repeat(31))),
+    ] {
+        let mut request = good.clone();
+        request[field] = value;
+        refused.push(request);
+    }
+    for request in refused {
+        let exchanged = stage.exchange(request.clone());
+        assert_eq!(exchanged.reply["stop"]["code"], "failed", "{request}");
+        assert!(exchanged.head.is_none(), "{request}");
+        assert!(
+            stage.connections().is_empty(),
+            "{request}: {:?}",
+            stage.connections()
+        );
+    }
+
+    // The SOCKS stand-in knows neither name, so each stops there.
+    stage.exchange(good);
+    stage.exchange(json!({ "op": "venice_funds", "address": TEST_ADDRESS }));
+    let connections = stage.connections();
+    let [venice, base] = connections.as_slice() else {
+        panic!("{connections:?}")
+    };
+    assert!(venice.named && venice.host == "api.venice.ai" && venice.user == "ab".repeat(32));
+    assert!(
+        base.named
+            && base.host == "mainnet.base.org"
+            && is_identity(&base.user)
+            && base.user != venice.user
+    );
+
+    stage.network = stood_in;
+    let exchanged = stage.exchange(venice_chat(&format!(
+        "http://{VENICE}/api/v1/chat/completions"
+    )));
+    assert_eq!(exchanged.reply, json!({ "ok": {} }));
+    let head = exchanged.head.unwrap();
+    assert_eq!(head["status"], 200);
+    assert_eq!(head["headers"]["content-type"], "text/event-stream");
+    assert_eq!(exchanged.body, EVENTS.concat().as_bytes());
+    let asked = stage.seen.venice.lock().unwrap().clone();
+    let [asked] = asked.as_slice() else {
+        panic!("{asked:?}")
+    };
+    assert_eq!(asked.line, "POST /api/v1/chat/completions HTTP/1.1");
+    assert_eq!(
+        asked.body,
+        venice_chat("")["body"].as_str().unwrap().as_bytes()
+    );
+    let mut headers = asked.headers.clone();
+    headers.sort();
+    let length = asked.body.len().to_string();
+    assert_eq!(
+        headers,
+        [
+            ("accept", "*/*"),
+            ("authorization", &*format!("Bearer {VENICE_KEY}")),
+            ("content-length", &*length),
+            ("content-type", "application/json"),
+            ("host", VENICE),
+        ]
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+    );
+}
+
+/// The signatures are the known ones, from Foundry's cast 1.8.6, which gives
+/// web3.js's documented EIP-191 signature and the EIP-712 specification's
+/// example signature for these keys: a Venice sign-in, and a five dollar
+/// top-up exactly as VeniceTests builds it. Anything but a Venice sign-in
+/// or a USDC transfer on Base is not signed. No connection is made.
+#[test]
+fn the_signatures_are_the_known_vectors() {
+    let stage = Stage::new(200, json!({}), 0);
+    let sign_in = format!(
+        "api.venice.ai wants you to sign in with your Ethereum account:\n{TEST_ADDRESS}\n\nSign in to Venice AI\n\nURI: https://api.venice.ai/api/v1/chat/completions\nVersion: 1\nChain ID: 8453\nNonce: 8f3b2c1d0e9a8b7c6d5e4f3a2b1c0d9e\nIssued At: 2026-11-20T12:00:00.000Z\nExpiration Time: 2026-11-20T12:05:00.000Z"
+    );
+    let (signed, _) =
+        stage.ask(json!({ "op": "venice_sign", "key": TEST_KEY, "message": sign_in }));
+    assert_eq!(
+        signed,
+        json!({ "ok": { "signature": "0xbfbf3f2b2c76d9fe069414ae51fbb76c126200ae49979ad42ea640acff94bde457c4c96e7462349dcc73730c89a43a65f4a97994a7530b699dd66d989e07cf351b" } })
+    );
+
+    let transfer = || {
+        json!({
+            "types": {
+                "EIP712Domain": [{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],
+                "TransferWithAuthorization": [{"name":"from","type":"address"},{"name":"to","type":"address"},{"name":"value","type":"uint256"},{"name":"validAfter","type":"uint256"},{"name":"validBefore","type":"uint256"},{"name":"nonce","type":"bytes32"}],
+            },
+            "primaryType": "TransferWithAuthorization",
+            "domain": { "name": "USD Coin", "version": "2", "chainId": 8453, "verifyingContract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+            "message": {
+                "from": TEST_ADDRESS, "to": "0x2670B922ef37C7Df47158725C0CC407b5382293F", "value": "5000000",
+                "validAfter": "1795218600", "validBefore": "1795219500", "nonce": format!("0x{}", "ab".repeat(32)),
+            },
+        })
+    };
+    let typed =
+        |typed: Value| json!({ "op": "venice_typed", "key": TEST_KEY, "typed": typed.to_string() });
+    let (signed, _) = stage.ask(typed(transfer()));
+    assert_eq!(
+        signed,
+        json!({ "ok": { "signature": "0x040a9e69f427ddb42ff6321fb652a5e870ec467b85de57148f3cd0fc6ce97573011fa577e3a221ec3d37a04ac6dd345ae083ba141c04e419eb4e6ae1465ea6111b" } })
+    );
+
+    let mut refused = vec![json!({ "op": "venice_sign", "key": TEST_KEY, "message": "Some data" })];
+    for (path, value) in [
+        ("/domain/chainId", json!(1)),
+        (
+            "/domain/verifyingContract",
+            json!("0x0000000000000000000000000000000000000001"),
+        ),
+        ("/domain/name", json!("USDC")),
+        ("/primaryType", json!("Permit")),
+        ("/types/TransferWithAuthorization/2/type", json!("uint128")),
+        ("/message/spender", json!(TEST_ADDRESS)),
+        ("/domain/salt", json!(format!("0x{}", "00".repeat(32)))),
+    ] {
+        let mut changed = transfer();
+        let (parent, field) = path.rsplit_once('/').unwrap();
+        changed.pointer_mut(parent).unwrap()[field] = value;
+        refused.push(typed(changed));
+    }
+    for request in refused {
+        let (reply, _) = stage.ask(request.clone());
+        assert_eq!(reply["stop"]["code"], "failed", "{request}: {reply}");
+    }
+    assert!(stage.connections().is_empty());
+}
+
+/// When the host stops taking a Venice answer, as the Mac does when its
+/// stream ends, the sender stops too and its connection to Venice ends.
+#[test]
+fn a_venice_answer_the_host_stops_taking_ends_its_request() {
+    let stage = Stage::new(200, json!({}), 0);
+    let mut request = venice_chat(&format!("http://{VENICE}/api/v1/endless"));
+    request["method"] = json!("GET");
+    request["body"] = Value::Null;
+    let (sender, host) = UnixStream::pair().unwrap();
+    std::thread::scope(|scope| {
+        let served = scope.spawn(|| serve(&stage.sender, &stage.network, sender));
+        let mut frames = Frames::new(host);
+        assert_eq!(frames.read().unwrap().unwrap().0, b'Y');
+        frames
+            .write(b'R', &serde_json::to_vec(&request).unwrap())
+            .unwrap();
+        assert_eq!(frames.read().unwrap().unwrap().0, b'L');
+        assert_eq!(frames.read().unwrap().unwrap().0, b'P');
+        drop(frames);
+        let stopped = Instant::now();
+        // The sender's answer has nowhere to go.
+        assert!(served.join().unwrap().is_err());
+        assert!(
+            stopped.elapsed() < Duration::from_secs(2),
+            "the sender went on"
+        );
+    });
+    let started = Instant::now();
+    while !*stage.seen.cut.lock().unwrap() {
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "Venice's stand-in is still answering"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// No key, signature or header value reaches a stop's words or the log, on
+/// any way a request carrying one stops: a key that does not read, a refused
+/// message or typed data, a refused address, header name or header value,
+/// Tor refusing, and Venice answering an error.
+#[test]
+fn no_key_reaches_a_stop_or_the_log() {
+    let mut stage = Stage::new(200, json!({}), 0);
+    let secrets = [
+        VENICE_KEY,
+        &TEST_KEY[2..],
+        &TEST_KEY[2..64],
+        "11111111111111",
+    ];
+    let unreadable = format!("0x{}zz", "11".repeat(31));
+    let mut requests = vec![
+        json!({ "op": "venice_sign", "key": unreadable, "message": "x" }),
+        json!({ "op": "venice_sign", "key": format!("0x{}", "11".repeat(31)), "message": "x" }),
+        json!({ "op": "venice_sign", "key": TEST_KEY, "message": "Some data" }),
+        json!({ "op": "venice_typed", "key": TEST_KEY, "typed": "{}" }),
+        json!({ "op": "venice_typed", "key": unreadable, "typed": "{}" }),
+    ];
+    let mut wrong_header = venice_chat(&format!("http://{VENICE}/api/v1/chat/completions"));
+    wrong_header["headers"]["cookie"] = json!(VENICE_KEY);
+    let mut broken_value = venice_chat(&format!("http://{VENICE}/api/v1/chat/completions"));
+    broken_value["headers"]["authorization"] = json!(format!("Bearer {VENICE_KEY}\n"));
+    // A request that does not read, at a value the reader would quote.
+    let mut unread_headers = venice_chat(&format!("http://{VENICE}/api/v1/chat/completions"));
+    unread_headers["headers"] = json!(format!("Bearer {VENICE_KEY}"));
+    requests.extend([
+        venice_chat("https://example.com/api/v1/chat/completions"),
+        wrong_header,
+        broken_value,
+        unread_headers,
+        venice_chat(&format!("http://{VENICE}/api/v1/missing")),
+    ]);
+    let check = |stage: &Stage, request: &Value| {
+        let exchanged = stage.exchange(request.clone());
+        let reply = exchanged.reply.to_string();
+        let (name, outcome) = exchanged.logged;
+        for secret in secrets {
+            assert!(!reply.contains(secret), "{request}: {reply}");
+        }
+        assert!(
+            ["venice", "venice_sign", "venice_typed", "unreadable"].contains(&name)
+                && ["ok", "failed", "tor_down"].contains(&outcome),
+            "{name} {outcome}"
+        );
+    };
+    for request in &requests {
+        check(&stage, request);
+    }
+    stage.network.tor = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    check(
+        &stage,
+        &venice_chat(&format!("http://{VENICE}/api/v1/chat/completions")),
+    );
 }
