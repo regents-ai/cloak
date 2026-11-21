@@ -372,14 +372,34 @@ pub(crate) struct Enrolled {
 /// Waits for the sign-in in the browser, then enrols this Mac's device key
 /// with the NEAR AI session it gave: the commons' ceremony, started under
 /// a PKCE challenge, the device's signature over the ceremony's nonce, and
-/// the finish. Once the commons' answer to the finish is taken, the NEAR AI
-/// session is ended at NEAR AI ([`end_session`]) and its token dropped. A
-/// session that did not end leaves the enrolment as it is; an enrolment
-/// that stops sends no end, and its token lapses within the hour.
+/// the finish ([`provision`]). Once that is over, enrolled or stopped, the
+/// NEAR AI session is ended at NEAR AI ([`end_session`]) and its token
+/// dropped: never before, since the commons checks the token at NEAR AI
+/// during the finish. A session that did not end leaves the enrolment as it
+/// is, and `signin_ended` says so; after an enrolment that stopped, only the
+/// stop is answered, and a session that did not end lapses within the hour.
 pub(crate) fn enrol(net: &Net, signin: Signin, device: &Device) -> Result<Enrolled, Halt> {
     let token = signin.token()?;
     let Signin { capabilities, .. } = signin;
+    let provisioned = provision(net, &token, capabilities, device);
+    let signin_ended = end_session(net, &token);
+    drop(token);
+    let (account, session) = provisioned?;
+    Ok(Enrolled {
+        account,
+        session,
+        signin_ended,
+    })
+}
 
+/// The commons' enrolment ceremony for `device`, under the NEAR AI session
+/// `token`: the account it made, and the account's own session.
+fn provision(
+    net: &Net,
+    token: &str,
+    capabilities: Capabilities,
+    device: &Device,
+) -> Result<(Account, String), Halt> {
     let verifier = URL_SAFE_NO_PAD.encode(random::<32>().ok_or_else(no_randomness)?);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     #[derive(Deserialize)]
@@ -441,7 +461,7 @@ pub(crate) fn enrol(net: &Net, signin: Signin, device: &Device) -> Result<Enroll
             "device_signature": signature,
             "access_token": token,
         }),
-        &[&token],
+        &[token],
     )?;
     if !anchored(&finished.tenant_id)
         || finished.device_key_id != device.key_id()
@@ -451,19 +471,16 @@ pub(crate) fn enrol(net: &Net, signin: Signin, device: &Device) -> Result<Enroll
             "the enrolment is not for this device, or not in an account namespace".into(),
         ));
     }
-    let signin_ended = end_session(net, &token);
-    drop(token);
-    Ok(Enrolled {
-        account: Account {
+    Ok((
+        Account {
             tenant_id: finished.tenant_id,
             device_key_id: finished.device_key_id,
             issuer_url: capabilities.issuer_url,
             audience: capabilities.audience,
             witness: capabilities.witness,
         },
-        session: finished.access_token,
-        signin_ended,
-    })
+        finished.access_token,
+    ))
 }
 
 /// Ends the NEAR AI session `token` is from, by the one request NEAR AI's
@@ -1788,12 +1805,12 @@ mod checks {
     }
 
     /// Proof before sending, for NEAR AI's session: the helper ends it only
-    /// once the commons has answered an enrolment it takes, only at NEAR
-    /// AI's own host, by the DELETE of the session the token's claims name,
-    /// and the token is in no answer line or stop. A session NEAR AI does
-    /// not confirm ended, or a token whose session does not read, leaves
-    /// the sign-in done and says so; an enrolment that stops ends nothing.
-    /// The refresh token goes nowhere.
+    /// once the commons has answered the enrolment, taken or refused, only
+    /// at NEAR AI's own host, by the DELETE of the session the token's
+    /// claims name, and the token is in no answer line or stop. A session
+    /// NEAR AI does not confirm ended, or a token whose session does not
+    /// read, leaves the sign-in done and says so. The refresh token goes
+    /// nowhere.
     #[test]
     fn the_near_ai_session_ends_only_after_the_enrolment() {
         let token = near_ai_token(json!({
@@ -1887,7 +1904,8 @@ mod checks {
         assert_eq!(routes(&stand_in), enrolment);
 
         // The commons refuses the finish, echoing the token: the sign-in
-        // stops, the stop's words withhold the token, and nothing is ended.
+        // stops, the stop's words withhold the token, and the session it
+        // came from is ended all the same, after the refusal.
         let stand_in = commons_and_near_ai(echoing(403), (204, Vec::new(), Vec::new()));
         let line = sign_in(&mut helper(), &stand_in, &token);
         let answer: Value = serde_json::from_str(&line).unwrap();
@@ -1898,7 +1916,7 @@ mod checks {
         );
         assert!(!line.contains(&token), "{line}");
         assert!(answer["text"].as_str().unwrap().contains("[withheld]"));
-        assert_eq!(routes(&stand_in), enrolment);
+        assert_eq!(routes(&stand_in), ended);
     }
 
     /// The upload is the envelope the person was shown, byte for byte. The

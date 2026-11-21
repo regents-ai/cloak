@@ -560,7 +560,8 @@ Every field is required, and any other field is refused.
   under `Authorization: Bearer` and the session token, the `sid` read
   from the token's own claims, on the line's route; then it drops the
   token. If the claims name no session, nothing is sent. An enrolment
-  that stops sends no end.
+  that stops ends the session the same way, after the stop; its answer is
+  the stop alone.
   Answer `enrolled`: `account`, which every later line carries back and
   none of which is secret (the tenant, the device key's id, the issuer's
   address, the upload audience and the witness pin as the commons published
@@ -742,7 +743,7 @@ The gate checks:
   taken at its headers. NEAR AI refusing while echoing the token, and a
   token naming no session, still answer `enrolled`, with `signin_ended`
   false; the commons refusing the finish while echoing the token stops
-  at `status` with the token withheld, and nothing is ended.
+  at `status` with the token withheld, and the DELETE follows it.
 
 The probe is for development. It takes exactly one route: `--socks
 HOST:PORT` (Tor's SOCKS5 port, one circuit for NEAR and one for Intel) or
