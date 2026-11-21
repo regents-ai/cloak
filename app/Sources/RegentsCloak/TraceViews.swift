@@ -37,6 +37,7 @@ struct TraceSharing: View {
                         share.stop = nil
                     } retry: {
                         SignInMenu(share: share, route: route, title: "Try Again", symbol: "arrow.clockwise")
+                            .overhanging()
                     }
                 } else {
                     TraceStopRow(stop: stop.stop) { share.stop = nil }
