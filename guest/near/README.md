@@ -50,6 +50,18 @@ guest image.
   `Stop` and nothing is sent; `Stop::sent` says whether the request may
   have reached NEAR. NEAR's gateway and Intel's servers each go through a
   route of the caller's (`Routes`).
+- `ask_readied` sends the one message a person readied for trace sharing
+  (docs/near-share.md, section 7): the same check of the request and the
+  same proof as `ask`, then the request without NEAR's encryption, carrying
+  the Trace Commons' admission binding as its one added field,
+  `metadata.trace_commons_admission`, on a connection pinned to the gateway
+  TLS key the proof checked. NEAR's signed receipt for the exchange is then
+  fetched on another connection pinned the same way and checked. Every
+  other request goes through `ask`, unchanged.
+- `src/share.rs` holds trace sharing's other steps: the NEAR AI sign-in and
+  enrolment, the admission challenge, the witness's review, the upload,
+  and the status and withdrawal of what was shared (see "Trace sharing's
+  lines").
 
 ## Routes
 
@@ -408,7 +420,9 @@ a proof for the model is kept within its age.
 Each already in the tree through another crate; two are direct, both
 permissively licensed and pinned by Cargo.lock: `ring` 0.17.14 (Apache-2.0
 AND ISC), for PS384, and `base64` 0.23.1 (MIT OR Apache-2.0), for Intel's
-tokens. No dependency was added for Intel Trust Authority.
+tokens. No dependency was added for Intel Trust Authority, nor for trace
+sharing: its device key and NEAR's receipts are Ed25519 through `ring`, and
+its UUIDs and RFC 3339 times are made in `src/share.rs`.
 
 ## Pins
 
@@ -431,9 +445,11 @@ command line. It reads one request a line on standard input, each one JSON
 object, and writes one answer a line on standard output for each, in
 order. It takes one line at a time: the next is read once the last is
 answered, so an `ask` holds the lines after it until NEAR replies (up to
-five minutes) or it stops. It ends when standard input closes. Nothing
-else goes to standard output; standard error gets only a failure to read
-or write those two, never the key, a message or a reply.
+five minutes) or it stops; an `enrol` waits for the person's sign-in in the
+browser until it finishes or the Mac ends the helper, and a `review` waits
+up to 570 seconds for the witness. It ends when standard input closes.
+Nothing else goes to standard output; standard error gets only a failure
+to read or write those two, never a key, a session, a message or a reply.
 
 One `Kept` lasts as long as the helper: Intel's collateral and keys for an
 hour, and a proof kept by one line can serve a later one (see "Proof
@@ -509,6 +525,103 @@ quotes it back.
     {"answer":"stopped","sent":true,"stop":"status","code":401,"text":"NEAR answered 401: invalid key"}
     {"answer":"stopped","sent":false,"stop":"line","text":"the line is not JSON"}
 
+### Trace sharing's lines
+
+Trace sharing with NEAR's Trace Commons (docs/near-share.md, section 7)
+adds eight lines. The Mac sends `readied` to the helper it chats through,
+since it is a chat request, and the others to a second `cloak-near` of
+their own. Each takes `route` as above: the commons, its issuer, its
+witness and NEAR on the `near_identity` circuit, Intel on the
+`intel_identity` one, every certificate checked against Mozilla's roots.
+Every field is required, and any other field is refused.
+
+- `listen` (`route`): reads the commons' capabilities
+  (`GET https://ingest.tracecommons.ai/v1/account/near/provision/capabilities`),
+  checks the witness pin, the issuer's address and the upload audience in
+  them, and opens a listener on `127.0.0.1`, on a port the system picks.
+  Answer `listening`: `sent` false, and `github` and `google`, the NEAR AI
+  sign-in's address for each, for the Mac to open in the browser. A new
+  `listen` closes the listener of the one before.
+- `enrol` (`route`, `device_key`, the device key's 32-byte Ed25519 seed in
+  standard base64): waits for the browser to come back from the sign-in to
+  `/trace-commons/near-ai/callback`. The page served there, whose one
+  script the page's Content-Security-Policy allows by its hash, posts the
+  address's fragment, with a state value of this sign-in's own, to
+  `/trace-commons/near-ai/deposit`, and takes the fragment out of the
+  address. Only a request whose `Host` is the listener's own address, and a
+  deposit whose `Origin` is too, is taken. The NEAR AI session token comes
+  from the fragment, and its refresh token is never read. The commons'
+  enrolment ceremony runs under a PKCE challenge with the device key's
+  signature, and the session token is dropped once the finish is sent.
+  Answer `enrolled`: `account`, which every later line carries back and
+  none of which is secret (the tenant, the device key's id, the issuer's
+  address, the upload audience and the witness pin as the commons published
+  it); `account_id`; `anchor_hash`; `session`, the account session, a
+  bearer for withdrawing, for the Mac to keep with the device key; and
+  `session_expires_at`, RFC 3339.
+- `ready` (`route`, `device_key`, `account`, `scopes`, `uses`): an upload
+  claim from the issuer, its request signed by the device key, then the
+  commons' admission challenge under that claim. Answer `admitted`:
+  `binding`, and `expires_at` in seconds since 1970, at most 15 minutes on.
+- `readied` (an `ask`'s fields, and `admission`, the binding): runs
+  `ask_readied`. Answer `exchanged`: `sent` true; `proof` and `reply` as
+  `replied` has them; `request` and `response`, the request body exactly as
+  written and the reply body exactly as it came, in standard base64; and
+  either `receipt`, NEAR's receipt for the two, checked, or `no_receipt`,
+  why there is none. The reply stands either way.
+- `review` (`route`, `account`, `scopes`, `uses`; `exchange`, with
+  `request`, `response` and `receipt` as `exchanged` gave them; and
+  `version`, Cloak's version, which the trace names): fetches the witness's
+  quote under a fresh nonce and checks it against the pin in `account`,
+  with Intel's collateral for its platform family, kept or fetched: Intel's
+  rules under the same policy as NEAR's servers, not in debug mode, report
+  data of `tcwitns1`, the witness's signing address and the nonce, and one
+  accepted set of registers. Only once it passes is the exchange sent to
+  the witness, as one raw contribution, for redaction. Answer `reviewed`:
+  `envelope`, the witness's answer exactly as it came, in standard base64;
+  its four headers, `certificate`, `signature`, `evidence` and
+  `evidence_signature`; and the `submission_id` and `trace_id` the
+  contribution was made with.
+- `upload` (`route`, `device_key`, `account`, `scopes`, `uses`, and
+  `envelope`, with `body` and the four headers as `reviewed` gave them): a
+  new claim, then the envelope's bytes exactly, and no others, to
+  `/v1/traces` with the four headers. Answer `uploaded`: `commons`, the
+  commons' answer as it came.
+- `status` (`route`, `device_key`, `account`, and `submissions`, 1 to 100
+  submission ids): a claim for the account's full grant, then the commons'
+  status of each. Answer `reported`: `commons`, as it came.
+- `withdraw` (`route`, `session`, `submission`): withdraws one submission
+  under the account session. Answer `withdrawn`, with `session` and
+  `session_expires_at` when the commons renewed the session.
+
+`scopes` are the commons' consent scopes: `debugging_evaluation` always,
+and any of `benchmark_only`, `ranking_training`, `model_training` and
+`public_attribution`. `uses` are the uses they grant, with
+`aggregate_analytics`; each name once.
+
+For these lines `sent` says whether the step's own request may have
+reached its host. `readied` stops as `ask` does; the others stop at:
+
+| `stop` | Step | `sent` |
+| --- | --- | --- |
+| `line` | The line is not JSON, or not a request in this format | false |
+| `request` | The line cannot go as given | false |
+| `signin` | The sign-in in the browser did not finish, or NEAR AI sent no session | false |
+| `fetch` | Reading the capabilities, the witness's quote or Intel's collateral for it | false |
+| `claim` | The issuer gave no upload claim, so the step's own request was not sent | false |
+| `refused` | The witness's enclave did not pass: nothing was sent to it | false |
+| `connect` | The step's connection could not be made | false |
+| `send` | Writing the step's request or reading its answer failed: the host may have it | true |
+| `status` | The host answered with a status other than 200 to 299 | true |
+| `reply` | The host's answer is not the one asked for | true |
+
+No answer holds the device key, the NEAR AI session or a claim; only
+`enrolled` and `withdrawn` hold the account session.
+
+    {"request":"listen","route":{"via":"direct"}}
+    {"answer":"listening","sent":false,"github":"https://cloud-platform.near.ai/v1/auth/github?frontend_callback=http%3A%2F%2F127.0.0.1%3A49235%2Ftrace-commons%2Fnear-ai%2Fcallback","google":"https://cloud-platform.near.ai/v1/auth/google?frontend_callback=http%3A%2F%2F127.0.0.1%3A49235%2Ftrace-commons%2Fnear-ai%2Fcallback"}
+    {"answer":"stopped","sent":false,"stop":"refused","text":"the witness was refused: the witness's quote is not tied to its signing address and our nonce"}
+
 ## Running it
 
     cargo build --locked
@@ -569,6 +682,20 @@ The gate checks:
   comes back in plain text; a reply with a changed or a plain field is
   refused; and a certificate key other than the pinned one is refused before
   any request byte reaches it.
+- `src/share.rs`, against a stand-in for every host trace sharing reaches
+  (`src/stand_in.rs`: a SOCKS5 proxy at a socket file in a folder of its
+  own, then a TLS server for the commons' hosts and NEAR's gateway with a
+  certificate from an authority made for these checks alone, in
+  `tests/fixtures/share-stand-in`), which records every request. A witness
+  whose quote does not pass gets nothing: the stand-in witness serves a
+  real quote that is not a witness's (the gateway's, from the saved
+  report), with Intel's real collateral for it held, and a `review` line
+  stops at `refused` with `sent` false after one request, the attestation
+  read; that quote passes Intel's own check at its fetch time and is
+  refused for its report data. And the upload is the envelope shown, byte
+  for byte: an envelope written as no encoder would write it again reaches
+  the stand-in ingest exactly, under the claim the stand-in issuer gave for
+  a request the device key signed, with the witness's four headers.
 
 The probe is for development. It takes exactly one route: `--socks
 HOST:PORT` (Tor's SOCKS5 port, one circuit for NEAR and one for Intel) or

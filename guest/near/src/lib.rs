@@ -16,8 +16,11 @@
 //! sending. [`check`] is the same check, or the same kept proof, without
 //! the sending: `ask` is `check`, then the request.
 //!
-//! [`respond`] is the line format of `cloak-near`, the helper the Mac app
-//! starts: one request a line in, one answer a line out.
+//! [`Helper`] is the line format of `cloak-near`, the helper the Mac app
+//! starts: one request a line in, one answer a line out. Besides the chat
+//! lines it takes those of trace sharing with NEAR's Trace Commons
+//! (`share.rs`), and [`ask_readied`] sends the one message a person readied
+//! for it.
 //!
 //! [`fetch_report`] opens one TLS connection to NEAR's gateway on the
 //! caller's [`Route`] (through Tor, or direct), records the SHA-256 of the
@@ -43,6 +46,9 @@ mod fetch;
 mod gate;
 mod gpu;
 mod helper;
+mod share;
+#[cfg(test)]
+mod stand_in;
 mod verify;
 
 use std::net::SocketAddr;
@@ -50,13 +56,14 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub use chat::{ask, check, Answered, Kept, Passed, Stop};
+pub use chat::{ask, ask_readied, check, Answered, Exchanged, Kept, Passed, Stop};
 pub use dcap_qvl::{QuoteCollateralV3, TcbStatus};
 pub use fetch::{
     fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, FetchError, Fetched,
 };
 pub use gpu::{verify_gpu, GpuRefusal};
-pub use helper::respond;
+pub use helper::Helper;
+pub use share::Halt;
 pub use verify::{verify_intel, Refusal, Who};
 
 /// `N` bytes from the system's secure random source; None if it fails.

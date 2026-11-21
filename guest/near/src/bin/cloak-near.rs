@@ -2,9 +2,11 @@
 //! reads one request a line on standard input and writes one answer a line
 //! on standard output for each, in order, one at a time, and ends when
 //! standard input closes. Nothing else goes to standard output; standard
-//! error gets only a failure to read or write those two, never the key, a
-//! message or a reply. The account key comes only inside an `ask` line.
-//! The line format is in README.md, "The helper", and `cloak_near::respond`.
+//! error gets only a failure to read or write those two, never a key, a
+//! session, a message or a reply. The account key comes only inside an
+//! `ask` or `readied` line, the device key and the account session only
+//! inside the lines of trace sharing.
+//! The line format is in README.md, "The helper", and `cloak_near::Helper`.
 //!
 //!     cloak-near
 
@@ -12,7 +14,7 @@ use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use cloak_near::{respond, Kept, Pins};
+use cloak_near::{Helper, Kept, Pins};
 
 const PINS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -33,7 +35,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut kept = Kept::new(INTEL_AGE).expect("an hour is within a day");
+    let mut helper = Helper::new(pins, Kept::new(INTEL_AGE).expect("an hour is within a day"));
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     let mut line = Vec::new();
@@ -47,7 +49,7 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        let answer = respond(&line, &pins, &mut kept);
+        let answer = helper.respond(&line);
         if let Err(error) = writeln!(output, "{answer}").and_then(|()| output.flush()) {
             eprintln!("cloak-near: writing standard output: {error}");
             return ExitCode::FAILURE;

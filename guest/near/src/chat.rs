@@ -18,7 +18,7 @@ use rustls::RootCertStore;
 use serde_json::{json, Map, Value};
 
 use crate::e2ee::{ReplyKey, SealKey};
-use crate::fetch::{connect, families, mozilla, request, NEAR};
+use crate::fetch::{connect, families, family_collateral, mozilla, request, NEAR};
 use crate::gpu::keys_cover;
 use crate::{
     fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, verify_gpu, verify_intel,
@@ -202,6 +202,45 @@ impl Kept {
         Ok(&self.collateral)
     }
 
+    /// The collateral for one quote's platform family at `now`: the kept
+    /// list's, or else fetched from Intel for that family alone, joining the
+    /// list (or taking its place when the list is older than `max_age`).
+    pub(crate) fn collateral_for_quote(
+        &mut self,
+        intel: &Route,
+        quote: &[u8],
+        now: u64,
+    ) -> Result<&Collateral, FetchError> {
+        let (fmspc, ca) = crate::verify::family(quote).map_err(FetchError::Malformed)?;
+        if now.saturating_sub(self.collateral_at) > self.max_age {
+            self.collateral.clear();
+            self.collateral_at = now;
+        }
+        let at = match self
+            .collateral
+            .iter()
+            .position(|c| c.fmspc == fmspc && c.ca == ca)
+        {
+            Some(at) => at,
+            None => {
+                let fetched = family_collateral(intel, fmspc, ca)?;
+                if self.collateral.is_empty() {
+                    self.collateral_at = now;
+                }
+                self.collateral.push(fetched);
+                self.collateral.len() - 1
+            }
+        };
+        Ok(&self.collateral[at])
+    }
+
+    /// Holds `collateral` as if fetched at `at`, for a check made offline.
+    #[cfg(test)]
+    pub(crate) fn hold_collateral(&mut self, collateral: Vec<Collateral>, at: u64) {
+        self.collateral = collateral;
+        self.collateral_at = at;
+    }
+
     /// Intel Trust Authority's key list for the tokens in `answer` at `now`.
     fn keys_for(&mut self, intel: &Route, answer: &[u8], now: u64) -> Result<&[u8], Stop> {
         if !keys_cover(answer, &self.keys) || now.saturating_sub(self.keys_at) > self.max_age {
@@ -271,6 +310,135 @@ pub fn ask(
         proof_passed_at: passed.at,
         reply,
     })
+}
+
+/// A readied message's reply, the exact bytes the receipt covers, and the
+/// receipt.
+#[derive(Debug)]
+pub struct Exchanged {
+    pub proof: Proof,
+    /// When `proof` passed, in seconds since 1970.
+    pub proof_passed_at: u64,
+    /// The chat completion as NEAR's model gave it.
+    pub reply: Value,
+    /// The request body exactly as it was written.
+    pub request: Vec<u8>,
+    /// The reply body exactly as it came.
+    pub response: Vec<u8>,
+    /// NEAR's signed receipt for the two, checked here; or why there is
+    /// none. Without one the exchange cannot be shared, and the reply
+    /// stands.
+    pub receipt: Result<Value, String>,
+}
+
+/// Sends the one message a person readied for sharing: [`ask`], but with
+/// NEAR's encryption left off, so that NEAR's receipt covers the words
+/// themselves, and with the commons' `admission` binding as the request's
+/// one extra field, `metadata.trace_commons_admission`. The request must
+/// pass the same check as any `ask` (its fields, the model, not streamed)
+/// before `metadata` is added, and is sent only under a proof that passed,
+/// on a connection pinned to the gateway TLS key that proof checked; then
+/// NEAR's receipt is fetched on another connection pinned the same way.
+/// Every other request goes through [`ask`] as before.
+#[allow(clippy::too_many_arguments)]
+pub fn ask_readied(
+    routes: &Routes,
+    roots: &RootCertStore,
+    model: &str,
+    api_key: &str,
+    body: &[u8],
+    admission: &str,
+    pins: &Pins,
+    kept: &mut Kept,
+    proof_age: Duration,
+) -> Result<Exchanged, Stop> {
+    let mut body = checked(body, model, api_key)?;
+    if !crate::share::binding_shape(admission) {
+        return Err(Stop::Request(
+            "the admission is not one the commons issues".into(),
+        ));
+    }
+    body.insert(
+        "metadata".into(),
+        json!({ "trace_commons_admission": admission }),
+    );
+    let request = serde_json::to_vec(&body).expect("a JSON map serializes");
+    let passed = check(routes, model, pins, kept, proof_age)?;
+    let pin = passed.proof.intel.gateway_tls_key;
+    let (reply, response) =
+        send_plain(&pin, &routes.near, roots, api_key, &request).inspect_err(|stop| {
+            if matches!(stop, Stop::Pin) {
+                kept.proofs.remove(model);
+            }
+        })?;
+    let receipt = crate::share::receipt(
+        &routes.near,
+        roots,
+        &pin,
+        model,
+        api_key,
+        &reply,
+        &request,
+        &response,
+    );
+    Ok(Exchanged {
+        proof: passed.proof,
+        proof_passed_at: passed.at,
+        reply,
+        request,
+        response,
+        receipt,
+    })
+}
+
+/// Writes `request` as it is to NEAR's chat endpoint on a new connection
+/// whose gateway certificate key must hash to `pin`, with no encryption
+/// headers; the reply as JSON and its body exactly as it came.
+fn send_plain(
+    pin: &[u8; 32],
+    route: &Route,
+    roots: &RootCertStore,
+    api_key: &str,
+    request_body: &[u8],
+) -> Result<(Value, Vec<u8>), Stop> {
+    let (mut tls, spki_sha256) = connect(route, NEAR, roots).map_err(Stop::Connect)?;
+    if spki_sha256 != *pin {
+        return Err(Stop::Pin);
+    }
+    tls.sock
+        .set_read_timeout(Some(REPLY_WAIT))
+        .map_err(|e| Stop::Connect(e.into()))?;
+    let authorization = format!("Bearer {api_key}");
+    let mut answer = request(
+        &mut tls,
+        "POST",
+        NEAR,
+        "/v1/chat/completions",
+        &[
+            ("Authorization", &authorization),
+            ("Content-Type", "application/json"),
+            ("Accept", "application/json"),
+            ("x-no-aliasing", "true"),
+        ],
+        Some(request_body),
+        REPLY_LIMIT,
+    )
+    .map_err(Stop::Send)?;
+    if answer.status != 200 {
+        answer.body = String::from_utf8_lossy(&answer.body)
+            .replace(api_key, "[the key]")
+            .into_bytes();
+        return Err(Stop::Status {
+            code: answer.status,
+            detail: answer.detail(),
+        });
+    }
+    let reply: Value =
+        serde_json::from_slice(&answer.body).map_err(|_| Stop::Reply("it is not JSON".into()))?;
+    if !reply.get("choices").is_some_and(Value::is_array) {
+        return Err(Stop::Reply("it has no choices".into()));
+    }
+    Ok((reply, answer.body))
 }
 
 /// A proof that passed for `model`, and nothing sent to the chat endpoint:

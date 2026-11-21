@@ -27,6 +27,8 @@ pub enum Who {
     Gateway,
     /// The model entry at this position in the report.
     Model(usize),
+    /// The Trace Commons witness, which redacts a shared trace.
+    Witness,
 }
 
 impl fmt::Display for Who {
@@ -34,6 +36,7 @@ impl fmt::Display for Who {
         match self {
             Who::Gateway => write!(f, "the gateway"),
             Who::Model(index) => write!(f, "model instance {}", index + 1),
+            Who::Witness => write!(f, "the witness"),
         }
     }
 }
@@ -99,6 +102,7 @@ impl fmt::Display for Refusal {
             Refusal::Intel { who, reason } => write!(f, "Intel's check refused {who}: {reason}"),
             Refusal::NotTdx(who) => write!(f, "{who}'s quote is not from a TDX trust domain"),
             Refusal::Debug(who) => write!(f, "{who} runs in debug mode"),
+            Refusal::ReportData(Who::Witness) => write!(f, "the witness's quote is not tied to its signing address and our nonce"),
             Refusal::ReportData(who) => write!(f, "{who}'s quote is not tied to its key, the TLS key and our nonce"),
             Refusal::Rtmr3(who) => write!(f, "{who}'s event log does not match its quote"),
             Refusal::ConfigId(who) => write!(f, "{who}'s compose file does not match its quote"),
@@ -339,6 +343,99 @@ fn policy(now: u64) -> QuotePolicy {
         .allow_dynamic_platform(true)
         .allow_cached_keys(true)
         .allow_smt(true)
+}
+
+/// A register the commons names in a witness pin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Register {
+    Mrtd,
+    MrConfigId,
+    Rtmr0,
+    Rtmr1,
+    Rtmr2,
+    Rtmr3,
+}
+
+/// One set of the witness's measurements the commons accepts: each register
+/// named must hold the value given, and a register not named is not judged.
+pub(crate) type WitnessSet = Vec<(Register, [u8; 48])>;
+
+/// One set as the commons publishes it, `mrtd=<96 hex>,mrconfigid=<96 hex>`:
+/// names from `Register` in any case, each once, each value 48 bytes of hex,
+/// at least one. None for anything else.
+pub(crate) fn witness_set(text: &str) -> Option<WitnessSet> {
+    let mut set = WitnessSet::new();
+    for entry in text.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let (name, value) = entry.split_once('=')?;
+        let register = match name.trim().to_ascii_lowercase().as_str() {
+            "mrtd" => Register::Mrtd,
+            "mrconfigid" => Register::MrConfigId,
+            "rtmr0" => Register::Rtmr0,
+            "rtmr1" => Register::Rtmr1,
+            "rtmr2" => Register::Rtmr2,
+            "rtmr3" => Register::Rtmr3,
+            _ => return None,
+        };
+        if set.iter().any(|(named, _)| *named == register) {
+            return None;
+        }
+        let mut bytes = [0u8; 48];
+        hex::decode_to_slice(value.trim(), &mut bytes).ok()?;
+        set.push((register, bytes));
+    }
+    (!set.is_empty()).then_some(set)
+}
+
+/// Checks the witness's quote, fetched under our nonce, before anything is
+/// sent to it: Intel's rules under the same policy as NEAR's servers, with
+/// `collateral` for its platform family, at `now`; not in debug mode; its
+/// report data exactly `report_data` (the commons' tag, the signing address
+/// the commons published and our nonce); and its registers one of the sets
+/// in `accepted`.
+pub(crate) fn verify_witness(
+    quote: &[u8],
+    report_data: &[u8; 64],
+    accepted: &[WitnessSet],
+    collateral: &Collateral,
+    now: u64,
+) -> Result<(), Refusal> {
+    let who = Who::Witness;
+    let claims = QuoteVerifier::new_prod()
+        .with_config::<RustCryptoConfig>()
+        .verify_with_policy(quote, &collateral.intel, now, &policy(now))
+        .map_err(|e| Refusal::Intel {
+            who,
+            reason: format!("{e:#}"),
+        })?;
+    let td: &TDReport10 = claims.report.as_td10().ok_or(Refusal::NotTdx(who))?;
+    if td.td_attributes[0] & 1 != 0 {
+        return Err(Refusal::Debug(who));
+    }
+    if td.report_data != *report_data {
+        return Err(Refusal::ReportData(who));
+    }
+    let held = |register: Register| match register {
+        Register::Mrtd => &td.mr_td,
+        Register::MrConfigId => &td.mr_config_id,
+        Register::Rtmr0 => &td.rt_mr0,
+        Register::Rtmr1 => &td.rt_mr1,
+        Register::Rtmr2 => &td.rt_mr2,
+        Register::Rtmr3 => &td.rt_mr3,
+    };
+    match accepted
+        .iter()
+        .any(|set| set.iter().all(|(register, value)| held(*register) == value))
+    {
+        true => Ok(()),
+        false => Err(Refusal::Pin {
+            who,
+            seen: format!(
+                "MRTD {}, MRCONFIGID {}",
+                hex::encode(td.mr_td),
+                hex::encode(td.mr_config_id)
+            ),
+        }),
+    }
 }
 
 /// One server's quote, checked by Intel's rules and tied to its report data,

@@ -4,7 +4,8 @@
 //! port, at a TCP address or a socket file, names resolved by Tor; or
 //! direct, names looked up by the system) with ordinary certificate checks
 //! against Mozilla's roots. The chat request (`chat.rs`) uses the same
-//! connection and HTTP code.
+//! connection and HTTP code, and so do the steps of trace sharing
+//! (`share.rs`), with the roots their caller gives.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -162,7 +163,11 @@ pub(crate) fn families(report: &[u8]) -> Result<BTreeSet<(String, String)>, Fetc
         .collect()
 }
 
-fn family_collateral(route: &Route, fmspc: String, ca: String) -> Result<Collateral, FetchError> {
+pub(crate) fn family_collateral(
+    route: &Route,
+    fmspc: String,
+    ca: String,
+) -> Result<Collateral, FetchError> {
     let pck = intel(
         route,
         INTEL_API,
@@ -489,7 +494,7 @@ pub(crate) struct Answer {
 }
 
 impl Answer {
-    fn header(&self, name: &str) -> Option<&str> {
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
             .find(|(n, _)| n == name)
@@ -665,7 +670,7 @@ impl Reader<'_> {
     }
 }
 
-fn percent_encode(text: &str) -> String {
+pub(crate) fn percent_encode(text: &str) -> String {
     text.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
@@ -676,7 +681,7 @@ fn percent_encode(text: &str) -> String {
         .collect()
 }
 
-fn percent_decode(text: &str) -> Option<String> {
+pub(crate) fn percent_decode(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
