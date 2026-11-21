@@ -3655,6 +3655,12 @@ whichever chat is showing. On the branches, before either merges: a new
 chat still going to Venice after Provider is set back to Boundless, and
 a share or withdrawal cut short by Cancel ending with no word.
 
+The wallet's share of those was fixed the same evening by a helper on
+branch `t3/fix-wallet-brief` (commit `f7a0ffe`), read and run by the
+chief (37 checks pass, no warnings, the new faces pictured off screen)
+and merged to main: nine faults, listed in CHANGELOG. Not pressed in the
+real app yet.
+
 NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
 November 2026), against stand-ins only: no sign-in, enrolment or upload
 has been made. An independent reader found 14 things and the helper

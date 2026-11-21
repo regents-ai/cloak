@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- V's wallet says the truth about each press and each read. A press
+  that stopped is one value with what it asked, so an approve's stop no
+  longer reads "Nothing was sent." because a quote was pressed after it.
+  A read that stops says why with Try Again and stays until a read works
+  (no spinner for good after a first read fails); Refresh, and every
+  other call to read, reads now, cutting the 10 second wait short; a read
+  begun before an approve's answer no longer lands over it. Return in
+  the Amount box does only what Deposit would; its red line goes as the
+  text changes; the model list's failed read says so with Try Again; a
+  failed wallet still shows its address and Send Out…; Withdraw pressed
+  before the deposit was read stops as "Not read" with Try Again. Three
+  payer checks added (37 pass).
 - `docs/state-machines.md` has a new section 11: every place in the app
   where a stage is still read off several fields, the menu, each window
   and the two unmerged branches included, with the faults traced in
