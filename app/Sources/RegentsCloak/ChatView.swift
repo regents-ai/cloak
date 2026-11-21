@@ -364,7 +364,8 @@ private struct Turns: View {
 /// and Never reword. Another unsent one is shrunk, marked so, and opens when
 /// pressed anywhere. A NEAR message is shown as written alone, and the open
 /// one has Send, with no lights and no rewording; its answer, when NEAR
-/// counted its tokens, has a mark that says how many.
+/// counted its tokens, has a mark that says how many, and under it each
+/// trace shared from it (`TraceStatusRows`).
 private struct TurnCard: View {
     let chat: Chat
     let conversation: UUID
@@ -427,6 +428,9 @@ private struct TurnCard: View {
                 NearStopRow(stop: stop.stop) { chat.nearMode.sendStop = nil }
                     .padding(12)
                     .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            }
+            if near {
+                TraceStatusRows(share: chat.nearMode.share, route: chat.nearMode.route, chat: conversation, turn: turn.id)
             }
             if let rewording {
                 Progress(chat: chat, started: rewording.started)
@@ -1084,7 +1088,7 @@ private struct Compose: View {
             }
             .font(.callout)
             if near {
-                NearSwitches(settings: chat.settings, nearMode: chat.nearMode)
+                NearSwitches(settings: chat.settings, nearMode: chat.nearMode, conversation: conversation)
             } else if !llama {
                 Switches(mode: mode)
             }
@@ -1125,10 +1129,12 @@ private struct Switches: View {
 
 /// NEAR mode's switch, Tor (`AppSettings.nearTor`), and beside it what
 /// NEAR's hardware check last found. The check runs as this shows, and
-/// again each time the route changes.
+/// again each time the route changes. While Share Traces is on, in a NEAR
+/// chat with a message, the share control at the end (`ShareControl`).
 private struct NearSwitches: View {
     @Bindable var settings: AppSettings
     let nearMode: NearMode
+    let conversation: Conversation?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -1138,6 +1144,9 @@ private struct NearSwitches: View {
             NearStatus(settings: settings, nearMode: nearMode)
                 .padding(.leading, 4)
             Spacer(minLength: 0)
+            if settings.shareTraces, let conversation, conversation.isNear, !conversation.isAgent {
+                ShareControl(share: nearMode.share, route: nearMode.route, conversation: conversation)
+            }
         }
         .font(.callout)
         .task(id: nearMode.route) { await nearMode.check() }

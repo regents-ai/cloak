@@ -1350,7 +1350,7 @@ whose reader goes away first is stopped with all it started (its process
 group), as Darkbloom's own app stops its installer. Nothing here is under
 test.
 
-## 9f. Trace sharing (`app/Sources/CloakChat/TraceShare.swift`, `app/Sources/CloakChat/Traces.swift`, `guest/near/src/share.rs`)
+## 9f. Trace sharing (`app/Sources/CloakChat/TraceShare.swift`, `app/Sources/CloakChat/Traces.swift`, `app/Sources/RegentsCloak/TraceViews.swift`, `guest/near/src/share.rs`)
 
 Share Traces, a switch in NEAR's Wallet sheet (`AppSettings.shareTraces`,
 off at first), lets one NEAR Private AI chat at a time be shared with the
@@ -1396,7 +1396,7 @@ any --switch off--> off (the sharing helper ended at once)
   helper takes them one at a time. A press certain to fail writes nothing:
   Ready on a chat of another mode or an agent's, or while not signed in;
   Review on an exchange with no receipt; Share before a review. Status is
-  read only at Refresh, never by itself.
+  read only at a trace's Refresh, for that trace alone, never by itself.
 - **Kept.** One keychain item, `sh.regents.cloak.traces`
   (`TracesKeychain`): the device key's 32-byte seed (made with CryptoKit at
   the first sign-in, and used again at each later one), the account the
@@ -1410,9 +1410,26 @@ any --switch off--> off (the sharing helper ended at once)
 - **Late answers.** `epoch` counts each turn of the switch and each sign-in;
   an answer from before one changes nothing, except that an upload or a
   withdrawal the commons took is kept whatever happened since.
-- **Stops.** `stop` holds the last step that stopped (the helper's own
-  stop, with whether its request may have reached its host, or `key` for
-  the keychain), until the next press or it is dismissed.
+- **Stops.** `stop` holds the last step that stopped: the step, the chat
+  and the trace it was for, and why (the helper's own stop, with whether
+  its request may have reached its host, or `key` for the keychain),
+  until the next press or it is dismissed. Each screen shows its own
+  steps' stops: the Wallet sheet the keychain's and the sign-in's, the
+  Ready sheet Ready's for its chat, the Review sheet Review's and
+  Share's for its chat, and a trace's line its Refresh and Withdraw.
+- **Screens.** The Wallet sheet's Share Traces section: the switch, the
+  account, the four scopes to grant and the terms. At the foot of a NEAR
+  chat with a message, while the switch is on, the share control: Share,
+  which opens the Ready sheet; once readied, Next message shares; once
+  answered, Review, which opens the Review sheet (Before and After side
+  by side, Review, then Share). Under each NEAR message, a line for each
+  trace shared from it: its status as the commons last gave it, its
+  credit when there is some, Refresh, and Withdraw, asked first, while
+  the commons still holds it. A control is off only where its press is
+  certain to fail, with a few words beside it: Sign in to share, Tor
+  needs Cloak running, Time ran out (with Ready Again; the control looks
+  at the challenge each second), No receipt (with Ready Again), and
+  Finish signing in.
 
 Nothing here is under test yet.
 

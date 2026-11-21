@@ -57,14 +57,24 @@ public final class TraceShare {
         public let exchange: TraceExchange
     }
 
-    /// A step under way, for its spinner. No press waits for one.
+    /// A step: under way, for its spinner (no press waits for one), or
+    /// stopped. `open` reads the keychain and `keep` writes it.
     public enum Step: Hashable, Sendable {
-        case ready, review, share, refresh, withdraw
+        case open, signIn, ready, review, share, refresh, withdraw, keep
+    }
+
+    /// A step that stopped: which, the chat and the trace it was for, if
+    /// any, and why.
+    public struct Stopped: Equatable, Sendable {
+        public let step: Step
+        public let chat: UUID?
+        public let trace: String?
+        public let stop: NearStop
     }
 
     public private(set) var state: State = .off
     /// The last step that stopped, until the next press or it is dismissed.
-    public var stop: NearStop?
+    public var stop: Stopped?
     private var busy: [Step: Int] = [:]
     private var record: TraceRecord?
     /// Counts each turn of the switch and each sign-in, so that a step's
@@ -85,6 +95,19 @@ public final class TraceShare {
 
     /// The scopes granted beyond the first, for chats readied from now on.
     public var scopes: Set<TraceScope> { record?.scopes ?? [] }
+
+    /// Every scope a chat readied now carries, the first among them.
+    public var granted: [TraceScope] { TraceScope.granted(scopes) }
+
+    /// The chat being shared, from readied until shared or replaced.
+    public var chat: UUID? {
+        guard case .signedIn(let sharing) = state else { return nil }
+        switch sharing {
+        case .idle: return nil
+        case .readied(let readied), .sending(let readied, _): return readied.chat
+        case .answered(let answered), .reviewed(let answered, _): return answered.readied.chat
+        }
+    }
 
     /// The provider last signed in with; nil before the first sign-in.
     public var provider: TraceProvider? { record?.provider }
@@ -124,7 +147,7 @@ public final class TraceShare {
             state = record == nil ? .signedOut : .signedIn(.idle)
         } catch {
             guard mine == epoch else { return }
-            stop = NearStop(kind: .key, code: nil, sent: false, text: "\(error)")
+            stop = Stopped(step: .open, chat: nil, trace: nil, stop: NearStop(kind: .key, code: nil, sent: false, text: "\(error)"))
         }
     }
 
@@ -153,7 +176,7 @@ public final class TraceShare {
             keep()
         } catch {
             guard mine == epoch else { return }
-            stop = error
+            stop = Stopped(step: .signIn, chat: nil, trace: nil, stop: error)
             state = record == nil ? .signedOut : .signedIn(.idle)
         }
     }
@@ -198,7 +221,7 @@ public final class TraceShare {
             state = .signedIn(.readied(Readied(chat: conversation.id, binding: admission.binding, expires: admission.expires, scopes: scopes)))
         } catch {
             guard mine == epoch else { return }
-            stop = error
+            stop = Stopped(step: .ready, chat: conversation.id, trace: nil, stop: error)
         }
     }
 
@@ -255,7 +278,7 @@ public final class TraceShare {
             state = .signedIn(.reviewed(answered, review))
         } catch {
             guard mine == epoch else { return }
-            stop = error
+            stop = Stopped(step: .review, chat: answered.readied.chat, trace: nil, stop: error)
         }
     }
 
@@ -283,23 +306,20 @@ public final class TraceShare {
             if state == .signedIn(.reviewed(answered, review)) { state = .signedIn(.idle) }
         } catch {
             guard mine == epoch else { return }
-            stop = error
+            stop = Stopped(step: .share, chat: answered.readied.chat, trace: nil, stop: error)
         }
     }
 
-    /// Reads the commons' status of the traces shared from `chat`, the
-    /// last 100 of them.
-    public func refresh(_ chat: UUID, route: NearRoute) async {
+    /// Reads the commons' status of `trace`.
+    public func refresh(_ trace: SharedTrace, route: NearRoute) async {
         guard case .signedIn = state, let record else { return }
-        let submissions = Array(record.shared.filter { $0.chat == chat }.suffix(100).map(\.submission))
-        guard !submissions.isEmpty else { return }
         let mine = epoch
         stop = nil
         busy[.refresh, default: 0] += 1
         defer { busy[.refresh, default: 1] -= 1 }
         do throws(NearStop) {
             let reports = try await sharing.status(
-                route: route, deviceKey: record.deviceKey, account: record.account, submissions: submissions)
+                route: route, deviceKey: record.deviceKey, account: record.account, submissions: [trace.submission])
             guard mine == epoch, var kept = self.record else { return }
             for report in reports {
                 guard let index = kept.shared.firstIndex(where: { $0.submission == report.submissionId }) else { continue }
@@ -311,7 +331,7 @@ public final class TraceShare {
             keep()
         } catch {
             guard mine == epoch else { return }
-            stop = error
+            stop = Stopped(step: .refresh, chat: trace.chat, trace: trace.submission, stop: error)
         }
     }
 
@@ -336,7 +356,7 @@ public final class TraceShare {
             keep()
         } catch {
             guard mine == epoch else { return }
-            stop = error
+            stop = Stopped(step: .withdraw, chat: trace.chat, trace: trace.submission, stop: error)
         }
     }
 
@@ -350,7 +370,7 @@ public final class TraceShare {
             do {
                 try await vault.save(data)
             } catch {
-                stop = NearStop(kind: .key, code: nil, sent: false, text: "\(error)")
+                stop = Stopped(step: .keep, chat: nil, trace: nil, stop: NearStop(kind: .key, code: nil, sent: false, text: "\(error)"))
             }
         }
     }

@@ -13,8 +13,9 @@ import SwiftUI
 /// showed the wallet; or, for Withdraw, the network's waiting time still
 /// running. Never for a press under way. In a NEAR Private AI chat, the
 /// owner's NEAR key, whether one is saved, the way to Settings' NEAR pane,
-/// and the tokens NEAR counted for the chat; in a Local Llama chat, nothing
-/// to pay. The wallet is read each time this opens on a chat it pays for.
+/// the tokens NEAR counted for the chat, and Share Traces (`TraceSharing`);
+/// in a Local Llama chat, nothing to pay. The wallet is read each time this
+/// opens on a chat it pays for.
 struct WalletView: View {
     @Bindable var wallet: Wallet
     let payer: Payer
@@ -47,6 +48,7 @@ struct WalletView: View {
                         dismiss()
                         showNearSettings()
                     }
+                    TraceSharing(settings: settings, share: nearMode.share, route: nearMode.route)
                 case .llama:
                     LlamaPayment()
                 }
