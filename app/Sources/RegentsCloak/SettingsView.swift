@@ -31,13 +31,14 @@ struct SettingsView: View {
     let door: Door
     let updates: Updates
     let near: NearMode
+    let venice: VeniceMode
     /// One for each model that answers Local Llama chats, smallest first.
     let downloads: [ModelDownload]
     @Bindable var selection: Selection
 
     static func window(
         _ settings: AppSettings, prompt: QuickPrompt, supervisor: Supervisor, door: Door, updates: Updates, near: NearMode,
-        downloads: [ModelDownload], selection: Selection
+        venice: VeniceMode, downloads: [ModelDownload], selection: Selection
     ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -45,7 +46,7 @@ struct SettingsView: View {
         let content = NSHostingController(
             rootView: SettingsView(
                 settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: near,
-                downloads: downloads, selection: selection))
+                venice: venice, downloads: downloads, selection: selection))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
         window.setContentSize(NSSize(width: 680, height: 500))
@@ -53,7 +54,7 @@ struct SettingsView: View {
     }
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general, near, llama, shortcut, door, advanced
+        case general, near, venice, llama, shortcut, door, advanced
 
         var id: Self { self }
 
@@ -61,6 +62,7 @@ struct SettingsView: View {
             switch self {
             case .general: "General"
             case .near: "NEAR"
+            case .venice: "Venice"
             case .llama: "Local Llama"
             case .shortcut: "Shortcut"
             case .door: "Door"
@@ -72,6 +74,7 @@ struct SettingsView: View {
             switch self {
             case .general: "gearshape"
             case .near: "cpu"
+            case .venice: "water.waves"
             case .llama: "laptopcomputer"
             case .shortcut: "keyboard"
             case .door: "door.left.hand.open"
@@ -96,6 +99,7 @@ struct SettingsView: View {
                 switch shown {
                 case .general: GeneralPane(settings: settings, updates: updates)
                 case .near: NearPane(settings: settings, mode: near)
+                case .venice: VenicePane(settings: settings, mode: venice)
                 case .llama: LlamaPane(settings: settings, downloads: downloads, rewording: supervisor.manifest.rewordingModel)
                 case .shortcut: ShortcutPane(settings: settings, prompt: prompt)
                 case .door: DoorPane(settings: settings, door: door)
@@ -295,6 +299,72 @@ private struct NearPane: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("NEAR Private AI chats can't send until you save a key again.")
+        }
+    }
+
+    /// Keeps the key typed, and clears the field at once.
+    private func save() {
+        let typed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        key = ""
+        guard !typed.isEmpty else { return }
+        Task {
+            if await mode.save(typed) { replacing = false }
+        }
+    }
+}
+
+/// Venice's key, kept in the keychain and never shown again, removed only
+/// once asked, and whether the wallet sheet lists the models Venice calls
+/// Anonymous. Venice always goes through Tor, as Token Inference does.
+private struct VenicePane: View {
+    @Bindable var settings: AppSettings
+    let mode: VeniceMode
+    @State private var key = ""
+    @State private var replacing = false
+    @State private var removing = false
+
+    var body: some View {
+        Form {
+            Section {
+                Row("Key", note: "Your Inference Only key from Venice. You can create one at venice.ai/settings/api. It pays for Venice chats that pay with a key, so Venice can connect those chats to your account. Cloak keeps it in this Mac's keychain, and it can't be viewed here after you save it.") {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if mode.hasKey == true, !replacing {
+                            HStack(spacing: 2) {
+                                Text("Saved")
+                                    .foregroundStyle(.secondary)
+                                SymbolButton("Replace", symbol: "pencil") { replacing = true }
+                                SymbolButton("Remove", symbol: "trash") { removing = true }
+                            }
+                        } else {
+                            HStack(spacing: 6) {
+                                SecureField("Venice key", text: $key, prompt: Text("Venice key"))
+                                    .labelsHidden()
+                                    .frame(width: 220)
+                                    .onSubmit(save)
+                                Button("Save", action: save)
+                                    .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                        if mode.keyFailed {
+                            Text("The keychain said no. Try again.")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+            Section {
+                Row("All tiers", note: "Off, Cloak lists only the models Venice calls Private or TEE. On, it also lists those Venice calls Anonymous, whose own companies can read your messages.") {
+                    Toggle("All tiers", isOn: $settings.veniceAllTiers)
+                }
+            }
+        }
+        .task { await mode.find() }
+        .alert("Remove key?", isPresented: $removing) {
+            Button("Remove", role: .destructive) { Task { await mode.remove() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Venice chats that pay with a key can't send until you save a key again.")
         }
     }
 
@@ -607,7 +677,7 @@ private struct AdvancedPane: View {
                 }
             }
             Section {
-                let note = "Puts every setting in this window back. Your wallet, NEAR key, chats and downloaded models stay as they are."
+                let note = "Puts every setting in this window back. Your wallet, NEAR and Venice keys, chats and downloaded models stay as they are."
                 HStack(spacing: 2) {
                     Spacer()
                     Button("Restore Defaults…") { restoring = true }
@@ -628,11 +698,12 @@ private struct AdvancedPane: View {
     /// What Restore Defaults does, from the defaults themselves.
     private var restored: String {
         """
-        Launch at login, Updates and Tor for NEAR turn off, \
+        Launch at login, Updates, Tor for NEAR and All tiers for Venice turn off, \
         rewording, Review, Saved chats and Cover traffic turn back on, \
         Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
-        Freshness to “\(AppSettings.defaultProofFreshness.title)” \
-        and Local Llama to \(supervisor.manifest.rewordingModel.label), \
+        Freshness to “\(AppSettings.defaultProofFreshness.title)”, \
+        Local Llama to \(supervisor.manifest.rewordingModel.label) \
+        and new Token Inference chats to Boundless, paid with a key, with no Venice model chosen, \
         the quick prompt loses its shortcut, and the door goes back to port \(AppSettings.defaultDoorPort).
         """
     }

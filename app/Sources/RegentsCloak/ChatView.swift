@@ -17,11 +17,12 @@ struct ChatView: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
     let showNearSettings: () -> Void
+    let showVeniceSettings: () -> Void
     let showLlamaSettings: () -> Void
 
     static func window(
         _ chat: Chat, showDetails: @escaping () -> Void, showNearSettings: @escaping () -> Void,
-        showLlamaSettings: @escaping () -> Void
+        showVeniceSettings: @escaping () -> Void, showLlamaSettings: @escaping () -> Void
     ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -31,7 +32,8 @@ struct ChatView: View {
         window.closesOnEscape = false
         let content = NSHostingController(
             rootView: ChatView(
-                chat: chat, showDetails: showDetails, showNearSettings: showNearSettings, showLlamaSettings: showLlamaSettings))
+                chat: chat, showDetails: showDetails, showNearSettings: showNearSettings, showVeniceSettings: showVeniceSettings,
+                showLlamaSettings: showLlamaSettings))
         content.sceneBridgingOptions = [.toolbars]
         content.sizingOptions = [.minSize]
         window.contentViewController = content
@@ -44,7 +46,9 @@ struct ChatView: View {
             Sidebar(chat: chat)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
-            Detail(chat: chat, showDetails: showDetails, showNearSettings: showNearSettings, showLlamaSettings: showLlamaSettings)
+            Detail(
+                chat: chat, showDetails: showDetails, showNearSettings: showNearSettings, showVeniceSettings: showVeniceSettings,
+                showLlamaSettings: showLlamaSettings)
         }
         .frame(minWidth: 760, minHeight: 460)
         .task { await chat.open() }
@@ -134,6 +138,7 @@ private struct Detail: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
     let showNearSettings: () -> Void
+    let showVeniceSettings: () -> Void
     let showLlamaSettings: () -> Void
 
     /// The conversation in front's mode; V's while none is, as the mark at
@@ -146,7 +151,8 @@ private struct Detail: View {
         VStack(spacing: 0) {
             switch kind {
             case .v: VBar()
-            case .token: TokenBar()
+            case .token:
+                TokenBar(venice: chat.selected.map(chat.isVenice) ?? false, tier: chat.selected.flatMap(chat.venice(of:))?.tier)
             case .near: NearBar(settings: chat.settings)
             case .llama: LlamaBar()
             }
@@ -163,8 +169,9 @@ private struct Detail: View {
         }
         .sheet(isPresented: $chat.showingWallet) {
             WalletView(
-                wallet: chat.wallet, payer: chat.payer, settings: chat.settings, nearMode: chat.nearMode, kind: kind,
-                tokens: chat.selected?.tokens, showNearSettings: showNearSettings)
+                wallet: chat.wallet, payer: chat.payer, settings: chat.settings, nearMode: chat.nearMode, veniceMode: chat.veniceMode,
+                kind: kind, conversation: chat.selected, tokens: chat.selected?.tokens, showNearSettings: showNearSettings,
+                showVeniceSettings: showVeniceSettings)
         }
         .sheet(isPresented: $chat.showingModes) {
             ModesPage(chat: chat)
@@ -192,7 +199,7 @@ private struct Detail: View {
         case .open:
             if let conversation = chat.selected {
                 VStack(spacing: 0) {
-                    Turns(chat: chat, conversation: conversation)
+                    Turns(chat: chat, conversation: conversation, showVeniceSettings: showVeniceSettings)
                     Divider()
                     Compose(chat: chat, showDetails: showDetails, showLlamaSettings: showLlamaSettings)
                 }
@@ -293,6 +300,7 @@ private struct WalletButton: View {
 private struct Turns: View {
     let chat: Chat
     let conversation: Conversation
+    let showVeniceSettings: () -> Void
 
     var body: some View {
         let rewording = chat.rewording?.conversation == conversation.id ? chat.rewording : nil
@@ -321,9 +329,9 @@ private struct Turns: View {
                                 newest: turn.id == conversation.turns.last?.id)
                         } else {
                             TurnCard(
-                                chat: chat, conversation: conversation.id, turn: turn, mode: mode,
+                                chat: chat, conversation: conversation, turn: turn, mode: mode,
                                 open: chat.isOpen(turn, in: conversation),
-                                rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil })
+                                rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil }, showVeniceSettings: showVeniceSettings)
                         }
                     }
                     if let rewording, rewording.turn == nil {
@@ -364,14 +372,17 @@ private struct Turns: View {
 /// and Never reword. Another unsent one is shrunk, marked so, and opens when
 /// pressed anywhere. A NEAR message is shown as written alone, and the open
 /// one has Send, with no lights and no rewording; its answer, when NEAR
-/// counted its tokens, has a mark that says how many.
+/// counted its tokens, has a mark that says how many. A Venice message's
+/// answer shows as it comes, with Stop, and a stop says whether the message
+/// may have reached Venice.
 private struct TurnCard: View {
     let chat: Chat
-    let conversation: UUID
+    let conversation: Conversation
     let turn: Turn
     let mode: Chat.Kind
     let open: Bool
     let rewording: Chat.Rewording?
+    let showVeniceSettings: () -> Void
     @State private var hovering = false
 
     var body: some View {
@@ -390,7 +401,7 @@ private struct TurnCard: View {
                     Pane(title: "Reworded", count: diff.added.count, mark: .added) {
                         TextBox(
                             text: open
-                                ? Binding(get: { reworded }, set: { chat.edit(turn.id, in: conversation, to: $0) })
+                                ? Binding(get: { reworded }, set: { chat.edit(turn.id, in: conversation.id, to: $0) })
                                 : .constant(reworded),
                             label: "Reworded", editable: open && sending == nil && chat.rewording == nil, marks: diff.added,
                             mark: .added)
@@ -410,6 +421,15 @@ private struct TurnCard: View {
                         TokenMark(tokens: tokens)
                     }
                 }
+            } else if let partial = chat.veniceMode.partial[turn.id], !partial.text.isEmpty {
+                Pane(title: "Answer", count: nil, mark: .added) {
+                    AnswerText(text: partial.text)
+                }
+            }
+            if let stop = chat.veniceMode.stops[turn.id] {
+                VeniceStopRow(stop: stop) { chat.veniceMode.dismissStop(of: turn.id) }
+                    .padding(12)
+                    .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             }
             if !near, let stop = chat.sendStop, stop.turn == turn.id {
                 Group {
@@ -434,40 +454,51 @@ private struct TurnCard: View {
                 if !near {
                     Lights(
                         reworded: turn.reworded.map { !Chat.isBlank($0) } ?? false, routed: chat.supervisor.phase == .running,
-                        linkable: mode == .token)
+                        link: mode != .token ? nil : conversation.isVenice ? Chat.Kind.veniceLink : Chat.Kind.tokenLink)
                 }
                 HStack(spacing: 12) {
                     if !near {
-                        SymbolButton("Reword", symbol: "pencil.line") { chat.reword(turn, in: conversation) }
+                        SymbolButton("Reword", symbol: "pencil.line") { chat.reword(turn, in: conversation.id) }
                             .disabled(!chat.canReword || sending != nil)
                     }
                     if let sending {
                         Busy(title: "Sending", started: sending.started)
+                        VeniceStopButton(chat: chat, turn: turn.id)
                     }
                     Spacer()
-                    let block = near ? chat.nearMode.sendBlock : chat.sendBlock(turn, in: mode)
-                    let originalBlock = turn.reworded == nil ? nil : chat.originalBlock(in: mode)
+                    let block = near ? chat.nearMode.sendBlock : chat.sendBlock(turn, in: conversation)
+                    let originalBlock = turn.reworded == nil ? nil : chat.originalBlock(in: conversation)
                     if let words = originalBlock ?? block {
                         Text(words)
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
+                    // Where a Venice chat's reason is fixed.
+                    let venice = chat.veniceBlock(in: conversation)
+                    if venice == .noKey {
+                        SymbolButton("Open Settings", symbol: "gearshape", action: showVeniceSettings)
+                    } else if venice == .noWallet {
+                        SymbolButton("Open Wallet", symbol: "creditcard") { chat.showingWallet = true }
+                    }
                     // Each press of Send or Send Original Text sends, one
                     // under way or not.
                     HStack(spacing: 0) {
-                        Button("Send", systemImage: "arrow.up") { chat.send(turn.id, in: conversation) }
+                        Button("Send", systemImage: "arrow.up") { chat.send(turn.id, in: conversation.id) }
                             .buttonStyle(RoundButtonStyle(diameter: 20))
                             .help("Send")
                             .disabled(block != nil)
                         if turn.reworded != nil {
                             SendOptions(settings: chat.settings, blocked: originalBlock != nil) {
-                                chat.sendOriginal(turn.id, in: conversation)
+                                chat.sendOriginal(turn.id, in: conversation.id)
                             }
                         }
                     }
                 }
             } else if let sending {
-                Busy(title: "Sending", started: sending.started)
+                HStack(spacing: 12) {
+                    Busy(title: "Sending", started: sending.started)
+                    VeniceStopButton(chat: chat, turn: turn.id)
+                }
             } else if turn.answer == nil {
                 // Only its room: the mark is drawn over the press that opens
                 // the card, so its help shows.
@@ -645,7 +676,7 @@ private struct TaskCard: View {
             }
             if newest, turn.answer == nil {
                 // The door sends nothing of a task that it has not reworded.
-                Lights(reworded: true, routed: chat.supervisor.phase == .running, linkable: mode == .token)
+                Lights(reworded: true, routed: chat.supervisor.phase == .running, link: mode == .token ? Chat.Kind.tokenLink : nil)
             }
             if let run {
                 HStack(spacing: 8) {
@@ -777,19 +808,19 @@ private struct EndRow: View {
 /// Whether the message is reworded and routed through Tor: a symbol each,
 /// green when it is, orange when not, with the state in words as its help
 /// and for VoiceOver. Routed has Tor's symbol, as the Tor switch does. In
-/// Token Inference a third, always orange, says one wallet pays for every
-/// chat.
+/// Token Inference a third, always orange, says who can link the chats, and
+/// why (`link`).
 private struct Lights: View {
     let reworded: Bool
     let routed: Bool
-    let linkable: Bool
+    let link: String?
 
     var body: some View {
         HStack(spacing: 4) {
             Light(symbol: "textformat", good: reworded, words: reworded ? "Reworded" : "Not reworded")
             Light(symbol: torSymbol, good: routed, words: routed ? "Routed through Tor" : "Not routed: Cloak isn't running")
-            if linkable {
-                Light(symbol: "link", good: false, words: "The provider can link your chats, because one wallet pays for all of them.")
+            if let link {
+                Light(symbol: "link", good: false, words: link)
             }
         }
     }
@@ -970,7 +1001,9 @@ extension View {
 /// the foot NEAR's Tor switch and what its hardware check last found. In a
 /// Local Llama conversation, it asks the model on this Mac, with Stop while
 /// the model answers, no details and no switches, and Cloak need not be
-/// running; when asking is certain to stop, why, and the way on.
+/// running; when asking is certain to stop, why, and the way on. With
+/// Venice chosen for a new Token Inference chat, the Agent switch stays off,
+/// saying why, and the box takes no message until a model is chosen.
 private struct Compose: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
@@ -1052,7 +1085,11 @@ private struct Compose: View {
                     HStack(spacing: 6) {
                         ModeSwitch(kind: $chat.kind)
                             .fixedSize()
-                        if chat.kind.hasAgent {
+                        if chat.veniceChosen {
+                            SwitchPill(
+                                title: Chat.Kind.agentName, symbol: Chat.Kind.agentSymbol, isOn: .constant(false),
+                                help: Chat.Kind.veniceAgent, fixed: Chat.Kind.veniceAgent)
+                        } else if chat.kind.hasAgent {
                             SwitchPill(
                                 title: Chat.Kind.agentName, symbol: Chat.Kind.agentSymbol, isOn: $chat.agentOn,
                                 help: Chat.Kind.agentAbout)
@@ -1081,12 +1118,19 @@ private struct Compose: View {
                     Text(block)
                         .foregroundStyle(.secondary)
                 }
+                if let conversation, let block = chat.veniceBlock(in: conversation), block == .noModel || block == .retired {
+                    Text(block.words)
+                        .foregroundStyle(.secondary)
+                    if block == .noModel {
+                        SymbolButton("Open Wallet", symbol: "creditcard") { chat.showingWallet = true }
+                    }
+                }
             }
             .font(.callout)
             if near {
                 NearSwitches(settings: chat.settings, nearMode: chat.nearMode)
             } else if !llama {
-                Switches(mode: mode)
+                Switches(mode: mode, venice: conversation.map(chat.isVenice) ?? false)
             }
         }
         .padding(16)
@@ -1101,10 +1145,11 @@ private let torSymbol = "point.3.connected.trianglepath.dotted"
 /// Tor and zkAPI, each a small glass pill of its symbol whose dot shows at
 /// a glance whether it is on. Tor is always on. zkAPI is on in V, which
 /// pays each request with a new key, and off in Token Inference, which
-/// pays from one wallet. Neither changes here, and a press on either says
-/// so.
+/// pays from one wallet, or, at Venice, one key or one wallet. Neither
+/// changes here, and a press on either says so.
 private struct Switches: View {
     let mode: Chat.Kind
+    let venice: Bool
 
     var body: some View {
         let v = mode == .v
@@ -1115,7 +1160,8 @@ private struct Switches: View {
                 fixed: v ? "Tor stays on in V chats." : "Tor stays on in Token Inference chats.")
             SwitchPill(
                 title: "zkAPI", symbol: "ticket", isOn: .constant(v),
-                help: v ? "Each request is paid with a new key." : "zkAPI is off: one wallet pays for every chat.",
+                help: v ? "Each request is paid with a new key."
+                    : venice ? "zkAPI is off: one key or one wallet pays for every chat." : "zkAPI is off: one wallet pays for every chat.",
                 fixed: v ? "zkAPI stays on in V chats." : "Token Inference pays from one wallet. V pays with zkAPI.")
             Spacer(minLength: 0)
         }
@@ -1332,6 +1378,15 @@ extension Chat.Kind {
 
     static let agentName = "Agent"
     static let agentSymbol = "hammer"
+    /// Token Inference's third light, and its mark's help: who can link the
+    /// chats, and why.
+    static let tokenLink = "The provider can link your chats, because one wallet pays for all of them."
+    static let veniceLink = "Venice can link your chats, because one key or one wallet pays for all of them."
+    /// What one wallet for both providers costs, on the Modes page and under
+    /// the wallet when it pays Venice.
+    static let oneAddress = "The wallet pays Boundless on Tempo and Venice on Base from the same address, so anyone can tie those payments to each other."
+    /// The Agent switch's help and words while Venice is chosen.
+    static let veniceAgent = "Agent tasks use Boundless. Choose Boundless in the Wallet to run one."
     /// The Agent switch's help.
     static let agentAbout =
         "Agent: your message becomes a task. Cloak's agent works on it step by step inside its sealed box on this Mac, through Tor. A remote model does the thinking, paid the same way as the chat."
@@ -1361,7 +1416,7 @@ extension Chat.Kind {
     var about: String {
         switch self {
         case .v: "V: reworded on this Mac and sent through Tor. Each request is paid with a new key, from a deposit of ETH."
-        case .token: "Token Inference: reworded on this Mac and sent through Tor, paid with USDC.e on Tempo from one wallet on this Mac."
+        case .token: "Token Inference: reworded on this Mac and sent through Tor, paid from one wallet on this Mac, in USDC.e on Tempo or in USDC on Base at Venice, or with your own Venice key."
         case .near: "NEAR Private AI: sent as you wrote it once NEAR's hardware check passes, paid by your NEAR key."
         case .llama: "Local Llama: the model on this Mac answers, nothing is sent and there's nothing to pay."
         }
@@ -1371,7 +1426,7 @@ extension Chat.Kind {
     var paidWith: String {
         switch self {
         case .v: "ETH on Ethereum"
-        case .token: "USDC.e on Tempo"
+        case .token: "USDC.e on Tempo, or at Venice with your own key or USDC on Base."
         case .near: "A NEAR key from cloud.near.ai"
         case .llama: "Nothing to pay"
         }
@@ -1391,6 +1446,8 @@ extension Chat.Kind {
                 "Each message is reworded on this Mac, and you see both.", "Sent through Tor.",
                 "One wallet pays for every request, so the provider can link your chats.", "Cards aren't accepted.",
                 "With Agent on, a message becomes a task.",
+                "Venice lists each model with its own tier: Anonymous, Private or TEE. Cloak shows Venice's word and cannot check it.",
+                Self.oneAddress,
             ]
         case .near:
             ["Each message goes to NEAR as you wrote it.", "Sent once NEAR's hardware check passes.", "Through Tor when you turn it on."]
@@ -1477,6 +1534,7 @@ private struct ModeColumn: View {
                     Label(mode.paidWith, systemImage: "creditcard")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .help("Paid with")
                 }
                 VStack(alignment: .leading, spacing: 6) {
@@ -1529,6 +1587,49 @@ private struct NearStopRow: View {
                 .buttonStyle(.borderless)
                 .hover(Circle(), outset: 4)
                 .help("Dismiss")
+        }
+    }
+}
+
+/// Why a Venice message stopped, in plain words, and whether it may have
+/// reached Venice.
+private struct VeniceStopRow: View {
+    let stop: VeniceStop
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(stop.kind.title)
+                    .fontWeight(.medium)
+                Text(stop.kind.words)
+                    .foregroundStyle(.secondary)
+                Text(stop.sent ? "Your message may have reached Venice. Sending again may be charged twice." : "Nothing was sent.")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Dismiss", systemImage: "xmark", action: dismiss)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .hover(Circle(), outset: 4)
+                .help("Dismiss")
+        }
+    }
+}
+
+/// Stop, and ⌘., beside a Venice message under way: ends every press on it.
+/// Whatever Venice charged so far stays charged.
+private struct VeniceStopButton: View {
+    let chat: Chat
+    let turn: UUID
+
+    var body: some View {
+        if chat.veniceMode.answering(turn) {
+            Button("Stop") { chat.veniceMode.stop(turn) }
+                .keyboardShortcut(".", modifiers: .command)
         }
     }
 }

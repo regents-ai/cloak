@@ -34,6 +34,10 @@ final class AppSettings {
         case proofFreshness
         case answerModel
         case vModel
+        case provider
+        case venicePays
+        case veniceModel
+        case veniceAllTiers
         case depositExpires
     }
 
@@ -201,6 +205,56 @@ final class AppSettings {
         }
     }
 
+    /// Where new Token Inference chats go: Boundless, paid from the Tempo
+    /// wallet, or Venice. A chat keeps the one it began with.
+    var provider: Provider {
+        get {
+            access(keyPath: \.provider)
+            return defaults.string(forKey: Key.provider.rawValue).flatMap(Provider.init) ?? .boundless
+        }
+        set {
+            withMutation(keyPath: \.provider) { defaults.set(newValue.rawValue, forKey: Key.provider.rawValue) }
+        }
+    }
+
+    /// How new Venice chats pay: the owner's Venice key, or the Venice
+    /// wallet. A chat keeps the way it began with.
+    var venicePays: VeniceChat.Pays {
+        get {
+            access(keyPath: \.venicePays)
+            return defaults.string(forKey: Key.venicePays.rawValue).flatMap(VeniceChat.Pays.init) ?? .key
+        }
+        set {
+            withMutation(keyPath: \.venicePays) { defaults.set(newValue.rawValue, forKey: Key.venicePays.rawValue) }
+        }
+    }
+
+    /// The Venice model new Venice chats go to, with the tier Venice listed
+    /// it at when it was chosen; nil until one is chosen.
+    var veniceModel: VeniceChoice? {
+        get {
+            access(keyPath: \.veniceModel)
+            return defaults.data(forKey: Key.veniceModel.rawValue).flatMap { try? PropertyListDecoder().decode(VeniceChoice.self, from: $0) }
+        }
+        set {
+            withMutation(keyPath: \.veniceModel) {
+                defaults.set(try! newValue.map(PropertyListEncoder().encode), forKey: Key.veniceModel.rawValue)
+            }
+        }
+    }
+
+    /// Whether Venice's model picker also lists the models Venice calls
+    /// Anonymous, whose own companies can read the messages.
+    var veniceAllTiers: Bool {
+        get {
+            access(keyPath: \.veniceAllTiers)
+            return defaults.bool(forKey: Key.veniceAllTiers.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.veniceAllTiers) { defaults.set(newValue, forKey: Key.veniceAllTiers.rawValue) }
+        }
+    }
+
     /// When V's deposit may be sent to the service's operator, as the payer
     /// last read it, so Chat can warn while Cloak is paused; nil without a
     /// deposit. Set only by `Payer`, and kept through Restore Defaults.
@@ -275,10 +329,35 @@ final class AppSettings {
             case .proofFreshness: withMutation(keyPath: \.proofFreshness, remove)
             case .answerModel: withMutation(keyPath: \.answerModel, remove)
             case .vModel: withMutation(keyPath: \.vModel, remove)
+            case .provider: withMutation(keyPath: \.provider, remove)
+            case .venicePays: withMutation(keyPath: \.venicePays, remove)
+            case .veniceModel: withMutation(keyPath: \.veniceModel, remove)
+            case .veniceAllTiers: withMutation(keyPath: \.veniceAllTiers, remove)
             case .depositExpires: break
             }
         }
     }
+}
+
+/// Where a Token Inference chat goes.
+enum Provider: String, CaseIterable, Identifiable {
+    case boundless, venice
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .boundless: "Boundless"
+        case .venice: "Venice"
+        }
+    }
+}
+
+/// A Venice model as its owner chose it: its id, and the tier Venice
+/// listed it at then.
+struct VeniceChoice: Codable, Hashable {
+    let model: String
+    let tier: VeniceTier
 }
 
 /// How long the model may go with nothing to reword before it leaves memory.

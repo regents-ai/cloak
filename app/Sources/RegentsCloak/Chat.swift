@@ -15,10 +15,15 @@ import os
 /// through Tor to a remote model, a V chat's paid through zkAPI by the
 /// guest's payer, a new key for each request (`Payer`, decision 24), a
 /// Token Inference chat's through the guest's sender from the one Tempo
-/// wallet (`Wallet`, decisions 10 and 25). In either, a conversation whose
+/// wallet (`Wallet`, decisions 10 and 25), or, when Venice was chosen for
+/// its first message, through the same sender to Venice, paid by the
+/// owner's Venice key or the same wallet's Venice credit (`VeniceMode`,
+/// decision 31). In either, a
+/// conversation whose
 /// first message is a task is the agent's (decisions 12 and 26): each task
 /// runs when its owner presses Run, its model requests reworded at the door
-/// and paid as its chat's are. A conversation whose first message went to
+/// and paid as its chat's are; a Token Inference task always through
+/// Boundless. A conversation whose first message went to
 /// NEAR is NEAR's (`NearMode`): each message goes there as written, at
 /// once, paid by the owner's NEAR key. A conversation whose first message
 /// went to the model on this Mac is Local Llama's: each message goes there
@@ -51,8 +56,10 @@ final class Chat {
     /// What one rewording is for.
     enum Asked {
         /// A new message, with the box as it was written, picks and all, to
-        /// give back if the rewording stops, and the mode it was written in.
-        case new(draft: String, picks: DetailPicks, mode: Kind)
+        /// give back if the rewording stops, and the mode it was written in,
+        /// with the Venice chat it begins when it is a Token Inference
+        /// chat's first and Venice is chosen.
+        case new(draft: String, picks: DetailPicks, mode: Kind, venice: VeniceChat?)
         /// A turn asked again.
         case again(UUID)
     }
@@ -132,6 +139,7 @@ final class Chat {
     /// V's.
     let payer: Payer
     let nearMode: NearMode
+    let veniceMode: VeniceMode
     /// One download for each model that answers Local Llama chats, the
     /// least memory first: read here for whether the chosen one is on this
     /// Mac, which a Local Llama chat needs.
@@ -202,7 +210,7 @@ final class Chat {
 
     init(
         supervisor: Supervisor, settings: AppSettings, folder: URL, wallet: URL, queue: PayQueue, door: Door,
-        nearMode: NearMode, downloads: [ModelDownload]
+        nearMode: NearMode, veniceMode: VeniceMode, downloads: [ModelDownload]
     ) {
         self.supervisor = supervisor
         self.settings = settings
@@ -213,6 +221,7 @@ final class Chat {
             keep: { settings.depositExpires = $0 }, chosen: { settings.vModel })
         self.payer = payer
         self.nearMode = nearMode
+        self.veniceMode = veniceMode
         self.downloads = downloads
         let agent = Agent(parts: Agent.Parts(
             run: { supervisor.run($0) }, pass: { door.pass(for: $0, paying: $1) }, reworded: { door.reworded(for: $0) }))
@@ -253,9 +262,11 @@ final class Chat {
     /// certain to stop, or one runs in its conversation already. A NEAR
     /// message goes unless sending it is certain to stop. A Local Llama
     /// message is asked unless asking is certain to stop (`llamaBlock`), or
-    /// the model is answering in its conversation already.
+    /// the model is answering in its conversation already. A Venice chat
+    /// takes none while it has no model to begin with, or its model is gone.
     var canSubmit: Bool {
         guard let selected, !Self.isBlank(draft) else { return false }
+        if let block = veniceBlock(in: selected), block == .noModel || block == .retired { return false }
         let mode = kind(of: selected)
         if isAgent(selected) { return isOpen && runBlock(in: mode) == nil && agent.runs[selected.id] == nil }
         if mode == .near { return isOpen && nearMode.sendBlock == nil }
@@ -273,9 +284,76 @@ final class Chat {
     }
 
     /// Whether `conversation` is the agent's: as its first turn is, or, while
-    /// it has none, as chosen.
+    /// it has none, as chosen. Not while Venice is chosen for a new Token
+    /// Inference chat: the agent's tasks go to Boundless only.
     func isAgent(_ conversation: Conversation) -> Bool {
-        conversation.turns.isEmpty ? agentOn && kind.hasAgent : conversation.isAgent
+        conversation.turns.isEmpty ? agentOn && kind.hasAgent && !veniceChosen : conversation.isAgent
+    }
+
+    /// Venice is chosen for the empty conversation's first message, in Token
+    /// Inference.
+    var veniceChosen: Bool {
+        kind == .token && settings.provider == .venice
+    }
+
+    /// Whether `conversation` is Venice's: as its first message made it, or,
+    /// while it has none, as chosen.
+    func isVenice(_ conversation: Conversation) -> Bool {
+        conversation.turns.isEmpty ? veniceChosen : conversation.isVenice
+    }
+
+    /// The Venice chat the empty conversation's first message begins: the
+    /// model chosen, its tier, and the way new chats pay. Nil while no
+    /// model is chosen.
+    var newVenice: VeniceChat? {
+        veniceMode.choice.map { VeniceChat(model: $0.model, tier: $0.tier, pays: settings.venicePays) }
+    }
+
+    /// The Venice chat `conversation` is, or, while it is empty with Venice
+    /// chosen, begins as; nil for any other, and for an empty one with no
+    /// model chosen.
+    func venice(of conversation: Conversation) -> VeniceChat? {
+        guard isVenice(conversation) else { return nil }
+        return conversation.turns.isEmpty ? newVenice : conversation.venice
+    }
+
+    /// Why a Venice message is certain to stop if sent now.
+    enum VeniceBlock {
+        case notRunning
+        /// A chat that pays with a key, with none kept.
+        case noKey
+        /// A chat that pays from the wallet, with none made.
+        case noWallet
+        /// A new chat, with no model chosen.
+        case noModel
+        /// Venice no longer lists the chat's model, or lists it at another
+        /// tier.
+        case retired
+
+        var words: String {
+            switch self {
+            case .notRunning: "Start Cloak to send."
+            case .noKey: "Save your Venice key in Settings."
+            case .noWallet: "Create a wallet to send."
+            case .noModel: "Choose a model in the Wallet."
+            case .retired: "Start a new chat."
+            }
+        }
+    }
+
+    /// Why a message in `conversation` can't go to Venice now, or nil when it
+    /// can, or when the conversation is not Venice's. Off only where sending
+    /// is certain to stop; no balance never holds it back, since Venice
+    /// answers that itself.
+    func veniceBlock(in conversation: Conversation) -> VeniceBlock? {
+        guard isVenice(conversation) else { return nil }
+        if veniceMode.retired.contains(conversation.id) { return .retired }
+        guard let chat = venice(of: conversation) else { return .noModel }
+        guard supervisor.phase == .running else { return .notRunning }
+        switch chat.pays {
+        case .key: return veniceMode.hasKey == false ? .noKey : nil
+        case .wallet: return wallet.presence == .absent || wallet.presence == .creating ? .noWallet : nil
+        }
     }
 
     func isNear(_ conversation: Conversation) -> Bool {
@@ -287,10 +365,12 @@ final class Chat {
     }
 
     /// Marks `conversation`, while it is empty, with `mode`, as its first
-    /// turn goes in; a V conversation has no mark.
-    private func mark(_ conversation: inout Conversation, as mode: Kind) {
+    /// turn goes in, and a Token Inference one with the Venice chat it
+    /// begins, if any; a V conversation has no mark.
+    private func mark(_ conversation: inout Conversation, as mode: Kind, venice: VeniceChat? = nil) {
         guard conversation.turns.isEmpty else { return }
         conversation.token = mode == .token ? true : nil
+        conversation.venice = mode == .token ? venice : nil
         conversation.near = mode == .near ? true : nil
         conversation.llama = mode == .llama ? true : nil
     }
@@ -346,22 +426,24 @@ final class Chat {
         return turn.id == conversation.turns.last?.id
     }
 
-    /// Why Send is off for `turn`, in a chat of `mode`, now, or nil when it
+    /// Why Send is off for `turn`, in `conversation`, now, or nil when it
     /// is on. Off only where sending is certain to stop: a reworded text
     /// left blank; Cloak not running, so nothing is routed through Tor; in
     /// Token Inference, no wallet, or, as the network last showed the
-    /// wallet, no funds; in V, the chain at the latest block read showing
-    /// the deposit closed. A V send with no deposit goes, and the payer
-    /// answers it. A send under way never turns it off.
-    func sendBlock(_ turn: Turn, in mode: Kind) -> String? {
+    /// wallet, no funds, or, in a Venice chat, `veniceBlock`; in V, the
+    /// chain at the latest block read showing the deposit closed. A V send
+    /// with no deposit goes, and the payer answers it. A send under way
+    /// never turns it off.
+    func sendBlock(_ turn: Turn, in conversation: Conversation) -> String? {
         if let reworded = turn.reworded, Self.isBlank(reworded) { return "Reword it to send." }
-        return originalBlock(in: mode)
+        return originalBlock(in: conversation)
     }
 
     /// Why Send Original Text is off now, or nil when it is on: Send's
     /// reasons but a blank reworded text, which it does not send.
-    func originalBlock(in mode: Kind) -> String? {
-        switch block(in: mode) {
+    func originalBlock(in conversation: Conversation) -> String? {
+        if isVenice(conversation) { return veniceBlock(in: conversation)?.words }
+        return switch block(in: kind(of: conversation)) {
         case .notRunning?: "Start Cloak to send."
         case .noWallet?: "Create a wallet to send."
         case .noFunds?: "Add funds to send."
@@ -453,6 +535,7 @@ final class Chat {
         guard case .open(let store) = access, let conversation = conversations.first(where: { $0.id == id }) else { return }
         if rewording?.conversation == id { rewording?.task.cancel() }
         answering[id]?.task.cancel()
+        veniceMode.stop(in: conversation)
         agent.stop(id)
         identities[id] = nil
         if !conversation.turns.isEmpty {
@@ -504,13 +587,13 @@ final class Chat {
             ask(turn.id, in: conversation.id)
         } else if settings.neverReword {
             let turn = Turn(original: original, reworded: nil)
-            mark(&conversation, as: mode)
+            mark(&conversation, as: mode, venice: newVenice)
             conversation.turns.append(turn)
             opened = turn.id
             update(conversation)
             send(turn.id, in: conversation.id)
         } else {
-            start(conversation.id, original, .new(draft: written, picks: picked, mode: mode))
+            start(conversation.id, original, .new(draft: written, picks: picked, mode: mode, venice: newVenice))
         }
     }
 
@@ -593,7 +676,7 @@ final class Chat {
     /// its Original alone, and sent so again after it is answered (decision
     /// 11). Each press is sent, as for Send.
     func sendOriginal(_ turn: UUID, in id: UUID) {
-        guard var conversation = conversations.first(where: { $0.id == id }), originalBlock(in: kind(of: conversation)) == nil,
+        guard var conversation = conversations.first(where: { $0.id == id }), originalBlock(in: conversation) == nil,
             let index = conversation.turns.firstIndex(where: { $0.id == turn }), conversation.turns[index].answer == nil
         else { return }
         conversation.turns[index].reworded = nil
@@ -608,7 +691,8 @@ final class Chat {
     /// the one before it plus more. Each press is sent; one under way never
     /// stops another. A NEAR conversation's turn goes to NEAR only; a V
     /// conversation's through the payer only, in the owner's turn; a Token
-    /// Inference conversation's to the Tempo wallet's provider only.
+    /// Inference conversation's to the Tempo wallet's provider only, or, a
+    /// Venice chat's, to Venice only, as the chat began.
     func send(_ turn: UUID, in id: UUID) {
         guard var conversation = conversations.first(where: { $0.id == id }),
             let index = conversation.turns.firstIndex(where: { $0.id == turn })
@@ -623,7 +707,14 @@ final class Chat {
             return
         }
         let mode = kind(of: conversation)
-        guard sendBlock(conversation.turns[index], in: mode) == nil else { return }
+        guard sendBlock(conversation.turns[index], in: conversation) == nil else { return }
+        if conversation.isVenice {
+            press(turn, at: index, in: &conversation)
+            veniceMode.send(turn, in: conversation, identity: identity(of: id), wallet: wallet.presence.address) { [weak self] answer in
+                self?.sent(turn, in: id, answer: answer, tokens: nil)
+            }
+            return
+        }
         if mode == .token {
             guard let deposits = wallet.deposits else { return }
             press(turn, at: index, in: &conversation)
@@ -811,7 +902,7 @@ final class Chat {
                 conversation.turns[index].reworded = reworded
                 turn = again
             } else {
-                if case .new(_, _, let mode) = asked { mark(&conversation, as: mode) }
+                if case .new(_, _, let mode, let venice) = asked { mark(&conversation, as: mode, venice: venice) }
                 let new = Turn(original: original, reworded: reworded)
                 conversation.turns.append(new)
                 opened = new.id
@@ -823,7 +914,7 @@ final class Chat {
             // open, saying why. A card's Reword only rewords.
             if case .new = asked, !settings.review { send(turn, in: id) }
         case .failure(let reason):
-            guard case .new(let written, let picked, _) = asked else {
+            guard case .new(let written, let picked, _, _) = asked else {
                 stop = Stop(reason: reason, newMessage: false)
                 return
             }

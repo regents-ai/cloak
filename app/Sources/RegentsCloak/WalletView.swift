@@ -15,25 +15,45 @@ import SwiftUI
 /// owner's NEAR key, whether one is saved, the way to Settings' NEAR pane,
 /// and the tokens NEAR counted for the chat; in a Local Llama chat, nothing
 /// to pay. The wallet is read each time this opens on a chat it pays for.
+/// A Token Inference chat's provider comes first: Boundless, or Venice,
+/// whose sections then take the place of Boundless's (`VeniceSections`),
+/// with the same wallet at the same address when Venice is paid from it.
 struct WalletView: View {
     @Bindable var wallet: Wallet
     let payer: Payer
     let settings: AppSettings
     let nearMode: NearMode
+    let veniceMode: VeniceMode
     /// The conversation in front's.
     let kind: Chat.Kind
+    /// The conversation in front.
+    let conversation: Conversation?
     /// The tokens NEAR counted for the conversation in front's answers,
     /// added up; nil while none has counts, as in every other mode.
     let tokens: Tokens?
     let showNearSettings: () -> Void
+    let showVeniceSettings: () -> Void
     @Environment(\.dismiss) private var dismiss
+
+    /// The provider shown: a started chat's own, fixed; or the one chosen
+    /// for new chats.
+    private var provider: Provider {
+        guard let conversation, !conversation.turns.isEmpty else { return settings.provider }
+        return conversation.isVenice ? .venice : .boundless
+    }
+
+    /// A started Venice chat's model, tier and way to pay.
+    private var started: VeniceChat? {
+        conversation?.turns.isEmpty == false ? conversation?.venice : nil
+    }
 
     var body: some View {
         let running = wallet.supervisor.phase == .running
+        let venice = kind == .token && provider == .venice
         VStack(spacing: 0) {
             switch kind {
             case .v: VBar()
-            case .token: TokenBar()
+            case .token: TokenBar(venice: venice, tier: venice ? started?.tier ?? veniceMode.choice?.tier : nil)
             case .near, .llama: EmptyView()
             }
             Form {
@@ -41,7 +61,15 @@ struct WalletView: View {
                 case .v:
                     VWallet(payer: payer, settings: settings, running: running)
                 case .token:
-                    WalletSections(wallet: wallet, running: running)
+                    ProviderPicker(settings: settings, fixed: conversation?.turns.isEmpty == false ? provider : nil)
+                    if venice {
+                        VeniceSections(mode: veniceMode, wallet: wallet, settings: settings, chat: started, running: running) {
+                            dismiss()
+                            showVeniceSettings()
+                        }
+                    } else {
+                        WalletSections(wallet: wallet, running: running, venice: nil)
+                    }
                 case .near:
                     NearPayment(mode: nearMode, tokens: tokens) {
                         dismiss()
@@ -53,7 +81,9 @@ struct WalletView: View {
             }
             .formStyle(.grouped)
             HStack(spacing: 10) {
-                if kind == .token, wallet.working > 0 || wallet.presence == .creating {
+                if kind == .token,
+                    wallet.working > 0 || wallet.presence == .creating || (venice && (veniceMode.reading > 0 || veniceMode.adding > 0))
+                {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -67,8 +97,12 @@ struct WalletView: View {
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { payer.follow() }
                         .disabled(!running)
                 case .token:
-                    SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await wallet.refresh() } }
-                        .disabled(wallet.presence.address == nil || !running)
+                    SymbolButton("Refresh", symbol: "arrow.clockwise") {
+                        Task {
+                            if venice { await veniceMode.refresh(wallet: wallet.presence.address) } else { await wallet.refresh() }
+                        }
+                    }
+                    .disabled((wallet.presence.address == nil && !venice) || !running)
                 case .near, .llama:
                     EmptyView()
                 }
@@ -86,17 +120,323 @@ struct WalletView: View {
         .task {
             switch kind {
             case .v: payer.follow()
-            case .token: await wallet.refresh()
-            case .near, .llama: break
+            case .token, .near, .llama: break
+            }
+        }
+        // Token Inference's wallet is read for the provider shown: for
+        // Boundless as the sheet opens on it or turns to it; for Venice then,
+        // and again as Cloak starts, the way new chats pay changes, or the
+        // wallet is made.
+        .task(id: venice) {
+            if kind == .token, !venice { await wallet.refresh() }
+        }
+        .task(id: VeniceRead(shown: venice, running: running, pays: settings.venicePays, wallet: wallet.presence.address)) {
+            if venice { await veniceMode.refresh(wallet: wallet.presence.address) }
+        }
+    }
+}
+
+/// What reading Venice for the sheet follows.
+private struct VeniceRead: Equatable {
+    let shown: Bool
+    let running: Bool
+    let pays: VeniceChat.Pays
+    let wallet: String?
+}
+
+/// Who answers Token Inference chats: Boundless, or Venice. Chosen here for
+/// new chats (`AppSettings.provider`); a started chat's shows, fixed.
+private struct ProviderPicker: View {
+    @Bindable var settings: AppSettings
+    /// A started chat's provider.
+    let fixed: Provider?
+
+    var body: some View {
+        Section {
+            Picker("Provider", selection: fixed.map { Binding.constant($0) } ?? $settings.provider) {
+                ForEach(Provider.allCases) { Text($0.title).tag($0) }
+            }
+            .disabled(fixed != nil)
+            .help(fixed == nil ? "Who answers new Token Inference chats." : "Each chat keeps the provider it started with.")
+        }
+    }
+}
+
+/// Venice's part of the sheet, in place of Boundless's: how new Venice chats
+/// pay, and what that has to spend, then the model they go to. A started
+/// chat shows its own way to pay and model, fixed. Paid with the wallet,
+/// Cloak's one wallet shows (`WalletSections`), with its USDC on Base and
+/// the credit it bought at Venice.
+private struct VeniceSections: View {
+    let mode: VeniceMode
+    let wallet: Wallet
+    @Bindable var settings: AppSettings
+    let chat: VeniceChat?
+    let running: Bool
+    let openSettings: () -> Void
+
+    var body: some View {
+        let pays = chat?.pays ?? settings.venicePays
+        Section {
+            Picker("Pay with", selection: chat.map { Binding.constant($0.pays) } ?? $settings.venicePays) {
+                ForEach(VeniceChat.Pays.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .disabled(chat != nil)
+            .help("How new Venice chats pay. Each chat keeps the way it started with.")
+            if pays == .key {
+                VeniceKeyRows(mode: mode, running: running, openSettings: openSettings)
+                if let stop = mode.accountStop {
+                    Text(stop.kind.words)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Venice")
+        } footer: {
+            if pays == .key {
+                Text("Paid from your Venice account at [venice.ai/settings/api](https://venice.ai/settings/api).")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        if pays == .wallet {
+            WalletSections(wallet: wallet, running: running, venice: mode)
+        }
+        VeniceModels(mode: mode, settings: settings, chat: chat, running: running)
+    }
+}
+
+/// The owner's Venice key: whether one is saved, the way to Settings'
+/// Venice pane, and what it has to spend.
+private struct VeniceKeyRows: View {
+    let mode: VeniceMode
+    let running: Bool
+    let openSettings: () -> Void
+
+    var body: some View {
+        LabeledContent("Key") {
+            HStack(spacing: 4) {
+                Text(key)
+                SymbolButton("Open Settings", symbol: "gearshape", action: openSettings)
+            }
+        }
+        LabeledContent("Balance") {
+            if let usd = mode.keyAccount?.usd {
+                Text(usd.dollars)
+            } else {
+                Unread(running: running, what: "balance")
+            }
+        }
+        if let diem = mode.keyAccount?.diem, diem > 0 {
+            LabeledContent {
+                Text(diem.formatted(.number.precision(.fractionLength(0...4))))
+            } label: {
+                Text("DIEM")
+                    .help("Venice's DIEM allowance on this key.")
+            }
+        }
+    }
+
+    private var key: String {
+        switch mode.hasKey {
+        case true?: "Saved"
+        case false?: "None"
+        case nil: mode.keyFailed ? "Couldn't check" : "Checking…"
+        }
+    }
+}
+
+/// The wallet's USDC on Base, read at the latest block, at its one address:
+/// what to send it for Venice, and what is there.
+private struct VeniceFunds: View {
+    let mode: VeniceMode
+    let running: Bool
+
+    var body: some View {
+        LabeledContent("Token", value: "USDC on Base")
+        LabeledContent("Balance") {
+            if let funds = mode.funds {
+                Text(funds.usdc)
+            } else if mode.fundsFailed {
+                Text("Couldn't read")
+                    .foregroundStyle(.secondary)
+            } else {
+                Unread(running: running, what: "wallet balance")
             }
         }
     }
 }
 
-/// The wallet that pays for Token Inference chats, Agent on or off.
+/// What the wallet has bought at Venice, as Venice last showed it, and a
+/// top-up from its USDC on Base. Add is off only while Cloak is not running,
+/// since the wallet signs in the guest, and while the wallet's USDC on Base,
+/// read at the latest block, is below the amount. Each press signs and pays.
+private struct VeniceCredit: View {
+    let mode: VeniceMode
+    let address: String
+    let running: Bool
+
+    var body: some View {
+        Section("Credit") {
+            LabeledContent("Balance") {
+                if let usd = mode.credit?.usd {
+                    Text(usd.dollars)
+                } else {
+                    Unread(running: running, what: "credit")
+                }
+            }
+            if let stop = mode.accountStop {
+                Text(stop.kind.words)
+                    .foregroundStyle(.secondary)
+            }
+            TopUp(mode: mode, address: address, running: running)
+        }
+    }
+}
+
+/// The amount to add, in dollars, starting at Venice's least, and Add. The
+/// amount is checked as Add is pressed; each press is one payment of exactly
+/// it, from the wallet at `address`.
+private struct TopUp: View {
+    let mode: VeniceMode
+    let address: String
+    let running: Bool
+    /// As typed; nil until it is, so the field shows Venice's least.
+    @State private var typed: String?
+    @State private var wrong = false
+
+    var body: some View {
+        let least = mode.terms?.least.plain
+        let text = typed ?? least ?? ""
+        let lacking = Amount(dollars: text)?.lacking(in: mode.funds)
+        LabeledContent("Amount") {
+            HStack(spacing: 4) {
+                Text("$")
+                    .foregroundStyle(.secondary)
+                TextField("Amount", text: Binding(get: { text }, set: { typed = $0; wrong = false }), prompt: Text(least ?? "5"))
+                    .labelsHidden()
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 100)
+                    .onSubmit { add(text) }
+                Button("Add") { add(text) }
+                    .disabled(!running || lacking != nil)
+            }
+        }
+        if wrong {
+            Text("Enter an amount in dollars, like 5.")
+                .foregroundStyle(.red)
+        } else if let lacking {
+            Text("Needs \(lacking.dollars.dollars) more on Base.")
+                .foregroundStyle(.secondary)
+        } else if !running {
+            Text("Start Cloak to use the wallet.")
+                .foregroundStyle(.secondary)
+        }
+        Text((mode.terms.map { "Venice's least is \($0.least.dollars.dollars). " } ?? "") + "Venice keeps what you add; it can't be sent back.")
+            .foregroundStyle(.secondary)
+        if let stop = mode.topUpStop {
+            Text(stop.kind.words)
+                .foregroundStyle(.orange)
+            if stop.sent, stop.kind == .unreachable || stop.kind == .failed {
+                Text("The payment may have gone through. Check Credit before adding again.")
+                    .foregroundStyle(.secondary)
+            }
+        } else if let added = mode.added {
+            Text("Added \(added.credited.dollars).")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// One press: one payment of exactly the amount typed, unless it is not
+    /// an amount.
+    private func add(_ text: String) {
+        guard let amount = Amount(dollars: text) else {
+            wrong = true
+            return
+        }
+        wrong = false
+        Task { await mode.add(amount, from: address) }
+    }
+}
+
+/// The model new Venice chats go to, grouped by Venice's tier, TEE first,
+/// each with its prices; Anonymous only with All tiers on, and none Venice
+/// may answer for from another. One offline is dimmed and can't be chosen.
+/// The chosen one's tier is its own row, a capsule with what the tier means
+/// as its help. A started chat shows its own model, fixed.
+private struct VeniceModels: View {
+    let mode: VeniceMode
+    @Bindable var settings: AppSettings
+    let chat: VeniceChat?
+    let running: Bool
+
+    var body: some View {
+        Section {
+            if let chat {
+                LabeledContent("Model", value: mode.models?.first { $0.id == chat.model }?.name ?? chat.model)
+                LabeledContent("Tier") { TierPill(tier: chat.tier) }
+            } else if mode.models != nil {
+                let offered = mode.offered
+                Picker("Model", selection: Binding(get: { mode.choice }, set: { settings.veniceModel = $0 })) {
+                    Text("None").tag(VeniceChoice?.none)
+                    ForEach(VeniceTier.allCases.reversed(), id: \.self) { tier in
+                        let listed = offered.filter { $0.tier == tier }
+                        if !listed.isEmpty {
+                            Section(tier.name) {
+                                ForEach(listed) { model in
+                                    Text(model.offline ? "\(model.name): Offline at Venice." : "\(model.name): \(model.input.price) | \(model.output.price)")
+                                        .accessibilityLabel(
+                                            model.offline ? "\(model.name), offline at Venice" : "\(model.name), \(model.input.price) in, \(model.output.price) out")
+                                        .tag(VeniceChoice?.some(VeniceChoice(model: model.id, tier: model.tier)))
+                                        .disabled(model.offline)
+                                }
+                            }
+                        }
+                    }
+                }
+                .help("Prices per million tokens: in | out.")
+                .accessibilityHint("Prices per million tokens, in and out.")
+                if let choice = mode.choice {
+                    LabeledContent("Tier") { TierPill(tier: choice.tier) }
+                }
+            } else if mode.listStop != nil {
+                Text("Cloak couldn't read Venice's models.")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Try Again") { Task { await mode.readModels() } }
+                        .disabled(!running)
+                }
+            } else if !running {
+                Text("Start Cloak to see Venice's models.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+}
+
+/// A Venice tier in Venice's word, in a capsule, with what it means as its
+/// help.
+private struct TierPill: View {
+    let tier: VeniceTier
+
+    var body: some View {
+        ModePill(title: tier.name, help: tier.about, tint: .gray)
+    }
+}
+
+/// The wallet that pays for Token Inference chats, Agent on or off: for
+/// Boundless, its USDC.e on Tempo, the deposit and the model chats go to;
+/// for Venice (`venice`), at the same address, its USDC on Base and the
+/// credit it bought at Venice.
 private struct WalletSections: View {
     let wallet: Wallet
     let running: Bool
+    /// Venice's, when the wallet is shown paying Venice.
+    let venice: VeniceMode?
 
     var body: some View {
         if !running {
@@ -105,7 +445,8 @@ private struct WalletSections: View {
                     .foregroundStyle(.secondary)
             }
         }
-        if let stop = wallet.stop ?? wallet.readStop {
+        // A read on Tempo that stopped says nothing of Venice.
+        if let stop = wallet.stop ?? (venice == nil ? wallet.readStop : nil) {
             Section {
                 StopRow(stop: stop) { wallet.dismiss() }
             }
@@ -124,9 +465,13 @@ private struct WalletSections: View {
                 }
             }
         case .held(let address):
-            Account(wallet: wallet, address: address, running: running)
-            Holding(wallet: wallet, running: running)
-            Models(wallet: wallet)
+            Account(wallet: wallet, address: address, running: running, venice: venice)
+            if let venice {
+                VeniceCredit(mode: venice, address: address, running: running)
+            } else {
+                Holding(wallet: wallet, running: running)
+                Models(wallet: wallet)
+            }
         case .absent, .creating:
             Section {
                 Text("Cloak makes one wallet on this Mac. You add funds to it, and it pays for each chat you send.")
@@ -208,14 +553,16 @@ private struct LlamaPayment: View {
     }
 }
 
-/// Where to add funds, and what is there.
+/// Where to add funds, and what is there: USDC.e on Tempo for Boundless, or,
+/// at the same address, USDC on Base for Venice (`venice`).
 private struct Account: View {
     let wallet: Wallet
     let address: String
     let running: Bool
+    let venice: VeniceMode?
 
     var body: some View {
-        Section("Wallet") {
+        Section {
             LabeledContent("Address") {
                 HStack(spacing: 4) {
                     Text(address)
@@ -227,19 +574,30 @@ private struct Account: View {
                     CodeButton(address: address)
                 }
             }
-            LabeledContent("Token", value: "USDC.e on Tempo")
-            if let look = wallet.look {
-                if !look.setup {
-                    Label("The provider no longer names USDC.e on Tempo. Don't add funds.", systemImage: "exclamationmark.triangle.fill")
-                        .symbolRenderingMode(.multicolor)
-                }
-                LabeledContent("Balance", value: look.balance.text)
-                if wallet.lacksFunds {
-                    Text("Add at least \(look.least.text) to send.")
-                        .foregroundStyle(.secondary)
-                }
+            if let venice {
+                VeniceFunds(mode: venice, running: running)
             } else {
-                LabeledContent("Balance") { Unread(running: running, what: "wallet balance") }
+                LabeledContent("Token", value: "USDC.e on Tempo")
+                if let look = wallet.look {
+                    if !look.setup {
+                        Label("The provider no longer names USDC.e on Tempo. Don't add funds.", systemImage: "exclamationmark.triangle.fill")
+                            .symbolRenderingMode(.multicolor)
+                    }
+                    LabeledContent("Balance", value: look.balance.text)
+                    if wallet.lacksFunds {
+                        Text("Add at least \(look.least.text) to send.")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    LabeledContent("Balance") { Unread(running: running, what: "wallet balance") }
+                }
+            }
+        } header: {
+            Text("Wallet")
+        } footer: {
+            if venice != nil {
+                Text(Chat.Kind.oneAddress)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -425,11 +783,20 @@ struct VBar: View {
     }
 }
 
-/// Token Inference's mark, with what it means for the person as its help.
+/// Token Inference's mark, with what it means for the person as its help;
+/// in a Venice chat, beside it, Venice and the chat's tier in Venice's word,
+/// with what the tier means as its help.
 struct TokenBar: View {
+    let venice: Bool
+    /// The Venice chat's, or the chosen model's for a new one.
+    let tier: VeniceTier?
+
     var body: some View {
-        HStack {
-            ModePill(title: "Token Inference", help: "The provider can link your chats, because one wallet pays for all of them.", tint: .orange)
+        HStack(spacing: 6) {
+            ModePill(title: "Token Inference", help: venice ? Chat.Kind.veniceLink : Chat.Kind.tokenLink, tint: .orange)
+            if venice {
+                ModePill(title: tier.map { "Venice \($0.name)" } ?? "Venice", help: tier?.about ?? "Choose a model in the Wallet.", tint: .gray)
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
@@ -496,9 +863,42 @@ extension Amount {
     }
 }
 
+extension Amount {
+    /// "1.00 USDC", for USDC on Base.
+    fileprivate var usdc: String {
+        "\(dollars.formatted(.number.precision(.fractionLength(2...6)))) USDC"
+    }
+
+    /// "5", "7.5": dollars as a field takes them.
+    fileprivate var plain: String {
+        dollars.formatted(.number.precision(.fractionLength(0...6)).grouping(.never).locale(Locale(identifier: "en_US_POSIX")))
+    }
+}
+
 extension Double {
     /// "$0.27"
     fileprivate var price: String {
         formatted(.currency(code: "USD").precision(.fractionLength(2...4)))
+    }
+}
+
+extension Decimal {
+    /// "$0.27"
+    fileprivate var price: String {
+        formatted(.currency(code: "USD").precision(.fractionLength(2...4)))
+    }
+
+    /// "$7.50"
+    fileprivate var dollars: String {
+        formatted(.currency(code: "USD"))
+    }
+}
+
+extension VeniceChat.Pays {
+    var title: String {
+        switch self {
+        case .key: "Key"
+        case .wallet: "Wallet"
+        }
     }
 }

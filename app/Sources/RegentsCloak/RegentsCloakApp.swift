@@ -52,14 +52,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Made at the first show of Chat or Settings, or the quick prompt's
     /// first Return.
     private lazy var nearMode = NearMode(near: near, supervisor: supervisor, settings: .standard)
+    /// Made at the first show of Chat or Settings, or the quick prompt's
+    /// first Return.
+    private lazy var veniceMode = VeniceMode(supervisor: supervisor, settings: .standard)
     /// Made at its window's first show or the quick prompt's first Return.
     private lazy var conversations = Chat(
         supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
-        queue: Launch.payQueue, door: door, nearMode: nearMode, downloads: downloads)
+        queue: Launch.payQueue, door: door, nearMode: nearMode, veniceMode: veniceMode, downloads: downloads)
     private lazy var chat = AppWindow { [unowned self] in
         ChatView.window(
             conversations, showDetails: { self.showDetails() }, showNearSettings: { self.showSettings(on: .near) },
-            showLlamaSettings: { self.showSettings(on: .llama) })
+            showVeniceSettings: { self.showSettings(on: .venice) }, showLlamaSettings: { self.showSettings(on: .llama) })
     }
     private lazy var details = AppWindow { [unowned self, supervisor, download] in
         DetailsView.window(supervisor, download, showModes: { self.showModes() })
@@ -70,10 +73,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var darkbloomMode = DarkbloomMode(manifest: Launch.manifest, settings: .standard)
     private lazy var darkbloom = AppWindow { [darkbloomMode] in DarkbloomView.window(darkbloomMode) }
     private let settingsSelection = SettingsView.Selection()
-    private lazy var settings = AppWindow { [supervisor, prompt, door, updates, nearMode, downloads, settingsSelection] in
+    private lazy var settings = AppWindow { [supervisor, prompt, door, updates, nearMode, veniceMode, downloads, settingsSelection] in
         SettingsView.window(
             .standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode,
-            downloads: downloads, selection: settingsSelection)
+            venice: veniceMode, downloads: downloads, selection: settingsSelection)
     }
     private lazy var prompt = QuickPrompt(settings: .standard) { [unowned self] text in
         conversations.compose(text)

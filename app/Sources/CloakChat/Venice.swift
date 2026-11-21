@@ -218,6 +218,8 @@ public struct VeniceStop: Error, Sendable, Equatable {
         case failed
         /// Its task was cancelled.
         case cancelled
+        /// The keychain did not give the key or the wallet.
+        case keychain
 
         /// One or two words for the chat.
         public var title: String {
@@ -240,6 +242,7 @@ public struct VeniceStop: Error, Sendable, Equatable {
             case .unreachable: "No connection"
             case .failed: "No answer"
             case .cancelled: "Stopped"
+            case .keychain: "Keychain"
             }
         }
 
@@ -264,6 +267,7 @@ public struct VeniceStop: Error, Sendable, Equatable {
             case .unreachable: "Cloak could not reach Venice. Try again."
             case .failed: "Venice did not answer. Try again."
             case .cancelled: "You stopped this message."
+            case .keychain: "Cloak could not read the keychain. Try again."
             }
         }
     }
@@ -276,7 +280,7 @@ public struct VeniceStop: Error, Sendable, Equatable {
     /// signature, a message, or words of Venice's.
     public let text: String
 
-    init(_ kind: Kind, sent: Bool, _ text: String) {
+    public init(_ kind: Kind, sent: Bool, _ text: String) {
         self.kind = kind
         self.sent = sent
         self.text = text
