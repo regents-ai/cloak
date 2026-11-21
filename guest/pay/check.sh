@@ -29,14 +29,14 @@ patch -s -o "$work/pay-client.go" "$module/internal/zkapi/client.go" guest/pay/c
 # package's own tests, which test the routes the patch removes.
 overlay() {
 	m=$1/$module
-	printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_pay.go":"%s/guest/pay/zz_cloak_pay.go","%s/cmd/zkapi-clientd/zz_cloak_pay_test.go":"%s/guest/pay/zz_cloak_pay_test.go","%s/internal/relay/relay.go":"%s/pay-relay.go","%s/internal/relay/socks5.go":"%s/pay-socks5.go","%s/internal/zkapi/client.go":"%s/pay-client.go","%s/internal/relay/relay_test.go":"","%s/internal/relay/socks5_test.go":"","%s/internal/relay/connect_test.go":""' \
-		"$m" "$1" "$m" "$1" "$m" "$2" "$m" "$2" "$m" "$2" "$m" "$m" "$m"
+	printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_pay.go":"%s/guest/pay/zz_cloak_pay.go","%s/cmd/zkapi-clientd/zz_cloak_pay_test.go":"%s/guest/pay/zz_cloak_pay_test.go","%s/internal/relay/relay.go":"%s/pay-relay.go","%s/internal/relay/socks5.go":"%s/pay-socks5.go","%s/internal/zkapi/client.go":"%s/pay-client.go","%s/internal/zkapi/zz_cloak_chain.go":"%s/guest/pay/zz_cloak_chain.go","%s/internal/relay/relay_test.go":"","%s/internal/relay/socks5_test.go":"","%s/internal/relay/connect_test.go":""' \
+		"$m" "$1" "$m" "$1" "$m" "$2" "$m" "$2" "$m" "$2" "$m" "$1" "$m" "$m" "$m"
 }
 { overlay /src /work; printf '}}'; } > "$work/test-overlay.json"
 # For vet, everything at once, the start included.
 { overlay "$repo" "$work"; printf ',"%s/%s/cmd/zkapi-clientd/zz_cloak_pay_linux.go":"%s/guest/pay/zz_cloak_pay_linux.go"}}' "$repo" "$module" "$repo"; } > "$work/vet-overlay.json"
-printf '{"Replace":{"%s/%s/cmd/zkapi-clientd/zz_cloak_pay.go":"%s/guest/pay/zz_cloak_pay.go","%s/%s/cmd/zkapi-clientd/zz_cloak_pay_linux.go":"%s/guest/pay/zz_cloak_pay_linux.go","%s/%s/internal/relay/relay.go":"%s/pay-relay.go","%s/%s/internal/relay/socks5.go":"%s/pay-socks5.go","%s/%s/internal/zkapi/client.go":"%s/pay-client.go"}}' \
-	"$repo" "$module" "$repo" "$repo" "$module" "$repo" "$repo" "$module" "$work" "$repo" "$module" "$work" "$repo" "$module" "$work" > "$work/pay-overlay.json"
+printf '{"Replace":{"%s/%s/cmd/zkapi-clientd/zz_cloak_pay.go":"%s/guest/pay/zz_cloak_pay.go","%s/%s/cmd/zkapi-clientd/zz_cloak_pay_linux.go":"%s/guest/pay/zz_cloak_pay_linux.go","%s/%s/internal/relay/relay.go":"%s/pay-relay.go","%s/%s/internal/relay/socks5.go":"%s/pay-socks5.go","%s/%s/internal/zkapi/client.go":"%s/pay-client.go","%s/%s/internal/zkapi/zz_cloak_chain.go":"%s/guest/pay/zz_cloak_chain.go"}}' \
+	"$repo" "$module" "$repo" "$repo" "$module" "$repo" "$repo" "$module" "$work" "$repo" "$module" "$work" "$repo" "$module" "$work" "$repo" "$module" "$repo" > "$work/pay-overlay.json"
 
 unformatted=$(gofmt -l guest/pay/*.go "$work"/pay-*.go)
 if [ -n "$unformatted" ]; then

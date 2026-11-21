@@ -201,6 +201,19 @@ sh guest/image/pay-disk-check.sh
 uv run --with pytest==8.4.2 pytest tests/test_pay_disk.py
 ```
 
+Check the Mac's calls and reads to the payer through the host
+(`docs/zkapi-mac-side.md`, section 1), on a serving guest with a blank
+payment disk and the stand-in tor, so every read of the chain fails: a
+read of the deposit finds no note, one with the chain fails whole after
+trying the chain through Tor, a call the payer allows reaches the daemon,
+and calls outside its routes are answered 404. The payer's own checks run
+against stand-ins in Docker, with no network:
+
+```bash
+uv run --with pytest==8.4.2 pytest tests/test_pay_frames.py
+sh guest/pay/check.sh
+```
+
 ## Stage 3 commands
 
 With the stage 2 parts built and a candidate's weights on disk (fetched only

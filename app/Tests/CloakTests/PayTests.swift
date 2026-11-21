@@ -174,8 +174,9 @@ struct PayTests {
         #"{"eth_balance":"3000000000000000","phase":"\#(phase)","destination":"0x\#(String(repeating: "b2", count: 20))","transaction_hash":"0x03"}"#
     }
 
+    /// A deposit's quote as the payer gives it, its expiry in milliseconds.
     static func quote(expires: Int64) -> String {
-        #"{"input_micro_usd":20000000,"id":"\#(quoteID)","kind":"funding","amount":5000000,"principal_wei":"5000000000000000","required_fee_wei":"100000000000000","required_total_wei":"5100000000000000","shortfall_wei":"0","expires_at":\#(expires)}"#
+        #"{"input_micro_usd":20000000,"id":"\#(quoteID)","kind":"deposit","amount":5000000,"principal_wei":"5000000000000000","required_fee_wei":"100000000000000","required_total_wei":"5100000000000000","shortfall_wei":"0","expires_at":\#(expires)}"#
     }
 
     static let models = #"{"object":"list","data":[{"id":"dear","oa_request_limit_micro_usd":9000},{"id":"cheap","oa_request_limit_micro_usd":2000}]}"#
@@ -221,9 +222,9 @@ struct PayTests {
     }
 
     @Test func anApproveIsSentOnlyFromConfirmAndNeverForAnExpiredQuote() async {
-        let now = Int64(Date.now.timeIntervalSince1970)
+        let now = Int64(Date.now.timeIntervalSince1970 * 1000)
         var answers = Self.atRest
-        answers["POST /admin/funding/quote"] = Self.quote(expires: now + 30)
+        answers["POST /admin/funding/quote"] = Self.quote(expires: now + 30_000)
         answers["POST /admin/funding/approve"] = Self.funding("deposit_pending")
         let standIn = StandIn(answers: answers)
         let payer = Self.payer(standIn)
@@ -243,7 +244,7 @@ struct PayTests {
 
         // A quote already past its 30 seconds is quoted again and shown,
         // never approved.
-        standIn.set("POST /admin/funding/quote", Self.quote(expires: now - 1))
+        standIn.set("POST /admin/funding/quote", Self.quote(expires: now - 1_000))
         await payer.quoteDeposit(microUSD: 20_000_000)
         let quotes = standIn.routes.count { $0 == "POST /admin/funding/quote" }
         await payer.confirm()

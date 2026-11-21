@@ -1005,14 +1005,47 @@ requests (rule 11); the fee figure in dollars, the trial's times and the
 Wallet button from ten days before the expiry; an empty amount on Send
 Out sends everything. The chief kept "Cards aren't accepted." on the
 Modes page, since "taken" already names a deposit anyone may claim.
-Until the guest half is in, a V chat cannot send; Sean's running Cloak
-is not rebuilt from this.
 
-- **For step 6, the guest half.** `cloak-pay` has the daemon's
-  `FundingHandler` and the real companion client; the `C`, `V` and `H`
-  frames, the allowlist of money routes and the chain read are still to
-  add, to the wire shapes in `docs/zkapi-mac-side.md`, section 1.
-- **For step 7.** The companion's route through the payer's Tor port to
+**Step 6, the guest half (merged 21 November 2026).** Built by a worker on
+`t3/guest-zkapi-step6-frames`, read by the chief against the Mac half and
+the vault's source (`Types.sol`'s `Note` and `NoteStatus`, the vault's
+own `paused`), and checked by the chief in the real guest; what it is and
+its checks are in CHANGELOG.md. Where the daemon differs from what the
+brief expected, with neither side changed: `GET /admin/withdrawal` reads
+the chain first, so with no network it answers 502, not 200; the first
+read of the deposit with the chain makes the payer's Ethereum key, as
+`GET /admin/funding/address` does; with no network the whole read fails,
+so the Mac's refresh shows a failure; and a hold that ends in an error
+sends no second `H`, the answer or the hang-up being its end, which the
+Mac already takes so. Not proven until step 7: a read of the deposit
+while the real companion settles, and the chain read against the
+deployed vault.
+
+**Step 7, first pass (21 November 2026, the chief).** The payer in the
+real guest, through the real tor, against the real chain and service, on
+a blank payment disk in a temporary folder, with no deposit and nothing
+approved (`/tmp/cloak-build/step7.py`; the answers are not kept in the
+repository). What it showed:
+
+- The guest serves 11 seconds after start. A read of the deposit with
+  the chain takes about 3.5 seconds and gives one block's values
+  (unpaused, balance 0); the address, withdrawal and leftover reads
+  take 1.5 to 2 seconds each; the model list takes about 10 seconds.
+- A chat request with no deposit is refused 402 `funding_required` in
+  about 4 seconds, with no hold. The refusal is the payer's own.
+- A deposit quote for $5 takes about 26 seconds to make and lives 30
+  seconds from then. It asked 0.0032 ETH for the deposit and up to
+  0.0026 ETH in network fees, so about $4 of fees on a $5 deposit at
+  that hour's price. Sean is told this before step 8.
+- One fault in the Mac half, fixed the same day: a quote's `expires_at`
+  is in milliseconds, and the Mac read it as seconds, so a quote would
+  never have shown as run out and its countdown would have been wrong.
+- Every answer's shape matches what the Mac reads.
+
+- **Still for step 7.** Memory in the guest during a real proof and the
+  hold during a real settlement, both of which need a deposit, so they
+  join step 8; and what happens when the payer ends after "ready".
+- **For step 7, as first listed.** The companion's route through the payer's Tor port to
   the host's real tor; a call to the real service with no note,
   expecting 402; memory in the guest during a real proof; and what
   happens when the payer ends after "ready".
@@ -3480,8 +3513,8 @@ candidates, so the split has to be re-declared before any holdout opens.
     with a $2 limit, given through the secret card, then a $5 top-up
     in USDC on Base to try the wallet route. Decided 21 November 2026
     (Sean, "33. a"). It waits on the carrying part and a caller in the
-    app. Decisions 31 (which wallet pays) and 32 (asking Venice about
-    its terms) are still open; a separate key is assumed.
+    app. Decisions 31 and 32 were answered the same day (below, after
+    39).
 34. Trace sharing is built the receipt way, in NEAR Private AI only.
     Decided 21 November 2026 (Sean, "34. c - you can do this easily.
     Make it 10x better than their version using our better llama.app
@@ -3504,6 +3537,32 @@ candidates, so the split has to be re-declared before any holdout opens.
     by the chief, reported after. Decided 21 November 2026 (Sean,
     "37. a"). It needs his Cloak rebuilt from main first, which waits
     for zkAPI step 6's guest half so the rebuild is one batch.
+38. A shared NEAR chat's message reaches NEAR without Cloak's
+    end-to-end encryption, and only that message: a chat the person
+    readies sends its next message so, carrying the commons' challenge;
+    every other NEAR message stays sealed, byte for byte as before.
+    Decided 21 November 2026 (Sean, "38 a"). The reason is in
+    `docs/near-share.md`: NEAR's receipt covers the exact bytes sent.
+39. The commons' witness is the one redactor, in two presses: Review
+    sends the chat to the witness and shows Before and After, then
+    Share uploads exactly what was shown. Decided 21 November 2026
+    (Sean, "39 a - we can still reword with Near. the user has 100%
+    control over what is sent to near, including if rewording
+    happens."). So sharing changes nothing about rewording: the shared
+    message is reworded or not by the person's own Never Reword and
+    Review settings, as any NEAR message is, and what goes to NEAR and
+    then to the witness is what they sent. Nothing is copied from the
+    Gateway's `macos/` folder: the repository's licence names no terms
+    for it.
+31. Venice is paid from the same wallet as Tempo: one key, one address,
+    funded with USDC on Base for Venice. Decided 21 November 2026
+    (Sean, "31. b"), against the chief's recommendation of a separate
+    key; the cost he accepted is that Venice's payments and Tempo's
+    share an address and so can be tied together. No second wallet key
+    is made, and `sh.regents.cloak.venice-wallet` is not used.
+32. Venice ships to friends without a question to Venice about its
+    terms. Decided 21 November 2026 (Sean, "32. b"). Nothing is written
+    or sent to Venice.
 
 Two more sections asked for by Sean on 20 November 2026, each with a
 helper in its own checkout and nothing merged yet: a Darkbloom serving

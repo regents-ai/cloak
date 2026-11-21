@@ -402,7 +402,7 @@ private struct ReviewSection: View {
                 let block = payer.confirmBlock(review)
                 HStack(spacing: 8) {
                     if !expired {
-                        Text(Date(timeIntervalSince1970: TimeInterval(quote.expiresAt)), style: .timer)
+                        Text(quote.expires, style: .timer)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                             .help("The quote holds until this runs out.")

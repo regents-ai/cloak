@@ -17,12 +17,10 @@
  	KeyReuseWindow   time.Duration `json:"-"` // fixed, in-memory window; zero disables reuse
  }
  
-@@ -240,6 +241,62 @@
- 		return &Error{http.StatusBadGateway, "companion_deployment_mismatch"}
- 	}
+@@ -242,6 +243,95 @@
  	return nil
-+}
-+
+ }
+ 
 +// Regents Cloak (guest/pay/client.patch): the conversation's Tor identity,
 +// which the Mac sends with each request, travels to Complete under this key,
 +// which no dialer reads. Complete puts it on the inference request's dials
@@ -36,51 +34,86 @@
 +}
 +
 +// Regents Cloak (guest/pay/client.patch): WaitSettled holds its caller, a
-+// request about to call Complete, while the wallet reports a request whose
-+// settlement is unfinished: this run's, or one an earlier run left in the
-+// wallet's journal, which no key group here knows and on which the
-+// companion's lease route can fail rather than withhold a key. It takes the
-+// request slot, so it waits behind a response being served and behind
-+// automatic settlement, and asks for no key. It asks the companion to settle
-+// (/wallet/settle, which retires or recovers the lease from the saved journal
-+// and installs the signed result; not settleGroup, whose one attempt per key
-+// group automatic settlement may already have spent) until it answers that
-+// nothing is pending, and after each answer that the settlement is still
-+// pending, waits a settlement poll before asking again. A cancelled caller
-+// asks nothing more, leaving the settlement to the journal; a lost or failed
-+// reply is returned, never retried.
-+func (c *Client) WaitSettled(ctx context.Context) error {
++// request about to call Complete, while an earlier request's settlement is
++// unfinished. It takes the request slot, so it waits behind automatic
++// settlement, which holds the slot while it settles (requests come one at a
++// time, so nothing else holds it then), and asks for no key. Then, while the
++// wallet reports a request whose settlement is unfinished, this run's or one
++// an earlier run left in the wallet's journal, which no key group here knows
++// and on which the companion's lease route can fail rather than withhold a
++// key, it asks the companion to settle (/wallet/settle, which retires or
++// recovers the lease from the saved journal and installs the signed result;
++// not settleGroup, whose one attempt per key group automatic settlement may
++// already have spent) until it answers that nothing is pending, and after
++// each answer that the settlement is still pending, waits a settlement poll
++// before asking again. held hears true once, when the hold first finds the
++// slot taken or the wallet's settlement unfinished, and false once, when that
++// hold ends with nothing pending, just before WaitSettled returns and its
++// caller asks for the key; a request that is not held hears neither, and an
++// error from held ends the hold with it. A cancelled caller asks nothing
++// more, leaving the settlement to the journal; a lost or failed reply is
++// returned, never retried.
++func (c *Client) WaitSettled(ctx context.Context, held func(bool) error) error {
++	holding := false
++	hold := func() error {
++		if holding {
++			return nil
++		}
++		holding = true
++		return held(true)
++	}
 +	select {
 +	case c.requestSlot <- struct{}{}:
-+	case <-ctx.Done():
-+		return ctx.Err()
++	default:
++		if err := hold(); err != nil {
++			return err
++		}
++		select {
++		case c.requestSlot <- struct{}{}:
++		case <-ctx.Done():
++			return ctx.Err()
++		}
 +	}
 +	defer func() { <-c.requestSlot }()
 +	state, err := c.Readiness(ctx)
-+	if err != nil || !state.PendingRequest {
++	if err != nil {
 +		return err
 +	}
-+	activity.Report(ctx, activity.Event{Kind: activity.SettlementWaiting})
-+	for {
-+		started := time.Now()
-+		activity.Report(ctx, activity.Event{Kind: activity.SettlementStarted})
-+		err = c.retireLease(ctx)
-+		activity.Report(ctx, activity.Event{Kind: activity.SettlementFinished, Complete: err == nil, Duration: time.Since(started)})
-+		if !isPendingSettlement(err) {
++	if state.PendingRequest {
++		if err := hold(); err != nil {
 +			return err
 +		}
-+		timer := time.NewTimer(c.settlementPoll)
-+		select {
-+		case <-ctx.Done():
-+			timer.Stop()
-+			return ctx.Err()
-+		case <-timer.C:
++		activity.Report(ctx, activity.Event{Kind: activity.SettlementWaiting})
++		for {
++			started := time.Now()
++			activity.Report(ctx, activity.Event{Kind: activity.SettlementStarted})
++			err = c.retireLease(ctx)
++			activity.Report(ctx, activity.Event{Kind: activity.SettlementFinished, Complete: err == nil, Duration: time.Since(started)})
++			if !isPendingSettlement(err) {
++				break
++			}
++			timer := time.NewTimer(c.settlementPoll)
++			select {
++			case <-ctx.Done():
++				timer.Stop()
++				return ctx.Err()
++			case <-timer.C:
++			}
++		}
++		if err != nil {
++			return err
 +		}
 +	}
- }
- 
++	if holding {
++		return held(false)
++	}
++	return nil
++}
++
  // Complete passes the caller's JSON unchanged over the anonymous HTTP client.
-@@ -277,7 +334,8 @@
+ // Raw SSE bytes remain available to the gateway immediately; no fake streaming
+ // or complete-response buffering occurs in either Go or the proof companion.
+@@ -277,7 +367,8 @@
  		c.cachedLease = nil
  		return nil, err
  	}
