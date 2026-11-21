@@ -438,7 +438,7 @@ private struct AddApp: View {
 }
 
 /// Text to paste elsewhere, in full, with Copy.
-private struct Copyable: View {
+struct Copyable: View {
     let text: String
 
     var body: some View {

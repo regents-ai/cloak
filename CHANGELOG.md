@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- A Darkbloom window (Sean, 20 November 2026, his pasted review of
+  Layr-Labs/d-inference v0.10.16 and "add this as a new section to the
+  app"). Held out of every release until Darkbloom's makers give written
+  permission (`docs/release.md`, Standing limits); never yet run against
+  the real Darkbloom, which is not installed on Sean's Mac.
+  - "Darkbloom" in the menu, and `show darkbloom` in AppleScript, open a
+    window that sets Darkbloom up, offers the one model that fits beside
+    Cloak, starts and stops serving, shows the local address and key for
+    other apps, and can also serve Darkbloom's network ("Serve Network",
+    off at first, linked by a code entered on Darkbloom's own page).
+    Nothing of Darkbloom's runs until the window first opens, and Cloak
+    adds no login item.
+  - Install fetches Darkbloom's own installer from api.darkbloom.dev at
+    that moment and runs it, as Darkbloom's own app does. Before Cloak
+    runs anything of Darkbloom's it checks the signature against
+    Darkbloom's developer team with the system's own check, and takes
+    release 0.10.16 or later only.
+  - Start serves with the person's requests kept on this Mac and the
+    address open to this Mac only (`--local --route this-mac --bind
+    127.0.0.1`, or `--me-first` with Serve Network on). A setup made
+    outside Cloak that Start would change is listed first, and Start
+    asks. The window says what it can read of where requests go, and
+    "Can't confirm" when it cannot.
+  - Darkbloom needs macOS 27; on an older system the window says so and
+    offers nothing else.
+  - Checked by the chief after the merge: the app builds with no
+    warnings and its 30 checks pass. The worker ran 46 checks against a
+    stand-in control service and 7 process checks, none of them kept.
+  - The licence (Eigen Labs, at v0.10.16), as it reads: section 1
+    forbids using the software "to power, enable, or operate any
+    service, platform, or product other than the Darkbloom platform"
+    without written permission; section 6 gives no right to the name
+    beyond attribution. Serving Darkbloom's own network is allowed.
 - Four modes, and zkAPI step 6's Mac half (Sean, 20 November 2026:
   "25. a", "26. a" and his own design for decision 28). Not in Sean's
   running Cloak, and V cannot pay yet: the guest's payer does not answer

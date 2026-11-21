@@ -3485,6 +3485,20 @@ Token Inference, by the owner's own key or by USDC on Base (his pasted
 review; brief `/tmp/cloak-build/brief-venice.md`, first pass: the
 client, its checks and a joining plan, no interface yet).
 
+The Darkbloom window is merged (21 November 2026), read and checked by
+the chief; what it is and the licence's words are in CHANGELOG.md. It is
+in no release until Darkbloom's makers give written permission
+(`docs/release.md`, Standing limits), and it has never run against the
+real Darkbloom: nothing of Darkbloom's is installed on Sean's Mac.
+Where the worker found Sean's pasted review wrong: Darkbloom's own
+supervisor restarts and updates it (its launchd job has KeepAlive
+false); `desktop ensure` installs a background agent that stays; the
+key route answers null while no local address runs; a plain `darkbloom
+start` serves both ways. A real try persists `~/.darkbloom`, a line in
+`~/.zshrc`, login services and a model of several GB. Waiting on Sean:
+whether to ask Darkbloom's makers for permission, and a real try on his
+Mac.
+
 Venice's first pass is merged (20 November 2026): the client and its
 checks, with no caller, and `docs/venice.md`. Venice answers through
 Tor for its public list and its payment challenge (the chief's try,

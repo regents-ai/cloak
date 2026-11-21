@@ -429,8 +429,8 @@ osascript -e 'tell application "Cloak" to show chat'
 ```
 
 The commands are `start`, `pause`, `show chat`, `show agents`, `show
-details` and `show settings`; a start or pause that doesn't apply now
-fails with the reason, as `cloak` would give it.
+darkbloom`, `show details` and `show settings`; a start or pause that
+doesn't apply now fails with the reason, as `cloak` would give it.
 
 The app downloads the model, the small lead (5.4 GiB), while it is not
 installed: the Details window, opened by Download Model in the menu, says
@@ -734,6 +734,50 @@ first, the changed words marked as in Chat; system prompts, tools, tool
 results and the model's answers are not shown. Up to 200 requests are held
 in memory until Cloak quits, never on disk, and only the latest 20 keep
 their text. No request's text is ever logged or written to disk.
+
+"Darkbloom" in the menu opens a window for Darkbloom (darkbloom.dev), which
+serves a model on this Mac to your other apps and, if you choose, to
+Darkbloom's network. Darkbloom runs on macOS 27 or later; on an older
+system the window says so and offers nothing else. Everything the window
+shows is Darkbloom's own, read while it is open from Darkbloom's control
+service on 127.0.0.1 (its port and token from
+`~/.darkbloom/desktop/connection.json`), its job in launchd and its files.
+Cloak runs Darkbloom's command line, `~/.darkbloom/bin/darkbloom`, only once
+the system's signature check says Darkbloom's developer signed it (the
+requirement Darkbloom's own app checks), and only release 0.10.16 or later.
+
+- Install fetches Darkbloom's installer from api.darkbloom.dev and runs it
+  as Darkbloom's own app does: it puts Darkbloom in `~/.darkbloom` and adds
+  it to the shell's path in `~/.zshrc`. Install, and Connect when Darkbloom
+  is installed but its control service doesn't answer, then start that
+  service (`darkbloom desktop ensure`), which stays and opens at login.
+  Closing the window stops an install under way.
+- Model is the one model Cloak offers: the largest in Darkbloom's list that
+  fits in what Darkbloom lets models take on this Mac, less what Cloak keeps
+  for itself (the rewording model, and Local Llama's chosen model when it
+  is another); one already on this Mac comes first. Download shows its
+  progress, with Cancel.
+- Start runs `darkbloom start --local --route this-mac --bind 127.0.0.1
+  --model <id>`, or `--me-first` in place of `--local` while Serve Network
+  is on. Stop asks Darkbloom to stop, which also keeps it from starting at
+  login.
+- Connection shows the address and key Darkbloom reports, each with Copy;
+  the key stays hidden until Show Key, and again once the window closes.
+  Requests says whether requests to the address stay on this Mac, from
+  Darkbloom's route and where its address listens.
+- Serve Network, off at first, links this Mac to your Darkbloom account (a
+  code shown in the window, entered on Darkbloom's page in your browser
+  with Continue in Browser), then serves Darkbloom's network too, your own
+  requests first.
+- A setup made outside Cloak that Start would change (serving Darkbloom's
+  network alone, an address open beyond this Mac, or a route that can send
+  requests on) is listed under Current Setup, and Start asks first.
+- More holds Remove Model, whether Darkbloom keeps serving after Cloak quits
+  and starts at login (as its launchd job says), and the release.
+
+Nothing of Darkbloom's runs until the window first opens, and Cloak adds no
+login item. Darkbloom's token, the key and any request's text are never
+logged or put on a command line.
 
 Run the app's checks (Token Inference's send path with the deposit kept
 sealed, whether this Mac holds the wallet, that NEAR mode's line to its

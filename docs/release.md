@@ -482,6 +482,12 @@ announcement text: all Sean's.
 - zkAPI is not replaced by Boundless, plain API keys or any other
   payment in the public protected build to meet a date.
 - No date is given for stage 2 until item 2 has passed.
+- The Darkbloom window (`app/Sources/RegentsCloak/Darkbloom*.swift`, its
+  menu item and `show darkbloom`) is in no release until Darkbloom's
+  makers give written permission for it; their licence forbids using
+  their software to power another product without it. Until then a
+  release is built with those three files and their two callers taken
+  out, or not at all.
 
 ## What could make this plan wrong
 

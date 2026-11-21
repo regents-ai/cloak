@@ -7,10 +7,10 @@ import os
 import SwiftUI
 
 /// The menu-bar app: one supervisor, each model's download, its menu, its
-/// Chat, Agents, Details and Settings windows, the quick prompt, Chat's
-/// Modes page on the first launch, NEAR mode's helper, the one way to V's
-/// payer, the door other apps and the agent in the guest send through while
-/// Cloak is Running, its AppleScript
+/// Chat, Agents, Darkbloom, Details and Settings windows, the quick prompt,
+/// Chat's Modes page on the first launch, NEAR mode's helper, the one way to
+/// V's payer, the door other apps and the agent in the guest send through
+/// while Cloak is Running, its AppleScript
 /// commands (`StartCommand` and the others), the control channel `cloak`
 /// uses to drive the same supervisor, and its updater (`Updates`).
 @main
@@ -65,6 +65,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DetailsView.window(supervisor, download, showModes: { self.showModes() })
     }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
+    /// Made at its window's first show; it follows Darkbloom only while the
+    /// window is open.
+    private lazy var darkbloomMode = DarkbloomMode(manifest: Launch.manifest, settings: .standard)
+    private lazy var darkbloom = AppWindow { [darkbloomMode] in DarkbloomView.window(darkbloomMode) }
     private let settingsSelection = SettingsView.Selection()
     private lazy var settings = AppWindow { [supervisor, prompt, door, updates, nearMode, downloads, settingsSelection] in
         SettingsView.window(
@@ -107,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         logger.notice("opened \(Launch.manifest.release, privacy: .public) (\(Launch.manifest.build, privacy: .public))")
         menu = StatusMenu(
             supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest.rewordingModel), showChat: showChat,
-            showAgents: showAgents, showDetails: showDetails, showSettings: showSettings,
+            showAgents: showAgents, showDarkbloom: showDarkbloom, showDetails: showDetails, showSettings: showSettings,
             checkForUpdates: updates.check)
         // Made now, so the shortcut chosen works from launch.
         _ = prompt
@@ -170,6 +174,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showAgents() {
         agents.show()
+    }
+
+    func showDarkbloom() {
+        darkbloom.show()
+        darkbloomMode.open()
     }
 
     func showDetails() {

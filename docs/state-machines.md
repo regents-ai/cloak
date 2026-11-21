@@ -1181,6 +1181,87 @@ at its limit with nothing sent; a phase the Mac does not know makes no
 call; an `R` frame carries only the identity and the reworded body; and a
 rewording that stops sends no request through the door.
 
+## 9e. Darkbloom (`app/Sources/RegentsCloak/DarkbloomClient.swift`, `app/Sources/RegentsCloak/DarkbloomMode.swift`)
+
+The Darkbloom window (`DarkbloomView`) shows one value,
+`DarkbloomMode.state`, read from what Cloak holds in memory and never
+stores: what it found of Darkbloom's runtime (`Runtime`), the control
+service's last report (`snapshot`), Darkbloom's launchd job and route
+(`setup`, read again with each report), and what the person's last press
+led to (`failure`, `starting`, `asked`). Nothing runs until the window
+first opens, Darkbloom is followed only while it is open (`open()`,
+`close()`), and whatever Darkbloom serves goes on after it closes or Cloak
+quits, as Darkbloom's own launchd job. Below macOS 27 the state is
+`unsupported` and nothing runs.
+
+The runtime, as Cloak finds it (`Darkbloom.find`: the file, its signature,
+its release, the flags `start --help` lists, then whether the service in
+`connection.json` answers for that release):
+
+```
+looking --no command line--> missing (Install)
+looking --signature, release or report refused--> refused (Try Again)
+looking --installed, no service answering for this release--> offline (Connect)
+looking --service answers--> connected
+missing --Install--> installing (steps 1 to 5) --ends well--> connecting
+installing --installer fails--> missing, with its failure
+installing --window closes--> installer stopped; looked for again at the next open
+offline --Connect--> connecting (desktop ensure, then find again)
+connecting --service answers--> connected
+connecting --desktop ensure fails--> refused
+connected --report stream breaks--> connecting --5 s, connection.json read again--> connected
+connected --report from another release--> offline
+connecting --no connection.json--> offline
+```
+
+Each report stream ends after Darkbloom's 30 snapshots and is opened again
+at once. While connected, `state` is the first of these that holds:
+
+```
+a press failed                                  -> failed (its words; Darkbloom's reason in the note)
+Cloak's Start under way (darkbloom start)       -> loading
+a stop under way, or the service draining       -> stopping
+the offered model downloading                   -> downloading (progress)
+starting                                        -> loading
+running: Only me's address listens, or a model serves loaded -> serving, else loading
+stopped, Only me's job running                  -> loading
+stopped                                         -> stopped with the model on this Mac, else no model
+stale                                           -> failed (Status out of date)
+any other report                                -> failed (Unknown state)
+```
+
+Stop applies, not Start, while Darkbloom serves or is set to (`isOn`: a
+report of starting, running, draining or stale, or the job loaded). Start
+is off only where it is certain to fail (`startBlock`), with its words
+beside it: Not connected, Needs a newer Darkbloom (a flag Start passes is
+not in `start --help`), No model fits, Model list unavailable, Download
+first. Start runs `darkbloom start` with `--local` or, while Serve Network
+is on, `--me-first`, and `--route this-mac --bind 127.0.0.1 --model <id>`;
+it asks first when it would change a setup made outside Cloak (`changes`:
+serving the network alone, an address open beyond this Mac, a route other
+than this-mac). Stop, Download, Cancel (asked first) and Remove (asked
+first, off while the model is loaded or serving) are actions sent to the
+control service; each is followed by its id in the reports until it ends,
+and one that ends failed or interrupted becomes the failure.
+
+Serve Network (`alsoServe`, read from the job when the window opens):
+
+```
+off --switch on, not linked--> linking (code and page from Darkbloom; Continue in Browser)
+linking --link succeeds--> on; Start again if Darkbloom serves
+linking --link fails or is refused--> off
+linking --switch off--> link cancelled, off
+off <--switch--> on, linked: Start again if Darkbloom serves (asked first when it changes a setup made outside Cloak)
+```
+
+The switch is off with "Needs a newer Darkbloom" while `start --help`
+doesn't list `--me-first`. The key is read from the service only for Show
+Key or Copy Key and is forgotten when the window closes. A program Cloak
+runs ends when it ends, heard from its own termination handler, and one
+whose reader goes away first is stopped with all it started (its process
+group), as Darkbloom's own app stops its installer. Nothing here is under
+test.
+
 ## 10. Stages still implied (found 15 November 2026)
 
 A second read, of everything built since section 9: the chat window, the
