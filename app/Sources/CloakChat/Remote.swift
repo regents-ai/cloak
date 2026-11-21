@@ -10,25 +10,18 @@ import Security
 // Tor, to a remote model, paid from one wallet, so the provider can link
 // every chat it pays for.
 
-/// A wallet's key, made by the guest's sender with the payment toolkit's
+/// The wallet's key, made by the guest's sender with the payment toolkit's
 /// own key code and kept only here: a generic password in the login
 /// keychain, this device only, like the conversations' key (`Keychain`).
 /// Its account is the wallet's address, so the address shows without the
 /// key being read. The key is read only when a request that signs is built,
-/// and goes to the sender in memory. Each wallet has a service of its own,
-/// never renamed.
-public struct WalletKeychain: Sendable {
-    let service: String
-    let label: String
-
-    /// Token Inference's wallet on Tempo.
-    public static let tempo = WalletKeychain(service: "sh.regents.cloak.wallet", label: "Regents Cloak wallet")
-    /// The wallet that pays Venice in USDC on Base; never the Tempo one.
-    public static let venice = WalletKeychain(service: "sh.regents.cloak.venice-wallet", label: "Regents Cloak Venice wallet")
+/// and goes to the sender in memory.
+public enum WalletKeychain {
+    static let service = "sh.regents.cloak.wallet"
 
     /// The wallet's address, or nil when there is none.
     @concurrent
-    public func address() async throws(Keychain.Failure) -> String? {
+    public static func address() async throws(Keychain.Failure) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -46,7 +39,7 @@ public struct WalletKeychain: Sendable {
 
     /// The wallet's key. Blocking: called while a request is built, off the
     /// main thread.
-    public func key() throws(Keychain.Failure) -> Data {
+    public static func key() throws(Keychain.Failure) -> Data {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -61,13 +54,13 @@ public struct WalletKeychain: Sendable {
 
     /// Stores a new wallet; never one beside a wallet already there.
     @concurrent
-    public func store(key: Data, address: String) async throws(Keychain.Failure) {
+    public static func store(key: Data, address: String) async throws(Keychain.Failure) {
         guard try await self.address() == nil else { throw Keychain.Failure(status: errSecDuplicateItem) }
         let item: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: address,
-            kSecAttrLabel as String: label,
+            kSecAttrLabel as String: "Regents Cloak wallet",
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecValueData as String: key,
         ]
@@ -260,7 +253,7 @@ public struct Look: Sendable, Equatable, Decodable {
 /// wallet's key; a key never leaves memory here.
 public enum Remote {
     /// The wallet's key, read when a request that signs is built:
-    /// `WalletKeychain.tempo.key` in the app.
+    /// `WalletKeychain.key` in the app.
     public typealias Key = @Sendable () throws -> Data
 
     /// Makes the wallet: the sender makes the key, `store` keeps it (the
@@ -398,14 +391,14 @@ public enum Remote {
         return earlier + [["role": "user", "content": conversation.turns[index].sent]]
     }
 
-    /// The Venice wallet's EIP-191 signature of a sign-in, made in the guest
+    /// The wallet's EIP-191 signature of Venice's sign-in, made in the guest
     /// (`venice_sign`), which signs nothing but Venice's sign-in.
     public static func veniceSign(_ message: String, key: @escaping Key, exchange: Exchange) async throws(RemoteStop) -> String {
         let signed: Signed = try await run(exchange, keep: { _ in }) { ["op": "venice_sign", "key": try hexKey(key), "message": message] }
         return signed.signature
     }
 
-    /// The Venice wallet's EIP-712 signature of `typed`, made in the guest
+    /// The wallet's EIP-712 signature of `typed`, made in the guest
     /// (`venice_typed`), which signs nothing but a USDC transfer on Base.
     public static func veniceTyped(_ typed: Data, key: @escaping Key, exchange: Exchange) async throws(RemoteStop) -> String {
         let signed: Signed = try await run(exchange, keep: { _ in }) {
@@ -421,8 +414,8 @@ public enum Remote {
         return funds.balance
     }
 
-    /// The Venice wallet's signer: each signature is made in the guest with
-    /// `key`, read as each request is built.
+    /// The wallet's signer for Venice: each signature is made in the guest
+    /// with `key`, read as each request is built.
     public static func veniceSigner(address: String, key: @escaping Key, exchange: @escaping Exchange) -> VeniceSigner {
         VeniceSigner(
             address: address, personal: { try await veniceSign($0, key: key, exchange: exchange) },

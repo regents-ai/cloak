@@ -123,7 +123,7 @@ public struct VeniceModel: Sendable, Equatable, Identifiable {
 /// began, and how it pays. A chat never moves to another model, tier or
 /// way to pay.
 public struct VeniceChat: Codable, Sendable, Equatable {
-    /// The owner's own Venice key, or the Venice wallet's credit.
+    /// The owner's own Venice key, or the credit Cloak's wallet bought at Venice.
     public enum Pays: String, Codable, Sendable, CaseIterable {
         case key, wallet
     }

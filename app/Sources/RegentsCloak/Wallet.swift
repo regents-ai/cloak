@@ -4,12 +4,13 @@ import Foundation
 import Observation
 import os
 
-/// Token Inference's one wallet (decisions 10 and 25 in docs/plan.md): made
-/// on this Mac when its owner presses Create, funded by its owner, and
+/// Token Inference's one wallet (decisions 10, 25 and 31 in docs/plan.md):
+/// made on this Mac when its owner presses Create, funded by its owner, and
 /// paying for every Token Inference chat sent, so the provider can link them
-/// all. Its key is in the keychain only (`WalletKeychain.tempo`); `look` is
-/// what the network and the provider show of it, read again after each
-/// request. Every press reaches the guest's
+/// all. The same key and address pay Boundless in USDC.e on Tempo and Venice
+/// in USDC on Base (`VeniceMode`). Its key is in the keychain
+/// only (`WalletKeychain`); `look` is what the network and the provider show
+/// of it, read again after each request. Every press reaches the guest's
 /// sender, which takes one request at a time; none is refused here for one
 /// already under way.
 @MainActor
@@ -65,7 +66,7 @@ final class Wallet {
         presence = .looking
         let read: Result<String?, Keychain.Failure>
         do {
-            read = .success(try await WalletKeychain.tempo.address())
+            read = .success(try await WalletKeychain.address())
         } catch {
             logger.error("cannot read the wallet: \(error.description, privacy: .public)")
             read = .failure(error)
@@ -81,7 +82,7 @@ final class Wallet {
         let address: String
         do {
             address = try await Remote.create(exchange: exchange) { key, address in
-                try await WalletKeychain.tempo.store(key: key, address: address)
+                try await WalletKeychain.store(key: key, address: address)
             }
         } catch {
             presence = .absent
@@ -105,7 +106,7 @@ final class Wallet {
         guard let deposits else { return }
         stop = nil
         stop = await run { [exchange, model] () async throws(RemoteStop) in
-            try await Remote.close(model: model, key: { try WalletKeychain.tempo.key() }, deposits: deposits, exchange: exchange)
+            try await Remote.close(model: model, key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange)
         }
         await refresh()
     }
@@ -115,7 +116,7 @@ final class Wallet {
         guard let deposits else { return }
         stop = nil
         stop = await run { [exchange] () async throws(RemoteStop) in
-            try await Remote.withdraw(key: { try WalletKeychain.tempo.key() }, deposits: deposits, exchange: exchange)
+            try await Remote.withdraw(key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange)
         }
         await refresh()
     }
