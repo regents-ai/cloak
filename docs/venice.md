@@ -1,12 +1,11 @@
 # Venice in Token Inference
 
 Venice (venice.ai) as a second provider inside Token Inference, beside
-today's provider at Boundless. First pass, 20 November 2026: the client is
-built and checked. Second, 21 November: the sender's Venice requests in the
-guest and the host's stream. Nothing is on screen yet. This is the plan for
-joining it to the app, now that the four-mode work (decisions 23 to 25 in
-`docs/plan.md`) is merged, and the size of verified encryption, which is not
-built.
+Boundless. First pass, 20 November 2026: the client, built and checked.
+Second, 21 November: the sender's Venice requests in the guest and the
+host's stream. Third, 21 November: the screens, paid by the owner's own
+Venice key or by Cloak's one wallet (decision 31). Verified encryption is
+not built; what it would take is at the end.
 
 Sources, read anonymously and kept for this pass: Venice's documents at
 docs.venice.ai (their `.md` pages), its API reference (`swagger.yaml`), its
@@ -18,45 +17,58 @@ github.com/veniceai/x402-client, and x402's legacy client (npm `x402`
 ## What a Venice chat is
 
 - A Token Inference chat whose first message went to Venice. It keeps
-  Venice, its model and that model's tier for the rest of its life
-  (`Conversation.venice`). It never moves to another provider, model or
-  tier: when Venice no longer lists the model as it was, the chat stops
-  and says so.
-- Its route is Token Inference's: each message is reworded on this Mac,
-  sent from the guest through Tor on the conversation's own Tor identity,
-  with cover traffic as the mode has it.
-- It is paid one of two ways, chosen when it starts and kept:
+  Venice, its model, that model's tier and its way to pay for the rest of
+  its life (`Conversation.venice`, a `VeniceChat`). It never moves to
+  another provider, model, tier or way to pay: when Venice no longer lists
+  the model as it was, the chat stops and says so.
+- Its route is Token Inference's: each message is reworded on this Mac, or
+  sent as written when its owner chooses, from the guest through Tor on
+  the conversation's own Tor identity, with cover traffic as the mode has
+  it.
+- It is paid one of two ways, chosen when it starts and kept
+  (`VeniceChat.pays`):
   - **Key**: the owner's own Venice API key, Inference Only, kept in this
-    Mac's keychain as NEAR's is.
-  - **Wallet**: USDC on Base, with no Venice account, by Venice's x402
-    route. Base only, no Solana, no automatic top-up.
+    Mac's keychain as NEAR's is (`ProviderKeychain.venice`, service
+    `sh.regents.cloak.venice`).
+  - **Wallet**: Venice credit, bought with USDC on Base by Venice's x402
+    route with no Venice account, from Cloak's one wallet: the same key
+    and the same address that pay Boundless in USDC.e on Tempo
+    (`WalletKeychain`, service `sh.regents.cloak.wallet`). Base only, no
+    Solana, no automatic top-up.
 - Models come from Venice's live list. No model name is written into the
   app. The picker lists the models Venice calls Private or TEE, and
   Anonymous ones only once the owner turns on All tiers.
 - Venice's own system prompt is off, web search is off, and thinking is
-  kept out of the answer.
-- Agent tasks keep today's provider in this pass: the Agent switch shows
-  only while Boundless is the provider.
+  kept out of the answer. The answer streams in as it comes; nothing else
+  in Cloak streams.
+- Agent tasks keep Boundless. With Venice as the provider, the Agent
+  switch on a new chat shows off and cannot be turned on; its help says
+  "Agent tasks use Boundless. Choose Boundless in the Wallet to run one."
+- Venice is not in V, NEAR Private AI or Local Llama. No verified
+  encryption, web search or voice.
 
 ## What is built
 
 `app/Sources/CloakChat/Venice.swift` and
-`app/Sources/CloakChat/VeniceWallet.swift`, the sender's Venice requests in
-`guest/sender/src/lib.rs` and `Sender.stream` in
-`host/Sources/CloakHost/Sender.swift` (Transport, below), with no caller in
-the app yet.
+`app/Sources/CloakChat/VeniceWallet.swift` (the client), the sender's
+Venice requests in `guest/sender/src/lib.rs`, `Sender.stream` in
+`host/Sources/CloakHost/Sender.swift` (Transport, below), and the app's
+parts (App, below).
 
 | Part | What it does |
 | --- | --- |
 | `Venice.models(transport:)` | `GET models?type=text`, no key, read strictly: each model's id, name, tier, whether it is offline or remapped, context and prices per million tokens |
 | `VeniceTier` | Venice's tier in Venice's word (Anonymous, Private, TEE), with `about`, the tooltip, and `isVenicePrivate` for the picker's filter |
-| `VeniceChat` | What a saved chat keeps: model and tier. `check(in:)` stops a chat whose model is not listed, is remapped, changed tier or is offline, before anything is sent |
+| `VeniceChat` | What a saved chat keeps: model, tier and `pays` (`key` or `wallet`). `check(in:)` stops a chat whose model is not listed, is remapped, changed tier or is offline, before anything is sent |
 | `Venice.account()` | Key: `GET api_keys/rate_limits` (balance in dollars and DIEM, whether the key may spend). Wallet: `GET x402/balance/{address}`, signed |
-| `Venice.ask(_:turn:in:partial:)` | One message: a fresh list and the chat's check, then `POST chat/completions` streamed, partial text as it comes, the last usage chunk, an error mid-stream, cancellation |
-| `VeniceStop` | Why a request stopped, as one of sixteen kinds, each with a title and a few words for the screen, and a `text` for the log made only from Cloak's own words, the status and known code names. A 402 that asks for credentials is the key's or the sign-in's refusal, never a short balance |
+| `Venice.ask(_:turn:in:partial:)` | One message: a fresh list and the chat's check, then `POST chat/completions` streamed, partial text as it comes, the last usage chunk, an error mid-stream, cancellation. A list that stops sends nothing more, and its stop says nothing was sent |
+| `VeniceStop` | Why a request stopped, as one of nineteen kinds, each with a title and a sentence for the screen, `sent` (whether it may have reached Venice), and a `text` for the log made only from Cloak's own words, the status and known code names. A 402 that asks for credentials is the key's or the sign-in's refusal, never a short balance |
 | `VeniceWallet.signIn(for:signer:now:nonce:)` | The `SIGN-IN-WITH-X` header for one URL, signed by the caller's signer |
-| `Venice.topUpTerms()`, `topUp(_:on:by:)` | The top-up's challenge (402, Base USDC only), the EIP-3009 authorization to sign, and the payment header |
+| `Venice.topUpTerms()`, `add(_:by:)`, `topUp(_:on:by:)` | The top-up: Venice's terms read afresh (402, Base USDC only), the EIP-3009 authorization for exactly the amount typed, and the payment header. Below the terms' least or not USDC on Base: nothing is signed |
+| `Amount(dollars:)`, `lacking(in:)` | A typed dollar amount read exactly to six decimals, or nothing; what the wallet's USDC on Base is short of it, or nil when enough or unread |
 | `VeniceSigner` | Supplied by the caller: an address, a personal-sign function and a typed-data function. No key is held here |
+| `Remote.veniceSign`, `veniceTyped`, `veniceFunds`, `veniceSigner` | The guest's `venice_sign`, `venice_typed` and `venice_funds` over `Exchange`, as `close` is built; the wallet's signer from the first two, with the one wallet key read as each signature is asked |
+| `Remote.veniceTransport(identity:stream:)` | A `VeniceRequest` as the sender's `venice` line for one Tor identity, and the pieces back as a `VeniceResponse` |
 
 The request body is exactly this, and nothing else (checked in
 `app/Tests/CloakTests/VeniceTests.swift`):
@@ -171,16 +183,13 @@ other frame fails the stream. `exchange` stays as it is for the
 one-answer requests. No change to the relay or to Tor: TorRelay has no
 list of destinations, and the guest's Tor port reaches any host.
 
-### App (not built)
+### App (built)
 
-- `Supervisor.swift`, beside `exchange`, refused unless Running as
-  `exchange` is. CloakSupervisor does not import CloakChat, so it carries
-  bytes:
+- `app/Sources/CloakSupervisor/Supervisor.swift`: `venice(_:)`, beside
+  `exchange`, refused unless Running as `exchange` is. CloakSupervisor
+  does not import CloakChat, so it carries bytes:
 
   ```swift
-  /// One Venice request through the guest's sender while Running
-  /// (`Sender.stream`): Venice's answer as it comes. Ending the stream
-  /// first closes its connection.
   public func venice(_ request: Data) async throws -> AsyncThrowingStream<Sender.Piece, any Error> {
       guard case .running = phase, let guest = stack.guest else { throw Sender.Failure(description: "Cloak is not running") }
       return Sender.stream(try await guest.connect(to: Sender.port), request: request)
@@ -188,22 +197,34 @@ list of destinations, and the guest's Tor port reaches any host.
   ```
 
   A pause, stop or quit stops the guest, which closes the connection of a
-  stream under way, as it does an `exchange`'s: the stream fails with
-  "the sender closed before answering", which `VeniceMode` reads as
-  `unreachable`, sent. Nothing else tracks a stream.
-- `host/Sources/cloak-host/main.swift`, only if a Venice request is to be
-  tried from the command line: in the loop that reads requests from
-  standard input, a line whose `op` is `venice` goes to `Sender.stream`
-  instead of `Sender.exchange`, printing `{"head":{"status","headers"}}`
-  for `.head`, the bytes as they are for `.body`, and the answer for
-  `.end` as `exchange`'s is printed.
-- `app/Sources/RegentsCloak/VeniceMode.swift` (new) turns a
-  `VeniceRequest` into the `venice` request's JSON for the conversation's
-  identity, and the pieces into a `VeniceResponse`: `.head` gives status
-  and headers, `.body` feeds `body`, `.end` with `ok` finishes it, and a
-  stop finishes it with an error (`VeniceUnreachable(sent:)`: false for
-  `tor_down`, true otherwise). The model list goes on the conversation's
-  own identity, since the chat follows it on the same circuit.
+  stream under way, as it does an `exchange`'s. Nothing else tracks a
+  stream.
+- `host/Sources/cloak-host/main.swift`, for trying a Venice request from
+  the command line: in the loop that reads requests from standard input,
+  a line whose `op` is `venice` goes to `Sender.stream` instead of
+  `Sender.exchange`, printing `{"head":{"status","headers"}}` for
+  `.head`, the bytes as they are for `.body`, and the answer for `.end`
+  as `exchange`'s is printed.
+- `Remote.veniceTransport` in `app/Sources/CloakChat/Remote.swift` (so its
+  check runs in the tests) turns a `VeniceRequest` into the `venice`
+  line, `{op, identity, method, url, headers, body}`, and the pieces into
+  a `VeniceResponse`: `.head` gives status and headers, `.body` feeds
+  `body`, `.end` with `ok` finishes it, and a stop finishes it with
+  `VeniceUnreachable(sent:)`. A stop before Venice's head is `sent: false`
+  only when the sender says `tor_down`; anything else may have reached
+  Venice. Ending the body first cancels the stream, which shuts the
+  socket.
+- `app/Sources/RegentsCloak/VeniceMode.swift` (new) holds the rest: the
+  key (`hasKey`, `save`, `remove`, as `NearMode` has them), the list
+  (`models`, `listStop`), the key's balance (`keyAccount`), the wallet's
+  USDC on Base (`funds`) and Venice credit (`credit`), Venice's top-up
+  terms (`terms`), each message under way (`partial`, `stops`,
+  `retired`) and each press of Add (`adding`, `topUpStop`, `added`). It
+  owns no wallet: the caller hands it the one wallet's address, from
+  `Wallet.presence`. The sheet's reads go under three Tor identities of
+  their own, new at each launch: the list, the key's balance, the
+  wallet's credit and top-ups. A message, and the list read just before
+  it, go on the conversation's own identity.
 
 ## What Venice's real answers changed
 
@@ -244,52 +265,55 @@ its guide sends the same body. Cloak sends that body in
 `X-402-Payment`). No change. Whether Venice settles it shows only at the
 first real top-up.
 
-## Which wallet
+## One wallet (decision 31)
 
 The app's signing code is the guest's: the sender's `create` makes a key
 with alloy, the Mac keeps it in the keychain (`WalletKeychain`, service
-`sh.regents.cloak.wallet`) and hands it back as hex for each request that
-signs (`Remote.hexKey`). Venice's wallet signs with the same code, through
-`venice_sign` and `venice_typed`.
+`sh.regents.cloak.wallet`, label "Regents Cloak wallet") and hands it back
+as hex for each request that signs (`Remote.hexKey`). Venice's wallet
+signs with that same key, through `venice_sign` and `venice_typed`, and
+reads that same address's USDC on Base through `venice_funds`.
 
-The sounder choice is a **separate key** for Venice, made by the same
-`create` and kept under its own keychain service
-(`sh.regents.cloak.venice-wallet`):
+The chief recommended a separate key for Venice, under its own keychain
+service. Sean chose one wallet on 21 November 2026 ("31. b", recorded in
+`docs/plan.md`). The cost he accepted:
 
 - An address is the same on every EVM network. One key on Tempo and Base
-  would show, to anyone reading both networks, that the Boundless deposits
+  shows, to anyone reading both networks, that the Boundless deposits
   and the Venice top-ups have one owner. Venice also records the wallet
-  address it is paid from (privacy policy).
-- Token Inference's standing sentence says one wallet links each
-  provider's chats. With one key it would also link the two providers'
-  chats to each other.
-- The tokens differ (USDC.e on Tempo, USDC on Base); two addresses keep
-  each sheet's "send here" to one token.
-- The cost: two addresses to fund, and USDC sent to the wrong one waits at
-  an address Cloak does not watch on that network. The sheet names the
-  network and token beside each address.
+  address it is paid from (privacy policy). So Venice's payments and
+  Boundless's can be tied to each other.
+- Token Inference's standing sentence already says one wallet links a
+  provider's chats. The sheet and the Modes page now also say that the
+  same address pays both providers.
 
-The choice is Sean's (decision 31 in `docs/plan.md`, open); the plan
-below assumes the separate key, and nothing in the transport depends on
-it.
+What it saves: one address to fund, one Create, and no USDC sent to an
+address Cloak does not watch. The sheet names the token and network beside
+the address for the provider shown: USDC.e on Tempo for Boundless, USDC on
+Base for Venice. No second wallet key is made, and
+`sh.regents.cloak.venice-wallet` is not used.
 
 ## Changes, file by file
 
 | File | Change |
 | --- | --- |
 | `app/Sources/CloakChat/Conversation.swift` | `public var venice: VeniceChat?`, set with the first message and never changed; `isVenice`. Absent in every other chat |
-| `app/Sources/CloakChat/Venice.swift` | `VeniceChat` gains `pays` (`key` or `wallet`), so a chat keeps how it pays; `VeniceKeychain` (service `sh.regents.cloak.venice`) as `NearKeychain` is; `VeniceWalletKeychain` (`sh.regents.cloak.venice-wallet`) as `WalletKeychain` is |
-| `app/Sources/CloakChat/Remote.swift` | `veniceSign`, `veniceTyped` and `veniceFunds` over `Exchange`, as `close` is built; the signer for `VeniceAuth.wallet` is made from the first two |
-| `app/Sources/RegentsCloak/VeniceMode.swift` (new) | The transport above; the list (`models`, `listStop`); the account (`account`, `accountStop`); one message's state (below); the wallet's top-up state (below); `hasKey`, `save`, `remove` as `NearMode` has them |
-| `app/Sources/RegentsCloak/AppSettings.swift` | `provider` (Boundless or Venice) for new Token Inference chats; `venicePays` (Key or Wallet, default Key); `veniceModel` (an id, or nil); `veniceAllTiers` (false). Restore Defaults puts each back |
-| `app/Sources/RegentsCloak/SettingsView.swift` | A Venice pane, below |
-| `app/Sources/RegentsCloak/Chat.swift` | `submit` sends a Venice chat through `VeniceMode`: the chat's own `pays`, `model` and `tier`, its identity from `identities`, partial text into the card. `Chat.sending[turn]` holds it while under way |
-| `app/Sources/RegentsCloak/ChatView.swift` | The tier capsule; the standing sentence; Send's reasons; the stops' words; Stop while answering |
-| `app/Sources/RegentsCloak/WalletView.swift` | The provider choice and Venice's sections, below |
-| `app/Sources/RegentsCloak/ChatView.swift` (`ModesPage`) | Token Inference's column, below |
-| `app/Sources/CloakSupervisor/Supervisor.swift` | `venice(_:)`, as Transport has it |
-| `docs/state-machines.md` | A section 9f from "States" below. Section 6e, the sender's Venice request, is written |
-| `README.md` | Token Inference's paragraph gains Venice, its two ways to pay and what Venice sees |
+| `app/Sources/CloakChat/Venice.swift` | `VeniceChat.pays`; the kinds `belowLeast`, `notUSDC` and `keychain`; `ask` says a stopped list sent nothing |
+| `app/Sources/CloakChat/VeniceWallet.swift` | `add(_:by:)`; a paid top-up answered other than 400, 401 or 402 is `failed`, since it may have gone through |
+| `app/Sources/CloakChat/Keychain.swift` | `ProviderKeychain`, one type for NEAR's key (`sh.regents.cloak.near`) and Venice's (`sh.regents.cloak.venice`), in place of `NearKeychain` |
+| `app/Sources/CloakChat/Remote.swift` | `Amount(dollars:)`, `lacking(in:)`; `veniceSign`, `veniceTyped`, `veniceFunds`, `veniceSigner`; `veniceTransport` |
+| `app/Sources/CloakSupervisor/Supervisor.swift` | `venice(_:)` |
+| `host/Sources/cloak-host/main.swift` | The `venice` line by hand, above |
+| `app/Sources/RegentsCloak/VeniceMode.swift` (new) | Above |
+| `app/Sources/RegentsCloak/AppSettings.swift` | `provider` (Boundless or Venice) for new Token Inference chats; `venicePays` (Key or Wallet, default Key); `veniceModel` (`VeniceChoice`, an id and its tier, or nil); `veniceAllTiers` (false). Restore Defaults puts each back |
+| `app/Sources/RegentsCloak/Chat.swift` | `send` takes a Venice chat to `VeniceMode` only, with the one wallet's address; `VeniceBlock`, Send's reasons; a new chat begins as `newVenice` |
+| `app/Sources/RegentsCloak/ChatView.swift` | The tier capsule; the standing sentence; Send's reasons with where each is fixed; the answer as it comes; Stop; the stop row; the Agent switch held off; the Modes page lines |
+| `app/Sources/RegentsCloak/WalletView.swift` | The Provider picker and Venice's sections; the one wallet's address with USDC on Base beside it |
+| `app/Sources/RegentsCloak/SettingsView.swift` | The Venice pane; Restore Defaults' words |
+| `app/Sources/RegentsCloak/RegentsCloakApp.swift` | One `VeniceMode`, handed to Chat and Settings; Open Settings goes to the Venice pane |
+| `app/Sources/RegentsCloak/Wallet.swift` | Its comment: the same key pays both providers |
+| `docs/state-machines.md` | Section 9f; 6e's caller |
+| `README.md` | Token Inference gains Venice, its two ways to pay, what Venice sees, and the one address |
 
 ## Settings: the Venice pane
 
@@ -313,77 +337,128 @@ Sidebar: **Venice**, symbol `water.waves`, after NEAR.
 
 The sheet keeps its frame. For a Token Inference chat it gains a
 **Provider** picker at the top, Boundless or Venice (`AppSettings.provider`,
-for new chats). For a Venice chat, the picker shows that chat's provider and
-cannot change it. With Venice chosen, the Tempo sections stay below,
-unchanged, and two sections come first:
+for new chats; help "Who answers new Token Inference chats."). For a chat
+that has begun, the picker shows that chat's provider and cannot change it
+(help "Each chat keeps the provider it started with."). With Boundless,
+the sheet is as it was. With Venice, Boundless's deposit and models are
+not shown, and these sections are:
 
 **Venice**
 
 | Row | Contents |
 | --- | --- |
-| Pay with | A segmented picker, Key or Wallet (`venicePays`, for new chats). Help: "How new Venice chats pay. Each chat keeps the way it started with." |
-| Key, when Key | "Saved" or "None", with the Settings symbol, as NEAR's row is |
-| Balance, when Key | The key's balance in dollars, then "DIEM" and its balance when it has any. Help on DIEM: "Venice's DIEM allowance on this key." |
-| Under them, when Key | "Paid from your Venice account at [venice.ai/settings/api](https://venice.ai/settings/api)." |
-| Address, when Wallet | The Venice wallet's address with Copy and the QR button, or, before it exists, "Cloak makes a second wallet for Venice, apart from the Tempo one." and **Create** |
-| Token, when Wallet | "USDC on Base" |
-| On hand, when Wallet | The address's USDC on Base |
-| Credit, when Wallet | Venice's balance for the address |
-| Amount, when Wallet | A dollar field, starting at Venice's suggested top-up, and **Add**. Under it: "Venice's least is $5. Venice keeps what you add; it can't be sent back." The amount is the challenge's (`VeniceTopUpTerms.least`; $5 in `x402-top-up.md`), and the second sentence is terms 6.5: credits are "non-transferable" and "non-refundable" |
+| Pay with | A segmented picker, Key or Wallet (`venicePays`, for new chats; fixed for a chat that has begun). Help: "How new Venice chats pay. Each chat keeps the way it started with." |
+| Key, with Key | "Saved", "None", "Checking…" or "Couldn't check", with Open Settings (`gearshape`) |
+| Balance, with Key | The key's balance in dollars, then "DIEM" and its balance when it has any. Help on DIEM: "Venice's DIEM allowance on this key." |
+| Under them, with Key | A read that stopped, in the stop's own words. Footer: "Paid from your Venice account at [venice.ai/settings/api](https://venice.ai/settings/api)." |
 
-**Models**: the Venice model picker, replacing Boundless's while Venice is
-chosen. Each row: the model's name, its tier as a capsule in Venice's word
-(Anonymous, Private, TEE) with the tier's `about` as help, and its prices,
-"in | out" as today. Only `isVenicePrivate` models unless All tiers is on.
-A model that is offline is dimmed and cannot be chosen, its help "Offline
-at Venice."
+**Wallet**, with Wallet: the one wallet. Before it exists, the sheet's own
+Create, as for Boundless ("Cloak makes one wallet on this Mac. You add
+funds to it, and it pays for each chat you send."): one Create makes it,
+once, for both providers.
 
-Buttons, under the money rule:
+| Row | Contents |
+| --- | --- |
+| Address | The one address, with Copy and the QR button |
+| Token | "USDC on Base" |
+| Balance | The address's USDC on Base at the latest block, such as "7.25 USDC", or "Couldn't read" |
+| Footer | "The wallet pays Boundless on Tempo and Venice on Base from the same address, so anyone can tie those payments to each other." |
 
-- **Add** is never held back by the page. It is disabled only when the
-  address's USDC on Base, read at the latest block, is below the amount:
-  "Needs $2.10 more on Base." beside it. A read that fails enables it. Each
-  press signs and sends a new authorization; two presses pay twice.
-- **Create** and **Add** are off while Cloak is not running, as today's
-  wallet buttons are, since the key signs in the guest: "Start Cloak to use
-  the wallet."
-- A refused top-up shows the stop's words ("Venice did not take the
-  payment. Check the wallet's USDC on Base, then try again.") beside Add.
-- Added: "Added $7.50." and the new credit.
+**Credit**, with Wallet
+
+| Row | Contents |
+| --- | --- |
+| Balance | Venice's credit for the address, in dollars; a read that stopped, in the stop's own words |
+| Amount | A dollar field, showing Venice's least until something is typed, and **Add** |
+| Under it | "Venice's least is $5. Venice keeps what you add; it can't be sent back." The least is the terms' (`VeniceTopUpTerms.least`; $5 in `x402-top-up.md`), and the second sentence is terms 6.5: credits are "non-transferable" and "non-refundable" |
+
+**Model**: for a new chat, a picker of Venice's models, "None" first, then
+grouped by tier, TEE first. Each row: "name: in | out", the prices per
+million tokens (help "Prices per million tokens: in | out."), or, dimmed
+and not choosable, "name: Offline at Venice." The chosen model's tier is
+its own row, **Tier**, a capsule in Venice's word with the tier's `about` as
+help. For a chat that has begun: its Model and Tier, fixed. Before the
+list reads: "Start Cloak to see Venice's models.", or "Cloak couldn't read
+Venice's models." with Try Again.
+
+A value not read yet shows "—", its help "Not read yet." or, while Cloak
+is not running, "Start Cloak to load the balance." (or "wallet balance",
+"credit"). The sheet reads on opening and when Provider, Pay with, the
+wallet's address or Cloak's running change; Refresh reads again. Every
+read costs nothing.
+
+Add, under the money rule:
+
+- Each press is one payment: Venice's terms read afresh, one EIP-3009
+  authorization of exactly the dollars typed, signed in the guest, one
+  paid POST. Two presses pay twice. A press while one is under way starts
+  a second.
+- Add is disabled only where the press is certain to fail: while Cloak is
+  not running ("Start Cloak to use the wallet."), since the key signs in
+  the guest, and while the address's USDC on Base, read at the latest
+  block, is below the amount ("Needs $2.10 more on Base."). A read that
+  fails leaves it enabled.
+- An amount that does not read: "Enter an amount in dollars, like 5.", in
+  red, and nothing is signed.
+- Below the terms' least: "Venice asks for more than this amount. Nothing
+  was signed." Terms that name no top-up in USDC on Base: "Venice asked
+  for a payment other than USDC on Base. Nothing was signed." Cloak never
+  signs more than the amount typed.
+- Venice refused the payment (400, 401 or 402): "Venice did not take the
+  payment. Check the wallet's USDC on Base, then try again."
+- Any other end after the payment went: the stop's words and "The payment
+  may have gone through. Check Credit before adding again."
+- Taken: "Added $7.50." The credit and the USDC on Base are read again
+  after every press.
 
 ## Chat
 
 - The mode pill stays Token Inference. Beside it, a Venice chat carries a
   capsule with "Venice" and the tier, such as "Venice TEE", its help the
-  tier's `about`, which begins "Venice's word for this model."
+  tier's `about`, which begins "Venice's word for this model." Before a
+  model is chosen it says "Venice", its help "Choose a model in the
+  Wallet."
 - The standing sentence for a Venice chat: "Venice can link your chats,
-  because one key or one wallet pays for all of them."
+  because one key or one wallet pays for all of them." The zkAPI light's
+  help: "zkAPI is off: one key or one wallet pays for every chat."
 - Send is off only where sending is certain to stop, with the reason beside
   it and a button to where it is fixed:
   - Cloak not running: "Start Cloak to send."
   - A key chat with no key kept: "Save your Venice key in Settings.", with
-    Open Settings.
-  - A wallet chat with no Venice wallet: "Create the Venice wallet first.",
-    with Open Wallet.
-  - A new chat with no model chosen: "Choose a model in the Wallet.", with
+    Open Settings, which opens the Venice pane.
+  - A wallet chat with no wallet yet: "Create a wallet to send.", with
     Open Wallet.
+  - A new chat with no model chosen: "Choose a model in the Wallet."
+  - A chat whose model Venice no longer lists, or lists at another tier,
+    once it has stopped so: "Start a new chat."
   No balance does not hold Send back: Venice answers 402 and the card says
   so.
-- A message under way shows its text as it comes and a Stop button (and
-  ⌘.). Stop cancels the request: whatever Venice charged so far stays
-  charged.
-- A stop shows its title and words from `VeniceStop`. Model gone and Tier
-  changed offer no Send Again, since both are certain to stop again: the
-  card says to start a new chat.
+- The reword gate is Token Inference's, unchanged: a message goes
+  reworded, or as written only by Send Original Text.
+- A message under way shows its answer as it comes, Sending with its
+  time, and Stop (and ⌘.). Stop cancels the request: whatever Venice
+  charged so far stays charged. Deleting the chat stops it too.
+- A stop shows its title and sentence from `VeniceStop`, then "Your message
+  may have reached Venice. Sending again may be charged twice." or
+  "Nothing was sent.", and Dismiss. The card keeps Send: each press sends
+  again.
+- A message saved without an answer shows Send after a relaunch, as any
+  unanswered Token Inference message does.
 
 ## The Modes page
 
-Token Inference's column, added to what the four-mode work writes:
+Token Inference's column:
 
+- Its line: "Token Inference: reworded on this Mac and sent through Tor,
+  paid from one wallet on this Mac, in USDC.e on Tempo or in USDC on Base
+  at Venice, or with your own Venice key."
 - Paid with: "USDC.e on Tempo, or at Venice with your own key or USDC on
   Base."
-- Its info line: "Venice lists each model with its own tier: Anonymous,
-  Private or TEE. Cloak shows Venice's word and cannot check it."
+- Two lines added under the four-mode work's: "Venice lists each model
+  with its own tier: Anonymous, Private or TEE. Cloak shows Venice's word
+  and cannot check it." and "The wallet pays Boundless on Tempo and Venice
+  on Base from the same address, so anyone can tie those payments to each
+  other."
 
 ## Every on-screen word
 
@@ -395,13 +470,14 @@ Token Inference's column, added to what the four-mode work writes:
 | Notes | The two notes above |
 | Alert | Remove key? / Venice chats that pay with a key can't send until you save a key again. / Remove / Cancel |
 | Keychain | The keychain said no. Try again. |
-| Sheet | Provider, Boundless, Venice, Pay with, Key, Wallet, Balance, DIEM, Address, Token, USDC on Base, On hand, Credit, Amount, Add, Create, None, Models |
-| Sheet lines (amounts as read) | How new Venice chats pay. Each chat keeps the way it started with. / Venice's DIEM allowance on this key. / Paid from your Venice account at venice.ai/settings/api. / Cloak makes a second wallet for Venice, apart from the Tempo one. / Venice's least is $5. Venice keeps what you add; it can't be sent back. / Needs $2.10 more on Base. / Start Cloak to use the wallet. / Added $7.50. / Offline at Venice. |
-| List | Start Cloak to see Venice's models. / Cloak couldn't read Venice's models. / Try Again |
+| Restore Defaults | "…new Token Inference chats to Boundless, Venice's Pay with to “Key”, the chosen Venice model is cleared, …"; "Your wallet, NEAR and Venice keys, chats and downloaded models stay as they are." |
+| Sheet labels | Provider, Boundless, Venice, Pay with, Key, Wallet, Balance, DIEM, Saved, None, Checking…, Couldn't check, Open Settings, Address, Token, USDC on Base, Couldn't read, Credit, Amount, $, Add, Model, Tier, Try Again, Refresh |
+| Sheet lines (amounts as read) | Who answers new Token Inference chats. / Each chat keeps the provider it started with. / How new Venice chats pay. Each chat keeps the way it started with. / Venice's DIEM allowance on this key. / Paid from your Venice account at venice.ai/settings/api. / The wallet pays Boundless on Tempo and Venice on Base from the same address, so anyone can tie those payments to each other. / Venice's least is $5. Venice keeps what you add; it can't be sent back. / Enter an amount in dollars, like 5. / Needs $2.10 more on Base. / Start Cloak to use the wallet. / The payment may have gone through. Check Credit before adding again. / Added $7.50. / Not read yet. / Start Cloak to load the credit. |
+| Models | None / name: $0.27 \| $1.10 / name: Offline at Venice. / Prices per million tokens: in \| out. / Start Cloak to see Venice's models. / Cloak couldn't read Venice's models. |
 | Tiers | Anonymous, Private, TEE, each with its `about` (`VeniceTier.about`) |
-| Chat | Venice Anonymous, Venice Private, Venice TEE / Venice can link your chats, because one key or one wallet pays for all of them. / Start Cloak to send. / Save your Venice key in Settings. / Create the Venice wallet first. / Choose a model in the Wallet. / Open Settings, Open Wallet, Stop |
-| Stops | The sixteen titles and lines in `VeniceStop.Kind` |
-| Modes page | The two lines above |
+| Chat | Venice, Venice Anonymous, Venice Private, Venice TEE / Venice can link your chats, because one key or one wallet pays for all of them. / zkAPI is off: one key or one wallet pays for every chat. / Start Cloak to send. / Save your Venice key in Settings. / Create a wallet to send. / Choose a model in the Wallet. / Start a new chat. / Open Settings, Open Wallet, Stop, Dismiss / Your message may have reached Venice. Sending again may be charged twice. / Nothing was sent. / Agent tasks use Boundless. Choose Boundless in the Wallet to run one. |
+| Stops | The nineteen titles and sentences in `VeniceStop.Kind` |
+| Modes page | The lines above |
 
 The tier tooltips, as built:
 
@@ -418,45 +494,42 @@ The tier tooltips, as built:
 
 ## States
 
-Section 9f of `docs/state-machines.md`, once joined. One message in a Venice
-chat, held as one value per turn, `VeniceMode.Turn`, in memory only:
+Section 9f of `docs/state-machines.md`: one message in a Venice chat, from
+Send to its answer or its stop; each press of Add; and what the sheet
+reads. A wallet chat signs once per message, the sign-in for its POST, in
+the guest; the list before it needs no signature. The messages, the
+answers and Venice's chat are kept as every Token Inference chat is; the
+answer so far, the stops and the retired chats are in memory only.
 
-```
-written --Send--> listing (a fresh list through the guest)
-listing --model gone, remapped, other tier or offline--> stopped (sent: false)
-listing --list unread--> stopped (unreachable or failed, sent: false)
-listing --listed as the chat began--> answering (text so far)
-answering --[DONE] after stop or length, text not blank--> answered (Turn.answer)
-answering --a chunk names another model--> stopped (otherModel, sent: true, text dropped)
-answering --error event mid-stream--> stopped (busy, tooLong or failed, sent: true)
-answering --stream ends before [DONE]--> stopped (failed, sent: true)
-answering --Stop, ⌘., or the chat closes--> stopped (cancelled, sent: true)
-answering --Cloak pauses, stops or quits--> stopped (unreachable, sent: true)
-stopped --Send Again, on the newest message, not gone or tierChanged--> listing
-```
+## Built differently from the plan
 
-A wallet chat signs twice per message: the list needs no signature, then
-the chat's sign-in is signed in the guest just before the POST. A sign-in
-the guest cannot make stops with `signing`, nothing sent. A message saved
-without an answer shows "Not answered" after a relaunch, as Local Llama's
-does.
+What the plan above had, and what was built instead:
 
-The wallet's top-up, one value, `VeniceMode.TopUp`:
-
-```
-none (no Venice wallet) --Create--> idle
-idle --Add--> asking (bare POST, Venice's challenge, Base USDC only)
-asking --no Base USDC entry, or unreadable--> refused (failed, nothing signed)
-asking --challenge read--> signing (EIP-3009 authorization in the guest)
-signing --guest cannot sign--> refused (signing, nothing sent)
-signing --signed--> paying (POST with PAYMENT-SIGNATURE)
-paying --200--> added (amount, new credit) --> idle
-paying --400, 401 or 402--> refused (paymentRefused, sent: true)
-paying --no answer--> refused (unreachable, sent: true: it may have paid)
-```
-
-Each press starts its own run; a second Add while one is under way starts
-a second, and both may pay.
+- One wallet for both providers (decision 31), not a second Venice key:
+  no Venice Create, no second address, no "On hand" row. The wallet's
+  USDC on Base is Balance under Wallet, and Venice's credit its own
+  Credit section.
+- A message saved without an answer keeps Send, as Token Inference's do,
+  not "Not answered".
+- The NEAR and Venice keys share one keychain type, `ProviderKeychain`,
+  with NEAR's service unchanged.
+- The model choice keeps its id and its tier (`VeniceChoice`), so a model
+  Venice moves to another tier is dropped from the choice.
+- Nineteen stop kinds, not sixteen: `belowLeast`, `notUSDC` and
+  `keychain` ("Cloak could not read the keychain. Try again."). The
+  sentences say "Try again" where the plan's said "Send again", since
+  the sheet shows them too.
+- The model picker has a Tier row and groups by tier; an offline model
+  reads "name: Offline at Venice.", dimmed.
+- With Venice shown, Boundless's deposit, its models and a stopped read of
+  Boundless's are not shown in the sheet.
+- The zkAPI light's help and the Modes page's line name the key and USDC
+  on Base.
+- Three stops say truly whether anything went, where the plan's states had
+  them otherwise: a list that stops before the message is `sent: false`
+  in its own kind; a stop before Venice's head is `sent: false` only when
+  Tor could not connect; a paid top-up answered other than 400, 401 or
+  402 is `failed`, with "may have gone through", never a "try again" kind.
 
 ## Costs and limits
 
@@ -473,8 +546,9 @@ a second, and both may pay.
 - An Admin key would work as an Inference Only one does, and can also "manage
   API keys" and read billing (`generating-api-key.md`). Cloak cannot tell
   them apart from the key; the note asks for Inference Only.
-- The key crosses into the guest for each request, as the Tempo wallet's
-  key does. NEAR's never leaves the Mac.
+- The Venice key crosses into the guest in each request's header, and the
+  wallet's key for each signature, as it does for Boundless. NEAR's key
+  never leaves the Mac.
 
 ## Verified encryption
 
