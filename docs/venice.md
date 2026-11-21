@@ -2,8 +2,9 @@
 
 Venice (venice.ai) as a second provider inside Token Inference, beside
 today's provider at Boundless. First pass, 20 November 2026: the client is
-built and checked, and nothing is on screen yet. This is the plan for
-joining it to the app once the four-mode work (decisions 23 to 25 in
+built and checked. Second, 21 November: the sender's Venice requests in the
+guest and the host's stream. Nothing is on screen yet. This is the plan for
+joining it to the app, now that the four-mode work (decisions 23 to 25 in
 `docs/plan.md`) is merged, and the size of verified encryption, which is not
 built.
 
@@ -40,7 +41,10 @@ github.com/veniceai/x402-client, and x402's legacy client (npm `x402`
 ## What is built
 
 `app/Sources/CloakChat/Venice.swift` and
-`app/Sources/CloakChat/VeniceWallet.swift`, with no caller in the app yet.
+`app/Sources/CloakChat/VeniceWallet.swift`, the sender's Venice requests in
+`guest/sender/src/lib.rs` and `Sender.stream` in
+`host/Sources/CloakHost/Sender.swift` (Transport, below), with no caller in
+the app yet.
 
 | Part | What it does |
 | --- | --- |
@@ -49,7 +53,7 @@ github.com/veniceai/x402-client, and x402's legacy client (npm `x402`
 | `VeniceChat` | What a saved chat keeps: model and tier. `check(in:)` stops a chat whose model is not listed, is remapped, changed tier or is offline, before anything is sent |
 | `Venice.account()` | Key: `GET api_keys/rate_limits` (balance in dollars and DIEM, whether the key may spend). Wallet: `GET x402/balance/{address}`, signed |
 | `Venice.ask(_:turn:in:partial:)` | One message: a fresh list and the chat's check, then `POST chat/completions` streamed, partial text as it comes, the last usage chunk, an error mid-stream, cancellation |
-| `VeniceStop` | Why a request stopped, as one of sixteen kinds, each with a title and a few words for the screen, and a `text` for the log made only from Cloak's own words, the status and known code names |
+| `VeniceStop` | Why a request stopped, as one of sixteen kinds, each with a title and a few words for the screen, and a `text` for the log made only from Cloak's own words, the status and known code names. A 402 that asks for credentials is the key's or the sign-in's refusal, never a short balance |
 | `VeniceWallet.signIn(for:signer:now:nonce:)` | The `SIGN-IN-WITH-X` header for one URL, signed by the caller's signer |
 | `Venice.topUpTerms()`, `topUp(_:on:by:)` | The top-up's challenge (402, Base USDC only), the EIP-3009 authorization to sign, and the payment header |
 | `VeniceSigner` | Supplied by the caller: an address, a personal-sign function and a typed-data function. No key is held here |
@@ -77,89 +81,168 @@ guest's sender through the guest's Tor port, and Venice keeps that route, as
 the chief chose. So the transport is a new sender request, not NEAR's
 helper.
 
-### Guest: `guest/sender/src/lib.rs`
+### Guest: `guest/sender/src/lib.rs` (built)
 
-Three new requests, beside `create`, `wallet`, `models`, `send`, `close`
-and `withdraw`:
+Four new requests, beside `create`, `wallet`, `models`, `send`, `close`
+and `withdraw`, each one `R` frame of JSON:
 
-```rust
-/// Venice's API root. The sender reaches nothing else for Venice.
-const VENICE: &str = "https://api.venice.ai/api/v1/";
-/// Base's public RPC, for the Venice wallet's USDC.
-const BASE_RPC: &str = "https://mainnet.base.org";
-/// USDC on Base.
-const BASE_USDC: &str = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-
-/// One request to Venice through Tor as `identity`, as the Mac built it.
-#[derive(Deserialize)]
-pub struct Venice {
-    identity: String,
-    method: VeniceMethod, // "GET" or "POST", nothing else
-    path: String,         // after VENICE, such as "chat/completions"
-    headers: BTreeMap<String, String>,
-    body: Option<String>, // JSON text
-}
-
-enum Request {
-    // ...
-    Venice(Venice),
-    /// EIP-191 signature of `message` by `key`. No network.
-    VeniceSign { key: B256, message: String },
-    /// EIP-712 signature of `typed` (eth_signTypedData_v4 JSON) by `key`. No network.
-    VeniceTyped { key: B256, typed: alloy::dyn_abi::TypedData },
-    /// The address's USDC on Base, read through Tor on a fresh identity.
-    VeniceFunds { address: Address },
-}
+```
+{"op":"venice","identity":"<64 hex>","method":"GET"|"POST","url":"https://api.venice.ai/api/v1/...","headers":{...},"body":"<JSON text>"|null}
+{"op":"venice_sign","key":"0x<32 bytes>","message":"api.venice.ai wants you to sign in with your Ethereum account:\n..."}
+{"op":"venice_typed","key":"0x<32 bytes>","typed":"<eth_signTypedData_v4 JSON, as text>"}
+{"op":"venice_funds","address":"0x<20 bytes>"}
 ```
 
-What `Venice` checks before anything leaves:
+`venice` carries the whole URL the client built (`VeniceRequest.url`)
+and its headers with lower-case names (`VeniceRequest.headers`). Before
+anything leaves, the sender checks, and stops with `failed`, nothing
+sent, on any of these:
 
 - `identity` is 64 hex digits, as `send`'s is;
-- `VENICE` joined with `path` parses as `https` with host `api.venice.ai`
-  and a path under `/api/v1/`; anything else stops with `failed` and sends
-  nothing;
-- header names are only `authorization`, `sign-in-with-x`,
-  `payment-signature` and `content-type`. The client is `client(identity)`,
-  which adds no header of its own, follows no redirect and takes no proxy
-  from the environment.
+- the URL's origin is exactly Venice's (`https`, `api.venice.ai`, port
+  443), with no user name or password, and its path begins `/api/v1/`;
+- each header name is exactly one of `authorization`, `sign-in-with-x`,
+  `payment-signature` and `content-type`, and each value is marked
+  sensitive;
+- the method is `GET` or `POST`; anything else does not read.
 
-The signing requests use alloy's `PrivateKeySigner` as `send` does:
-`sign_message(message.as_bytes())` and
-`sign_hash(&typed.eip712_signing_hash()?)`, each answered as 0x-hex of
-r, s and v. `VeniceFunds` calls `balanceOf` on `BASE_USDC` through an alloy
-provider on `BASE_RPC`, built as `rpc` is for Tempo.
+The client is `client(identity)`: through the guest's Tor port as the
+chat's identity, names resolved by Tor, no proxy from the environment, no
+redirect followed (a 3xx is handed on as Venice's answer), and no header
+of its own beyond what HTTP needs (`accept`, `content-length`, `host`).
+`REQUEST_LIMIT`, 180 seconds from connecting to the last byte, holds for
+Venice too.
 
-**Frames.** A Venice answer streams. After the request, the sender writes
-`H` once, the status and every response header with lower-case names, as
-JSON; then `P` frames, the body's bytes as they arrive, each at most
-`MAX_FRAME`; then `A`, `{"ok":{}}` or `{"stop":...}`. A stop before `H` is
-`tor_down` when Tor could not connect (nothing sent) and `failed`
-otherwise. The other new requests answer with one `A`, as today. A failed
-frame write means the Mac has gone: the sender drops the response, which
-closes the Tor stream, and Venice stops answering. `REQUEST_LIMIT` (180
-seconds, connect to last byte) holds for Venice too.
+The signing requests are narrower than this plan first had. Each answers
+`{"ok":{"signature":"0x<r><s><v>"}}`, `v` 27 or 28, and sends nothing:
 
-### Host: `host/Sources/CloakHost/Sender.swift`
+- `venice_sign` signs (EIP-191) only a message that begins with Venice's
+  sign-in line, `api.venice.ai wants you to sign in with your Ethereum
+  account:` and a new line.
+- `venice_typed` signs (EIP-712) only EIP-3009's
+  `TransferWithAuthorization` in USDC's domain on Base: name `USD Coin`,
+  version `2`, chain 8453, contract `0x8335…2913`, exactly those two type
+  lists, no salt and no other field. alloy's `TypedData` needs a feature
+  the guest's lock does not have, so the guest names the one struct with
+  `sol!` and hashes it with `eip712_signing_hash`. The wallet's key
+  cannot be asked through Venice's requests to sign a Permit, an approval
+  or a transfer on another network.
 
-`Sender.stream(_ socket:, request:) -> AsyncThrowingStream<Sender.Piece, any Error>`,
-built as `Runner.run` is: `Piece` is `.head(status, headers)`, `.body(Data)`
-or `.end(Data)` (the `A` payload). Ending the stream first, as a consumer that
-stops does, shuts the socket (`onTermination`). `exchange` stays as it is
-for the one-answer requests. No change to the relay or to tor: TorRelay has
-no list of destinations, and the guest's Tor port reaches any host.
+`venice_funds` calls `balanceOf` on USDC at `https://mainnet.base.org`
+through Tor on a fresh identity of its own, so the read is tied to no
+chat, and answers `{"ok":{"balance":"<units>"}}`, six decimals.
 
-### App
+No key, signature or header value reaches a stop's words or the log. A
+Venice error from reqwest has its URL taken out before it becomes words
+(`without_url`); a request that does not read is answered with its line
+and column alone; the log has each request's name and outcome, as before.
 
-- `Supervisor.swift` (after the merge): `public func venice(_ request: Data) -> AsyncThrowingStream<Sender.Piece, any Error>`,
-  refused unless Running, as `exchange` and `run` are. CloakSupervisor does
-  not import CloakChat, so it carries bytes.
-- `app/Sources/RegentsCloak/VeniceMode.swift` (new) turns a `VeniceRequest`
-  into the `venice` request's JSON for the conversation's identity, and the
-  pieces into a `VeniceResponse`: `.head` gives status and headers, `.body`
-  feeds `body`, `.end` with `ok` finishes it, and a stop finishes it with an
-  error (`VeniceUnreachable(sent:)`: false for `tor_down`, true otherwise).
-  The model list goes on the conversation's own identity, since the chat
-  follows it on the same circuit.
+**Frames.** After the request, `venice` answers:
+
+```
+sender: L <head>     {"status":200,"headers":{"content-type":"text/event-stream",...}}, once
+sender: P <bytes>    the body as it arrives, each at most MAX_FRAME (16 MB); zero or more
+sender: A <reply>    {"ok":{}} or {"stop":{"code","detail"}}
+```
+
+Header names are lower case, and a name Venice repeats is joined with
+", ". `L` is a letter no channel uses: the payer's has `V` (a read of the
+deposit) and `H` (held), the runner's `T`, `O`, `E`, `X` and `N`. A stop
+before `L` is `tor_down` when Tor could not connect (nothing sent) and
+`failed` otherwise (the request may have reached Venice). The other three
+requests answer with one `A`, as today's do.
+
+**The cut.** When the Mac stops reading, the sender learns it at its next
+`P`: the write fails, the sender drops Venice's answer, which closes its
+Tor stream, and stops with `failed` ("the host has gone"). An answer that
+sends nothing for a while is cut at its next byte or at `REQUEST_LIMIT`,
+whichever comes first.
+
+### Host: `host/Sources/CloakHost/Sender.swift` (built)
+
+`Sender.stream(_ socket: Int32, request: Data) -> AsyncThrowingStream<Sender.Piece, any Error>`,
+built as `Runner.run` and `Pay.exchange` are, with the host's one
+`Connection`. `Piece` is `.head(status:headers:)`, `.body(Data)` or
+`.end(Data)` (the `A` payload, as `exchange` returns it). The frames are
+read on a thread of the request's own. Ending the stream first, as a
+consumer that stops does, shuts the socket (`onTermination`), which the
+sender meets at its next write. A `P` before `L`, a second `L` or any
+other frame fails the stream. `exchange` stays as it is for the
+one-answer requests. No change to the relay or to Tor: TorRelay has no
+list of destinations, and the guest's Tor port reaches any host.
+
+### App (not built)
+
+- `Supervisor.swift`, beside `exchange`, refused unless Running as
+  `exchange` is. CloakSupervisor does not import CloakChat, so it carries
+  bytes:
+
+  ```swift
+  /// One Venice request through the guest's sender while Running
+  /// (`Sender.stream`): Venice's answer as it comes. Ending the stream
+  /// first closes its connection.
+  public func venice(_ request: Data) async throws -> AsyncThrowingStream<Sender.Piece, any Error> {
+      guard case .running = phase, let guest = stack.guest else { throw Sender.Failure(description: "Cloak is not running") }
+      return Sender.stream(try await guest.connect(to: Sender.port), request: request)
+  }
+  ```
+
+  A pause, stop or quit stops the guest, which closes the connection of a
+  stream under way, as it does an `exchange`'s: the stream fails with
+  "the sender closed before answering", which `VeniceMode` reads as
+  `unreachable`, sent. Nothing else tracks a stream.
+- `host/Sources/cloak-host/main.swift`, only if a Venice request is to be
+  tried from the command line: in the loop that reads requests from
+  standard input, a line whose `op` is `venice` goes to `Sender.stream`
+  instead of `Sender.exchange`, printing `{"head":{"status","headers"}}`
+  for `.head`, the bytes as they are for `.body`, and the answer for
+  `.end` as `exchange`'s is printed.
+- `app/Sources/RegentsCloak/VeniceMode.swift` (new) turns a
+  `VeniceRequest` into the `venice` request's JSON for the conversation's
+  identity, and the pieces into a `VeniceResponse`: `.head` gives status
+  and headers, `.body` feeds `body`, `.end` with `ok` finishes it, and a
+  stop finishes it with an error (`VeniceUnreachable(sent:)`: false for
+  `tor_down`, true otherwise). The model list goes on the conversation's
+  own identity, since the chat follows it on the same circuit.
+
+## What Venice's real answers changed
+
+The chief fetched four answers through Tor on 21 November 2026, with no
+key and no money, and kept them outside the repository:
+
+- **The model list** (`models-one.json`) is the documented shape. No
+  change.
+- **A chat sent with no key** (`chat.json`) is answered 402,
+  `{"error":"Authentication required","authOptions":{...},"extensions":{...}}`:
+  Venice's x402 challenge, with no code. The client read every 402 with no
+  spend-limit code as a short balance, so a refused key or sign-in would
+  have shown "balance too low" and sent the owner to add money Venice
+  cannot give back. Now a 402 that carries `authOptions` is the key's or
+  the sign-in's refusal (`VeniceFailure.challenge`); a 402 without it is
+  a spend limit by its code, and a short balance otherwise, as Venice's
+  `INSUFFICIENT_BALANCE` is. Check: `challengeIsNeverNoBalance` in
+  `app/Tests/CloakTests/VeniceTests.swift`, on the real bytes.
+- **The top-up's terms** (`topup-terms.json`) give addresses in lower
+  case, Base's entry first and a Solana entry with its own `feePayer`. They
+  read as they are: `realTopUpTermsRead` checks the real bytes give $5 to
+  `0x2670…293f`, 300 seconds, `USD Coin` version `2`.
+- **The top-up's headers** (`topup-headers.txt`): HTTP/2 through
+  Cloudflare; `payment-required` is the body in base64, and the client
+  reads the body. Cloudflare sets two cookies (`__cf_bm`, `_cfuvid`); the
+  sender's client keeps no cookies, so neither is sent back.
+
+The nonce. Venice's guide lets the client make it
+(`x402-venice-api.md`, line 96), and Venice's own client does
+(`crypto.randomUUID()`, its first 16 hex digits). Cloak makes its own: 16
+random bytes as hex for a sign-in, 32 for a transfer. Asking Venice for
+one would add a round trip through Tor to every message.
+
+The network. Venice's client turns `eip155:8453` into `"base"` and sends
+`{"x402Version":2,"scheme":"exact","network":"base","payload":{...}}`;
+its guide sends the same body. Cloak sends that body in
+`PAYMENT-SIGNATURE`, as the guide does (Venice's client names the header
+`X-402-Payment`). No change. Whether Venice settles it shows only at the
+first real top-up.
 
 ## Which wallet
 
@@ -186,7 +269,9 @@ The sounder choice is a **separate key** for Venice, made by the same
   an address Cloak does not watch on that network. The sheet names the
   network and token beside each address.
 
-The choice is Sean's; the plan below assumes the separate key.
+The choice is Sean's (decision 31 in `docs/plan.md`, open); the plan
+below assumes the separate key, and nothing in the transport depends on
+it.
 
 ## Changes, file by file
 
@@ -201,9 +286,9 @@ The choice is Sean's; the plan below assumes the separate key.
 | `app/Sources/RegentsCloak/Chat.swift` | `submit` sends a Venice chat through `VeniceMode`: the chat's own `pays`, `model` and `tier`, its identity from `identities`, partial text into the card. `Chat.sending[turn]` holds it while under way |
 | `app/Sources/RegentsCloak/ChatView.swift` | The tier capsule; the standing sentence; Send's reasons; the stops' words; Stop while answering |
 | `app/Sources/RegentsCloak/WalletView.swift` | The provider choice and Venice's sections, below |
-| The Modes page (the four-mode work's file) | Token Inference's column, below |
-| `guest/sender/src/lib.rs`, `host/Sources/CloakHost/Sender.swift`, `app/Sources/CloakSupervisor/Supervisor.swift` | The transport above |
-| `docs/state-machines.md` | A section 9d from "States" below; section 7a gains `api.venice.ai` and `mainnet.base.org` as the sender's destinations |
+| `app/Sources/RegentsCloak/ChatView.swift` (`ModesPage`) | Token Inference's column, below |
+| `app/Sources/CloakSupervisor/Supervisor.swift` | `venice(_:)`, as Transport has it |
+| `docs/state-machines.md` | A section 9f from "States" below. Section 6e, the sender's Venice request, is written |
 | `README.md` | Token Inference's paragraph gains Venice, its two ways to pay and what Venice sees |
 
 ## Settings: the Venice pane
@@ -333,7 +418,7 @@ The tier tooltips, as built:
 
 ## States
 
-Section 9d of `docs/state-machines.md`, once joined. One message in a Venice
+Section 9f of `docs/state-machines.md`, once joined. One message in a Venice
 chat, held as one value per turn, `VeniceMode.Turn`, in memory only:
 
 ```

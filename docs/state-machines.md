@@ -541,6 +541,51 @@ state it left; none without a disk), `tests/test_escape_path.py` (the
 sandbox reaches neither listener nor the payer's files) and
 `guest/pay/check.sh` (Docker, no network).
 
+## 6e. One Venice request through the sender (`guest/sender/src/lib.rs`, `host/Sources/CloakHost/Sender.swift`)
+
+Built 21 November 2026, with no caller in the app yet; the plan is
+[venice.md](venice.md), Transport. In the guest:
+
+```
+connected --> turn (Y) --> request read (R) --> checked --> Tor connect as the chat's identity
+  --> head handed on (L) --> body handed on as it arrives (P, zero or more) --> answer (A, ok)
+request that does not read --> A stop (failed, its line and column only); nothing sent
+checked: identity, origin, path, method or a header name refused --> A stop (failed); nothing sent
+Tor refuses or builds no circuit --> A stop (tor_down); nothing sent
+no head, or the answer breaks --> A stop (failed); the request may have reached Venice
+the host stops reading --> next P write fails --> answer dropped, its Tor stream closed --> stop, which goes nowhere
+180 s from connecting (REQUEST_LIMIT) --> answer dropped --> A stop (failed)
+```
+
+Checked means: `identity` is 64 hex digits; the URL's origin is exactly
+`https://api.venice.ai`, with no user name or password, and its path
+begins `/api/v1/`; the method is GET or POST; each header name is
+`authorization`, `sign-in-with-x`, `payment-signature` or `content-type`.
+No redirect is followed. The sender's destinations are now four, each
+only through the guest's Tor port: the provider and Tempo's RPC for
+Boundless's requests, as before; `api.venice.ai` for `venice`;
+`mainnet.base.org` for `venice_funds`, on a fresh identity. `venice_sign`
+and `venice_typed` reach nothing: they sign only a Venice sign-in and
+only a USDC transfer on Base, and answer with one `A`.
+
+On the Mac, `Sender.stream`:
+
+```
+connected --> Y read --> R written --> L read: head --> P read: a piece (repeated) --> A read: end --> closed
+P before L, a second L, or any other frame --> failed --> closed
+the sender closes before A --> failed --> closed
+the stream's consumer ends it --> socket shut --> the read ends --> closed
+```
+
+No key, signature or header value reaches a stop's words or the log.
+Checks in `guest/sender/tests/sender.rs`, against stand-ins for Tor,
+Venice and Base: `venice_requests_leave_for_venices_api_alone_with_its_header_names`,
+`the_signatures_are_the_known_vectors`,
+`a_venice_answer_the_host_stops_taking_ends_its_request` and
+`no_key_reaches_a_stop_or_the_log`; and
+`aVeniceAnswerTheMacStopsReadingClosesItsConnection` in
+`app/Tests/CloakTests/SendTests.swift`.
+
 ## 7. One request in the guest adapter (`guest/adapter/main.go`)
 
 ```
