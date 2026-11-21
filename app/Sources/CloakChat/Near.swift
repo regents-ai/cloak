@@ -54,9 +54,14 @@ public struct NearStop: Error, Sendable, Equatable {
         /// The helper's own steps (guest/near, "Answers" and "Trace
         /// sharing's lines").
         case line, request, fetch, refused, connect, pin, send, status, reply
-        /// Trace sharing's own: the browser sign-in did not finish, or the
-        /// issuer gave no upload claim.
-        case signin, claim
+        /// Trace sharing's own: the browser sign-in did not finish, the
+        /// issuer gave no upload claim, or the commons names another issuer
+        /// or witness than this Cloak knows.
+        case signin, claim, moved
+        /// Trace sharing's, on this Mac alone: the sign-in ran out of time,
+        /// or Share Traces was turned off, or the account signed out, with a
+        /// step under way.
+        case expired, interrupted
         /// The helper does not match its pin, or cannot start, or its answer
         /// did not read.
         case helper
@@ -242,10 +247,12 @@ public actor Near {
         return Tokens(input: usage.prompt_tokens, output: usage.completion_tokens)
     }
 
-    /// Ends the helper at once, a line under way or not: at quit.
+    /// Ends the helper at once, a line under way or not, and forgets it, so
+    /// the next line starts a new one: at quit, and as sharing ends.
     public nonisolated func stop() {
         current.withLock { process in
-            if let process { process.terminate() }
+            process?.terminate()
+            process = nil
         }
     }
 
@@ -311,9 +318,13 @@ public actor Near {
         return answer
     }
 
-    /// The helper running, or a new one once its file matches its pin.
+    /// The helper running, or a new one once its file matches its pin, in
+    /// place of one `stop` ended.
     private func start() throws(NearStop) -> Running {
-        if let running { return running }
+        if let running {
+            if current.withLock({ $0 === running.process }) { return running }
+            drop()
+        }
         let digest: String
         do {
             digest = SHA256.hash(data: try Data(contentsOf: helper, options: .mappedIfSafe)).map { String(format: "%02x", $0) }.joined()

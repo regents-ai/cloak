@@ -95,14 +95,15 @@ final class NearMode {
     }
 
     /// Sends `turn` as written on `route`, once the check passes, sealed
-    /// unless its chat is readied for sharing; returns NEAR's answer and the
-    /// tokens it counted for it, when its reply says, or nil when it stopped
-    /// (`sendStop`).
+    /// unless Share Traces is on at the press and its chat is readied for
+    /// sharing; returns NEAR's answer and the tokens it counted for it, when
+    /// its reply says, or nil when it stopped (`sendStop`).
     func send(_ turn: UUID, in conversation: Conversation, route: NearRoute) async -> (text: String, tokens: Tokens?)? {
         sendStop = nil
         do throws(NearStop) {
             let answer = try await share.send(
-                turn, in: conversation, on: near, route: route, proofAge: settings.proofFreshness, key: { try NearKeychain.key() })
+                turn, in: conversation, shares: settings.shareTraces, on: near, route: route, proofAge: settings.proofFreshness,
+                key: { try NearKeychain.key() })
             proof = answer.proof
             checkStop = nil
             return (answer.text, answer.tokens)
@@ -115,7 +116,7 @@ final class NearMode {
             case .fetch, .refused, .pin, .reply, .helper, .ended:
                 proof = nil
                 checkStop = error
-            case .line, .request, .connect, .send, .status, .key, .signin, .claim: break
+            case .line, .request, .connect, .send, .status, .key, .signin, .claim, .moved, .expired, .interrupted: break
             }
             return nil
         }

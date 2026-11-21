@@ -375,6 +375,7 @@ pub fn ask_readied(
         &routes.near,
         roots,
         &pin,
+        &passed.proof.intel.model_key,
         model,
         api_key,
         &reply,

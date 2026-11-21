@@ -950,7 +950,7 @@ private struct TokenMark: View {
 
 extension View {
     /// The box a pane's text sits in.
-    fileprivate func paneBox() -> some View {
+    func paneBox() -> some View {
         padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
@@ -1782,6 +1782,8 @@ extension NearStop {
         case .key: "Key unreadable"
         case .signin: "Not signed in"
         case .claim: "No claim"
+        // Sharing's own, which no message stops for.
+        case .moved, .expired, .interrupted: shareTitle
         }
     }
 
@@ -1806,6 +1808,7 @@ extension NearStop {
         case .key: "The keychain didn't give Cloak your NEAR key."
         case .signin: "The sign-in in your browser didn't finish."
         case .claim: "The commons didn't give Cloak a claim to upload with, so nothing went."
+        case .moved, .expired, .interrupted: shareWords
         }
     }
 }

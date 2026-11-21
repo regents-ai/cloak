@@ -647,22 +647,32 @@ message goes as above. On, Sign In (GitHub or Google) opens NEAR AI's
 sign-in in your browser, and Cloak then enrols this Mac with the commons;
 Debugging is always granted, Benchmarks, Ranking, Training and
 Attribution are off until you turn them on, and the commons' Terms are a
-press away. At the foot of a NEAR chat, the share symbol (dimmed while
-the switch is off) opens Share: your next message in that chat goes to
-NEAR without end-to-end encryption, carrying the commons' challenge, and
-Ready readies it for up to 15 minutes ("Next message shares", then "Time
-ran out" with Ready Again). Every other NEAR message stays sealed. Once
-the answer is back, Review shows that exchange as Before; its Review
-button sends it to the commons' witness, only once the witness's Intel
-quote passes against the pin the commons gave at sign-in, and shows the
-witness's redacted After exactly as it came; Share uploads exactly that.
-Each trace shared shows under its message as the commons last said:
-Sent, In review, Accepted, Not accepted or Withdrawn, its credit when
-there is some, Refresh, and Withdraw, asked first. Every step is a
-press, and nothing is shared without Review and then Share. What sharing
-keeps (its device key, the account and its session, your choices and the
-traces shared) is one item in the login keychain, this Mac only; NEAR
-AI's own sign-in is dropped once the enrolment is sent.
+press away. A sign-in not finished in ten minutes stops, with Try Again.
+The account's menu signs in again or signs out, which forgets the account,
+so traces already shared can no longer be withdrawn from Cloak. At the
+foot of a NEAR chat, the share symbol (dimmed while the switch is off)
+opens Share: that chat so far and your next message in it go to NEAR
+without end-to-end encryption, carrying the commons' challenge, and Ready
+readies it for up to 15 minutes ("Next message shares", then "Time ran
+out" with Ready Again). Every other NEAR message stays sealed, and so does
+that one if the switch is off when you send it. Once the answer is back,
+Review shows that exchange as Before, one line each, with Exact for its
+bytes; its Review button sends the chat to the commons' witness, only once
+the witness's Intel quote passes against the pin the commons gave at
+sign-in, and shows the witness's After exactly as it came. That check is
+of the witness's hardware, not of the connection to it: Phala, which hosts
+the witness, can read the chat on its way. The witness takes the chat's
+words out, so After is the trace's record of the exchange, not the
+conversation; Share uploads exactly that. Each trace shared shows under
+its message as the commons last said: Sent, In review, Accepted, Not
+accepted or Withdrawn, its credit when there is some, Refresh, and
+Withdraw, asked first. Every step is a press, and nothing is shared
+without Review and then Share. Sharing reaches only the commons' issuer
+and witness this Cloak knows; if the commons names others, sharing stops
+until Cloak is updated. What sharing keeps (its device key, the account
+and its session, your choices and the traces shared) is one item in the
+login keychain, this Mac only; NEAR AI's own sign-in is dropped once the
+enrolment is sent.
 
 Or pick Local Llama: the model on this Mac chosen in Settings answers
 each message itself, as you wrote it, with the conversation so far, through

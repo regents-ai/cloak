@@ -22,25 +22,6 @@ public enum TraceScope: String, CaseIterable, Codable, Identifiable, Sendable {
     static func granted(_ chosen: Set<TraceScope>) -> [TraceScope] {
         allCases.filter { $0 == .debuggingEvaluation || chosen.contains($0) }
     }
-
-    /// The uses `scopes` grant, each once, in the commons' order, with
-    /// `aggregate_analytics`: as the commons' own client maps them
-    /// (`trace-commons-contributor/src/consent.rs`, `scopes_to_allowed_uses`).
-    static func uses(of scopes: [TraceScope]) -> [String] {
-        var uses: [String] = []
-        for scope in scopes {
-            let granted: [String] =
-                switch scope {
-                case .debuggingEvaluation: ["debugging", "evaluation"]
-                case .benchmarkOnly: ["benchmark_generation"]
-                case .rankingTraining: ["ranking_model_training"]
-                case .modelTraining: ["model_training"]
-                case .publicAttribution: []
-                }
-            uses += granted.filter { !uses.contains($0) }
-        }
-        return uses + ["aggregate_analytics"]
-    }
 }
 
 /// Where the NEAR AI sign-in starts.
@@ -83,15 +64,65 @@ public struct TraceAccount: Codable, Sendable, Equatable {
 public struct TraceExchange: Sendable, Equatable {
     public let request: Data
     public let response: Data
-    /// The receipt as JSON, as the helper gave it; nil when there is none.
-    let receipt: Data?
+    /// The receipt as the helper checked it; nil when there is none.
+    let receipt: Receipt?
     public let noReceipt: String?
 
     public var hasReceipt: Bool { receipt != nil }
+
+    /// The chat as it went to NEAR and came back, a line a message: the
+    /// request's messages, then the answer. Nil when it does not read as
+    /// Cloak's chat request and NEAR's answer.
+    public var lines: [TraceLine]? {
+        struct Request: Decodable {
+            let messages: [Message]
+            struct Message: Decodable {
+                let role: String
+                let content: String
+            }
+        }
+        guard let messages = try? JSONDecoder().decode(Request.self, from: request).messages,
+            let answer = try? Remote.content(of: response)
+        else { return nil }
+        var lines: [TraceLine] = []
+        for message in messages {
+            switch message.role {
+            case "user": lines.append(TraceLine(yours: true, text: message.content))
+            case "assistant": lines.append(TraceLine(yours: false, text: message.content))
+            default: return nil
+            }
+        }
+        return lines + [TraceLine(yours: false, text: answer)]
+    }
+
+    /// NEAR's signed receipt, as the helper gave it and the witness takes
+    /// it back (guest/near, `receipt`).
+    struct Receipt: Decodable, Sendable, Equatable {
+        let text: String
+        let signature: String
+        let signingAddress: String
+        let signingAlgo: String
+        let signatureKind: String
+
+        /// As a line has it.
+        var line: [String: String] {
+            [
+                "text": text, "signature": signature, "signing_address": signingAddress, "signing_algo": signingAlgo,
+                "signature_kind": signatureKind,
+            ]
+        }
+    }
+}
+
+/// One message of a chat, as a review shows it: whose, and its words.
+public struct TraceLine: Sendable, Equatable {
+    /// Yours, or else the model's.
+    public let yours: Bool
+    public let text: String
 }
 
 /// The witness's answer to a review: the envelope's bytes exactly as they
-/// came, its four headers, and the ids it gave the trace.
+/// came, its four headers, and the submission's id.
 public struct TraceReview: Sendable, Equatable, Decodable {
     public let envelope: Data
     let certificate: String
@@ -99,7 +130,6 @@ public struct TraceReview: Sendable, Equatable, Decodable {
     let evidence: String
     let evidenceSignature: String
     public let submissionId: String
-    public let traceId: String
 }
 
 /// One trace shared from a chat, and the commons' last word on it.
@@ -108,7 +138,6 @@ public struct SharedTrace: Codable, Sendable, Equatable, Identifiable {
     /// The message it shared.
     public let turn: UUID
     public let submission: String
-    public let trace: String
     public let shared: Date
     /// The commons' status, as it last reported it, or `withdrawn` once
     /// withdrawn from this Mac.
@@ -168,7 +197,7 @@ extension Near {
         let line = try exchange(sends: true) { () throws(NearStop) -> [String: Any] in
             [
                 "request": "ready", "route": route.line, "device_key": deviceKey.base64EncodedString(), "account": try account.line(),
-                "scopes": scopes.map(\.rawValue), "uses": TraceScope.uses(of: scopes),
+                "scopes": scopes.map(\.rawValue),
             ]
         }
         let admitted: Admitted = try answer(line, named: "admitted", sends: true)
@@ -186,6 +215,7 @@ extension Near {
             let proof: NearProof
             let request: Data
             let response: Data
+            let receipt: TraceExchange.Receipt?
             let noReceipt: String?
         }
         guard let messages = Remote.messages(for: turn, in: conversation) else {
@@ -199,16 +229,11 @@ extension Near {
             ]
         }
         let exchanged: Exchanged = try answer(line, named: "exchanged", sends: true)
-        let receipt = (try? JSONSerialization.jsonObject(with: line) as? [String: Any])?["receipt"].flatMap {
-            try? JSONSerialization.data(withJSONObject: $0)
-        }
-        guard (receipt == nil) != (exchanged.noReceipt == nil) else {
-            throw NearStop(kind: .helper, code: nil, sent: true, text: "the helper's exchange has no receipt and no reason")
-        }
         let (text, tokens) = try Self.reply(in: line)
         return (
             text, exchanged.proof, tokens,
-            TraceExchange(request: exchanged.request, response: exchanged.response, receipt: receipt, noReceipt: exchanged.noReceipt)
+            TraceExchange(
+                request: exchanged.request, response: exchanged.response, receipt: exchanged.receipt, noReceipt: exchanged.noReceipt)
         )
     }
 
@@ -218,16 +243,16 @@ extension Near {
     func review(
         route: NearRoute, account: TraceAccount, scopes: [TraceScope], exchange: TraceExchange, version: String
     ) throws(NearStop) -> TraceReview {
-        guard let receipt = exchange.receipt, let receiptLine = try? JSONSerialization.jsonObject(with: receipt) else {
+        guard let receipt = exchange.receipt else {
             throw NearStop(kind: .request, code: nil, sent: false, text: "the exchange has no receipt")
         }
         let line = try self.exchange(sends: true) { () throws(NearStop) -> [String: Any] in
             [
                 "request": "review", "route": route.line, "account": try account.line(), "scopes": scopes.map(\.rawValue),
-                "uses": TraceScope.uses(of: scopes), "version": version,
+                "version": version,
                 "exchange": [
                     "request": exchange.request.base64EncodedString(), "response": exchange.response.base64EncodedString(),
-                    "receipt": receiptLine,
+                    "receipt": receipt.line,
                 ] as [String: Any],
             ]
         }
@@ -244,7 +269,7 @@ extension Near {
             let commons: Receipt
             /// The commons' `TraceSubmissionReceipt`.
             struct Receipt: Decodable {
-                let status: String?
+                let status: String
                 let creditPointsPending: Double?
                 let creditPointsFinal: Double?
             }
@@ -252,7 +277,7 @@ extension Near {
         let line = try exchange(sends: true) { () throws(NearStop) -> [String: Any] in
             [
                 "request": "upload", "route": route.line, "device_key": deviceKey.base64EncodedString(), "account": try account.line(),
-                "scopes": scopes.map(\.rawValue), "uses": TraceScope.uses(of: scopes),
+                "scopes": scopes.map(\.rawValue),
                 "envelope": [
                     "body": review.envelope.base64EncodedString(), "certificate": review.certificate, "signature": review.signature,
                     "evidence": review.evidence, "evidence_signature": review.evidenceSignature,
@@ -260,9 +285,7 @@ extension Near {
             ]
         }
         let uploaded: Uploaded = try answer(line, named: "uploaded", sends: true)
-        // A receipt without a status is an accepted one, as the commons'
-        // own schema reads it (`default_submission_status`).
-        return (uploaded.commons.status ?? "accepted", uploaded.commons.creditPointsPending, uploaded.commons.creditPointsFinal)
+        return (uploaded.commons.status, uploaded.commons.creditPointsPending, uploaded.commons.creditPointsFinal)
     }
 
     /// The commons' status of each of `submissions`, 1 to 100 of them, as
@@ -319,17 +342,25 @@ struct TraceRecord: Codable, Sendable, Equatable {
 }
 
 /// Where the record is kept: the keychain in the app, a stand-in in the
-/// checks. `load` gives nil when nothing is kept.
+/// checks. `load` gives nil when nothing is kept; `remove` takes it away,
+/// at sign-out.
 public struct TraceVault: Sendable {
     let load: @Sendable () async throws -> Data?
     let save: @Sendable (Data) async throws -> Void
+    let remove: @Sendable () async throws -> Void
 
-    public init(load: @escaping @Sendable () async throws -> Data?, save: @escaping @Sendable (Data) async throws -> Void) {
+    public init(
+        load: @escaping @Sendable () async throws -> Data?, save: @escaping @Sendable (Data) async throws -> Void,
+        remove: @escaping @Sendable () async throws -> Void
+    ) {
         self.load = load
         self.save = save
+        self.remove = remove
     }
 
-    public static let keychain = TraceVault(load: { try await TracesKeychain.load() }, save: { try await TracesKeychain.store($0) })
+    public static let keychain = TraceVault(
+        load: { try await TracesKeychain.load() }, save: { try await TracesKeychain.store($0) },
+        remove: { try await TracesKeychain.remove() })
 }
 
 /// Trace sharing's record: a generic password in the login keychain, this
@@ -372,6 +403,13 @@ public enum TracesKeychain {
             status = SecItemUpdate(item as CFDictionary, [kSecValueData as String: record] as CFDictionary)
         }
         guard status == errSecSuccess else { throw Keychain.Failure(status: status) }
+    }
+
+    /// Takes the record away; none kept is no failure.
+    @concurrent
+    public static func remove() async throws(Keychain.Failure) {
+        let status = SecItemDelete(item as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw Keychain.Failure(status: status) }
     }
 }
 

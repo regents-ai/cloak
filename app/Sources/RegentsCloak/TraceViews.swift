@@ -13,7 +13,9 @@ private let terms = URL(string: "https://tracecommons.ai/about/tnc/")!
 
 /// The Share Traces switch, and while it is on, the account and the
 /// choices: Debugging always granted, the other four off until granted,
-/// each for chats readied from then on. The terms are a press away.
+/// each for chats readied from then on. The terms are a press away. A stop
+/// of no one chat or trace shows here, on or off: the keychain's, the
+/// sign-in's, and a share or withdrawal that sharing ended under way.
 struct TraceSharing: View {
     @Bindable var settings: AppSettings
     let share: TraceShare
@@ -28,7 +30,15 @@ struct TraceSharing: View {
                         account
                     }
                 }
-                if let stop = share.stop, [.open, .signIn, .keep].contains(stop.step) {
+            }
+            if let stop = share.stop, stop.chat == nil, stop.trace == nil {
+                if stop.stop.kind == .expired {
+                    TraceStopRow(stop: stop.stop) {
+                        share.stop = nil
+                    } retry: {
+                        SignInMenu(share: share, route: route, title: "Try Again", symbol: "arrow.clockwise")
+                    }
+                } else {
                     TraceStopRow(stop: stop.stop) { share.stop = nil }
                 }
             }
@@ -62,6 +72,7 @@ struct TraceSharing: View {
             // The stop under it says why.
             if let stop = share.stop, stop.step == .open {
                 SymbolButton("Try Again", symbol: "arrow.clockwise") { Task { await share.turn(on: true) } }
+                    .overhanging()
             } else {
                 ProgressView()
                     .controlSize(.small)
@@ -75,12 +86,14 @@ struct TraceSharing: View {
             Text("In your browser")
                 .foregroundStyle(.secondary)
             SymbolButton("Cancel", symbol: "xmark") { share.cancelSignIn() }
+                .overhanging()
         case .signedIn:
             torBlock
             if let provider = share.provider {
                 Text(provider.title)
             }
-            SignInMenu(share: share, route: route, again: true)
+            SignInMenu(share: share, route: route, title: "Account", symbol: "person.crop.circle", signsOut: true)
+                .overhanging()
         }
     }
 
@@ -93,34 +106,61 @@ struct TraceSharing: View {
     }
 }
 
-/// Sign In, by GitHub or Google, in the browser. Off while Tor is on and
-/// Cloak is not running, since every step goes on NEAR mode's route.
+/// Sign In, by GitHub or Google, in the browser: the words `title`, or the
+/// symbol `symbol` alone with `title` its help; and with `signsOut`, Sign
+/// Out after them, asked first. Signing in is off while Tor is on and Cloak
+/// is not running, since every step goes on NEAR mode's route.
 private struct SignInMenu: View {
     let share: TraceShare
     let route: NearRoute?
-    var again = false
+    var title = "Sign In"
+    var symbol: String?
+    var signsOut = false
+    @State private var confirming = false
 
     var body: some View {
+        if let symbol {
+            menu {
+                Label(title, systemImage: symbol)
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+                    .contentShape(.rect)
+            }
+            // Plain, so the whole 28 points answer the pointer, as a
+            // `SymbolButton`'s do.
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .hover(Circle())
+        } else {
+            menu { Text(title) }
+        }
+    }
+
+    private func menu(@ViewBuilder label: () -> some View) -> some View {
         Menu {
             ForEach(TraceProvider.allCases) { provider in
-                Button(provider.title) {
+                Button(symbol == nil ? provider.title : "Sign In with \(provider.title)") {
                     guard let route else { return }
                     Task { await share.signIn(with: provider, route: route) { _ = NSWorkspace.shared.open($0) } }
                 }
+                .disabled(route == nil)
+            }
+            if signsOut {
+                Divider()
+                Button("Sign Out…", role: .destructive) { confirming = true }
             }
         } label: {
-            if again {
-                Label("Sign In", systemImage: "person.crop.circle")
-                    .labelStyle(.iconOnly)
-            } else {
-                Text("Sign In")
-            }
+            label()
         }
-        .menuIndicator(again ? .hidden : .automatic)
         .menuStyle(.button)
         .fixedSize()
-        .help("Sign In")
-        .disabled(route == nil)
+        .help(title)
+        .disabled(route == nil && !signsOut)
+        .confirmationDialog("Sign Out", isPresented: $confirming, titleVisibility: .visible) {
+            Button("Sign Out", role: .destructive) { share.signOut() }
+        } message: {
+            Text("Cloak forgets this account. Traces already shared can no longer be withdrawn from Cloak.")
+        }
     }
 }
 
@@ -181,27 +221,7 @@ struct ShareControl: View {
         let chat = conversation.id
         switch sharing {
         case .readied(let readied) where readied.chat == chat:
-            // Each second, so it turns within one of the challenge ending,
-            // as the next message stops going readied.
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                HStack(spacing: 4) {
-                    if readied.expires > context.date {
-                        SymbolButton("Share", symbol: "square.and.arrow.up") { readying = true }
-                            .foregroundStyle(.tint)
-                        Text("Next message shares")
-                            .foregroundStyle(.secondary)
-                            .help(
-                                "Your next message here goes without end-to-end encryption, until \(readied.expires.formatted(date: .omitted, time: .shortened))."
-                            )
-                    } else {
-                        SymbolButton("Share", symbol: "square.and.arrow.up") {}
-                            .disabled(true)
-                        Text("Time ran out")
-                            .foregroundStyle(.secondary)
-                        SymbolButton("Ready Again", symbol: "arrow.clockwise") { readying = true }
-                    }
-                }
-            }
+            ReadiedControl(readied: readied, readying: $readying)
         case .sending(let readied, _) where readied.chat == chat:
             ProgressView()
                 .controlSize(.small)
@@ -227,9 +247,54 @@ struct ShareControl: View {
     }
 }
 
-/// Readies a chat: says what the next message costs, which uses are
-/// granted, and links the terms. Ready gets the commons' challenge, after
-/// which the sheet closes.
+/// A readied chat's control: that the next message shares, until the
+/// challenge ends, when it turns, once, to say the time ran out, with
+/// Ready Again, as the next message stops going readied.
+private struct ReadiedControl: View {
+    let readied: TraceShare.Readied
+    @Binding var readying: Bool
+    @State private var ended: Bool
+
+    init(readied: TraceShare.Readied, readying: Binding<Bool>) {
+        self.readied = readied
+        _readying = readying
+        _ended = State(initialValue: readied.expires <= .now)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if ended {
+                SymbolButton("Share", symbol: "square.and.arrow.up") {}
+                    .disabled(true)
+                Text("Time ran out")
+                    .foregroundStyle(.secondary)
+                SymbolButton("Ready Again", symbol: "arrow.clockwise") { readying = true }
+            } else {
+                SymbolButton("Share", symbol: "square.and.arrow.up") { readying = true }
+                    .foregroundStyle(.tint)
+                Text("Next message shares")
+                    .foregroundStyle(.secondary)
+                    .help(
+                        "\(unsealed) Ready until \(readied.expires.formatted(date: .omitted, time: .shortened))."
+                    )
+            }
+        }
+        .task(id: readied.expires) {
+            ended = readied.expires <= .now
+            guard !ended else { return }
+            try? await Task.sleep(for: .seconds(readied.expires.timeIntervalSinceNow))
+            if !Task.isCancelled { ended = true }
+        }
+    }
+}
+
+/// What readying a chat costs, as the Ready sheet and the readied control
+/// say it.
+private let unsealed = "This chat so far and your next message go to NEAR without end-to-end encryption."
+
+/// Readies a chat: says what it costs, which uses are granted, and links
+/// the terms. Ready gets the commons' challenge, after which the sheet
+/// closes.
 private struct ReadySheet: View {
     let share: TraceShare
     let route: NearRoute?
@@ -240,9 +305,7 @@ private struct ReadySheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Share")
                 .font(.title2.weight(.semibold))
-            Text(
-                "Your next message in this chat goes to NEAR without end-to-end encryption. Then Review sends the chat to the commons for redaction, and shows you what would be shared."
-            )
+            Text("\(unsealed) Then Review sends the chat to the commons for redaction, and shows you what would be shared.")
             .fixedSize(horizontal: false, vertical: true)
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow {
@@ -291,10 +354,13 @@ private struct ReadySheet: View {
     }
 }
 
-/// The review: Before, the exchange as it went to NEAR and came back, and
-/// After, the witness's envelope exactly as it came. Review sends the chat
-/// to the witness; Share uploads exactly the After shown, after which the
-/// sheet closes.
+/// The review: Before, the chat as it went to NEAR and came back, a line a
+/// message, with its exact bytes a press away, and After, the witness's
+/// envelope exactly as it came. The witness takes the chat's words out of
+/// the exchange before it redacts (its `witness_contribution`), so After
+/// never reads as messages, and shows its bytes alone. Review sends the
+/// chat to the witness; Share uploads exactly the After shown, after which
+/// the sheet closes.
 private struct ReviewSheet: View {
     let share: TraceShare
     let route: NearRoute?
@@ -310,12 +376,27 @@ private struct ReviewSheet: View {
                 .font(.title2.weight(.semibold))
             if let answered {
                 if reviewed == nil {
-                    Text("Review sends this chat to the commons' witness, which redacts it. Nothing is shared until you press Share.")
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "Review sends this chat to the commons' witness to redact. Cloak checks the witness's hardware first, but not the connection to it: Phala, which hosts the witness, can read the chat on its way. Nothing is shared until you press Share."
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(alignment: .top, spacing: 12) {
-                    Pane(title: "Before", count: nil, mark: .removed) {
-                        TextBox(text: .constant(Self.before(answered.exchange)), label: "Before", editable: false, maxHeight: 420)
+                    VStack(alignment: .leading, spacing: 8) {
+                        let exact = Self.before(answered.exchange)
+                        Pane(title: "Before", count: nil, mark: .removed) {
+                            if let lines = answered.exchange.lines {
+                                ChatLines(lines: lines)
+                            } else {
+                                TextBox(text: .constant(exact), label: "Before", editable: false, maxHeight: 420)
+                            }
+                        }
+                        if answered.exchange.lines != nil {
+                            DisclosureGroup("Exact") {
+                                TextBox(text: .constant(exact), label: "Exact", editable: false, maxHeight: 240)
+                                    .paneBox()
+                            }
+                        }
                     }
                     Pane(title: "After", count: nil, mark: .added) {
                         if let reviewed {
@@ -346,12 +427,12 @@ private struct ReviewSheet: View {
                 Spacer()
                 Button("Close") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                if reviewed != nil {
+                if let answered, let reviewed {
                     Button("Review") { press { await share.review(route: $0) } }
                         .disabled(route == nil)
                     Button("Share") {
                         press { route in
-                            await share.share(route: route)
+                            await share.share(reviewed, of: answered, route: route)
                             if share.answered == nil { dismiss() }
                         }
                     }
@@ -376,6 +457,31 @@ private struct ReviewSheet: View {
     /// The request as it went to NEAR, then the reply as it came.
     private static func before(_ exchange: TraceExchange) -> String {
         String(decoding: exchange.request, as: UTF8.self) + "\n\n" + String(decoding: exchange.response, as: UTF8.self)
+    }
+}
+
+/// A chat, a line a message: who said it, then the words. It scrolls once
+/// taller than the review's panes.
+private struct ChatLines: View {
+    let lines: [TraceLine]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(lines.indices, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(lines[index].yours ? "You" : "NEAR")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(lines[index].text)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+        }
+        .frame(maxHeight: 420)
     }
 }
 
@@ -459,10 +565,11 @@ private struct TraceStatusRow: View {
 }
 
 /// A sharing step that stopped: its few words, what it means, and whether
-/// anything may have gone.
-private struct TraceStopRow: View {
+/// anything may have gone; with `retry` beside Dismiss, when it has one.
+private struct TraceStopRow<Retry: View>: View {
     let stop: NearStop
     let dismiss: () -> Void
+    @ViewBuilder let retry: Retry
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -474,14 +581,13 @@ private struct TraceStopRow: View {
                     .fontWeight(.medium)
                 Text(stop.shareWords)
                     .foregroundStyle(.secondary)
-                // The keychain's stops are this Mac's alone, and a status
-                // is the host turning the step down.
-                if stop.kind != .key, stop.kind != .status {
-                    Text(stop.sent ? "It may have arrived." : "Nothing was sent.")
+                if let gone {
+                    Text(gone)
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer()
+            retry
             Button("Dismiss", systemImage: "xmark", action: dismiss)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
@@ -490,6 +596,24 @@ private struct TraceStopRow: View {
         }
         .padding(10)
         .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Whether anything may have gone. None for the keychain's stops, this
+    /// Mac's alone, a status, the host turning the step down, or a sign-in
+    /// that ran out, whose words say it. A claim's request may have reached
+    /// the issuer, but nothing went to the commons.
+    private var gone: String? {
+        switch stop.kind {
+        case .key, .status, .expired: nil
+        case .claim: "Nothing was shared."
+        default: stop.sent ? "It may have arrived." : "Nothing was sent."
+        }
+    }
+}
+
+extension TraceStopRow where Retry == EmptyView {
+    init(stop: NearStop, dismiss: @escaping () -> Void) {
+        self.init(stop: stop, dismiss: dismiss) { EmptyView() }
     }
 }
 
@@ -582,6 +706,9 @@ extension NearStop {
         case .helper: "Damaged"
         case .ended: "Stopped"
         case .key: "Keychain unreadable"
+        case .moved: "Commons moved"
+        case .expired: "Timed out"
+        case .interrupted: "Ended"
         }
     }
 
@@ -606,6 +733,9 @@ extension NearStop {
         case .helper: "Reinstall Cloak."
         case .ended: "The part of Cloak that shares quit."
         case .key: "The keychain didn't give Cloak what sharing keeps."
+        case .moved: "The commons changed its servers. Sharing stops until Cloak is updated."
+        case .expired: "The sign-in didn't finish within ten minutes."
+        case .interrupted: "Sharing ended before the commons answered."
         }
     }
 }

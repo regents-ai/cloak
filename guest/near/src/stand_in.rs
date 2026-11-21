@@ -8,7 +8,8 @@
 //!
 //! The certificates were made with OpenSSL 3.6.4 on 21 November 2026: P-256,
 //! valid until 2126, the server's for ingest.tracecommons.ai,
-//! issuer.tracecommons.ai, witness.tracecommons.ai and cloud-api.near.ai.
+//! issuer.tracecommons.ai, the witness's Phala address and
+//! cloud-api.near.ai.
 
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -17,8 +18,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use der::{Decode, Encode};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::{RootCertStore, ServerConfig, ServerConnection, StreamOwned};
+use sha2::{Digest, Sha256};
+
+use crate::{Proxy, Route, SocksAddr};
+
+const SERVER: &[u8] = include_bytes!("../tests/fixtures/share-stand-in/server.der");
 
 /// One request that reached the stand-in.
 #[derive(Clone, Debug)]
@@ -96,6 +103,15 @@ impl StandIn {
             "intel_identity": "intel"
         })
     }
+
+    /// The same route, as sharing's steps take it.
+    pub fn tor(&self) -> Route<'_> {
+        Route::Tor(Proxy {
+            addr: SocksAddr::Unix(&self.socket),
+            user: "near",
+            password: "cloak",
+        })
+    }
 }
 
 impl Drop for StandIn {
@@ -113,6 +129,18 @@ pub(crate) fn roots() -> RootCertStore {
         ))
         .unwrap();
     roots
+}
+
+/// The SHA-256 of the stand-in's certificate key, as `connect` gives it: the
+/// pin a proof takes for the stand-in's gateway.
+pub(crate) fn pin() -> [u8; 32] {
+    let certificate = x509_cert::Certificate::from_der(SERVER).unwrap();
+    let key = certificate
+        .tbs_certificate()
+        .subject_public_key_info()
+        .to_der()
+        .unwrap();
+    Sha256::digest(key).into()
 }
 
 /// A JSON answer.
@@ -200,9 +228,7 @@ fn socks(socket: &mut UnixStream) -> Option<String> {
 }
 
 fn server_config() -> Arc<ServerConfig> {
-    let certificate = CertificateDer::from(
-        include_bytes!("../tests/fixtures/share-stand-in/server.der").to_vec(),
-    );
+    let certificate = CertificateDer::from(SERVER.to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
         include_bytes!("../tests/fixtures/share-stand-in/server-key.der").to_vec(),
     ));

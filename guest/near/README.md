@@ -56,8 +56,9 @@ guest image.
   the Trace Commons' admission binding as its one added field,
   `metadata.trace_commons_admission`, on a connection pinned to the gateway
   TLS key the proof checked. NEAR's signed receipt for the exchange is then
-  fetched on another connection pinned the same way and checked. Every
-  other request goes through `ask`, unchanged.
+  fetched on another connection pinned the same way, and taken only when it
+  is signed by the model key the same proof found in the model's servers'
+  quotes. Every other request goes through `ask`, unchanged.
 - `src/share.rs` holds trace sharing's other steps: the NEAR AI sign-in and
   enrolment, the admission challenge, the witness's review, the upload,
   and the status and withdrawal of what was shared (see "Trace sharing's
@@ -537,8 +538,9 @@ Every field is required, and any other field is refused.
 
 - `listen` (`route`): reads the commons' capabilities
   (`GET https://ingest.tracecommons.ai/v1/account/near/provision/capabilities`),
-  checks the witness pin, the issuer's address and the upload audience in
-  them, and opens a listener on `127.0.0.1`, on a port the system picks.
+  checks that they name the issuer and the witness this Cloak knows, the
+  witness pin and the upload audience, and opens a listener on
+  `127.0.0.1`, on a port the system picks.
   Answer `listening`: `sent` false, and `github` and `google`, the NEAR AI
   sign-in's address for each, for the Mac to open in the browser. A new
   `listen` closes the listener of the one before.
@@ -556,20 +558,22 @@ Every field is required, and any other field is refused.
   Answer `enrolled`: `account`, which every later line carries back and
   none of which is secret (the tenant, the device key's id, the issuer's
   address, the upload audience and the witness pin as the commons published
-  it); `account_id`; `anchor_hash`; `session`, the account session, a
-  bearer for withdrawing, for the Mac to keep with the device key; and
-  `session_expires_at`, RFC 3339.
-- `ready` (`route`, `device_key`, `account`, `scopes`, `uses`): an upload
-  claim from the issuer, its request signed by the device key, then the
-  commons' admission challenge under that claim. Answer `admitted`:
+  it); and `session`, the account session, a bearer for withdrawing, for
+  the Mac to keep with the device key.
+- `ready` (`route`, `device_key`, `account`, `scopes`): an upload claim
+  from the issuer, its request signed by the device key, then the commons'
+  admission challenge under that claim. Answer `admitted`:
   `binding`, and `expires_at` in seconds since 1970, at most 15 minutes on.
 - `readied` (an `ask`'s fields, and `admission`, the binding): runs
   `ask_readied`. Answer `exchanged`: `sent` true; `proof` and `reply` as
   `replied` has them; `request` and `response`, the request body exactly as
   written and the reply body exactly as it came, in standard base64; and
-  either `receipt`, NEAR's receipt for the two, checked, or `no_receipt`,
-  why there is none. The reply stands either way.
-- `review` (`route`, `account`, `scopes`, `uses`; `exchange`, with
+  either `receipt`, NEAR's receipt for the two, or `no_receipt`, why there
+  is none. A receipt is taken only as an Ed25519 signature by the model key
+  the message's proof covers, of the model's name and the SHA-256 of the
+  two bodies; it proves the model's server signed for those bytes, not
+  what the model did with them. The reply stands either way.
+- `review` (`route`, `account`, `scopes`; `exchange`, with
   `request`, `response` and `receipt` as `exchanged` gave them; and
   `version`, Cloak's version, which the trace names): fetches the witness's
   quote under a fresh nonce and checks it against the pin in `account`,
@@ -580,26 +584,44 @@ Every field is required, and any other field is refused.
   the witness, as one raw contribution, for redaction. Answer `reviewed`:
   `envelope`, the witness's answer exactly as it came, in standard base64;
   its four headers, `certificate`, `signature`, `evidence` and
-  `evidence_signature`; and the `submission_id` and `trace_id` the
-  contribution was made with.
-- `upload` (`route`, `device_key`, `account`, `scopes`, `uses`, and
-  `envelope`, with `body` and the four headers as `reviewed` gave them): a
-  new claim, then the envelope's bytes exactly, and no others, to
-  `/v1/traces` with the four headers. Answer `uploaded`: `commons`, the
-  commons' answer as it came.
+  `evidence_signature`; and the `submission_id` the contribution was made
+  with. The witness takes the exchange's request and reply bodies out
+  before it redacts, so the envelope holds what the trace says of the chat,
+  not its words.
+- `upload` (`route`, `device_key`, `account`, `scopes`, and `envelope`,
+  with `body` and the four headers as `reviewed` gave them): a new claim,
+  then the envelope's bytes exactly, and no others, to `/v1/traces` with
+  the four headers. Answer `uploaded`: `commons`, the commons' answer as it
+  came, which must name the trace's `status`.
 - `status` (`route`, `device_key`, `account`, and `submissions`, 1 to 100
   submission ids): a claim for the account's full grant, then the commons'
   status of each. Answer `reported`: `commons`, as it came.
 - `withdraw` (`route`, `session`, `submission`): withdraws one submission
   under the account session. Answer `withdrawn`: `commons`, the commons'
   answer as it came, which says how far the trace had gone
-  (`distribution_reach`), and `session` and `session_expires_at` when the
-  commons renewed the session.
+  (`distribution_reach`), and `session` when the commons renewed the
+  session.
 
 `scopes` are the commons' consent scopes: `debugging_evaluation` always,
 and any of `benchmark_only`, `ranking_training`, `model_training` and
-`public_attribution`. `uses` are the uses they grant, with
-`aggregate_analytics`; each name once.
+`public_attribution`, each name once. The helper turns them into the uses
+they grant itself, by the commons' own client's table, with
+`aggregate_analytics` added.
+
+The issuer (`issuer.tracecommons.ai`) and the witness (its direct Phala
+address, `2904b99d74bc6ff9ffda211479b0a95cb9237a38-8088.dstack-pha1-prod5.phala.network`)
+are fixed in `src/share.rs`, as NEAR's pins are. `listen`, and every line
+that goes to the issuer or the witness, stops at `moved` when the
+capabilities or the account name others: sharing stops until Cloak is
+updated.
+
+What the witness check covers, and what it does not: the quote proves the
+witness's enclave runs the measured image and holds the signing address
+the commons pins. Its report data ties no TLS key, and Phala's gateway,
+not the enclave, ends TLS at that address, so the connection the chat goes
+to the witness on is checked only against Mozilla's roots. Phala, or
+whoever holds a certificate for that address, can read the chat on its way
+to the witness (docs/near-share.md, section 8).
 
 For these lines `sent` says whether the step's own request may have
 reached its host. `readied` stops as `ask` does; the others stop at:
@@ -609,6 +631,7 @@ reached its host. `readied` stops as `ask` does; the others stop at:
 | `line` | The line is not JSON, or not a request in this format | false |
 | `request` | The line cannot go as given | false |
 | `signin` | The sign-in in the browser did not finish, or NEAR AI sent no session | false |
+| `moved` | The commons names another issuer or witness than this Cloak knows | false |
 | `fetch` | Reading the capabilities, the witness's quote or Intel's collateral for it | false |
 | `claim` | The issuer gave no upload claim, so the step's own request was not sent | false |
 | `refused` | The witness's enclave did not pass: nothing was sent to it | false |
@@ -694,7 +717,11 @@ The gate checks:
   report), with Intel's real collateral for it held, and a `review` line
   stops at `refused` with `sent` false after one request, the attestation
   read; that quote passes Intel's own check at its fetch time and is
-  refused for its report data. And the upload is the envelope shown, byte
+  refused for its report data, at a fixed time. The readied message goes
+  only where its proof covers: with no proof it stops before any byte, on
+  a gateway showing another key than its proof's it stops at `pin` with
+  nothing written, and under its own proof it goes once, in plain text,
+  with the commons' challenge. And the upload is the envelope shown, byte
   for byte: an envelope written as no encoder would write it again reaches
   the stand-in ingest exactly, under the claim the stand-in issuer gave for
   a request the device key signed, with the witness's four headers.

@@ -4,8 +4,9 @@
 //! gives. In the order a share takes:
 //!
 //! - [`listen`] reads the commons' published capabilities, the witness's pin
-//!   among them, and opens a listener on this Mac's loopback address for the
-//!   NEAR AI sign-in the person makes in their browser;
+//!   among them, refuses an issuer or a witness other than the two fixed
+//!   here, and opens a listener on this Mac's loopback address for the NEAR
+//!   AI sign-in the person makes in their browser;
 //! - [`enrol`] waits for that sign-in, runs the commons' enrolment ceremony
 //!   with this Mac's device key and the NEAR AI session the browser handed
 //!   over, and drops that session at once; its refresh token is never read;
@@ -15,7 +16,10 @@
 //!   fetches and checks NEAR's receipt for it;
 //! - [`review`] checks the witness's enclave against the pin the commons
 //!   published at enrolment, and only once it passes sends the witness the
-//!   exchange to redact; its envelope comes back exactly as it was sent;
+//!   exchange to redact; its envelope comes back exactly as it was sent.
+//!   The witness's quote ties no TLS key, so the exchange goes on an
+//!   ordinary certificate check to whatever ends TLS for the witness's
+//!   address, which today is Phala's gateway, outside the enclave;
 //! - [`upload`] sends that envelope, the bytes given and no others;
 //! - [`status`] and [`withdraw`] read and withdraw what was shared.
 //!
@@ -44,10 +48,20 @@ use crate::{random, FetchError, Kept, Refusal, Route};
 
 /// The commons' ingest: enrolment, challenges, uploads and their status.
 pub(crate) const INGEST: &str = "ingest.tracecommons.ai";
+/// The commons' issuer of upload claims, and its witness, as the commons
+/// publishes them today: fixed here, as NEAR's pins are, so that when the
+/// commons names others sharing stops until Cloak is updated
+/// ([`Halt::Moved`]). The witness is at its direct Phala address, where
+/// Phala's gateway, not the witness's enclave, ends TLS (docs/near-share.md,
+/// section 8).
+const ISSUER: &str = "issuer.tracecommons.ai";
+const WITNESS: &str =
+    "2904b99d74bc6ff9ffda211479b0a95cb9237a38-8088.dstack-pha1-prod5.phala.network";
 /// Where NEAR AI's sign-in starts, followed by the provider.
 const SIGNIN: &str = "https://cloud-platform.near.ai/v1/auth";
 const PROVIDERS: [&str; 2] = ["github", "google"];
-/// The page NEAR AI sends the browser back to, and the one it posts to.
+/// The page NEAR AI sends the browser back to, followed by the sign-in's
+/// state, and the one that page posts to.
 const CALLBACK: &str = "/trace-commons/near-ai/callback";
 const DEPOSIT: &str = "/trace-commons/near-ai/deposit";
 /// How long the browser may take over one loopback request.
@@ -70,21 +84,15 @@ const POLICY_VERSION: &str = "2026-04-24";
 const AGENT: &str = "regents-cloak";
 /// The tag a witness quote's report data starts with.
 const WITNESS_TAG: &[u8; 8] = b"tcwitns1";
-/// The consent scopes, the first always granted, and the uses they grant.
-const SCOPES: [&str; 5] = [
-    "debugging_evaluation",
-    "benchmark_only",
-    "ranking_training",
-    "model_training",
-    "public_attribution",
-];
-const USES: [&str; 6] = [
-    "debugging",
-    "evaluation",
-    "benchmark_generation",
-    "ranking_model_training",
-    "model_training",
-    "aggregate_analytics",
+/// The consent scopes, the first always granted, each with the uses it
+/// grants: the commons' own client's table (`consent.rs`,
+/// `scopes_to_allowed_uses`), which adds aggregate analytics to every grant.
+const SCOPES: [(&str, &[&str]); 5] = [
+    ("debugging_evaluation", &["debugging", "evaluation"]),
+    ("benchmark_only", &["benchmark_generation"]),
+    ("ranking_training", &["ranking_model_training"]),
+    ("model_training", &["model_training"]),
+    ("public_attribution", &[]),
 ];
 
 /// Where sharing's connections go: the commons, the witness and NEAR on
@@ -107,8 +115,12 @@ pub enum Halt {
     /// quote or Intel's collateral for it.
     Fetch(FetchError),
     /// The issuer gave no upload claim, so the step's own request, which
-    /// goes under one, was not sent.
+    /// goes under one, was not sent; the claim's own request may have
+    /// reached the issuer.
     Claim(String),
+    /// The commons names an issuer or a witness other than the one this
+    /// Cloak knows, so nothing was sent to it.
+    Moved(&'static str),
     /// The witness's enclave did not pass, so nothing was sent to it.
     Refused(Refusal),
     /// The connection to send on could not be made.
@@ -133,6 +145,7 @@ impl Halt {
             | Halt::Signin(_)
             | Halt::Fetch(_)
             | Halt::Claim(_)
+            | Halt::Moved(_)
             | Halt::Refused(_)
             | Halt::Connect(_) => false,
             Halt::Send(_) | Halt::Status { .. } | Halt::Reply(_) => true,
@@ -147,6 +160,7 @@ impl fmt::Display for Halt {
             Halt::Signin(why) => write!(f, "the sign-in did not finish: {why}"),
             Halt::Fetch(error) => write!(f, "fetching: {error}"),
             Halt::Claim(why) => write!(f, "no upload claim: {why}"),
+            Halt::Moved(who) => write!(f, "the commons names another {who} than this Cloak knows"),
             Halt::Refused(refusal) => write!(f, "the witness was refused: {refusal}"),
             Halt::Connect(error) => write!(f, "connecting: {error}"),
             Halt::Send(error) => write!(f, "sending: {error}"),
@@ -169,14 +183,12 @@ pub(crate) struct Witness {
 
 /// A witness pin, read.
 struct Pinned {
-    host: String,
     address: [u8; 20],
     sets: Vec<WitnessSet>,
 }
 
 impl Witness {
     fn pinned(&self) -> Result<Pinned, String> {
-        let host = https_host(&self.url).ok_or("the witness's address is not an https host")?;
         let mut address = [0u8; 20];
         self.signing_address
             .strip_prefix("0x")
@@ -189,19 +201,26 @@ impl Witness {
             .collect::<Option<Vec<_>>>()
             .filter(|sets| !sets.is_empty())
             .ok_or("the witness's measurements are not ones it can be checked against")?;
-        Ok(Pinned {
-            host,
-            address,
-            sets,
-        })
+        Ok(Pinned { address, sets })
     }
+}
+
+/// Refuses an issuer or a witness other than the two this Cloak knows,
+/// each by its address exactly.
+fn known(issuer_url: &str, witness: &Witness) -> Result<(), Halt> {
+    if issuer_url != format!("https://{ISSUER}") {
+        return Err(Halt::Moved("issuer"));
+    }
+    if witness.url != format!("https://{WITNESS}") {
+        return Err(Halt::Moved("witness"));
+    }
+    Ok(())
 }
 
 /// The commons' published capabilities, as far as Cloak reads them.
 #[derive(Deserialize)]
 struct Capabilities {
-    ready: bool,
-    near_ai_login_ready: Option<bool>,
+    near_ai_login_ready: bool,
     witness: Witness,
     issuer_url: String,
     audience: String,
@@ -278,14 +297,16 @@ pub(crate) struct Signin {
     listener: TcpListener,
     /// `http://127.0.0.1:<port>`: the only origin the deposit is taken from.
     origin: String,
-    /// A value of this sign-in's own, which the deposit must carry.
+    /// A value of this sign-in's own, in hex: the page is served only at
+    /// the address that ends with it, and the deposit must carry it.
     state: String,
     capabilities: Capabilities,
 }
 
-/// Reads the commons' capabilities and, when it takes NEAR AI sign-ins,
-/// opens the loopback listener the sign-in returns to. The sign-in's
-/// address for each provider, for the Mac to open in the browser.
+/// Reads the commons' capabilities and, when it takes NEAR AI sign-ins at
+/// the issuer and the witness this Cloak knows, opens the loopback listener
+/// the sign-in returns to. The sign-in's address for each provider, for the
+/// Mac to open in the browser.
 pub(crate) fn listen(net: &Net) -> Result<(Signin, Vec<String>), Halt> {
     let capabilities: Capabilities = fetch_json(
         net,
@@ -293,21 +314,17 @@ pub(crate) fn listen(net: &Net) -> Result<(Signin, Vec<String>), Halt> {
         "the commons",
         "/v1/account/near/provision/capabilities",
     )?;
-    if !capabilities
-        .near_ai_login_ready
-        .unwrap_or(capabilities.ready)
-    {
+    if !capabilities.near_ai_login_ready {
         return Err(Halt::Request(
             "the commons is not taking NEAR AI sign-ins".into(),
         ));
     }
+    known(&capabilities.issuer_url, &capabilities.witness)?;
     let malformed = |why: &str| Halt::Fetch(FetchError::Malformed(why.to_owned()));
     capabilities
         .witness
         .pinned()
         .map_err(|why| malformed(&why))?;
-    https_host(&capabilities.issuer_url)
-        .ok_or_else(|| malformed("the issuer's address is not an https host"))?;
     let audience = capabilities.audience.trim();
     if audience.is_empty() || audience.len() > 256 {
         return Err(malformed("the upload audience is blank or too long"));
@@ -319,12 +336,15 @@ pub(crate) fn listen(net: &Net) -> Result<(Signin, Vec<String>), Halt> {
         .map_err(|e| Halt::Signin(format!("no loopback listener: {e}")))?
         .port();
     let origin = format!("http://127.0.0.1:{port}");
-    let callback = percent_encode(&format!("{origin}{CALLBACK}"));
+    // The state goes in the return address's path, which NEAR AI keeps as
+    // it is (it refuses a query or a fragment), so that only the browser
+    // sent there is served the page that carries it.
+    let state = hex::encode(random::<32>().ok_or_else(no_randomness)?);
+    let callback = percent_encode(&format!("{origin}{CALLBACK}/{state}"));
     let urls = PROVIDERS
         .iter()
         .map(|provider| format!("{SIGNIN}/{provider}?frontend_callback={callback}"))
         .collect();
-    let state = hex::encode(random::<32>().ok_or_else(no_randomness)?);
     Ok((
         Signin {
             listener,
@@ -339,12 +359,8 @@ pub(crate) fn listen(net: &Net) -> Result<(Signin, Vec<String>), Halt> {
 /// An account [`enrol`] made, and its session.
 pub(crate) struct Enrolled {
     pub account: Account,
-    pub account_id: String,
-    pub anchor_hash: String,
     /// The account session: a bearer for withdrawing.
     pub session: String,
-    /// When it ends, RFC 3339.
-    pub session_expires_at: String,
 }
 
 /// Waits for the sign-in in the browser, then enrols this Mac's device key
@@ -401,11 +417,8 @@ pub(crate) fn enrol(net: &Net, signin: Signin, device: &Device) -> Result<Enroll
     #[derive(Deserialize)]
     struct Finished {
         access_token: String,
-        expires_in_secs: u64,
-        account_id: String,
         tenant_id: String,
         device_key_id: String,
-        anchor_hash: String,
     }
     let finished: Finished = post_json(
         net,
@@ -438,10 +451,7 @@ pub(crate) fn enrol(net: &Net, signin: Signin, device: &Device) -> Result<Enroll
             audience: capabilities.audience,
             witness: capabilities.witness,
         },
-        account_id: finished.account_id,
-        anchor_hash: finished.anchor_hash,
         session: finished.access_token,
-        session_expires_at: rfc3339(now.saturating_add(finished.expires_in_secs)),
     })
 }
 
@@ -484,7 +494,8 @@ fn lower_hex_64(text: &str) -> bool {
 impl Signin {
     /// Serves the loopback page until the browser posts the sign-in, and
     /// answers NEAR AI's session token from it. Anything else the browser
-    /// asks is answered and waited past.
+    /// asks is answered and waited past; the Mac ends a sign-in left
+    /// waiting.
     fn token(&self) -> Result<String, Halt> {
         for stream in self.listener.incoming() {
             let Ok(mut stream) = stream else { continue };
@@ -514,8 +525,12 @@ impl Signin {
             answer(stream, "403 Forbidden", &[], b"");
             return None;
         }
+        let page = target
+            .strip_prefix(CALLBACK)
+            .and_then(|rest| rest.strip_prefix('/'))
+            == Some(self.state.as_str());
         match (method, target) {
-            ("GET", CALLBACK) => {
+            ("GET", _) if page => {
                 let (page, csp) = self.page();
                 answer(
                     stream,
@@ -554,13 +569,13 @@ impl Signin {
 
     /// The page NEAR AI returns the browser to: it posts the address's
     /// fragment, which the browser never sends itself, with this sign-in's
-    /// state, and takes the fragment out of the address. Its one script is
-    /// allowed by its hash and may reach only this listener.
+    /// state, and takes the fragment and the state out of the address. Its
+    /// one script is allowed by its hash and may reach only this listener.
     fn page(&self) -> (String, String) {
         let script = format!(
             "const m=document.getElementById(\"m\");\
              const f=location.hash.slice(1);\
-             history.replaceState(null,\"\",location.pathname);\
+             history.replaceState(null,\"\",\"{CALLBACK}\");\
              fetch(\"{DEPOSIT}\",{{method:\"POST\",headers:{{\"Content-Type\":\"application/json\"}},\
              body:JSON.stringify({{state:\"{state}\",fragment:f}})}})\
              .then(r=>{{m.textContent=r.ok?\"Signed in. You can close this tab.\":\"Sign-in failed. Try again in Cloak.\";}})\
@@ -663,10 +678,9 @@ pub(crate) fn ready(
     device: &Device,
     account: &Account,
     scopes: &[String],
-    uses: &[String],
 ) -> Result<Admission, Halt> {
-    granted(scopes, uses)?;
-    let claim = claim(net, device, account, scopes, uses)?;
+    granted(scopes)?;
+    let claim = claim(net, device, account, scopes, &uses(scopes))?;
     #[derive(Deserialize)]
     struct Challenge {
         binding: String,
@@ -723,11 +737,10 @@ fn claim(
     device: &Device,
     account: &Account,
     scopes: &[String],
-    uses: &[String],
+    uses: &[&str],
 ) -> Result<String, Halt> {
     device.of(account)?;
-    let issuer = https_host(&account.issuer_url)
-        .ok_or_else(|| Halt::Request("the issuer's address is not an https host".into()))?;
+    known(&account.issuer_url, &account.witness)?;
     let body = serde_json::to_vec(&json!({
         "schema_version": "ironclaw.trace_upload_claim_request.v1",
         "tenant_id": account.tenant_id,
@@ -741,7 +754,7 @@ fn claim(
     let signature = device.sign(&body);
     let answer = post(
         net,
-        &issuer,
+        ISSUER,
         "the issuer",
         "/v1/trace-upload-claim",
         &[
@@ -768,21 +781,17 @@ fn claim(
     }
 }
 
-/// Refuses a grant the commons does not know: every scope and use by its
-/// name, each once, and debugging and evaluation always among them.
-fn granted(scopes: &[String], uses: &[String]) -> Result<(), Halt> {
-    let known = |names: &[String], all: &[&str]| {
-        names.iter().all(|n| all.contains(&n.as_str()))
-            && names
-                .iter()
-                .enumerate()
-                .all(|(at, n)| !names[..at].contains(n))
-    };
-    if known(scopes, &SCOPES)
-        && known(uses, &USES)
-        && scopes.iter().any(|s| s == SCOPES[0])
-        && uses.iter().any(|u| u == "debugging")
-    {
+/// Refuses a grant the commons does not know: every scope by its name,
+/// each once, and the first always among them.
+fn granted(scopes: &[String]) -> Result<(), Halt> {
+    let known = scopes
+        .iter()
+        .all(|s| SCOPES.iter().any(|(name, _)| name == s));
+    let once = scopes
+        .iter()
+        .enumerate()
+        .all(|(at, s)| !scopes[..at].contains(s));
+    if known && once && scopes.iter().any(|s| s == SCOPES[0].0) {
         Ok(())
     } else {
         Err(Halt::Request(
@@ -791,16 +800,33 @@ fn granted(scopes: &[String], uses: &[String]) -> Result<(), Halt> {
     }
 }
 
+/// The uses `scopes` grant, in the commons' order, and aggregate analytics.
+/// No use is granted by two scopes, so each comes once.
+fn uses(scopes: &[String]) -> Vec<&'static str> {
+    SCOPES
+        .iter()
+        .filter(|(name, _)| scopes.iter().any(|s| s == name))
+        .flat_map(|(_, uses)| uses.iter().copied())
+        .chain(["aggregate_analytics"])
+        .collect()
+}
+
 /// NEAR's signed receipt for a readied exchange, fetched on a new
 /// connection to its gateway that must show the certificate key `pin`, and
-/// checked: Ed25519, signed by the model, over the model's name and the
+/// checked: an Ed25519 signature by `model_key`, the model's own key, which
+/// the proof the message went on found bound to every one of the model's
+/// servers' Intel quotes (NEAR's vllm-proxy signs receipts with the key
+/// whose public half its quotes carry), over the model's name and the
 /// SHA-256 of `request_body` and `response_body`, the exact bytes sent and
-/// received. The receipt as the witness takes it, or why there is none.
+/// received. That the model's server, and no other, signed for these bytes
+/// is what it proves; not what the model did with them. The receipt as the
+/// witness takes it, or why there is none.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn receipt(
     route: &Route,
     roots: &RootCertStore,
     pin: &[u8; 32],
+    model_key: &[u8; 32],
     model: &str,
     api_key: &str,
     reply: &Value,
@@ -838,51 +864,41 @@ pub(crate) fn receipt(
     if answer.status != 200 {
         return Err(format!("NEAR answered {}", answer.status));
     }
-    let whole: Value = serde_json::from_slice(&answer.body).map_err(|_| "it is not JSON")?;
-    let held = whole
-        .get("receipt")
-        .filter(|r| r.is_object())
-        .unwrap_or(&whole);
+    // NEAR's `SignatureResponse`, as its cloud-api gives it.
     #[derive(Deserialize)]
     struct Signed {
         text: String,
         signature: String,
         signing_address: String,
         signing_algo: String,
-        signature_kind: Option<String>,
+        signature_kind: String,
     }
     let signed: Signed =
-        serde_json::from_value(held.clone()).map_err(|_| "it is not a receipt".to_owned())?;
-    if signed.signing_algo != "ed25519" || signed.signature_kind.as_deref() != Some("provider_tee")
-    {
+        serde_json::from_slice(&answer.body).map_err(|_| "it is not a receipt".to_owned())?;
+    if signed.signing_algo != "ed25519" || signed.signature_kind != "provider_tee" {
         return Err("it is not the model's own Ed25519 receipt".into());
     }
-    let key = hex::decode(&signed.signing_address)
+    if signed.signing_address != hex::encode(model_key) {
+        return Err("it is not signed by the model key the proof covers".into());
+    }
+    let signature = hex::decode(&signed.signature)
         .ok()
-        .filter(|k| k.len() == 32)
-        .ok_or("its key is not 32 bytes of hex")?;
-    let signature = hex::decode(
-        signed
-            .signature
-            .strip_prefix("0x")
-            .unwrap_or(&signed.signature),
-    )
-    .ok()
-    .filter(|s| s.len() == 64)
-    .ok_or("its signature is not 64 bytes of hex")?;
-    UnparsedPublicKey::new(&ED25519, &key)
+        .filter(|s| s.len() == 64)
+        .ok_or("its signature is not 64 bytes of hex")?;
+    UnparsedPublicKey::new(&ED25519, model_key)
         .verify(signed.text.as_bytes(), &signature)
         .map_err(|_| "its signature does not verify")?;
     let parts: Vec<&str> = signed.text.split(':').collect();
-    let hashes = match parts[..] {
-        [named, request_hex, response_hex] if named == model => (request_hex, response_hex),
-        [request_hex, response_hex] => (request_hex, response_hex),
-        _ => return Err("it is for another model, or not for one exchange".into()),
+    let [named, request_hex, response_hex] = parts[..] else {
+        return Err("it is not for one exchange".into());
     };
+    if named != model {
+        return Err("it is for another model".into());
+    }
     let same = |text: &str, body: &[u8]| {
         hex::decode(text).is_ok_and(|digest| digest == Sha256::digest(body).as_slice())
     };
-    if !same(hashes.0, request_body) || !same(hashes.1, response_body) {
+    if !same(request_hex, request_body) || !same(response_hex, response_body) {
         return Err("it covers other bytes than this exchange".into());
     }
     Ok(json!({
@@ -914,25 +930,27 @@ pub(crate) struct Reviewed {
     pub evidence: String,
     pub evidence_signature: String,
     pub submission_id: String,
-    pub trace_id: String,
 }
 
 /// Proof before sending, for the witness: a quote is fetched under a fresh
-/// nonce and checked against the pin in `account` (Intel's rules, the
-/// report data tying it to the signing address and the nonce, and an
+/// nonce and checked at `now` against the pin in `account` (Intel's rules,
+/// the report data tying it to the signing address and the nonce, and an
 /// accepted set of measurements), and only once it passes is the exchange
 /// sent to it, as one raw contribution, for redaction. A quote that does
-/// not pass stops the review, and nothing is sent.
+/// not pass stops the review, and nothing is sent. The quote ties no TLS
+/// key: the exchange goes on an ordinary certificate check, to whatever
+/// ends TLS for the witness's address (docs/near-share.md, section 8).
 pub(crate) fn review(
     net: &Net,
     kept: &mut Kept,
     account: &Account,
     scopes: &[String],
-    uses: &[String],
     exchange: &Exchange,
     version: &str,
+    now: u64,
 ) -> Result<Reviewed, Halt> {
-    granted(scopes, uses)?;
+    granted(scopes)?;
+    known(&account.issuer_url, &account.witness)?;
     let witness = account.witness.pinned().map_err(Halt::Request)?;
     let text = |b64: &str| {
         STANDARD
@@ -945,11 +963,11 @@ pub(crate) fn review(
     if !exchange.receipt.is_object() {
         return Err(Halt::Request("the exchange has no receipt".into()));
     }
-    let contribution = contribution(account, scopes, &request_body, &response_body, version)?;
+    let contribution = contribution(account, scopes, &request_body, &response_body, version, now)?;
     let body = serde_json::to_vec(&json!({
         "raw_contribution": contribution.raw,
         "granted_scopes": scopes,
-        "granted_uses": uses,
+        "granted_uses": uses(scopes),
         "inference_receipt": exchange.receipt,
     }))
     .expect("JSON serializes");
@@ -964,7 +982,7 @@ pub(crate) fn review(
     }
     let quoted: Quoted = fetch_json(
         net,
-        &witness.host,
+        WITNESS,
         "the witness",
         &format!("/v1/attestation?nonce={}", hex::encode(nonce)),
     )?;
@@ -973,7 +991,6 @@ pub(crate) fn review(
             "the witness's quote is not hex".into(),
         ))
     })?;
-    let now = now()?;
     let collateral = kept
         .collateral_for_quote(&net.intel, &quote, now)
         .map_err(Halt::Fetch)?;
@@ -986,7 +1003,7 @@ pub(crate) fn review(
     // Only now, the witness's enclave having passed, is the exchange sent.
     let answer = post(
         net,
-        &witness.host,
+        WITNESS,
         "the witness",
         "/v1/witness/admission",
         &[("Content-Type", "application/json")],
@@ -1009,15 +1026,13 @@ pub(crate) fn review(
         evidence_signature: header("x-trace-admission-signature")?,
         envelope: answer.body,
         submission_id: contribution.submission_id,
-        trace_id: contribution.trace_id,
     })
 }
 
-/// One raw contribution and the ids it was made with.
+/// One raw contribution and the submission id it was made with.
 struct Contribution {
     raw: Value,
     submission_id: String,
-    trace_id: String,
 }
 
 /// The exchange as the commons' raw contribution, in the shape its own
@@ -1030,13 +1045,14 @@ fn contribution(
     request_body: &str,
     response_body: &str,
     version: &str,
+    now: u64,
 ) -> Result<Contribution, Halt> {
     if version.is_empty() || version.len() > 64 || !version.bytes().all(|b| b.is_ascii_graphic()) {
         return Err(Halt::Request(
             "the version is not one a trace can name".into(),
         ));
     }
-    let at = rfc3339(now()?);
+    let at = rfc3339(now);
     let (submission_id, trace_id) = (uuid()?, uuid()?);
     let raw = json!({
         "trace_id": trace_id,
@@ -1084,11 +1100,7 @@ fn contribution(
         "embedding_analysis": null,
         "value": {"submission_score": 0.0, "credit_points_pending": 0.0},
     });
-    Ok(Contribution {
-        raw,
-        submission_id,
-        trace_id,
-    })
+    Ok(Contribution { raw, submission_id })
 }
 
 /// The witness's envelope and headers, as the person was shown them.
@@ -1104,16 +1116,16 @@ pub(crate) struct Envelope {
 }
 
 /// Uploads the envelope under a new claim: its bytes exactly, with the
-/// witness's four headers. The commons' answer as it came.
+/// witness's four headers. The commons' answer as it came, which must name
+/// the trace's status.
 pub(crate) fn upload(
     net: &Net,
     device: &Device,
     account: &Account,
     scopes: &[String],
-    uses: &[String],
     envelope: &Envelope,
 ) -> Result<Value, Halt> {
-    granted(scopes, uses)?;
+    granted(scopes)?;
     let body = STANDARD
         .decode(&envelope.body)
         .map_err(|_| Halt::Request("the envelope is not base64".into()))?;
@@ -1128,7 +1140,7 @@ pub(crate) fn upload(
             "the witness's headers are not ones a request can carry".into(),
         ));
     }
-    let claim = claim(net, device, account, scopes, uses)?;
+    let claim = claim(net, device, account, scopes, &uses(scopes))?;
     let answer = post(
         net,
         INGEST,
@@ -1147,7 +1159,11 @@ pub(crate) fn upload(
         None,
         &[&claim],
     )?;
-    reply_json(&answer)
+    let receipt: Value = reply_json(&answer)?;
+    if !receipt["status"].is_string() {
+        return Err(Halt::Reply("the commons' receipt names no status".into()));
+    }
+    Ok(receipt)
 }
 
 /// The commons' status of each submission, read under a claim for the
@@ -1190,8 +1206,6 @@ pub(crate) fn status(
 pub(crate) struct Withdrawn {
     pub commons: Value,
     pub session: Option<String>,
-    /// RFC 3339, as the commons sent it.
-    pub session_expires_at: Option<String>,
 }
 
 /// Withdraws one submission under the account session.
@@ -1212,19 +1226,12 @@ pub(crate) fn withdraw(net: &Net, session: &str, submission: &str) -> Result<Wit
         None,
         &[session],
     )?;
-    let renewed = |name: &str| {
-        answer
-            .header(name)
-            .filter(|value| header_safe(value))
-            .map(str::to_owned)
-    };
-    let session = renewed("x-trace-commons-session-token");
     Ok(Withdrawn {
         commons: reply_json(&answer)?,
-        session_expires_at: session
-            .as_ref()
-            .and(renewed("x-trace-commons-session-expires-at")),
-        session,
+        session: answer
+            .header("x-trace-commons-session-token")
+            .filter(|value| header_safe(value))
+            .map(str::to_owned),
     })
 }
 
@@ -1324,17 +1331,6 @@ fn reply_json<T: DeserializeOwned>(answer: &Answer) -> Result<T, Halt> {
         .map_err(|_| Halt::Reply("it is not the JSON that was asked for".into()))
 }
 
-/// The host of an address that is `https://` and a host name alone.
-fn https_host(url: &str) -> Option<String> {
-    let host = url.strip_prefix("https://")?;
-    let host = host.strip_suffix('/').unwrap_or(host);
-    (!host.is_empty()
-        && host
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.'))
-    .then(|| host.to_ascii_lowercase())
-}
-
 /// Text a header can carry: printable ASCII, no line breaks.
 fn header_safe(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|b| (0x20..0x7f).contains(&b))
@@ -1399,7 +1395,7 @@ fn rfc3339(seconds: u64) -> String {
     )
 }
 
-fn now() -> Result<u64, Halt> {
+pub(crate) fn now() -> Result<u64, Halt> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| Halt::Request("the clock reads before 1970".into()))?
@@ -1422,13 +1418,16 @@ mod checks {
     use ring::signature::{UnparsedPublicKey, ED25519};
     use serde_json::{json, Value};
 
-    use super::{subject, Device, WITNESS_TAG};
+    use super::{review, subject, Account, Device, Exchange, Halt, Net, WITNESS};
     use crate::stand_in::{self, StandIn};
-    use crate::verify::{family, verify_witness, witness_set};
-    use crate::{Collateral, Helper, Kept, Pins, Refusal, Who};
+    use crate::{
+        Collateral, GpuProof, Helper, IntelProof, Kept, Passed, Pins, Proof, Refusal, TcbStatus,
+        Who,
+    };
 
     /// A device key's seed, made for these checks.
     const SEED: [u8; 32] = [9; 32];
+    const MODEL: &str = "z-ai/glm-5.3-flash";
 
     fn device() -> Device {
         Device::from_line(&STANDARD.encode(SEED)).unwrap()
@@ -1450,7 +1449,7 @@ mod checks {
             "issuer_url": "https://issuer.tracecommons.ai",
             "audience": "trace-commons-ingest",
             "witness": {
-                "url": "https://witness.tracecommons.ai",
+                "url": format!("https://{WITNESS}"),
                 "signing_address": format!("0x{}", "11".repeat(20)),
                 "expected_measurements": [format!("mrtd={}", "00".repeat(48))]
             }
@@ -1461,13 +1460,36 @@ mod checks {
         serde_json::from_str(&helper.respond(line.to_string().as_bytes())).unwrap()
     }
 
+    /// A proof that passed at `at`, for a gateway whose certificate key
+    /// hashes to `gateway_tls_key`, kept for a `proof_age` of 600 seconds.
+    fn kept(at: u64, gateway_tls_key: [u8; 32]) -> Kept {
+        let passed = Passed {
+            proof: Proof {
+                intel: IntelProof {
+                    gateway_key: [0; 32],
+                    gateway_tls_key,
+                    model_key: [0x42; 32],
+                    instances: 3,
+                    gateway_tcb: TcbStatus::UpToDate,
+                    model_tcb: vec![TcbStatus::UpToDate; 3],
+                },
+                gpu: GpuProof { gpus: 8 },
+            },
+            at,
+        };
+        let mut kept = Kept::new(Duration::from_secs(3600)).unwrap();
+        kept.keep(MODEL, &passed, 600);
+        kept
+    }
+
     /// Ruling 2: nothing raw goes to a witness whose quote does not pass.
     /// The stand-in witness answers the attestation read with a real quote
     /// that is not a witness's, the gateway's in tests/fixtures/report.json,
     /// and Intel's real collateral for it is held, so nothing is fetched
-    /// from Intel. That quote passes Intel's own check at the time it was
-    /// fetched; its report data is not the witness's tag, address and our
-    /// nonce, so the review stops and the exchange is never sent.
+    /// from Intel. The review runs at the time that collateral was fetched,
+    /// when the quote passes Intel's own rules, so it stops for the one
+    /// reason left: its report data is not the witness's tag, address and
+    /// our nonce. The exchange is never sent.
     #[test]
     fn an_unverified_witness_quote_sends_nothing() {
         let report: Value =
@@ -1483,61 +1505,127 @@ mod checks {
             .parse()
             .unwrap();
 
-        let quote = hex::decode(&quote_hex).unwrap();
-        let (fmspc, ca) = family(&quote).unwrap();
-        let held = collateral
-            .iter()
-            .find(|c| c.fmspc == fmspc && c.ca == ca)
-            .unwrap();
-        let mut report_data = [0u8; 64];
-        report_data[..8].copy_from_slice(WITNESS_TAG);
-        let accepted = [witness_set(&format!("mrtd={}", "00".repeat(48))).unwrap()];
-        assert_eq!(
-            verify_witness(&quote, &report_data, &accepted, held, fetched_at),
-            Err(Refusal::ReportData(Who::Witness))
-        );
-
         let stand_in = StandIn::start(move |seen, _| {
             match (seen.host.as_str(), seen.path.split('?').next().unwrap()) {
-                ("witness.tracecommons.ai", "/v1/attestation") => {
+                (WITNESS, "/v1/attestation") => {
                     stand_in::json(200, json!({ "quote_hex": quote_hex }))
                 }
                 _ => stand_in::json(404, json!({})),
             }
         });
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
         let mut kept = Kept::new(Duration::from_secs(3600)).unwrap();
-        kept.hold_collateral(collateral, now);
-        let mut helper = helper(kept);
-        let review = json!({
-            "request": "review",
-            "route": stand_in.route(),
-            "account": account(),
-            "scopes": ["debugging_evaluation"],
-            "uses": ["debugging", "evaluation", "aggregate_analytics"],
-            "exchange": {
-                "request": STANDARD.encode(r#"{"model":"z-ai/glm-5.3-flash","messages":[{"role":"user","content":"ping"}]}"#),
-                "response": STANDARD.encode(r#"{"id":"chatcmpl-1","choices":[]}"#),
-                "receipt": {"text": "stand-in"}
-            },
-            "version": "1.0"
-        });
-        let answer = answer(&mut helper, &review);
-        assert_eq!(answer["answer"], "stopped", "{answer}");
-        assert_eq!(answer["stop"], "refused");
-        assert_eq!(answer["sent"], false);
+        kept.hold_collateral(collateral, fetched_at);
+        let roots = stand_in::roots();
+        let net = Net {
+            route: stand_in.tor(),
+            intel: stand_in.tor(),
+            roots: &roots,
+        };
+        let account: Account = serde_json::from_value(account()).unwrap();
+        let exchange: Exchange = serde_json::from_value(json!({
+            "request": STANDARD.encode(r#"{"model":"z-ai/glm-5.3-flash","messages":[{"role":"user","content":"ping"}]}"#),
+            "response": STANDARD.encode(r#"{"id":"chatcmpl-1","choices":[]}"#),
+            "receipt": {"text": "stand-in"}
+        }))
+        .unwrap();
+        let scopes = ["debugging_evaluation".to_owned()];
+        let halt = review(
+            &net, &mut kept, &account, &scopes, &exchange, "1.0", fetched_at,
+        )
+        .err();
+        assert!(
+            matches!(halt, Some(Halt::Refused(Refusal::ReportData(Who::Witness)))),
+            "{halt:?}"
+        );
         let seen = stand_in.seen();
         assert_eq!(seen.len(), 1, "{seen:?}");
         assert_eq!(
             (seen[0].host.as_str(), seen[0].method.as_str()),
-            ("witness.tracecommons.ai", "GET")
+            (WITNESS, "GET")
         );
         let nonce = seen[0].path.strip_prefix("/v1/attestation?nonce=").unwrap();
         assert!(nonce.len() == 64 && nonce.bytes().all(|b| b.is_ascii_hexdigit()));
         assert!(seen[0].body.is_empty());
+    }
+
+    /// Proof before sending, for the readied message, which goes without
+    /// NEAR's encryption: with no proof that passed it is never written,
+    /// and with one it goes only on a connection whose certificate key is
+    /// the one that proof checked. The stand-in is NEAR's gateway; its
+    /// certificate is from an authority Mozilla's roots, which a proof's own
+    /// fetches go by, do not hold, so no proof fetched here passes, and a
+    /// kept one is given instead.
+    #[test]
+    fn the_readied_message_goes_only_where_its_proof_covers() {
+        let stand_in = StandIn::start(|seen, _| match seen.path.as_str() {
+            "/v1/chat/completions" => {
+                stand_in::json(200, json!({ "id": "chatcmpl-1", "choices": [] }))
+            }
+            _ => stand_in::json(404, json!({})),
+        });
+        let admission = format!("tcad1:{}:0f:1900000000", "ab".repeat(32));
+        let readied = json!({
+            "request": "readied",
+            "model": MODEL,
+            "route": stand_in.route(),
+            "proof_age": 600,
+            "key": "sk-test",
+            "body": {"model": MODEL, "messages": [{"role": "user", "content": "ping"}]},
+            "admission": admission
+        });
+        let stopped = |answer: &Value| {
+            (
+                answer["answer"].clone(),
+                answer["stop"].clone(),
+                answer["sent"].clone(),
+            )
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // No proof kept: the one fetched cannot pass, and nothing is written.
+        let unproved = answer(
+            &mut helper(Kept::new(Duration::from_secs(3600)).unwrap()),
+            &readied,
+        );
+        assert_eq!(
+            stopped(&unproved),
+            (json!("stopped"), json!("fetch"), json!(false)),
+            "{unproved}"
+        );
+        assert!(stand_in.seen().is_empty());
+
+        // A proof that passed, but for another certificate key: the
+        // connection is made, and nothing is written on it.
+        let elsewhere = answer(&mut helper(kept(now - 5, [7; 32])), &readied);
+        assert_eq!(
+            stopped(&elsewhere),
+            (json!("stopped"), json!("pin"), json!(false)),
+            "{elsewhere}"
+        );
+        assert!(stand_in.seen().is_empty());
+
+        // The same proof, for the stand-in's own key: the message goes as
+        // written, with the commons' challenge and no encryption headers.
+        let covered = answer(&mut helper(kept(now - 5, stand_in::pin())), &readied);
+        assert_eq!(covered["answer"], "exchanged", "{covered}");
+        assert_eq!(covered["sent"], true);
+        let seen = stand_in.seen();
+        let sent: Vec<_> = seen
+            .iter()
+            .filter(|s| s.path == "/v1/chat/completions")
+            .collect();
+        assert_eq!(sent.len(), 1, "{seen:?}");
+        assert_eq!(
+            (sent[0].host.as_str(), sent[0].method.as_str()),
+            ("cloud-api.near.ai", "POST")
+        );
+        let body: Value = serde_json::from_slice(&sent[0].body).unwrap();
+        assert_eq!(body["metadata"]["trace_commons_admission"], admission);
+        assert_eq!(body["messages"][0]["content"], "ping");
+        assert_eq!(sent[0].header("x-signing-algo"), None);
     }
 
     /// The upload is the envelope the person was shown, byte for byte. The
@@ -1566,7 +1654,6 @@ mod checks {
             "device_key": STANDARD.encode(SEED),
             "account": account(),
             "scopes": ["debugging_evaluation", "benchmark_only"],
-            "uses": ["debugging", "evaluation", "benchmark_generation", "aggregate_analytics"],
             "envelope": {
                 "body": STANDARD.encode(envelope),
                 "certificate": "witness-certificate",
@@ -1605,7 +1692,15 @@ mod checks {
         let asked: Value = serde_json::from_slice(&claim.body).unwrap();
         assert_eq!(asked["subject"], subject(&device.key_id()));
         assert_eq!(asked["consent_scopes"], upload["scopes"]);
-        assert_eq!(asked["allowed_uses"], upload["uses"]);
+        assert_eq!(
+            asked["allowed_uses"],
+            json!([
+                "debugging",
+                "evaluation",
+                "benchmark_generation",
+                "aggregate_analytics"
+            ])
+        );
 
         assert_eq!(
             (

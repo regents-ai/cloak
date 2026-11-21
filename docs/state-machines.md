@@ -1367,82 +1367,106 @@ opening --the keychain fails--> opening, with `stop` (switch on again reads agai
 signedOut, signedIn(any) --Sign In--> signingIn (listen; the browser opened; enrol waits for it)
 signingIn --the browser hands back a session, enrolled, item written--> signedIn(idle)
 signingIn --stops, or Cancel--> signedIn(idle) with an item, else signedOut
+signingIn --ten minutes on, still the same sign-in--> signedIn(idle) with an item, else signedOut, with `stop` (Try Again)
+signedIn(any) --Sign Out, asked first--> signedOut (the keychain item removed)
 signedIn(any) --Ready on a NEAR chat (a claim, then the challenge)--> signedIn(readied(chat))
-readied(chat) --that chat's next Send, its challenge not ended--> sending(chat, turn)
+readied(chat) --that chat's next Send, the switch on at the press, its challenge not ended--> sending(chat, turn)
 sending --answered--> answered(chat, turn, exchange)
 sending --stopped before reaching NEAR--> readied(chat)
 sending --stopped, may have reached NEAR--> idle
 answered, reviewed --Review: the witness's quote checked, then the exchange sent to it--> reviewed(answered, envelope)
-reviewed --Share: the envelope's bytes uploaded, exactly--> idle, the trace kept
-any --switch off--> off (the sharing helper ended at once)
+reviewed --Share of the review shown, still the one held: the envelope's bytes uploaded, exactly--> idle, the trace kept
+any --switch off--> off (the sharing helper ended at once; a Share or Withdraw under way leaves `stop`)
 ```
 
 - **Two helpers.** The readied message goes on the chat's helper
   (`Near.readied`, behind any NEAR line under way). Every other sharing
   step goes on a helper of its own, the same file under the same pin
   (`AppDelegate.traces`), since `enrol` holds its helper until the browser
-  hands back a session. Cancel, a second Sign In, the switch going off and
-  Quit end that helper at once, a step under way or not.
+  hands back a session. Cancel, a second Sign In, the sign-in's ten
+  minutes, Sign Out, the switch going off and Quit end that helper at once,
+  a step under way or not, and forget it: the next step starts a new one.
 - **Sealed unless readied.** `TraceShare.send` sends a message as
-  `Near.ask` always has, byte for byte, unless Share Traces is on, signed
-  in, the message's chat is the one readied, the chat is NEAR's and not an
-  agent's, and its challenge has not ended. Only then does it go as
-  `readied`, without Cloak's encryption and carrying the challenge. Only the
-  first message after Ready does; one that stopped before reaching NEAR
-  leaves the chat readied. Ready on another chat replaces the one readied,
-  and whatever came of it.
+  `Near.ask` always has, byte for byte, unless Share Traces is on at the
+  press (`send`'s own `shares`, the switch's value as the message goes),
+  signed in, the message's chat is the one readied, the chat is NEAR's and
+  not an agent's, and its challenge has not ended. Only then does it go as
+  `readied`: the whole chat so far and the new message, without Cloak's
+  encryption, carrying the challenge. Only the first message after Ready
+  does; one that stopped before reaching NEAR leaves the chat readied, and
+  one that may have reached it clears it. Ready on another chat replaces
+  the one readied, and whatever came of it.
 - **Every step a press.** Ready, Review, Share, Refresh and Withdraw each
   write one line, at their press, and no press waits for another: the
   helper takes them one at a time. A press certain to fail writes nothing:
   Ready on a chat of another mode or an agent's, or while not signed in;
-  Review on an exchange with no receipt; Share before a review. Status is
-  read only at a trace's Refresh, for that trace alone, never by itself.
+  Review on an exchange with no receipt; Share before a review, or of a
+  review that is not the one held (which stops, saying nothing was sent).
+  Status is read only at a trace's Refresh, for that trace alone, never by
+  itself.
 - **Kept.** One keychain item, `sh.regents.cloak.traces`
   (`TracesKeychain`): the device key's 32-byte seed (made with CryptoKit at
   the first sign-in, and used again at each later one), the account the
   commons enrolled, its session, the provider last signed in with, the
-  scopes granted, and each trace shared with its chat, its message, the
-  commons' ids and its last status. Read when the switch turns on, and
-  written after each change, one write after another
-  (`TraceShare.keep`). NEAR AI's own session is the helper's alone and is
-  dropped once the enrolment is sent. What was readied, answered or
-  reviewed is in memory only.
-- **Late answers.** `epoch` counts each turn of the switch and each sign-in;
-  an answer from before one changes nothing, except that an upload or a
-  withdrawal the commons took is kept whatever happened since.
+  scopes granted, and each trace shared with its chat, its message, its
+  submission id, when it was shared and its last status. Read when the
+  switch turns on, and written after each change; every read, write and
+  removal waits for the one before (`TraceShare.onVault`). Sign Out
+  removes it. NEAR AI's own session is the helper's alone and is dropped
+  once the enrolment is sent. What was readied, answered or reviewed is in
+  memory only.
+- **Late answers.** `epoch` counts each turn of the switch, each sign-in,
+  each sign-in that ran out and each Sign Out; an answer from before one
+  changes nothing, except that an upload or a withdrawal the commons took
+  is kept whatever happened since: with the switch off, it is written into
+  the keychain item for the same device key (`TraceShare.change`), so
+  Withdraw is there when the switch comes back on.
 - **Stops.** `stop` holds the last step that stopped: the step, the chat
   and the trace it was for, and why (the helper's own stop, with whether
   its request may have reached its host, or `key` for the keychain),
-  until the next press or it is dismissed. Each screen shows its own
-  steps' stops: the Wallet sheet the keychain's and the sign-in's, the
-  Ready sheet Ready's for its chat, the Review sheet Review's and
-  Share's for its chat, and a trace's line its Refresh and Withdraw.
+  until the next press or it is dismissed. Two kinds are the Mac's own:
+  `expired`, the sign-in's ten minutes, and `interrupted`, the switch
+  turned off or Sign Out with Share or Withdraw under way, which says it
+  may have arrived. Each screen shows its own steps' stops: the Wallet
+  sheet the keychain's, the sign-in's and those two, with the switch off
+  too; the Ready sheet Ready's for its chat; the Review sheet Review's and
+  Share's for its chat; and a trace's line its Refresh and Withdraw.
 - **Screens.** The Wallet sheet's Share Traces section: the switch, the
-  account, the four scopes to grant and the terms. At the foot of a NEAR
-  chat with a message, the share control, dimmed while the switch is off
-  (a press says so, and nothing runs): Share, which opens the Ready
-  sheet; once readied, Next message shares; once answered, Review, which
-  opens the Review sheet (Before and After side by side, Review, then
-  Share). Under each NEAR message, a line for each
+  account (its symbol a menu: sign in again with GitHub or Google, or Sign
+  Out, asked first), the four scopes to grant and the terms. At the foot of
+  a NEAR chat with a message, the share control, dimmed while the switch is
+  off (a press says so, and nothing runs): Share, which opens the Ready
+  sheet, which says this chat so far and the next message go to NEAR
+  without end-to-end encryption; once readied, Next message shares; once
+  answered, Review, which opens the Review sheet (Before as lines, who said
+  it and then the words, with Exact under it; After as the envelope's
+  bytes; Review, then Share). Under each NEAR message, a line for each
   trace shared from it: its status as the commons last gave it, its
   credit when there is some, Refresh, and Withdraw, asked first, while
   the commons still holds it. A control is off only where its press is
   certain to fail, with a few words beside it: Sign in to share, Tor
-  needs Cloak running, Time ran out (with Ready Again; the control looks
-  at the challenge each second), No receipt (with Ready Again), and
+  needs Cloak running, Time ran out (with Ready Again; the control
+  changes once, at the challenge's end), No receipt (with Ready Again), and
   Finish signing in.
 
 `app/Tests/CloakTests/TraceShareTests.swift` checks, against stand-in
 helpers pinned as the real one is and a stand-in for the keychain: that
 each step writes its line only at its press, so nothing reaches the
-witness before Review nor the commons before Share, and a Review of an
-exchange with no receipt writes nothing; that the upload carries exactly
-the envelope the review gave back; that no chat of another mode and no
-agent task can be readied; and that every other message goes as today's
-`ask`, field for field, with the switch off, in a chat not readied while
-another is, and once the challenge has ended. `guest/near/src/share.rs`'s
-own checks show that a witness quote that does not pass sends nothing,
-and that the upload's body is the envelope's bytes exactly.
+witness before Review nor the commons before Share, a Review of an
+exchange with no receipt writes nothing, and a Share of a review no longer
+held writes nothing; that the upload carries exactly the envelope the
+review gave back; that no chat of another mode and no agent task can be
+readied; that every other message goes as today's `ask`, field for field,
+with the switch off, in a chat not readied while another is, and once the
+challenge has ended; that only the one message after Ready goes readied,
+a stop before NEAR keeping the chat readied and one after clearing it;
+and that with the switch off the sharing helper is given nothing, a send
+with the switch off at the press goes sealed, and turning it off forgets
+the chat readied. `guest/near/src/share.rs`'s own checks show that a
+witness quote that does not pass sends nothing, refused for its report
+data at a fixed time; that the readied message goes only after a passed
+proof and only on the connection its key covers; and that the upload's
+body is the envelope's bytes exactly.
 
 ## 10. Stages still implied (found 15 November 2026)
 

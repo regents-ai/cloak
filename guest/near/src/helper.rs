@@ -66,7 +66,6 @@ enum Request {
         device_key: String,
         account: Account,
         scopes: Vec<String>,
-        uses: Vec<String>,
     },
     /// The readied message: an `ask`, unencrypted, carrying `admission`.
     Readied {
@@ -83,7 +82,6 @@ enum Request {
         route: RouteLine,
         account: Account,
         scopes: Vec<String>,
-        uses: Vec<String>,
         exchange: Exchange,
         /// Cloak's version, which the trace names.
         version: String,
@@ -93,7 +91,6 @@ enum Request {
         device_key: String,
         account: Account,
         scopes: Vec<String>,
-        uses: Vec<String>,
         envelope: Envelope,
     },
     Status {
@@ -176,11 +173,7 @@ enum Answer {
     Enrolled {
         sent: bool,
         account: Account,
-        account_id: String,
-        anchor_hash: String,
         session: String,
-        /// RFC 3339.
-        session_expires_at: String,
     },
     /// A `ready` got the commons' challenge.
     Admitted {
@@ -213,7 +206,6 @@ enum Answer {
         evidence: String,
         evidence_signature: String,
         submission_id: String,
-        trace_id: String,
     },
     /// An `upload` was taken: the commons' answer as it came.
     Uploaded { sent: bool, commons: Value },
@@ -226,8 +218,6 @@ enum Answer {
         commons: Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         session: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        session_expires_at: Option<String>,
     },
     /// A line stopped at the step `stop`; `code` is the host's status,
     /// given only when `stop` is `status`.
@@ -390,16 +380,9 @@ impl Helper {
                 device_key,
                 account,
                 scopes,
-                uses,
             } => Device::from_line(&device_key)
                 .and_then(|device| {
-                    share::ready(
-                        &self.net(&route.routes()),
-                        &device,
-                        &account,
-                        &scopes,
-                        &uses,
-                    )
+                    share::ready(&self.net(&route.routes()), &device, &account, &scopes)
                 })
                 .map(|admission| Answer::Admitted {
                     sent: true,
@@ -411,7 +394,6 @@ impl Helper {
                 route,
                 account,
                 scopes,
-                uses,
                 exchange,
                 version,
             } => {
@@ -421,38 +403,39 @@ impl Helper {
                     intel: routes.intel,
                     roots: &self.roots,
                 };
-                share::review(
-                    &net,
-                    &mut self.kept,
-                    &account,
-                    &scopes,
-                    &uses,
-                    &exchange,
-                    &version,
-                )
-                .map(|reviewed| Answer::Reviewed {
-                    sent: true,
-                    envelope: STANDARD.encode(&reviewed.envelope),
-                    certificate: reviewed.certificate,
-                    signature: reviewed.signature,
-                    evidence: reviewed.evidence,
-                    evidence_signature: reviewed.evidence_signature,
-                    submission_id: reviewed.submission_id,
-                    trace_id: reviewed.trace_id,
-                })
-                .unwrap_or_else(halted)
+                share::now()
+                    .and_then(|now| {
+                        share::review(
+                            &net,
+                            &mut self.kept,
+                            &account,
+                            &scopes,
+                            &exchange,
+                            &version,
+                            now,
+                        )
+                    })
+                    .map(|reviewed| Answer::Reviewed {
+                        sent: true,
+                        envelope: STANDARD.encode(&reviewed.envelope),
+                        certificate: reviewed.certificate,
+                        signature: reviewed.signature,
+                        evidence: reviewed.evidence,
+                        evidence_signature: reviewed.evidence_signature,
+                        submission_id: reviewed.submission_id,
+                    })
+                    .unwrap_or_else(halted)
             }
             Request::Upload {
                 route,
                 device_key,
                 account,
                 scopes,
-                uses,
                 envelope,
             } => Device::from_line(&device_key)
                 .and_then(|device| {
                     let net = self.net(&route.routes());
-                    share::upload(&net, &device, &account, &scopes, &uses, &envelope)
+                    share::upload(&net, &device, &account, &scopes, &envelope)
                 })
                 .map(|commons| Answer::Uploaded {
                     sent: true,
@@ -482,7 +465,6 @@ impl Helper {
                     sent: true,
                     commons: withdrawn.commons,
                     session: withdrawn.session,
-                    session_expires_at: withdrawn.session_expires_at,
                 })
                 .unwrap_or_else(halted),
         }
@@ -512,10 +494,7 @@ impl Helper {
         Ok(Answer::Enrolled {
             sent: true,
             account: enrolled.account,
-            account_id: enrolled.account_id,
-            anchor_hash: enrolled.anchor_hash,
             session: enrolled.session,
-            session_expires_at: enrolled.session_expires_at,
         })
     }
 
@@ -553,6 +532,7 @@ fn halted(halt: Halt) -> Answer {
         Halt::Signin(_) => ("signin", None),
         Halt::Fetch(_) => ("fetch", None),
         Halt::Claim(_) => ("claim", None),
+        Halt::Moved(_) => ("moved", None),
         Halt::Refused(_) => ("refused", None),
         Halt::Connect(_) => ("connect", None),
         Halt::Send(_) => ("send", None),
