@@ -56,7 +56,7 @@ In the Gateway, one Rust background service does every step. It runs inside the 
 
 1. **Device key.** An Ed25519 key pair, generated once with `ring` as PKCS8 (`contributor/identity.rs:65-75`). The Gateway stores it through its credential store, under `trace-commons.account.credentials` in the login keychain (`contributor/channel.rs:98`).
 2. **Enrollment without an invite.**
-   - Cloak sends `POST /v1/account/near-ai/provision/start/v2` to the commons (`https://ingest.tracecommons.ai`, `contributor/channel.rs:102`), then `…/finish/v2` (`contributor/daemon/nearai_onboarding.rs:80-86`).
+   - Cloak sends `POST /v1/account/near-ai/provision/start` to the commons (`https://ingest.tracecommons.ai`, `contributor/channel.rs:102`), then `…/provision/finish` (`contributor/daemon/nearai_onboarding.rs:71-80`). The `/v2` routes are for the commons' staging server only (`:81-86`).
    - The NEAR AI JWT goes in the request body, never as an `Authorization` header, so the commons can look it up. The client sends no account id, and there is no field for one (`nearai_onboarding.rs:11-17`, `:36-40`).
    - The commons returns a nonce. The device signs a preimage that ties the nonce to this ceremony, to the device's public key and to a PKCE challenge (`nearai_onboarding.rs:19-30`). The bytes come from `protocol/onboarding.rs:232` (`near_ai_provisioning_device_bytes`).
    - Result: a tenant in the commons' `near-` namespace, tied to that NEAR AI account (`ingest/admission.rs:231-245`).
@@ -445,7 +445,7 @@ Block numbers count from 0 in `tc-terms.json`. Quoted from the live draft (`tc-t
 2. **Whether a chat, once admitted, is ever accepted.** It would be at least Medium (1.5 step 9), so a reviewer decides. Whether reviewers take a plain chat at all is unknown.
 3. **Credit for a chat.** It depends on point 2, on Training being on, and on the gate's scoring of a conversation with no tool calls.
 4. **Tor.** Whether the commons' hosts answer Tor exits.
-5. **Enrollment from Cloak.** It is untried. The provision v2 body was read in the source, but no call was made.
+5. **Enrollment from Cloak.** It is untried. The provision body was read in the source, but no call was made.
 6. **Whether the NEAR AI sign-in must be kept after enrollment.** It matters for re-enrolling, for credit or for the balance. The source suggests not for sharing, but this is unconfirmed.
 7. **Whether the person signs in to the NEAR AI account that pays for their Cloak chats.** Credit lands in the sign-in account (terms block 21). Cloak cannot check that it matches the account behind the NEAR key in Cloak.
 

@@ -206,7 +206,7 @@ There are seven steps. Step 1 happens once, at setup. Steps 2 to 7 happen for ea
    - **What Cloak would then hold:** NEAR AI's refresh token and a short-lived session token. These can manage the account: list organizations and workspaces, mint API keys and read the balance (`contributor/daemon/nearai_credential/api.rs:563-700`, `:855-884`). Cloak needs them once, for enrolment, and should drop them straight after.
    - Cloak's entitlements are virtualization only, with no App Sandbox (`app/RegentsCloak.entitlements`), so a loopback listener needs no new entitlement.
 2. **Enrolment.**
-   - A production build calls `POST /v1/account/near-ai/provision/start`, then `…/finish`. The `/v2` routes are the staging build's (`contributor/daemon/nearai_onboarding.rs:71-86`). This corrects section 1.2 of `docs/near-traces-incloak.md`, which named the `/v2` routes.
+   - A production build calls `POST /v1/account/near-ai/provision/start`, then `…/finish`. The `/v2` routes are the staging build's (`contributor/daemon/nearai_onboarding.rs:71-86`). Section 1.2 of `docs/near-traces-incloak.md` named the `/v2` routes and is corrected with this note.
    - The NEAR AI session token goes in the body, never as an `Authorization` header. The client sends no account id (`:11-18`, `:39-41`).
    - The device signs a preimage that ties the nonce, the ceremony, its public key and a PKCE challenge together (`:22-31`, `:285`; the bytes are `protocol/onboarding.rs:232`).
    - Result: a `nearai-…` tenant, an account access token and the device's key id (`:95-114`). The witness pin and the receipt endpoint come from what the commons publishes at sign-up (`:479-510`; `repo/docs/operator/native-admission-session.md:22-26`).
