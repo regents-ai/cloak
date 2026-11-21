@@ -124,23 +124,32 @@ private struct SignInMenu: View {
     }
 }
 
-/// The share control at the foot of a NEAR chat while Share Traces is on:
-/// Share, which opens the sheet that readies the chat; once readied, how
-/// long its challenge lasts, or that it ran out, with Ready Again; once
-/// answered, Review, which opens the review sheet, off with "No receipt"
-/// when NEAR gave none. Off with "Sign in to share" until signed in.
+/// The share control at the foot of a NEAR chat: Share, which opens the
+/// sheet that readies the chat; once readied, that the next message shares,
+/// or that its time ran out, with Ready Again; once answered, Review, which
+/// opens the review sheet, off with "No receipt" when NEAR gave none. Off
+/// with "Sign in to share" until signed in, and dimmed while Share Traces
+/// is off, when a press says so. Never hidden.
 struct ShareControl: View {
     let share: TraceShare
     let route: NearRoute?
     let conversation: Conversation
     @State private var readying = false
     @State private var reviewing = false
+    @State private var explaining = false
 
     var body: some View {
         HStack(spacing: 4) {
             switch share.state {
             case .off:
-                EmptyView()
+                SymbolButton("Share", symbol: "square.and.arrow.up") { explaining = true }
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHint("Share Traces is off.")
+                    .popover(isPresented: $explaining, arrowEdge: .top) {
+                        Text("Share Traces is off. Turn it on in Wallet.")
+                            .font(.callout)
+                            .padding(12)
+                    }
             case .opening:
                 SymbolButton("Share", symbol: "square.and.arrow.up") {}
                     .disabled(true)

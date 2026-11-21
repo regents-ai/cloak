@@ -1419,10 +1419,11 @@ any --switch off--> off (the sharing helper ended at once)
   Share's for its chat, and a trace's line its Refresh and Withdraw.
 - **Screens.** The Wallet sheet's Share Traces section: the switch, the
   account, the four scopes to grant and the terms. At the foot of a NEAR
-  chat with a message, while the switch is on, the share control: Share,
-  which opens the Ready sheet; once readied, Next message shares; once
-  answered, Review, which opens the Review sheet (Before and After side
-  by side, Review, then Share). Under each NEAR message, a line for each
+  chat with a message, the share control, dimmed while the switch is off
+  (a press says so, and nothing runs): Share, which opens the Ready
+  sheet; once readied, Next message shares; once answered, Review, which
+  opens the Review sheet (Before and After side by side, Review, then
+  Share). Under each NEAR message, a line for each
   trace shared from it: its status as the commons last gave it, its
   credit when there is some, Refresh, and Withdraw, asked first, while
   the commons still holds it. A control is off only where its press is

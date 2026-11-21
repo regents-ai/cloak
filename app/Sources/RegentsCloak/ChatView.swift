@@ -1129,8 +1129,8 @@ private struct Switches: View {
 
 /// NEAR mode's switch, Tor (`AppSettings.nearTor`), and beside it what
 /// NEAR's hardware check last found. The check runs as this shows, and
-/// again each time the route changes. While Share Traces is on, in a NEAR
-/// chat with a message, the share control at the end (`ShareControl`).
+/// again each time the route changes. In a NEAR chat with a message, the
+/// share control at the end (`ShareControl`).
 private struct NearSwitches: View {
     @Bindable var settings: AppSettings
     let nearMode: NearMode
@@ -1144,7 +1144,7 @@ private struct NearSwitches: View {
             NearStatus(settings: settings, nearMode: nearMode)
                 .padding(.leading, 4)
             Spacer(minLength: 0)
-            if settings.shareTraces, let conversation, conversation.isNear, !conversation.isAgent {
+            if let conversation, conversation.isNear, !conversation.isAgent {
                 ShareControl(share: nearMode.share, route: nearMode.route, conversation: conversation)
             }
         }
