@@ -1431,7 +1431,17 @@ any --switch off--> off (the sharing helper ended at once)
   at the challenge each second), No receipt (with Ready Again), and
   Finish signing in.
 
-Nothing here is under test yet.
+`app/Tests/CloakTests/TraceShareTests.swift` checks, against stand-in
+helpers pinned as the real one is and a stand-in for the keychain: that
+each step writes its line only at its press, so nothing reaches the
+witness before Review nor the commons before Share, and a Review of an
+exchange with no receipt writes nothing; that the upload carries exactly
+the envelope the review gave back; that no chat of another mode and no
+agent task can be readied; and that every other message goes as today's
+`ask`, field for field, with the switch off, in a chat not readied while
+another is, and once the challenge has ended. `guest/near/src/share.rs`'s
+own checks show that a witness quote that does not pass sends nothing,
+and that the upload's body is the envelope's bytes exactly.
 
 ## 10. Stages still implied (found 15 November 2026)
 
