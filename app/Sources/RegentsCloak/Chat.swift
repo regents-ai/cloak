@@ -18,16 +18,15 @@ import os
 /// wallet (`Wallet`, decisions 10 and 25), or, when Venice was chosen for
 /// its first message, through the same sender to Venice, paid by the
 /// owner's Venice key or the same wallet's Venice credit (`VeniceMode`,
-/// decision 31). In either, a
-/// conversation whose
-/// first message is a task is the agent's (decisions 12 and 26): each task
-/// runs when its owner presses Run, its model requests reworded at the door
-/// and paid as its chat's are; a Token Inference task always through
-/// Boundless. A conversation whose first message went to
-/// NEAR is NEAR's (`NearMode`): each message goes there as written, at
-/// once, paid by the owner's NEAR key. A conversation whose first message
-/// went to the model on this Mac is Local Llama's: each message goes there
-/// as written, with the conversation so far, and nothing leaves this Mac
+/// decision 31). In either, a conversation whose first message is a task
+/// is the agent's (decisions 12 and 26): each task runs when its owner
+/// presses Run, its model requests reworded at the door and paid as its
+/// chat's are; a Token Inference task always through Boundless. A
+/// conversation whose first message went to NEAR is NEAR's (`NearMode`):
+/// each message goes there as written, at once, paid by the owner's NEAR
+/// key. A conversation whose first message went to the model on this Mac
+/// is Local Llama's: each message goes there as written, with the
+/// conversation so far, and nothing leaves this Mac
 /// (`Supervisor.answer`). With Saved chats off, a conversation started or
 /// continued is kept in memory only (`unsaved`).
 @MainActor

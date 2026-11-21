@@ -1429,7 +1429,7 @@ extension Chat.Kind {
     var paidWith: String {
         switch self {
         case .v: "ETH on Ethereum"
-        case .token: "USDC.e on Tempo, or at Venice with your own key or USDC on Base."
+        case .token: "USDC.e on Tempo, or at Venice with your own key or USDC on Base"
         case .near: "A NEAR key from cloud.near.ai"
         case .llama: "Nothing to pay"
         }

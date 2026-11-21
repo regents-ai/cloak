@@ -335,7 +335,9 @@ private struct VenicePane: View {
                                 Text("Saved")
                                     .foregroundStyle(.secondary)
                                 SymbolButton("Replace", symbol: "pencil") { replacing = true }
+                                    .overhanging()
                                 SymbolButton("Remove", symbol: "trash") { removing = true }
+                                    .overhanging()
                             }
                         } else {
                             HStack(spacing: 6) {

@@ -218,6 +218,7 @@ private struct VeniceKeyRows: View {
             HStack(spacing: 4) {
                 Text(key)
                 SymbolButton("Open Settings", symbol: "gearshape", action: openSettings)
+                    .overhanging()
             }
         }
         LabeledContent("Balance") {
@@ -315,8 +316,7 @@ private struct TopUp: View {
                     .foregroundStyle(.secondary)
                 TextField("Amount", text: Binding(get: { text }, set: { typed = $0; wrong = false }), prompt: Text(least ?? "5"))
                     .labelsHidden()
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 100)
+                    .fixedSize()
                     .onSubmit { add(text) }
                 Button("Add") { add(text) }
                     .disabled(!running || lacking != nil)
