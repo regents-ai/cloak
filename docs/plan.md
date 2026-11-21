@@ -3513,8 +3513,8 @@ candidates, so the split has to be re-declared before any holdout opens.
     with a $2 limit, given through the secret card, then a $5 top-up
     in USDC on Base to try the wallet route. Decided 21 November 2026
     (Sean, "33. a"). It waits on the carrying part and a caller in the
-    app. Decisions 31 (which wallet pays) and 32 (asking Venice about
-    its terms) are still open; a separate key is assumed.
+    app. Decisions 31 and 32 were answered the same day (below, after
+    39).
 34. Trace sharing is built the receipt way, in NEAR Private AI only.
     Decided 21 November 2026 (Sean, "34. c - you can do this easily.
     Make it 10x better than their version using our better llama.app
@@ -3537,27 +3537,32 @@ candidates, so the split has to be re-declared before any holdout opens.
     by the chief, reported after. Decided 21 November 2026 (Sean,
     "37. a"). It needs his Cloak rebuilt from main first, which waits
     for zkAPI step 6's guest half so the rebuild is one batch.
-38. Open, put to Sean 21 November 2026: how a shared NEAR chat's
-    message reaches NEAR. The helper's reading (`docs/near-share.md`,
-    checked by the chief against `guest/near/src/chat.rs`, NEAR's
-    response-signature page and the commons' `admission_evidence.rs`)
-    is that a client other than the Gateway can complete the receipt
-    route as the source reads, but NEAR's receipt covers the exact
-    bytes sent and Cloak seals every word in them, so a readable
-    shared chat needs one message sent without Cloak's encryption.
-    a) only a chat the person readies sends its next message that way;
-    b) every NEAR message does while Share Traces is on; c) keep every
-    message sealed and drop trace sharing. Recommended: a.
-39. Open, put to Sean 21 November 2026: whether the commons' witness
-    is accepted as the one redactor. The raw chat goes to the witness
-    before a before-and-after view can exist, the witness passes
-    part-redacted text to NEAR AI's classifier, and the upload must be
-    the witness's exact bytes, so Cloak's own redactor cannot be used.
-    a) yes, in two presses (Review, then Share); b) yes, in one press,
-    unseen; c) no, and no trace sharing. Recommended: a. Nothing of
-    trace sharing is built until 38 and 39 are answered. Nothing was
-    copied from the Gateway's `macos/` folder: the repository's
-    licence names no terms for it.
+38. A shared NEAR chat's message reaches NEAR without Cloak's
+    end-to-end encryption, and only that message: a chat the person
+    readies sends its next message so, carrying the commons' challenge;
+    every other NEAR message stays sealed, byte for byte as before.
+    Decided 21 November 2026 (Sean, "38 a"). The reason is in
+    `docs/near-share.md`: NEAR's receipt covers the exact bytes sent.
+39. The commons' witness is the one redactor, in two presses: Review
+    sends the chat to the witness and shows Before and After, then
+    Share uploads exactly what was shown. Decided 21 November 2026
+    (Sean, "39 a - we can still reword with Near. the user has 100%
+    control over what is sent to near, including if rewording
+    happens."). So sharing changes nothing about rewording: the shared
+    message is reworded or not by the person's own Never Reword and
+    Review settings, as any NEAR message is, and what goes to NEAR and
+    then to the witness is what they sent. Nothing is copied from the
+    Gateway's `macos/` folder: the repository's licence names no terms
+    for it.
+31. Venice is paid from the same wallet as Tempo: one key, one address,
+    funded with USDC on Base for Venice. Decided 21 November 2026
+    (Sean, "31. b"), against the chief's recommendation of a separate
+    key; the cost he accepted is that Venice's payments and Tempo's
+    share an address and so can be tied together. No second wallet key
+    is made, and `sh.regents.cloak.venice-wallet` is not used.
+32. Venice ships to friends without a question to Venice about its
+    terms. Decided 21 November 2026 (Sean, "32. b"). Nothing is written
+    or sent to Venice.
 
 Two more sections asked for by Sean on 20 November 2026, each with a
 helper in its own checkout and nothing merged yet: a Darkbloom serving
