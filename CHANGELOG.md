@@ -32,8 +32,10 @@
   Llama while paused and its chosen model; the model as its own
   download; NEAR's token counts). Venice's screens and NEAR trace
   sharing are not in it.
-  Built as 0.6.0 (247): signed, accepted by Apple, 151,979,333 bytes,
-  and held unpublished until Sean answers decision 40 in `docs/plan.md`.
+  Built as 0.6.0 (247), then again as 0.6.0 (252) from commit `6ca8f9f`
+  with the fixes from Sean's first try of V's wallet: signed, accepted
+  by Apple, 151,990,597 bytes, running on his Mac, and held unpublished
+  until decision 40 in `docs/plan.md` is settled.
 - Rows that end in a round symbol button sit level: the label was a few
   points high and the row taller than its neighbours in NEAR Private
   AI's wallet (Key), Details (Modes), Settings' NEAR key and each

@@ -3631,6 +3631,15 @@ screens (branch `t3/add-venice-provider`, read by the chief and brought
 to main's level rows and amount box) and NEAR trace sharing merge after
 this release is out, not into it.
 
+Sean began that first deposit himself on 21 November and met three dead
+ends in V's wallet before any money moved: no Start where the wallet said
+to start Cloak, a Refresh that did nothing, and a Deposit press whose
+quote opened out of sight. Fixed the same day (CHANGELOG), and the build
+made again as 0.6.0 (252) from commit `6ca8f9f`, 151,990,597 bytes,
+signed, accepted by Apple and running on his Mac. Still unpublished. His
+standing word from that day: every new build goes into his own Cloak
+immediately.
+
 NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
 November 2026), against stand-ins only: no sign-in, enrolment or upload
 has been made. An independent reader found 14 things and the helper
@@ -3654,8 +3663,11 @@ settled, each of which Sean is told before a real share:
   commons moves them, sharing stops until an update, as NEAR's pins do.
 
 Put to Sean as decisions 41 (record acceptance of the commons' terms,
-or keep the link) and 42 (the first real share). It merges after 0.6.0
-is out.
+or keep the link) and 42 (the first real share). He answered both on 21
+November: 41 a, keep only the Terms link; 42 a, make the first real
+share, and "you can test it yourself", so the chief makes the presses in
+Cloak. The sign-in in the browser stays his own press. It merges after
+0.6.0 is out.
 
 ## Gates
 
