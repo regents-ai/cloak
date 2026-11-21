@@ -1,3 +1,6 @@
+// Compiled only by `app/build.sh darkbloom`: Darkbloom's window is in no
+// release until its makers allow it (decision 36 in docs/plan.md).
+#if DARKBLOOM
 import AppKit
 import CloakSupervisor
 import SwiftUI
@@ -554,3 +557,4 @@ private struct Failure: View {
         }
     }
 }
+#endif

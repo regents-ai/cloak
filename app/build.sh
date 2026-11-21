@@ -17,8 +17,22 @@
 # notarization requires: every build on this Mac is signed as a release is
 # (decision 8a, 20 November 2026). Needs rustup, and guest/build.sh,
 # host/build.sh and llama-worker/install.sh to have run first.
+#
+#     app/build.sh             the app as a release has it
+#     app/build.sh darkbloom   with Darkbloom's window, for this Mac only:
+#                              it is in no release until its makers allow
+#                              it (decision 36 in docs/plan.md)
 set -eu
 cd "$(dirname "$0")/.."
+
+case "${1:-}" in
+"") darkbloom="" ;;
+darkbloom) darkbloom="-Xswiftc -DDARKBLOOM" ;;
+*)
+	echo "usage: app/build.sh [darkbloom]" >&2
+	exit 2
+	;;
+esac
 
 identity=$(plutil -extract identity raw app/release.json)
 sign() {
@@ -30,7 +44,9 @@ ls guest/build/Image guest/build/initrd.gz host/.build/tor/tor host/.build/tor/l
 
 # The cd matters: rustup reads rust-toolchain.toml from the working folder.
 (cd guest/near && lockf /tmp/cloak-build.lock nice -n 10 cargo build --locked --release -j 2 --bin cloak-near)
-lockf /tmp/cloak-build.lock nice -n 10 swift build --package-path app -c release -j 2
+# Unquoted: two words or none.
+# shellcheck disable=SC2086
+lockf /tmp/cloak-build.lock nice -n 10 swift build --package-path app -c release -j 2 $darkbloom
 bin=$(swift build --package-path app -c release --show-bin-path)
 
 app="app/build/Cloak.app"
@@ -41,7 +57,13 @@ cp "$bin/RegentsCloak" "$bin/cloak" "$app/Contents/MacOS/"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 # SwiftPM's run path is the binary's own folder; the framework is in Frameworks.
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/RegentsCloak"
-cp app/RegentsCloak.sdef app/AppIcon.icns "$app/Contents/Resources/"
+cp app/AppIcon.icns "$app/Contents/Resources/"
+# The dictionary names `show darkbloom` only where the app has the window.
+if [ -n "$darkbloom" ]; then
+	cp app/RegentsCloak.sdef "$app/Contents/Resources/"
+else
+	sed '/<command name="show darkbloom"/,/<\/command>/d' app/RegentsCloak.sdef > "$app/Contents/Resources/RegentsCloak.sdef"
+fi
 cp guest/build/Image guest/build/initrd.gz "$app/Contents/Resources/guest/"
 cp host/.build/tor/tor host/.build/tor/libevent-2.1.7.dylib "$app/Contents/Resources/tor/"
 cp guest/near/target/release/cloak-near "$app/Contents/Resources/near/"

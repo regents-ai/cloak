@@ -39,6 +39,7 @@ final class ShowAgentsCommand: NSScriptCommand {
     }
 }
 
+#if DARKBLOOM
 @objc(CloakShowDarkbloomCommand)
 final class ShowDarkbloomCommand: NSScriptCommand {
     override func performDefaultImplementation() -> Any? {
@@ -46,6 +47,7 @@ final class ShowDarkbloomCommand: NSScriptCommand {
         return nil
     }
 }
+#endif
 
 @objc(CloakShowDetailsCommand)
 final class ShowDetailsCommand: NSScriptCommand {
