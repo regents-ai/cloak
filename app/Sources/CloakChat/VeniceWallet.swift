@@ -175,7 +175,7 @@ extension Venice {
         let request = VeniceRequest(method: "POST", url: URL(string: Self.base + "x402/top-up")!, headers: [:], body: nil)
         let response = try await Self.carry(request, transport)
         let body = try await Self.whole(response)
-        guard response.status == 402 else { throw VeniceStop.answered(response.status, Self.code(in: body), auth: nil) }
+        guard response.status == 402 else { throw VeniceStop.answered(response.status, body, auth: nil) }
         struct Entry: Decodable {
             let amount: Amount
             let payTo: String
@@ -218,7 +218,7 @@ extension Venice {
         let response = try await Self.carry(request, transport)
         let body = try await Self.whole(response)
         guard response.status == 200 else {
-            guard [400, 401, 402].contains(response.status) else { throw VeniceStop.answered(response.status, Self.code(in: body), auth: nil) }
+            guard [400, 401, 402].contains(response.status) else { throw VeniceStop.answered(response.status, body, auth: nil) }
             throw VeniceStop(.paymentRefused, sent: true, "status \(response.status) to the top-up")
         }
         struct Taken: Decodable {

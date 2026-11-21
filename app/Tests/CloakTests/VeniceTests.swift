@@ -251,4 +251,44 @@ struct VeniceTests {
         #expect(stop?.kind == .failed)
         #expect(standIn.sent.count == 1)
     }
+
+    /// Venice's answer, through Tor on 20 November 2026, to a chat sent with
+    /// no credentials, byte for byte.
+    static let challenge = #"{"x402Version":2,"error":"Authentication required","resource":{"url":"https://api.venice.ai/api/v1/chat/completions","description":"Venice API","mimeType":"application/json"},"accepts":[{"scheme":"exact","network":"eip155:8453","amount":"10000000","asset":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","payTo":"0x2670b922ef37c7df47158725c0cc407b5382293f","maxTimeoutSeconds":300,"extra":{"name":"USD Coin","version":"2"}},{"scheme":"exact","network":"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp","amount":"10000000","asset":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","payTo":"8qUL23aSj7mDWdoLMXGHFvnVCT9wd7jXcysiekroADEL","maxTimeoutSeconds":300,"extra":{"name":"USD Coin","version":"2","feePayer":"BFK9TLC3edb13K6v4YyH3DwPb5DSUpkWvb7XnqCL9b4F"}}],"extensions":{"sign-in-with-x":{"info":{"domain":"api.venice.ai","uri":"https://api.venice.ai/api/v1/chat/completions","version":"1","nonce":"02a34e25e4c4c78eba36bdd0be6642bb","issuedAt":"2026-11-20T22:57:45.626Z","expirationTime":"2026-11-20T23:02:45.626Z","statement":"Sign in to Venice AI"},"supportedChains":[{"chainId":"eip155:8453","type":"eip191"},{"chainId":"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp","type":"ed25519"}],"schema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"domain":{"type":"string"},"address":{"type":"string"},"statement":{"type":"string"},"uri":{"type":"string","format":"uri"},"version":{"type":"string"},"chainId":{"type":"string"},"type":{"type":"string"},"nonce":{"type":"string"},"issuedAt":{"type":"string","format":"date-time"},"expirationTime":{"type":"string","format":"date-time"},"notBefore":{"type":"string","format":"date-time"},"requestId":{"type":"string"},"resources":{"type":"array","items":{"type":"string","format":"uri"}},"signature":{"type":"string"}},"required":["domain","address","uri","version","chainId","type","nonce","issuedAt","signature"]}}},"authOptions":{"apiKey":{"header":"Authorization: Bearer YOUR_API_KEY","getKey":"https://venice.ai/settings/api","docs":"https://docs.venice.ai/api-reference"},"x402Wallet":{"header":"SIGN-IN-WITH-X","legacyHeader":"X-Sign-In-With-X","topUp":"POST /api/v1/x402/top-up","docs":"https://docs.venice.ai/api-reference/endpoint/x402/top-up"}}}"#
+
+    /// A 402 that asks for credentials says the key or sign-in was not
+    /// taken, never that the balance is short, so nobody adds money for it;
+    /// a 402 for balance still says so.
+    @Test
+    func challengeIsNeverNoBalance() async throws {
+        let signer = VeniceSigner(address: Self.address, personal: { _ in Self.signature }, typed: { _ in Issue.record("nothing here pays"); return "" })
+        for (auth, kind) in [(VeniceAuth.key("sk-test"), VeniceStop.Kind.key), (.wallet(signer), .signIn)] {
+            for (body, expected) in [(Self.challenge, kind), (#"{"error":"Insufficient balance","code":"INSUFFICIENT_BALANCE"}"#, .noBalance)] {
+                let standIn = StandIn { request in request.url.path == "/api/v1/models" ? (200, [:], Self.list) : (402, [:], body) }
+                let venice = Venice(auth: auth, transport: standIn.transport)
+
+                let asked = await #expect(throws: VeniceStop.self) { try await Self.ask(venice, VeniceChat(model: "llama-3.3-70b", tier: .private)) }
+                let checked = await #expect(throws: VeniceStop.self) { try await venice.account() }
+
+                #expect(asked?.kind == expected)
+                #expect(checked?.kind == expected)
+            }
+        }
+    }
+
+    /// Venice's answer, through Tor on 20 November 2026, to a bare top-up,
+    /// byte for byte: its Base entry is the terms, addresses as Venice
+    /// writes them.
+    @Test
+    func realTopUpTermsRead() async throws {
+        let terms = #"{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:8453","amount":"5000000","asset":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","payTo":"0x2670b922ef37c7df47158725c0cc407b5382293f","maxTimeoutSeconds":300,"extra":{"name":"USD Coin","version":"2"}},{"scheme":"exact","network":"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp","amount":"5000000","asset":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","payTo":"8qUL23aSj7mDWdoLMXGHFvnVCT9wd7jXcysiekroADEL","maxTimeoutSeconds":300,"extra":{"name":"USD Coin","version":"2","feePayer":"BFK9TLC3edb13K6v4YyH3DwPb5DSUpkWvb7XnqCL9b4F"}}]}"#
+        let standIn = StandIn { _ in (402, ["payment-required": Data(terms.utf8).base64EncodedString()], terms) }
+
+        let read = try await Venice(auth: .key("sk-test"), transport: standIn.transport).topUpTerms()
+
+        #expect(
+            read
+                == VeniceTopUpTerms(
+                    payTo: "0x2670b922ef37c7df47158725c0cc407b5382293f", least: Amount(units: 5_000_000), timeout: 300, name: "USD Coin", version: "2"))
+    }
 }
