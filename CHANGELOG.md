@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- V's deposit Review says its fee and total in dollars too, as "Up to
+  0.0126 ETH, about $19.86", at the quote's own rate (the dollars asked
+  for over the ETH quoted for them). A real quote on 21 November put the
+  fee on a 5 dollar deposit at about four times the deposit, which ETH
+  alone does not make plain. A withdrawal and a send name no dollars and
+  stay in ETH. Not yet seen on screen.
+- The menu's symbols: macOS 27 hides symbols in menus unless an item
+  asks for them, and macOS 26 shows them. Cloak leaves that to the Mac,
+  so its menu matches the Mac's own on each.
 - Two small things seen on screen: V's wallet headed its first box
   "Address" over a row also named Address, and now heads it "Wallet",
   as Token Inference's does; and in NEAR Private AI's wallet "Key" sits

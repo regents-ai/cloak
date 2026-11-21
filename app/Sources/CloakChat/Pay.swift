@@ -248,6 +248,18 @@ public struct PayQuote: Decodable, Sendable, Equatable {
     /// Expired now: the payer refuses an approve of it, so it is quoted
     /// again rather than approved unseen.
     public func expired(at now: Date) -> Bool { expires <= now }
+
+    /// What `wei` comes to in dollars at this quote's own rate: the dollars
+    /// asked for, over the ETH quoted for them. Nil for a quote with no
+    /// dollars in it, a withdrawal or a send.
+    public func dollars(wei: String) -> Decimal? {
+        let plain = Locale(identifier: "en_US_POSIX")
+        guard let asked = inputMicroUsd,
+            let principal = Decimal(string: principalWei, locale: plain), principal > 0,
+            let wei = Decimal(string: wei, locale: plain)
+        else { return nil }
+        return Decimal(asked) / 1_000_000 * wei / principal
+    }
 }
 
 /// One model in the service's list, as the payer reads it: its name, and
