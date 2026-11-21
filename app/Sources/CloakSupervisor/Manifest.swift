@@ -163,9 +163,13 @@ public struct Layout: Sendable {
     /// The Chat window's sealed conversations, one file each.
     public var conversations: URL { support.appending(path: "conversations") }
 
-    /// Development mode's wallet folder, which holds its deposit, sealed
+    /// Token Inference's wallet folder, which holds its deposit, sealed
     /// under the conversations' key; the key is in the keychain.
     public var wallet: URL { support.appending(path: "wallet") }
+
+    /// V's payment disk's image (`PaymentDisk`), in an owner-only folder:
+    /// the guest's payer's encrypted disk, attached to each run's guest.
+    var paymentDisk: URL { support.appending(path: "pay/disk.img") }
 
     /// The apps given a pass to the door (`Door`), sealed under the
     /// conversations' key: names, fingerprints of their passes, counts and

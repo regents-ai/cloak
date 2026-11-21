@@ -3,10 +3,11 @@ import CryptoKit
 import Foundation
 import Security
 
-// Development mode (decision 10 in docs/plan.md): a turn's reworded text, or
-// its original when its owner chose to send it as written (decision 11),
-// goes through the guest's sender (guest/sender), through Tor, to a remote
-// model, paid from one wallet. Never part of a release.
+// Token Inference (decisions 10 and 25 in docs/plan.md): a turn's reworded
+// text, or its original when its owner chose to send it as written
+// (decision 11), goes through the guest's sender (guest/sender), through
+// Tor, to a remote model, paid from one wallet, so the provider can link
+// every chat it pays for.
 
 /// The wallet's key, made by the guest's sender with the payment toolkit's
 /// own key code and kept only here: a generic password in the login
@@ -285,7 +286,8 @@ public enum Remote {
 
     /// The answer in `completion`, a chat completion in OpenAI's shape: the
     /// first choice's text, when it has one and finished by stopping or at
-    /// its length. Shared by Development mode and NEAR mode (`Near`).
+    /// its length. Shared by V (`Payer`), Token Inference and NEAR Private AI
+    /// (`Near`).
     public static func content(of completion: Data) throws(RemoteStop) -> String {
         struct Completion: Decodable {
             let choices: [Choice]

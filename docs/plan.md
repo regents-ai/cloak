@@ -994,10 +994,24 @@ of its own, which settles the companion's listener. `tests/test_pay_path.py`,
 named above as written but not run, is gone: its checks are in
 `tests/test_escape_path.py`.
 
+**Step 6, the Mac half (merged 21 November 2026).** Built by a worker on
+`t3/zkapi-token-inference-mac`, read and checked by the chief; what it is
+and its checks are in CHANGELOG.md. It carries decisions 25, 26 and 28:
+four modes, Agent in V and Token Inference, Start opens Chat with the
+Modes page. Where the worker corrected the design: a hold is two `H`
+frames (held, then released); a Withdraw press does not stop new
+requests (rule 11); the fee figure in dollars, the trial's times and the
+30-day claim stay off screen; the three-day notice became a mark on the
+Wallet button from ten days before the expiry; an empty amount on Send
+Out sends everything. The chief kept "Cards aren't accepted." on the
+Modes page, since "taken" already names a deposit anyone may claim.
+Until the guest half is in, a V chat cannot send; Sean's running Cloak
+is not rebuilt from this.
+
 - **For step 6, the guest half.** `cloak-pay` has the daemon's
   `FundingHandler` and the real companion client; the `C`, `V` and `H`
-  frames and the chain read are still to add, to the wire shapes the Mac
-  half writes into `docs/zkapi-mac-side.md`.
+  frames, the allowlist of money routes and the chain read are still to
+  add, to the wire shapes in `docs/zkapi-mac-side.md`, section 1.
 - **For step 7.** The companion's route through the payer's Tor port to
   the host's real tor; a call to the real service with no note,
   expecting 402; memory in the guest during a real proof; and what
@@ -3450,6 +3464,46 @@ candidates, so the split has to be re-declared before any holdout opens.
     Gateway. A second read of NEAR's source for that build is with a
     helper; nothing is built until the try shows a plain chat is
     accepted and step 6's Mac half is merged.
+    That second read is `docs/near-traces-incloak.md` (20 November).
+    Its finding, spot-checked by the chief in NEAR's source at commit
+    `46aa4201`: for an account made by NEAR AI sign-in, the commons'
+    server takes an upload only with a session identity from one of
+    five named coding tools (codex, claude-code, opencode, cline,
+    gemini-cli; `trace_contribution.rs:217-225`) or a signed NEAR AI
+    receipt for a call the commons set a challenge on
+    (`ingest/admission.rs:286-293`). A Cloak chat honestly has
+    neither, and a chat file imported by the Gateway never gets the
+    first, so Sean's try would most likely be refused too. Nothing is
+    built; the choice of what next is put to Sean as decision 34,
+    which replaces the chief's question 30 (the steps of the try).
+33. A real Venice trial, both steps: Sean's own Inference Only key
+    with a $2 limit, given through the secret card, then a $5 top-up
+    in USDC on Base to try the wallet route. Decided 21 November 2026
+    (Sean, "33. a"). It waits on the carrying part and a caller in the
+    app. Decisions 31 (which wallet pays) and 32 (asking Venice about
+    its terms) are still open; a separate key is assumed.
+34. Trace sharing is built the receipt way, in NEAR Private AI only.
+    Decided 21 November 2026 (Sean, "34. c - you can do this easily.
+    Make it 10x better than their version using our better llama.app
+    skeleton. for Near mode only . you have their github for their
+    macOS app for reference right? you can copy that"). Told to him:
+    the Gateway's Mac app is public in TraceCommons/trace-commons
+    under `macos/`, and its client crates are MIT or Apache-2.0;
+    whether a client other than the Gateway can get the commons'
+    challenge and a witnessed receipt is not yet known, and is the
+    first thing the helper settles.
+35. The NEAR line on regents.sh/cloak stays as it is (Sean, 21
+    November 2026, "35. see #34"; the chief's reading: the sharing it
+    promises is being built).
+36. The Darkbloom window stays out of every release until Darkbloom's
+    makers give permission; Sean is messaging them himself (21
+    November 2026, "36. hold until I get permission, I am messaging
+    them"). The chief drafts and sends nothing.
+37. Darkbloom is tried for real on Sean's Mac, this Mac alone, no
+    account: Install, Download, Start and Stop from Cloak's window,
+    by the chief, reported after. Decided 21 November 2026 (Sean,
+    "37. a"). It needs his Cloak rebuilt from main first, which waits
+    for zkAPI step 6's guest half so the rebuild is one batch.
 
 Two more sections asked for by Sean on 20 November 2026, each with a
 helper in its own checkout and nothing merged yet: a Darkbloom serving
@@ -3458,6 +3512,20 @@ window (his pasted review of Layr-Labs/d-inference v0.10.16; brief
 Token Inference, by the owner's own key or by USDC on Base (his pasted
 review; brief `/tmp/cloak-build/brief-venice.md`, first pass: the
 client, its checks and a joining plan, no interface yet).
+
+The Darkbloom window is merged (21 November 2026), read and checked by
+the chief; what it is and the licence's words are in CHANGELOG.md. It is
+in no release until Darkbloom's makers give written permission
+(`docs/release.md`, Standing limits), and it has never run against the
+real Darkbloom: nothing of Darkbloom's is installed on Sean's Mac.
+Where the worker found Sean's pasted review wrong: Darkbloom's own
+supervisor restarts and updates it (its launchd job has KeepAlive
+false); `desktop ensure` installs a background agent that stays; the
+key route answers null while no local address runs; a plain `darkbloom
+start` serves both ways. A real try persists `~/.darkbloom`, a line in
+`~/.zshrc`, login services and a model of several GB. Waiting on Sean:
+whether to ask Darkbloom's makers for permission, and a real try on his
+Mac.
 
 Venice's first pass is merged (20 November 2026): the client and its
 checks, with no caller, and `docs/venice.md`. Venice answers through

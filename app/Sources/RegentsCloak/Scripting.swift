@@ -39,6 +39,14 @@ final class ShowAgentsCommand: NSScriptCommand {
     }
 }
 
+@objc(CloakShowDarkbloomCommand)
+final class ShowDarkbloomCommand: NSScriptCommand {
+    override func performDefaultImplementation() -> Any? {
+        MainActor.assumeIsolated { AppDelegate.current.showDarkbloom() }
+        return nil
+    }
+}
+
 @objc(CloakShowDetailsCommand)
 final class ShowDetailsCommand: NSScriptCommand {
     override func performDefaultImplementation() -> Any? {

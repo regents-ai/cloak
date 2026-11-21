@@ -965,13 +965,19 @@ The download's checks were deleted on 19 November (decision 15 in
 A conversation whose first message went to NEAR (`Conversation.near`, true
 from that message on and absent otherwise) sends each message as written
 to NEAR AI Cloud through `cloak-near`, the helper in the app's bundle
-(`guest/near/README.md`, "The helper"). It never goes to the wallet's
-provider, and a Cloak conversation never goes to NEAR. What a new
-conversation is, is the mode picked under the message box (`Chat.kind`, in
-memory only, V at each launch): one of three, V (a Cloak conversation),
-NEAR Private AI (this one) or Local Llama (section 9c). In V, a switch,
-Agent, makes each message a task (`Chat.Kind.agent`); it shows only while
-V is picked, and picking V again leaves it as it is.
+(`guest/near/README.md`, "The helper"). It never goes to V's or Token
+Inference's provider, and a V or Token Inference conversation never goes
+to NEAR. What a new conversation is, is the mode picked under the message
+box (`Chat.kind`, in memory only, V at each launch): one of four, V (paid
+through zkAPI, section 9d), Token Inference (paid from the Tempo wallet;
+`Conversation.token`, true from its first message on), NEAR Private AI
+(this one) or Local Llama (section 9c). A saved conversation with none of
+the three marks is V's. In V and Token Inference, a switch, Agent, makes
+each message a task (`Chat.agentOn`, in memory only, off at each launch).
+A conversation with no turn yet is the agent's while Agent is on and its
+mode has one (`Kind.hasAgent`), and after that as its first turn is
+(`Chat.isAgent`). The switch shows only while one of those two modes is
+picked, and a change of mode leaves it as it is.
 
 The helper's life is owned by the `Near` actor, which runs on a serial
 queue of its own and blocks on the helper's pipes with no suspension
@@ -1016,6 +1022,17 @@ NEAR): read off `Turn.answer`, `Chat.sending[turn]` and
 with no key kept (`NearMode.hasKey` false) or with Tor on while Cloak is
 not running; every other press reaches the helper, behind any line under
 way.
+
+An answered message keeps, with its answer, the tokens NEAR counted for it
+(`Turn.tokens`, read by `Near.ask` from the reply's `usage`:
+`prompt_tokens` in, the message with the chat before it; `completion_tokens`
+out, the answer), sealed with the conversation as its other fields are. A
+reply with no `usage` that reads gives none, which stops nothing; no other
+mode's turn has any. A later answer to the same turn replaces both. The
+answer's mark (a numbered circle beside Answer) says them as its help; in
+Wallet, one Tokens row says the conversation's totals
+(`Conversation.tokens`), absent while no answer has counts. Counts only:
+Cloak knows no NEAR price. Nothing sent to NEAR changes for this.
 
 `app/Tests/CloakTests/NearTests.swift` checks that the `ask` line carries
 exactly the freshness chosen, in seconds, and the route chosen, against a
@@ -1069,6 +1086,193 @@ Cloak need not be running. There is no rewording, no details row, no
 Review, no Send Original Text and no Tor switch. No deadline. No
 check.
 
+## 9d. V's payer, seen from the Mac (`app/Sources/CloakChat/Payer.swift`, `app/Sources/CloakChat/PayQueue.swift`, `app/Sources/CloakChat/Pay.swift`, `host/Sources/CloakHost/Pay.swift`, `app/Sources/RegentsCloak/VWallet.swift`)
+
+V's money is owned by the payer in the guest (`guest/pay`, as user `pay`
+on the payment disk, section 6c). The Mac holds a mirror (`Payer`), read
+fresh each time; the frames, the routes and their bodies are in
+`docs/zkapi-mac-side.md`, section 1. Its one named value, `Payer.state`,
+is computed from one read and never stored:
+
+| State | From the last read |
+|---|---|
+| `unread` | Cloak is not Running, or nothing read yet |
+| `none` | no note in the wallet, funding and withdrawal at rest |
+| `depositing(stage)` | funding phase `approval_pending`, `deposit_pending` or `confirming`, at stage `pending`, `fee_wait`, `finalizing` or `activating` |
+| `withdrawing(phase)` | withdrawal phase `quoted`, `waiting_funds`, `withdrawal_pending` or `confirming`, or `waiting_settlement` with a saved destination |
+| `taken` | a note in the wallet that the chain shows `closed` |
+| `settling` | the wallet's `pending_request`, while no request of the Mac's is out |
+| `ready` | a note, none of the above |
+| `failed(fault)` | any phase or stage not named above |
+
+The funding phase is checked first, then the withdrawal phase, then the
+note. A state the Mac does not know is `failed`, and no follow call is
+made for it.
+
+One read (`refresh`) is a `V` with the chain, then `GET` of the funding
+address, the withdrawal and the return, then the follow calls the read
+allows, each with only what the payer saved: the deposit's amount while
+funding is `deposit_pending` or `confirming`; the withdrawal's
+destination and note while it is `withdrawal_pending` or `confirming`;
+the send while the return is `return_pending`. A follow call never signs.
+`follow` reads at once and again every 10 seconds while the state is
+`depositing`, `withdrawing` or `settling`, or a send is under way, one
+round at a time (a `Task.sleep` loop in one task, `Payer.following`). It
+runs at each change between Running and not, when the Wallet sheet
+opens, on its Refresh, after each approve, and after each V Send or task.
+A read that fails keeps `readStop`, clears the chain read, and blocks
+nothing.
+
+Beside the state, the expiry has a band (`Payer.band(at:)`): `far`;
+`near`, within 10 days of it (`Payer.warning`); `due`, past it, when
+anyone may send the deposit to the service's operator. The expiry is the
+wallet's, or, while Cloak is paused, the one kept on the Mac
+(`AppSettings.depositExpires`, written when the read one changes and
+cleared when there is no note). The Wallet button in Chat's toolbar wears
+a mark, orange while `near` and red once `due`, with the words as its
+help.
+
+Every money press goes through a review:
+
+```
+press (Deposit with an amount, Withdraw, Send Out with an address)
+  --quote, a C frame--> review shown (Payer.review: the quote, its fee and how long it holds)
+review --the review's button, quote unexpired--> approve, a C frame within 660 s --> following
+review --the review's button, quote expired--> quoted again and shown, nothing approved
+review --Cancel--> nothing approved
+```
+
+`Payer.confirm` is the only place an approve is sent from, and only for
+the quote the review shows. Withdraw's destination is always the funding
+address itself (decision 23a). Each press is sent; `working` counts
+those under way, shown as a spinner, and blocks nothing. A button is off only where the chain,
+read at the latest block, shows it certain to fail, with a few words
+beside it: Deposit while the vault is paused or a note is `active`;
+Withdraw while paused or no note is `active`; Send Out while the address
+holds no ETH; the review's button while paused, or while the address
+holds less than the quote needs (the total for a deposit, the fee for a
+withdrawal).
+
+A V chat request (`Payer.send`, then `PayQueue.complete`) goes to the
+model the owner picked in Wallet (`AppSettings.vModel`) while the service
+lists it, otherwise to the listed model whose requests cost least at
+most, the first such in the list. Send and Run in V are off only while
+Cloak is not Running or the chain shows the deposit closed
+(`Chat.Block`, `.closed`); with no deposit the request goes and the
+payer answers 402, shown as "Deposit to send." or "Deposit to run." with
+Wallet….
+
+The queue (`PayQueue`) gives each chat request its turn: one `R` out at a
+time; every waiting `owner` request (Chat's Send) before any waiting
+`door` request (a V task's model requests and other apps', through the
+door), in arrival order within each; a request out is never cancelled for
+another. A request cancelled while it waits leaves the queue; one
+cancelled while out closes its connection. One exchange:
+
+```
+sent --A--> answered
+sent --{"held": true}--> held (PayQueue.held)
+held --{"held": false}--> sending
+held --180 s (PayLimit.hold)--> hung up: held too long, nothing sent or spent
+sent, sending --600 s (PayLimit.answer)--> hung up: may have been charged
+any --connection ends--> ended (unreachable if it ended while held)
+any --caller cancelled--> hung up: cancelled
+```
+
+`C` and `V` frames never wait for a turn: 60 seconds for a read, quote
+or follow call, 660 for an approve.
+
+Checked by `app/Tests/CloakTests/PayTests.swift`, against a stand-in payer
+on a socket pair: opening, reading and following send no quote and no
+approve, and a follow sends only the saved body; an approve is sent only
+by `confirm`, and an expired quote is quoted again instead; two presses
+send two requests; one request is out at a time and the owner's go
+first; a request out is not cut for another; a hold that goes quiet ends
+at its limit with nothing sent; a phase the Mac does not know makes no
+call; an `R` frame carries only the identity and the reworded body; and a
+rewording that stops sends no request through the door.
+
+## 9e. Darkbloom (`app/Sources/RegentsCloak/DarkbloomClient.swift`, `app/Sources/RegentsCloak/DarkbloomMode.swift`)
+
+The Darkbloom window (`DarkbloomView`) shows one value,
+`DarkbloomMode.state`, read from what Cloak holds in memory and never
+stores: what it found of Darkbloom's runtime (`Runtime`), the control
+service's last report (`snapshot`), Darkbloom's launchd job and route
+(`setup`, read again with each report), and what the person's last press
+led to (`failure`, `starting`, `asked`). Nothing runs until the window
+first opens, Darkbloom is followed only while it is open (`open()`,
+`close()`), and whatever Darkbloom serves goes on after it closes or Cloak
+quits, as Darkbloom's own launchd job. Below macOS 27 the state is
+`unsupported` and nothing runs.
+
+The runtime, as Cloak finds it (`Darkbloom.find`: the file, its signature,
+its release, the flags `start --help` lists, then whether the service in
+`connection.json` answers for that release):
+
+```
+looking --no command line--> missing (Install)
+looking --signature, release or report refused--> refused (Try Again)
+looking --installed, no service answering for this release--> offline (Connect)
+looking --service answers--> connected
+missing --Install--> installing (steps 1 to 5) --ends well--> connecting
+installing --installer fails--> missing, with its failure
+installing --window closes--> installer stopped; looked for again at the next open
+offline --Connect--> connecting (desktop ensure, then find again)
+connecting --service answers--> connected
+connecting --desktop ensure fails--> refused
+connected --report stream breaks--> connecting --5 s, connection.json read again--> connected
+connected --report from another release--> offline
+connecting --no connection.json--> offline
+```
+
+Each report stream ends after Darkbloom's 30 snapshots and is opened again
+at once. While connected, `state` is the first of these that holds:
+
+```
+a press failed                                  -> failed (its words; Darkbloom's reason in the note)
+Cloak's Start under way (darkbloom start)       -> loading
+a stop under way, or the service draining       -> stopping
+the offered model downloading                   -> downloading (progress)
+starting                                        -> loading
+running: Only me's address listens, or a model serves loaded -> serving, else loading
+stopped, Only me's job running                  -> loading
+stopped                                         -> stopped with the model on this Mac, else no model
+stale                                           -> failed (Status out of date)
+any other report                                -> failed (Unknown state)
+```
+
+Stop applies, not Start, while Darkbloom serves or is set to (`isOn`: a
+report of starting, running, draining or stale, or the job loaded). Start
+is off only where it is certain to fail (`startBlock`), with its words
+beside it: Not connected, Needs a newer Darkbloom (a flag Start passes is
+not in `start --help`), No model fits, Model list unavailable, Download
+first. Start runs `darkbloom start` with `--local` or, while Serve Network
+is on, `--me-first`, and `--route this-mac --bind 127.0.0.1 --model <id>`;
+it asks first when it would change a setup made outside Cloak (`changes`:
+serving the network alone, an address open beyond this Mac, a route other
+than this-mac). Stop, Download, Cancel (asked first) and Remove (asked
+first, off while the model is loaded or serving) are actions sent to the
+control service; each is followed by its id in the reports until it ends,
+and one that ends failed or interrupted becomes the failure.
+
+Serve Network (`alsoServe`, read from the job when the window opens):
+
+```
+off --switch on, not linked--> linking (code and page from Darkbloom; Continue in Browser)
+linking --link succeeds--> on; Start again if Darkbloom serves
+linking --link fails or is refused--> off
+linking --switch off--> link cancelled, off
+off <--switch--> on, linked: Start again if Darkbloom serves (asked first when it changes a setup made outside Cloak)
+```
+
+The switch is off with "Needs a newer Darkbloom" while `start --help`
+doesn't list `--me-first`. The key is read from the service only for Show
+Key or Copy Key and is forgotten when the window closes. A program Cloak
+runs ends when it ends, heard from its own termination handler, and one
+whose reader goes away first is stopped with all it started (its process
+group), as Darkbloom's own app stops its installer. Nothing here is under
+test.
+
 ## 10. Stages still implied (found 15 November 2026)
 
 A second read, of everything built since section 9: the chat window, the
@@ -1116,8 +1320,9 @@ its stages first.
   message and "not reworded yet" for a task.
 - **The draft's details** (`Chat.picks`, `askingDetails`, `detailsAsk`).
   Resting, asking, shown, fixed.
-- **The wallet** (`app/Sources/RegentsCloak/Wallet.swift`). Whether this
-  Mac holds it is one value, `WalletPresence` in
+- **Token Inference's wallet** (`app/Sources/RegentsCloak/Wallet.swift`).
+  V's is the payer's, with its own named state (section 9d). Whether this
+  Mac holds Token Inference's is one value, `WalletPresence` in
   `app/Sources/CloakChat/Remote.swift`: looking, unreadable, absent,
   creating, held. Its reads are still off `look`, `working`, `stop` and
   `readStop`. Two reads under way are not ordered, so the older may land
@@ -1134,7 +1339,10 @@ its stages first.
   does not know. That one is the toolkit's to forget, when it next pays.
 - **The door** (`app/Sources/CloakDoor/Door.swift`). `state` (closed,
   open, refused) beside `listener`, `access`, `boxes` and `serving`; there
-  is no "opening". The app opens and closes it from one loop, in turn, so
+  is no "opening". How a request is paid is set by its pass: an app's
+  always through V's payer (`Payment.zkapi`, rank `door` in the queue,
+  section 9d), and a box's as its task's chat pays, through the payer for
+  a V task and from the Tempo wallet for a Token Inference one. The app opens and closes it from one loop, in turn, so
   the two do not cross. A listener that fails after opening leaves the box
   passes in place until the next close. Each chat request it takes past
   the pass is listed (`requests`, newest first, at most 200, in memory

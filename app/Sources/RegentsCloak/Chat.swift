@@ -7,16 +7,19 @@ import os
 
 /// What the Chat window holds: the saved conversations, the one shown, the
 /// message being written, the one rewording at a time, and the turns being
-/// sent. A turn leaves this Mac as reworded, or as written when its owner
-/// presses Send Original Text on it or has Never reword ticked (decision 11
-/// in docs/plan.md), and only when its owner presses a Send, or, with
-/// Review off, the box's Send, which sends it once it is reworded: in
-/// Development mode (decision 10)
-/// through the guest's sender and Tor to a remote model, paid from the one
-/// wallet. A conversation whose first message is a task is the agent's
-/// (decision 12): each task runs when its owner presses Run, its model
-/// requests reworded at the door. A conversation whose first message went
-/// to NEAR is NEAR's (`NearMode`): each message goes there as written, at
+/// sent. A conversation's first message fixes its mode (`Kind`). In V and
+/// Token Inference, a turn leaves this Mac as reworded, or as written when
+/// its owner presses Send Original Text on it or has Never reword ticked
+/// (decision 11 in docs/plan.md), and only when its owner presses a Send,
+/// or, with Review off, the box's Send, which sends it once it is reworded:
+/// through Tor to a remote model, a V chat's paid through zkAPI by the
+/// guest's payer, a new key for each request (`Payer`, decision 24), a
+/// Token Inference chat's through the guest's sender from the one Tempo
+/// wallet (`Wallet`, decisions 10 and 25). In either, a conversation whose
+/// first message is a task is the agent's (decisions 12 and 26): each task
+/// runs when its owner presses Run, its model requests reworded at the door
+/// and paid as its chat's are. A conversation whose first message went to
+/// NEAR is NEAR's (`NearMode`): each message goes there as written, at
 /// once, paid by the owner's NEAR key. A conversation whose first message
 /// went to the model on this Mac is Local Llama's: each message goes there
 /// as written, with the conversation so far, and nothing leaves this Mac
@@ -48,8 +51,8 @@ final class Chat {
     /// What one rewording is for.
     enum Asked {
         /// A new message, with the box as it was written, picks and all, to
-        /// give back if the rewording stops.
-        case new(draft: String, picks: DetailPicks)
+        /// give back if the rewording stops, and the mode it was written in.
+        case new(draft: String, picks: DetailPicks, mode: Kind)
         /// A turn asked again.
         case again(UUID)
     }
@@ -68,7 +71,29 @@ final class Chat {
     /// The last send that stopped.
     struct SendStop {
         let turn: UUID
-        let stop: RemoteStop
+        let stop: Reason
+
+        /// Why, from the way it was paid.
+        enum Reason: Error {
+            /// Token Inference's, from the Tempo wallet.
+            case tempo(RemoteStop)
+            /// V's, through the payer.
+            case zkapi(PayStop)
+
+            var code: String {
+                switch self {
+                case .tempo(let stop): stop.code.rawValue
+                case .zkapi(let stop): stop.code.rawValue
+                }
+            }
+
+            var detail: String {
+                switch self {
+                case .tempo(let stop): stop.detail
+                case .zkapi(let stop): stop.detail
+                }
+            }
+        }
     }
 
     /// The last rewording that ended without a reworded text.
@@ -84,12 +109,17 @@ final class Chat {
         let task: Task<Void, Never>
     }
 
-    /// What a conversation is, fixed by its first message.
+    /// A conversation's mode, fixed by its first message.
     enum Kind: Hashable {
-        case chat
+        case v
+        case token
         case near
         case llama
-        case agent
+
+        /// Whether its chats can be the agent's.
+        var hasAgent: Bool {
+            self == .v || self == .token
+        }
     }
 
     let supervisor: Supervisor
@@ -97,7 +127,10 @@ final class Chat {
     let settings: AppSettings
     let agent: Agent
     let folder: URL
+    /// Token Inference's wallet.
     let wallet: Wallet
+    /// V's.
+    let payer: Payer
     let nearMode: NearMode
     /// One download for each model that answers Local Llama chats, the
     /// least memory first: read here for whether the chosen one is on this
@@ -136,9 +169,16 @@ final class Chat {
     /// The details of the draft are being asked for.
     private(set) var askingDetails = false
     @ObservationIgnored private var detailsAsk: Task<Void, Never>?
-    /// What the empty conversation's first message makes it. In memory only:
-    /// a chat at each launch.
-    var kind = Kind.chat
+    /// The mode the empty conversation's first message puts it in. In
+    /// memory only: V at each launch.
+    var kind = Kind.v
+    /// Whether the empty conversation's first message is a task, in a mode
+    /// with the agent. In memory only: off at each launch.
+    var agentOn = false
+    /// The wallet sheet is shown, for the conversation in front.
+    var showingWallet = false
+    /// The Modes page is shown.
+    var showingModes = false
     private(set) var rewording: Rewording?
     var stop: Stop?
     /// The unsent message last opened or added; see `isOpen(_:in:)`. In
@@ -161,22 +201,30 @@ final class Chat {
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "chat")
 
     init(
-        supervisor: Supervisor, settings: AppSettings, folder: URL, wallet: URL, door: Door, nearMode: NearMode,
-        downloads: [ModelDownload]
+        supervisor: Supervisor, settings: AppSettings, folder: URL, wallet: URL, queue: PayQueue, door: Door,
+        nearMode: NearMode, downloads: [ModelDownload]
     ) {
         self.supervisor = supervisor
         self.settings = settings
         self.folder = folder
         self.wallet = Wallet(supervisor: supervisor, folder: wallet)
+        let payer = Payer(
+            queue: queue, running: { supervisor.phase == .running }, expiry: settings.depositExpires,
+            keep: { settings.depositExpires = $0 }, chosen: { settings.vModel })
+        self.payer = payer
         self.nearMode = nearMode
         self.downloads = downloads
         let agent = Agent(parts: Agent.Parts(
-            run: { supervisor.run($0) }, pass: { door.pass(for: $0) }, reworded: { door.reworded(for: $0) }))
+            run: { supervisor.run($0) }, pass: { door.pass(for: $0, paying: $1) }, reworded: { door.reworded(for: $0) }))
         self.agent = agent
-        // Each start of Cloak is a new guest, without the agent's earlier work.
         Task {
-            for await running in Observations({ supervisor.phase == .running }) where running {
-                agent.restarted()
+            for await running in Observations({ supervisor.phase == .running }) {
+                // Each start of Cloak is a new guest, without the agent's
+                // earlier work.
+                if running { agent.restarted() }
+                // V's deposit is read as Cloak starts, and forgotten as it
+                // stops.
+                payer.follow()
             }
         }
     }
@@ -208,28 +256,43 @@ final class Chat {
     /// the model is answering in its conversation already.
     var canSubmit: Bool {
         guard let selected, !Self.isBlank(draft) else { return false }
-        if isAgent(selected) { return isOpen && runBlock == nil && agent.runs[selected.id] == nil }
-        if isNear(selected) { return isOpen && nearMode.sendBlock == nil }
-        if isLlama(selected) { return isOpen && llamaBlock == nil && answering[selected.id] == nil }
+        let mode = kind(of: selected)
+        if isAgent(selected) { return isOpen && runBlock(in: mode) == nil && agent.runs[selected.id] == nil }
+        if mode == .near { return isOpen && nearMode.sendBlock == nil }
+        if mode == .llama { return isOpen && llamaBlock == nil && answering[selected.id] == nil }
         return settings.neverReword ? canCompose : canReword
+    }
+
+    /// The mode of `conversation`: as its first message made it, or, while
+    /// it has none, as chosen. A saved conversation with no mark is V's.
+    func kind(of conversation: Conversation) -> Kind {
+        guard !conversation.turns.isEmpty else { return kind }
+        if conversation.isNear { return .near }
+        if conversation.isLlama { return .llama }
+        return conversation.isToken ? .token : .v
     }
 
     /// Whether `conversation` is the agent's: as its first turn is, or, while
     /// it has none, as chosen.
     func isAgent(_ conversation: Conversation) -> Bool {
-        conversation.turns.isEmpty ? kind == .agent : conversation.isAgent
+        conversation.turns.isEmpty ? agentOn && kind.hasAgent : conversation.isAgent
     }
 
-    /// Whether `conversation` is NEAR's: as its first message went, or,
-    /// while it has none, as chosen.
     func isNear(_ conversation: Conversation) -> Bool {
-        conversation.turns.isEmpty ? kind == .near : conversation.isNear
+        kind(of: conversation) == .near
     }
 
-    /// Whether `conversation` is Local Llama's: as its first message went,
-    /// or, while it has none, as chosen.
     func isLlama(_ conversation: Conversation) -> Bool {
-        conversation.turns.isEmpty ? kind == .llama : conversation.isLlama
+        kind(of: conversation) == .llama
+    }
+
+    /// Marks `conversation`, while it is empty, with `mode`, as its first
+    /// turn goes in; a V conversation has no mark.
+    private func mark(_ conversation: inout Conversation, as mode: Kind) {
+        guard conversation.turns.isEmpty else { return }
+        conversation.token = mode == .token ? true : nil
+        conversation.near = mode == .near ? true : nil
+        conversation.llama = mode == .llama ? true : nil
     }
 
     /// The download of the model chosen to answer Local Llama chats
@@ -283,40 +346,47 @@ final class Chat {
         return turn.id == conversation.turns.last?.id
     }
 
-    /// Why Send is off for `turn` now, or nil when it is on. Off only where
-    /// sending is certain to stop: a reworded text left blank; Cloak not
-    /// running, so nothing is routed through Tor; no wallet; or, as the
-    /// network last showed the wallet, no funds. A send under way never
-    /// turns it off.
-    func sendBlock(_ turn: Turn) -> String? {
+    /// Why Send is off for `turn`, in a chat of `mode`, now, or nil when it
+    /// is on. Off only where sending is certain to stop: a reworded text
+    /// left blank; Cloak not running, so nothing is routed through Tor; in
+    /// Token Inference, no wallet, or, as the network last showed the
+    /// wallet, no funds; in V, the chain at the latest block read showing
+    /// the deposit closed. A V send with no deposit goes, and the payer
+    /// answers it. A send under way never turns it off.
+    func sendBlock(_ turn: Turn, in mode: Kind) -> String? {
         if let reworded = turn.reworded, Self.isBlank(reworded) { return "Reword it to send." }
-        return originalBlock
+        return originalBlock(in: mode)
     }
 
     /// Why Send Original Text is off now, or nil when it is on: Send's
     /// reasons but a blank reworded text, which it does not send.
-    var originalBlock: String? {
-        switch block {
+    func originalBlock(in mode: Kind) -> String? {
+        switch block(in: mode) {
         case .notRunning?: "Start Cloak to send."
         case .noWallet?: "Create a wallet to send."
         case .noFunds?: "Add funds to send."
+        case .closed?: "Deposit closed."
         case nil: nil
         }
     }
 
     /// Why Run is off now, or nil when it is on: off only where running is
     /// certain to stop, as for Send.
-    var runBlock: String? {
-        switch block {
+    func runBlock(in mode: Kind) -> String? {
+        switch block(in: mode) {
         case .notRunning?: "Start Cloak to run."
         case .noWallet?: "Create a wallet to run."
         case .noFunds?: "Add funds to run."
+        case .closed?: "Deposit closed."
         case nil: nil
         }
     }
 
-    private var block: Block? {
-        Block(running: supervisor.phase == .running, hasWallet: wallet.presence != .absent && wallet.presence != .creating, lacksFunds: wallet.lacksFunds)
+    private func block(in mode: Kind) -> Block? {
+        let running = supervisor.phase == .running
+        return mode == .token
+            ? Block(running: running, hasWallet: wallet.presence != .absent && wallet.presence != .creating, lacksFunds: wallet.lacksFunds)
+            : Block(running: running, closed: payer.closed)
     }
 
     /// Finds the key, or makes the first one, then opens every conversation
@@ -373,7 +443,8 @@ final class Chat {
     /// (the quick prompt's): nothing is sent or reworded. Before the store
     /// opens, the text waits for the empty conversation it opens on.
     func compose(_ text: String) {
-        kind = .chat
+        kind = .v
+        agentOn = false
         newConversation()
         draft = text
     }
@@ -415,29 +486,31 @@ final class Chat {
         let original = picked.message(written.trimmingCharacters(in: .whitespacesAndNewlines))
         guard canSubmit, var conversation = selected else { return }
         draft = ""
+        let mode = kind(of: conversation)
         if isAgent(conversation) {
             run(original, in: conversation.id)
-        } else if isNear(conversation) {
+        } else if mode == .near {
             let turn = Turn(original: written.trimmingCharacters(in: .whitespacesAndNewlines), reworded: nil)
+            mark(&conversation, as: mode)
             conversation.turns.append(turn)
-            conversation.near = true
             opened = turn.id
             update(conversation)
             send(turn.id, in: conversation.id)
-        } else if isLlama(conversation) {
+        } else if mode == .llama {
             let turn = Turn(original: written.trimmingCharacters(in: .whitespacesAndNewlines), reworded: nil)
+            mark(&conversation, as: mode)
             conversation.turns.append(turn)
-            conversation.llama = true
             update(conversation)
             ask(turn.id, in: conversation.id)
         } else if settings.neverReword {
             let turn = Turn(original: original, reworded: nil)
+            mark(&conversation, as: mode)
             conversation.turns.append(turn)
             opened = turn.id
             update(conversation)
             send(turn.id, in: conversation.id)
         } else {
-            start(conversation.id, original, .new(draft: written, picks: picked))
+            start(conversation.id, original, .new(draft: written, picks: picked, mode: mode))
         }
     }
 
@@ -455,16 +528,40 @@ final class Chat {
 
     /// Runs a task that ended without an answer again, as a new turn.
     func runAgain(_ turn: Turn, in id: UUID) {
-        guard runBlock == nil else { return }
+        guard let conversation = conversations.first(where: { $0.id == id }), runBlock(in: kind(of: conversation)) == nil
+        else { return }
         run(turn.original, in: id)
     }
 
+    /// Runs a task, its model requests paid as its chat's are: a V chat's
+    /// through the payer, with V's model, a Token Inference chat's from the
+    /// Tempo wallet, with its model. The first task marks its conversation
+    /// with its mode, saved with its turn.
     private func run(_ task: String, in id: UUID) {
-        agent.run(task, in: id, model: wallet.model) { [weak self] turn in
+        guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        let mode = kind(of: conversations[index])
+        mark(&conversations[index], as: mode)
+        let kept: (Turn) -> Void = { [weak self] turn in
             guard let self else { return }
             keep(turn, in: id)
             // A task that ended may have paid for its model requests.
-            if agent.runs[id] == nil { Task { await wallet.refresh() } }
+            guard agent.runs[id] == nil else { return }
+            if mode == .token { Task { await wallet.refresh() } } else { payer.follow() }
+        }
+        guard mode == .v else {
+            agent.run(task, in: id, model: wallet.model, paying: .tempo, keep: kept)
+            return
+        }
+        Task {
+            do throws(PayStop) {
+                let model = try await payer.modelForSend()
+                agent.run(task, in: id, model: model, paying: .zkapi, keep: kept)
+            } catch {
+                logger.error("V's models did not read: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .private)")
+                let words = error.code == .modelUnavailable
+                    ? "The service lists no model now. Try again later." : "Cloak couldn't read V's models. Try again."
+                agent.refuse(task, .failed(words), keep: kept)
+            }
         }
     }
 
@@ -496,7 +593,7 @@ final class Chat {
     /// its Original alone, and sent so again after it is answered (decision
     /// 11). Each press is sent, as for Send.
     func sendOriginal(_ turn: UUID, in id: UUID) {
-        guard originalBlock == nil, var conversation = conversations.first(where: { $0.id == id }),
+        guard var conversation = conversations.first(where: { $0.id == id }), originalBlock(in: kind(of: conversation)) == nil,
             let index = conversation.turns.firstIndex(where: { $0.id == turn }), conversation.turns[index].answer == nil
         else { return }
         conversation.turns[index].reworded = nil
@@ -509,8 +606,9 @@ final class Chat {
     /// A turn sent after later ones moves to the end first, so the
     /// conversation is in the order its turns were sent and each request is
     /// the one before it plus more. Each press is sent; one under way never
-    /// stops another. A NEAR conversation's turn goes to NEAR only, and
-    /// every other to the wallet's provider only.
+    /// stops another. A NEAR conversation's turn goes to NEAR only; a V
+    /// conversation's through the payer only, in the owner's turn; a Token
+    /// Inference conversation's to the Tempo wallet's provider only.
     func send(_ turn: UUID, in id: UUID) {
         guard var conversation = conversations.first(where: { $0.id == id }),
             let index = conversation.turns.firstIndex(where: { $0.id == turn })
@@ -520,36 +618,61 @@ final class Chat {
             press(turn, at: index, in: &conversation)
             Task { [conversation] in
                 let answer = await nearMode.send(turn, in: conversation, route: route)
-                sent(turn, in: id, answer: answer)
+                sent(turn, in: id, answer: answer?.text, tokens: answer?.tokens)
             }
             return
         }
-        guard let deposits = wallet.deposits, sendBlock(conversation.turns[index]) == nil else { return }
+        let mode = kind(of: conversation)
+        guard sendBlock(conversation.turns[index], in: mode) == nil else { return }
+        if mode == .token {
+            guard let deposits = wallet.deposits else { return }
+            press(turn, at: index, in: &conversation)
+            sendStop = nil
+            let identity = identity(of: id)
+            let (model, exchange) = (wallet.model, wallet.exchange)
+            Task { [conversation] in
+                let result: Result<String, SendStop.Reason>
+                do throws(RemoteStop) {
+                    result = .success(try await Remote.send(
+                        turn, in: conversation, model: model, identity: identity,
+                        key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange))
+                } catch {
+                    result = .failure(.tempo(error))
+                }
+                finish(turn, in: id, result)
+                await wallet.refresh()
+            }
+            return
+        }
         press(turn, at: index, in: &conversation)
         sendStop = nil
-        let identity = identities[id] ?? Self.newIdentity()
-        identities[id] = identity
-        let (model, exchange) = (wallet.model, wallet.exchange)
+        let identity = identity(of: id)
         Task { [conversation] in
-            let result: Result<String, RemoteStop>
-            do throws(RemoteStop) {
-                result = .success(try await Remote.send(
-                    turn, in: conversation, model: model, identity: identity,
-                    key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange))
+            let result: Result<String, SendStop.Reason>
+            do throws(PayStop) {
+                result = .success(try await payer.send(turn, in: conversation, identity: identity))
             } catch {
-                result = .failure(error)
+                result = .failure(.zkapi(error))
             }
             finish(turn, in: id, result)
+            // Its settlement, and the deposit's new balance.
+            payer.follow()
         }
     }
 
-    private func finish(_ turn: UUID, in id: UUID, _ result: Result<String, RemoteStop>) {
-        if case .failure(let stop) = result {
-            logger.error("a send stopped: \(stop.code.rawValue, privacy: .public) \(stop.detail, privacy: .private)")
-            sendStop = SendStop(turn: turn, stop: stop)
+    /// The conversation's own Tor identity, made the first time.
+    private func identity(of id: UUID) -> String {
+        let identity = identities[id] ?? Self.newIdentity()
+        identities[id] = identity
+        return identity
+    }
+
+    private func finish(_ turn: UUID, in id: UUID, _ result: Result<String, SendStop.Reason>) {
+        if case .failure(let reason) = result {
+            logger.error("a send stopped: \(reason.code, privacy: .public) \(reason.detail, privacy: .private)")
+            sendStop = SendStop(turn: turn, stop: reason)
         }
-        sent(turn, in: id, answer: try? result.get())
-        Task { await wallet.refresh() }
+        sent(turn, in: id, answer: try? result.get(), tokens: nil)
     }
 
     /// Moves a turn sent after later ones to the end, and counts the press.
@@ -562,14 +685,16 @@ final class Chat {
     }
 
     /// One press of Send on the turn ended; its answer, when one came, is
-    /// kept with it. A conversation deleted meanwhile takes its answer with
-    /// it.
-    private func sent(_ turn: UUID, in id: UUID, answer: String?) {
+    /// kept with it, and with it the tokens NEAR counted for that answer,
+    /// in place of an earlier answer's. A conversation deleted meanwhile
+    /// takes its answer with it.
+    private func sent(_ turn: UUID, in id: UUID, answer: String?, tokens: Tokens?) {
         if let presses = sending[turn]?.presses, presses > 1 { sending[turn]?.presses -= 1 } else { sending[turn] = nil }
         guard let answer, var conversation = conversations.first(where: { $0.id == id }),
             let index = conversation.turns.firstIndex(where: { $0.id == turn })
         else { return }
         conversation.turns[index].answer = answer
+        conversation.turns[index].tokens = tokens
         update(conversation)
     }
 
@@ -686,6 +811,7 @@ final class Chat {
                 conversation.turns[index].reworded = reworded
                 turn = again
             } else {
+                if case .new(_, _, let mode) = asked { mark(&conversation, as: mode) }
                 let new = Turn(original: original, reworded: reworded)
                 conversation.turns.append(new)
                 opened = new.id
@@ -697,7 +823,7 @@ final class Chat {
             // open, saying why. A card's Reword only rewords.
             if case .new = asked, !settings.review { send(turn, in: id) }
         case .failure(let reason):
-            guard case .new(let written, let picked) = asked else {
+            guard case .new(let written, let picked, _) = asked else {
                 stop = Stop(reason: reason, newMessage: false)
                 return
             }

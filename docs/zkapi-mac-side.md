@@ -25,7 +25,7 @@ Repository root: `/Users/sean/Documents/regent/repos/cloak`. Daemon files are un
 | Order of requests, each conversation's Tor identity, rewording, the owner's presses, time limits | The Mac app | `cloak-pay` |
 | What the sheet shows | The Mac app, as a mirror read fresh each time | — |
 
-The Mac writes one payment fact to disk: the expiry day, so it can warn while Cloak is paused and the guest is down. I would put it in `AppSettings.Key` as `depositExpires`, cleared when there is no note. This is new saved data; the chief may prefer it sealed like `agents`.
+The Mac writes two payment facts to disk, both in `AppSettings`: `depositExpires`, the expiry, so it can warn while Cloak is paused and the guest is down, cleared when there is no note; and `vModel`, the model the owner picked in Wallet, kept only when they pick. The expiry is new saved data, kept plainly; whether it should be sealed like `agents` is still open.
 
 ### States
 
@@ -34,13 +34,15 @@ One named value, as `docs/state-machines.md:893-897` asks. It is computed from o
 | State | Entered when | Source |
 |---|---|---|
 | `unread` | Cloak is not Running, or nothing read yet | Supervisor phase |
-| `none` | `has_note` false, funding `phase` is `ready` or `waiting_funds` | view frame; `GET /admin/funding/address` |
-| `depositing(stage)` | funding `phase` is `deposit_pending` or `confirming`; `deposit_stage` is `pending`, `fee_wait`, `finalizing` or `activating` | `daemon:internal/zkapi/address_funding.go:124-168` |
-| `ready` | `has_note`, not `pending_request`, withdrawal `phase` `ready` | view frame; `GET /admin/withdrawal` |
+| `none` | `has_note` false, funding `phase` one of `ready`, `waiting_funds`, `active`, `withdrawal_pending` or `return_pending`, and withdrawal `phase` one of `no_note`, `ready` or `complete` | view frame; `GET /admin/funding/address`; `GET /admin/withdrawal` |
+| `depositing(stage)` | funding `phase` is `approval_pending`, `deposit_pending` or `confirming`; `deposit_stage` is `pending` (also when absent), `fee_wait`, `finalizing` or `activating` | `daemon:internal/zkapi/address_funding.go:124-168` |
+| `ready` | `has_note`, the chain's note not `closed`, and not `settling` | view frame; `GET /admin/withdrawal` |
 | `settling` | `pending_request` true and no request of ours is being sent | view frame |
-| `withdrawing(stage)` | withdrawal `phase` is `quoted`, `waiting_settlement`, `waiting_funds`, `withdrawal_pending` or `confirming` | `daemon:internal/zkapi/address_withdrawal.go:124-181` |
-| `taken` | chain says the note is `Closed` and no withdrawal of ours is saved | view frame, chain part |
-| `failed(fault)` | `reverted`, `legacy_recovery`, `recovery_required`, `failed_finalizing`, or any phase string the app does not know | both status calls |
+| `withdrawing(phase)` | withdrawal `phase` is `quoted`, `waiting_funds`, `withdrawal_pending` or `confirming`, or `waiting_settlement` with a saved destination (without one, it is only the last request settling) | `daemon:internal/zkapi/address_withdrawal.go:124-181` |
+| `taken` | `has_note`, and the chain says the note is `closed`, with no withdrawal of ours under way | view frame, chain part |
+| `failed(fault)` | any funding phase, deposit stage or withdrawal phase not named above, `reverted`, `legacy_recovery`, `recovery_required` and `failed_finalizing` among them | both status calls |
+
+`Payer.state(view:funding:withdrawal:sending:)` checks the funding phase first, then the withdrawal phase, then the note, in that order. A `failed` state makes no follow call.
 
 Two things sit beside it rather than inside it:
 
@@ -51,15 +53,17 @@ An unknown phase is `failed`, with no call made and no guess.
 
 ### Calls over the host's existing channel
 
-The channel is `Guest.connect(to:)` at `host/Sources/CloakHost/Guest.swift:112-125`, to vsock port 8021, one request per connection, in the existing frames. Three frame kinds are added to the existing `R` and `A`:
+The channel is `Guest.connect(to:)` at `host/Sources/CloakHost/Guest.swift:112-125`, to vsock port 8021, one exchange per connection, in the existing frames: a kind byte, the payload's length as four bytes, big-endian, then the payload, at most 16 MiB (`host/Sources/CloakHost/Pay.swift`). Every payload is a JSON object. The host writes one frame and reads until `A`; for `R` it also takes `H`, and any other frame, or `H` after `C` or `V`, ends the exchange as a failure. Three frame kinds are added to the existing `R` and `A`:
 
-| Frame | Direction | Payload | Takes a turn |
-|---|---|---|---|
-| `R` (exists) | host to guest | `{"identity","body"}` | Yes |
-| `H` (new) | guest to host | `{}`, once, when the hold finds an earlier settlement unfinished | — |
-| `C` (new) | host to guest | `{"method","path","body"}`, allowlisted, called in-process | No |
-| `V` (new) | host to guest | `{"chain": true or false}` | No |
-| `A` (exists) | guest to host | `{"status","body"}` | — |
+| Frame | Byte | Direction | Payload | Takes a turn |
+|---|---|---|---|---|
+| `R` (exists) | `0x52` | host to guest | `{"identity": "<64 hex>", "body": "<the chat request, OpenAI's shape, as a JSON text>"}` | Yes |
+| `H` (new) | `0x48` | guest to host | `{"held": true}` once, when the hold first finds an earlier settlement unfinished; then `{"held": false}` once, when the hold ends, just before the request's key is asked for. No `H` comes for a request that was not held | — |
+| `C` (new) | `0x43` | host to guest | `{"method": "GET" or "POST", "path": "<allowlisted>", "body": "<the route's JSON body as a JSON text, or \"\" for none>"}`, called in-process | No |
+| `V` (new) | `0x56` | host to guest | `{"chain": true or false}` | No |
+| `A` (exists) | `0x41` | guest to host | `{"status": <HTTP status>, "body": "<the route's body as text>"}` | — |
+
+An `R` body holds `model`, `messages` and `"stream": false`: each user message as it was sent (reworded, unless its owner pressed Send Original Text or ticked Never reword), after the turns sent and answered before. A reworded message's original is never in it. `C` bodies are written by the Mac with the keys below, in snake case; answers are read with snake case turned to camel case (`JSONDecoder.pay`).
 
 `C` goes through the same in-process `p.api.ServeHTTP` that `complete` uses (`zz_cloak_pay.go:297-320`). `cloak-pay` adds the bearer key and `X-OA-Management-Token` itself, which the daemon requires at `daemon:internal/server/server.go:108-118`. Neither is ever in a frame. Anything outside the allowlist is answered 404.
 
@@ -75,7 +79,10 @@ The allowlist, all routed in `daemon:internal/zkapi/funding_admin.go` (`ServeAdm
 | Withdraw: prepare | `POST /admin/withdrawal/quote` | 74 | `{"destination","note_id"}` (`note_id` required, 82) | quote |
 | Withdraw: sign | `POST /admin/withdrawal/approve` | 56 | `{"quote_id"}` | `AddressWithdrawalStatus` |
 | Withdraw: follow | `POST /admin/withdrawal` | 74 | same destination and note | `AddressWithdrawalStatus` |
-| Leftover ETH | `GET /admin/return`, `POST /admin/return/quote`, `POST /admin/return/approve`, `POST /admin/return` | 32, 105, 56, 113 | `{"destination","amount_wei"}` | `AddressReturnStatus` |
+| Leftover ETH | `GET /admin/return` | 32 | — | `AddressReturnStatus` |
+| Send Out: prepare | `POST /admin/return/quote` | 105 | `{"destination","amount_wei": ""}`; an empty amount sends all of it (`address_return.go`, near 118); the destination must differ from the funding address, or the daemon refuses | quote |
+| Send Out: sign | `POST /admin/return/approve` | 56 | `{"quote_id"}` | `AddressReturnStatus` |
+| Send Out: follow | `POST /admin/return` | 113 | none | `AddressReturnStatus` |
 | A saved quote | `GET /admin/{funding,withdrawal,return}/quote` | 34 | — | quote or none |
 | Models | `GET /v1/models` | `server.go:120` | — | ids with `oa_request_limit_micro_usd` (`model_budget.go:174-210`) |
 
@@ -85,12 +92,35 @@ Facts about these calls that the Mac must respect:
 - A quote lives 30 seconds (`address_quote.go:253`), and an approve of a stale or replaced quote fails closed (`checkedAddressQuote`, `address_quote.go:200-207`).
 - Each admin call has a 10-minute limit (line 17).
 - The follow call cannot sign. For native ETH, signing without an approved quote is refused (`address_funding.go:646-649`); a saved transaction is only re-sent as identical bytes (`address_funding.go:323-337`).
-- The Mac may call follow on its own only in `deposit_pending`, `confirming` and `withdrawal_pending`, and always with the saved amount. With no deposit saved, the same call would write an amount into the record (`address_funding.go:264`).
+- The Mac may call follow on its own only in the phases listed below, and always with the saved amount. With no deposit saved, the same call would write an amount into the record (`address_funding.go:264`).
 
-**Expiry and settlement status** come from `V`, since the admin API has neither in usable form. Its answer holds:
+Withdraw's destination is always the funding address itself (decision 23a): the Mac quotes `{"destination": <the address GET /admin/funding/address gave>, "note_id": <the withdrawal status's note_id>}` and nothing else. The Mac's follow calls are exactly three, each only from what the last read saved:
 
-- From `Client.WalletStatus`: `has_note`, `pending_request`, `note_id`, `deposit_amount`, `current_balance`, `expiry_ts`.
-- With `chain: true`, read at one block: the block's number and time, vault `paused()`, `notes(noteId)` (commitment, `depositAmount`, `expiryTs`, status), and the funding address's balance.
+- `POST /admin/funding/deposit` `{"amount": <funding status's amount>}` while the funding `phase` is `deposit_pending` or `confirming` and an amount is saved.
+- `POST /admin/withdrawal` `{"destination", "note_id"}`, both from the withdrawal status, while its `phase` is `withdrawal_pending` or `confirming`.
+- `POST /admin/return` while the return `phase` is `return_pending`.
+
+**Expiry and settlement status** come from `V`, since the admin API has neither in usable form. Its answer is exactly:
+
+```json
+{
+  "wallet": {
+    "has_note": true,
+    "pending_request": false,
+    "note": { "note_id": 7, "expiry_ts": 1795000000 }
+  },
+  "chain": {
+    "block": 23000000,
+    "time": 1794000000,
+    "paused": false,
+    "balance_wei": "1000000000000000",
+    "note": { "status": "active", "expiry_ts": 1795000000 }
+  }
+}
+```
+
+- `wallet` is from `Client.WalletStatus`; `wallet.note` is absent without a note.
+- `chain` is present only for `{"chain": true}`, and read at one block, the one `eth_getBlockByNumber "latest"` gave: its number and time, vault `paused()`, `notes(noteId)` as `chain.note` (absent without a note; `status` is `uninitialized`, `active`, `pending_withdrawal` or `closed`), and the funding address's balance in wei, as a decimal string. A `V` whose chain read fails answers non-200; the Mac then blocks no button on the chain.
 
 The chain read is a new overlay file, `guest/pay/zz_cloak_chain.go`, added into `internal/zkapi/` the way `zz_cloak_pay.go` is added to the command package. It must sit in that package because `FundingHandler.config` (`funding.go:92`) and `addressRPC` (`address_funding.go:524`) are unexported. It reuses the daemon's own Tor route and RPC. It pins all reads to the block number that `eth_getBlockByNumber "latest"` returns. Selectors are derived with `crypto.Keccak256`, as `address_withdrawal.go:100` does.
 
@@ -103,7 +133,7 @@ The chain read is a new overlay file, `guest/pay/zz_cloak_chain.go`, added into 
 - A request already being sent is never cancelled to make room, since a cut after its key is issued may be charged.
 - Each press is its own entry; two presses send two requests.
 - A cancelled request leaves the queue. If it was being sent, the socket closes, and `cloak-pay` cancels it with nothing spent if its key was not yet asked for (`zz_cloak_pay.go:214-220`).
-- A press on Withdraw stops new turns until the withdrawal ends or the owner cancels its review. The daemon answers 409 `withdrawal_pending` to requests then anyway (`daemon:cmd/zkapi-clientd/main.go:170-195`).
+- A press on Withdraw does not stop new turns on the Mac, since a press is never held back by page state. The daemon answers 409 `withdrawal_pending` to requests while one is under way (`daemon:cmd/zkapi-clientd/main.go:170-195`), and the Mac shows its own words for that.
 
 `C` and `V` frames never wait in this queue.
 
@@ -111,9 +141,9 @@ The chain read is a new overlay file, `guest/pay/zz_cloak_chain.go`, added into 
 
 Step 3 left these for step 6 (`plan.md:967-970`).
 
-- **Still settling.** The Mac cannot tell a held request from one being proved, because only one `A` frame comes back. `H` fixes that: `WaitSettled` takes a callback, called once on the first "still pending". The request then shows `held`, and the sheet shows `settling`.
-- **Hold limit: 180 s from `H`.** The Mac then hangs up. Nothing was sent or spent, and the stop says so. For scale, the trial saw 35 s after a restart and 77.7 s for the second of two requests.
-- **Answer limit: 600 s once the hold is over.** The stop then says the request may have been charged, as NEAR's does. The daemon's own cap is 30 minutes (`daemon:internal/server/server.go:227`).
+- **Still settling.** The Mac cannot tell a held request from one being proved, because only one `A` frame comes back. `H` fixes that: `WaitSettled` takes a callback, called once on the first "still pending", which writes `{"held": true}`; when the hold ends, the guest writes `{"held": false}` before asking for the key. The request shows `held` between the two, and the sheet shows `settling`.
+- **Hold limit: 180 s from `{"held": true}`.** The Mac then hangs up. Nothing was sent or spent, and the stop says so. For scale, the trial saw 35 s after a restart and 77.7 s for the second of two requests.
+- **Answer limit: 600 s from the `R` frame, and again from `{"held": false}`.** The stop then says the request may have been charged, as NEAR's does. The daemon's own cap is 30 minutes (`daemon:internal/server/server.go:227`).
 - **Calls:** 60 s for reads, 660 s for an approve.
 
 All four are constants in one place, to be set again from step 7's measurements. The Mac never shows the daemon's own message text, which names `zkapi-clientd config` (`plan.md:917-919`); it maps codes to its own words.
@@ -249,7 +279,6 @@ The same rule applied to Send and Run changes today's behaviour. `Block` (`app/S
 - The sender's Rust checks, with its folder.
 - "sender ready" in `tests/guest_boot.py:176-215`.
 - Port 8020 at `tests/test_escape_path.py:122-123`, replaced by 8021.
-- The skip mark and the "sender's path" sentence in `tests/test_pay_path.py:24-26` and `:36`.
 
 **Documents**
 
@@ -306,7 +335,7 @@ Checks come after each part works, and only for money, break-outs and proof befo
     - An unknown phase makes no call.
     - A request frame carries only identity and body.
     - A rewording that stops sends no frame.
-15. Break-outs: take the skip off `tests/test_pay_path.py` once `cloak-pay` starts at boot, and add `C` and `V` frames from the sandbox, plus reads of the funding file as the agent.
+15. Break-outs: in `tests/test_escape_path.py`, which holds the payer's break-out checks since step 5, add `C` and `V` frames from the sandbox, plus reads of the funding file as the agent.
 16. Documents: a "Step 6" note under `plan.md:767`, the payer's stages in `state-machines.md`, README, CHANGELOG.
 
 No agent presses Deposit or sends ETH; that is step 8, and Sean's.

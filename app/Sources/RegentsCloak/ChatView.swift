@@ -11,8 +11,8 @@ import SwiftUI
 /// task in place of a message, with the steps the agent took. In NEAR
 /// Private AI's conversations, each message as written and its answer; in
 /// Local Llama's, each message as written and the answer of the model on
-/// this Mac. Development mode's mark is at the top, or the mode's own in a
-/// NEAR Private AI or Local Llama conversation.
+/// this Mac. The mode's mark is at the top. The Modes page shows on it as a
+/// sheet.
 struct ChatView: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
@@ -59,13 +59,12 @@ private struct Sidebar: View {
         List(selection: $chat.selection) {
             ForEach(chat.conversations) { conversation in
                 let agent = chat.isAgent(conversation)
-                let near = chat.isNear(conversation)
-                let llama = chat.isLlama(conversation)
+                let mode = chat.kind(of: conversation)
                 let unsaved = chat.unsaved.contains(conversation.id)
                 HStack(spacing: 6) {
                     Text(agent && conversation.turns.isEmpty ? "New task" : conversation.title)
                         .lineLimit(1)
-                    if agent || near || llama || unsaved {
+                    if agent || mode != .v || unsaved {
                         Spacer(minLength: 0)
                     }
                     if unsaved {
@@ -76,25 +75,19 @@ private struct Sidebar: View {
                             .help("Not saved. What's new here is gone when Cloak quits.")
                     }
                     if agent {
-                        Image(systemName: "hammer")
+                        Image(systemName: Chat.Kind.agentSymbol)
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
-                            .accessibilityLabel("Agent")
-                            .help("Agent chat")
+                            .accessibilityLabel(Chat.Kind.agentName)
+                            .help("\(Chat.Kind.agentName) chat")
                     }
-                    if near {
-                        Image(systemName: "cpu")
+                    // V's chats have no mark.
+                    if mode != .v {
+                        Image(systemName: mode.symbol)
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
-                            .accessibilityLabel("NEAR Private AI")
-                            .help("NEAR Private AI chat")
-                    }
-                    if llama {
-                        Image(systemName: "laptopcomputer")
-                            .imageScale(.small)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Local Llama")
-                            .help("Local Llama chat")
+                            .accessibilityLabel(mode.name)
+                            .help("\(mode.name) chat")
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -142,26 +135,20 @@ private struct Detail: View {
     let showDetails: () -> Void
     let showNearSettings: () -> Void
     let showLlamaSettings: () -> Void
-    @State private var showingWallet = false
 
-    /// The conversation in front's kind; a V chat's while none is, as
-    /// the mark at the top shows.
+    /// The conversation in front's mode; V's while none is, as the mark at
+    /// the top shows.
     private var kind: Chat.Kind {
-        guard let conversation = chat.selected else { return .chat }
-        if chat.isNear(conversation) { return .near }
-        if chat.isLlama(conversation) { return .llama }
-        if chat.isAgent(conversation) { return .agent }
-        return .chat
+        chat.selected.map(chat.kind(of:)) ?? .v
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if chat.selected.map(chat.isNear) == true {
-                NearBar(settings: chat.settings)
-            } else if chat.selected.map(chat.isLlama) == true {
-                LlamaBar()
-            } else {
-                DevelopmentBar()
+            switch kind {
+            case .v: VBar()
+            case .token: TokenBar()
+            case .near: NearBar(settings: chat.settings)
+            case .llama: LlamaBar()
             }
             Divider()
             content
@@ -171,13 +158,16 @@ private struct Detail: View {
                 CoverToggle(settings: chat.settings, supervisor: chat.supervisor)
             }
             ToolbarItem {
-                Button("Wallet", systemImage: "creditcard") { showingWallet = true }
-                    .help("Wallet")
-                    .disabled(!chat.isOpen)
+                WalletButton(chat: chat, v: kind == .v)
             }
         }
-        .sheet(isPresented: $showingWallet) {
-            WalletView(wallet: chat.wallet, nearMode: chat.nearMode, kind: kind, showNearSettings: showNearSettings)
+        .sheet(isPresented: $chat.showingWallet) {
+            WalletView(
+                wallet: chat.wallet, payer: chat.payer, settings: chat.settings, nearMode: chat.nearMode, kind: kind,
+                tokens: chat.selected?.tokens, showNearSettings: showNearSettings)
+        }
+        .sheet(isPresented: $chat.showingModes) {
+            ModesPage(chat: chat)
         }
         .task(id: chat.supervisor.phase == .running) { await chat.wallet.refresh() }
     }
@@ -257,6 +247,46 @@ private struct CoverToggle: View {
     }
 }
 
+/// Wallet, in Chat's toolbar: the sheet for the conversation in front. In a
+/// V chat, while V's deposit expires within the warning or has expired, a
+/// warning sits on the symbol's corner, orange then red, and the help says
+/// when.
+private struct WalletButton: View {
+    let chat: Chat
+    let v: Bool
+
+    var body: some View {
+        let band = v ? chat.payer.band(at: .now) : nil
+        let warning: (Color, String)? =
+            switch band {
+            case .near?: (.orange, "Expires \(chat.payer.expiry?.formatted(.dateTime.day().month()) ?? ""). Withdraw before then.")
+            case .due?: (.red, "Can be taken now.")
+            case .far?, nil: nil
+            }
+        Button {
+            chat.showingWallet = true
+        } label: {
+            Label {
+                Text("Wallet")
+            } icon: {
+                Image(systemName: "creditcard")
+                    .overlay(alignment: .bottomTrailing) {
+                        if let (tint, _) = warning {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(tint)
+                                .background(.background, in: .circle)
+                                .offset(x: 3, y: 3)
+                        }
+                    }
+            }
+        }
+        .help(warning.map { "Wallet. \($0.1)" } ?? "Wallet")
+        .accessibilityValue(warning?.1 ?? "")
+        .disabled(!chat.isOpen)
+    }
+}
+
 /// The conversation's messages, in the order they were sent, each not yet
 /// sent where it was added. One unsent message is open at a time, to be
 /// edited, reworded again and sent; pressing another opens it instead.
@@ -267,13 +297,12 @@ private struct Turns: View {
     var body: some View {
         let rewording = chat.rewording?.conversation == conversation.id ? chat.rewording : nil
         let agent = chat.isAgent(conversation)
-        let near = chat.isNear(conversation)
-        let llama = chat.isLlama(conversation)
+        let mode = chat.kind(of: conversation)
         let run = chat.agent.runs[conversation.id]
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // What each mode does is in the Modes note.
+                    // What each mode does is on the Modes page.
                     if conversation.turns.isEmpty, rewording == nil {
                         Text(agent ? "New task" : "New chat")
                             .font(.title3.weight(.semibold))
@@ -283,16 +312,16 @@ private struct Turns: View {
                         if agent {
                             let running = run?.turn.id == turn.id ? run : nil
                             TaskCard(
-                                chat: chat, conversation: conversation.id, turn: running?.turn ?? turn, run: running,
+                                chat: chat, conversation: conversation.id, mode: mode, turn: running?.turn ?? turn, run: running,
                                 newest: turn.id == conversation.turns.last?.id)
-                        } else if llama {
+                        } else if mode == .llama {
                             LlamaCard(
                                 chat: chat, conversation: conversation.id, turn: turn,
                                 answering: chat.answering[conversation.id].flatMap { $0.turn == turn.id ? $0 : nil },
                                 newest: turn.id == conversation.turns.last?.id)
                         } else {
                             TurnCard(
-                                chat: chat, conversation: conversation.id, turn: turn, near: near,
+                                chat: chat, conversation: conversation.id, turn: turn, mode: mode,
                                 open: chat.isOpen(turn, in: conversation),
                                 rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil })
                         }
@@ -329,22 +358,24 @@ private struct Turns: View {
 /// message going as written shows its Original alone. The open one has the
 /// lights, Reword, which only rewords, and Send: nothing is sent unless
 /// Cloak routes it through Tor and, unless its owner chose to send it as
-/// written, it is reworded. Unlinked is never good in Development mode.
-/// While it has a reworded text, the drop-down beside Send holds Send
-/// Original Text, which sends it as written instead, and Never reword.
-/// Another unsent one is shrunk, marked so, and opens when pressed
-/// anywhere. A NEAR message is shown as written alone, and the open one has
-/// Send, with no lights and no rewording.
+/// written, it is reworded. In Token Inference a third light says the
+/// provider can link the chats. While it has a reworded text, the drop-down
+/// beside Send holds Send Original Text, which sends it as written instead,
+/// and Never reword. Another unsent one is shrunk, marked so, and opens when
+/// pressed anywhere. A NEAR message is shown as written alone, and the open
+/// one has Send, with no lights and no rewording; its answer, when NEAR
+/// counted its tokens, has a mark that says how many.
 private struct TurnCard: View {
     let chat: Chat
     let conversation: UUID
     let turn: Turn
-    let near: Bool
+    let mode: Chat.Kind
     let open: Bool
     let rewording: Chat.Rewording?
     @State private var hovering = false
 
     var body: some View {
+        let near = mode == .near
         let sending = chat.sending[turn.id]
         let shrunk = !open && turn.answer == nil
         let notSent = rewording == nil && shrunk && sending == nil
@@ -374,12 +405,23 @@ private struct TurnCard: View {
             if let answer = turn.answer {
                 Pane(title: "Answer", count: nil, mark: .added) {
                     AnswerText(text: answer)
+                } accessory: {
+                    if let tokens = turn.tokens {
+                        TokenMark(tokens: tokens)
+                    }
                 }
             }
             if !near, let stop = chat.sendStop, stop.turn == turn.id {
-                StopRow(stop: stop.stop) { chat.sendStop = nil }
-                    .padding(12)
-                    .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                Group {
+                    switch stop.stop {
+                    case .tempo(let stop):
+                        StopRow(stop: stop) { chat.sendStop = nil }
+                    case .zkapi(let stop):
+                        PayStopRow(stop: stop, showWallet: { chat.showingWallet = true }) { chat.sendStop = nil }
+                    }
+                }
+                .padding(12)
+                .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             }
             if near, let stop = chat.nearMode.sendStop, stop.turn == turn.id {
                 NearStopRow(stop: stop.stop) { chat.nearMode.sendStop = nil }
@@ -390,7 +432,9 @@ private struct TurnCard: View {
                 Progress(chat: chat, started: rewording.started)
             } else if open {
                 if !near {
-                    Lights(reworded: turn.reworded.map { !Chat.isBlank($0) } ?? false, routed: chat.supervisor.phase == .running)
+                    Lights(
+                        reworded: turn.reworded.map { !Chat.isBlank($0) } ?? false, routed: chat.supervisor.phase == .running,
+                        linkable: mode == .token)
                 }
                 HStack(spacing: 12) {
                     if !near {
@@ -401,8 +445,8 @@ private struct TurnCard: View {
                         Busy(title: "Sending", started: sending.started)
                     }
                     Spacer()
-                    let block = near ? chat.nearMode.sendBlock : chat.sendBlock(turn)
-                    let originalBlock = turn.reworded == nil ? nil : chat.originalBlock
+                    let block = near ? chat.nearMode.sendBlock : chat.sendBlock(turn, in: mode)
+                    let originalBlock = turn.reworded == nil ? nil : chat.originalBlock(in: mode)
                     if let words = originalBlock ?? block {
                         Text(words)
                             .font(.callout)
@@ -503,10 +547,12 @@ private struct SendOptions: View {
 /// side by side, the words marked as in a message; the steps the agent took;
 /// its answer. While it runs, its newest steps, how long it has run, and
 /// Stop. One that ended without an answer says why and, as the newest, can
-/// run again. The newest without an answer has the lights.
+/// run again; in V, one stopped for want of a deposit says so, with
+/// Wallet. The newest without an answer has the lights.
 private struct TaskCard: View {
     let chat: Chat
     let conversation: UUID
+    let mode: Chat.Kind
     let turn: Turn
     let run: Agent.Run?
     let newest: Bool
@@ -583,6 +629,14 @@ private struct TaskCard: View {
             if run == nil, turn.answer == nil {
                 if let end = chat.agent.ends[turn.id] {
                     EndRow(title: end.title, words: end.words)
+                    if mode == .v, case .failed = end, chat.payer.state == .none {
+                        HStack(spacing: 12) {
+                            Text("Deposit to run.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            Button("Wallet…") { chat.showingWallet = true }
+                        }
+                    }
                 } else {
                     Text("Not finished")
                         .font(.callout)
@@ -591,7 +645,7 @@ private struct TaskCard: View {
             }
             if newest, turn.answer == nil {
                 // The door sends nothing of a task that it has not reworded.
-                Lights(reworded: true, routed: chat.supervisor.phase == .running)
+                Lights(reworded: true, routed: chat.supervisor.phase == .running, linkable: mode == .token)
             }
             if let run {
                 HStack(spacing: 8) {
@@ -603,7 +657,7 @@ private struct TaskCard: View {
             } else if newest, turn.answer == nil {
                 HStack(spacing: 12) {
                     Spacer()
-                    let block = chat.runBlock
+                    let block = chat.runBlock(in: mode)
                     if let block {
                         Text(block)
                             .font(.callout)
@@ -720,19 +774,23 @@ private struct EndRow: View {
     }
 }
 
-/// Whether the message is reworded, routed through Tor and unlinked from
-/// the person's other chats: a symbol each, green when it is, orange when
-/// not, with the state in words as its help and for VoiceOver. Routed has
-/// Tor's symbol, as the Tor switch does.
+/// Whether the message is reworded and routed through Tor: a symbol each,
+/// green when it is, orange when not, with the state in words as its help
+/// and for VoiceOver. Routed has Tor's symbol, as the Tor switch does. In
+/// Token Inference a third, always orange, says one wallet pays for every
+/// chat.
 private struct Lights: View {
     let reworded: Bool
     let routed: Bool
+    let linkable: Bool
 
     var body: some View {
         HStack(spacing: 4) {
             Light(symbol: "textformat", good: reworded, words: reworded ? "Reworded" : "Not reworded")
             Light(symbol: torSymbol, good: routed, words: routed ? "Routed through Tor" : "Not routed: Cloak isn't running")
-            Light(symbol: "link", good: false, words: "The provider can link your chats, because one wallet pays for all of them.")
+            if linkable {
+                Light(symbol: "link", good: false, words: "The provider can link your chats, because one wallet pays for all of them.")
+            }
         }
     }
 }
@@ -831,12 +889,14 @@ struct Card<Content: View>: View {
     }
 }
 
-/// A titled text, with how many words are marked and how they look.
-struct Pane<Content: View>: View {
+/// A titled text, with how many words are marked and how they look, and
+/// at the end of its title's line any mark of its own.
+struct Pane<Content: View, Accessory: View>: View {
     let title: String
     let count: Int?
     let mark: TextBox.Mark
     @ViewBuilder let content: Content
+    @ViewBuilder let accessory: Accessory
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -852,11 +912,35 @@ struct Pane<Content: View>: View {
                         .padding(.vertical, 1)
                         .background(Color(nsColor: mark.tint).opacity(0.15), in: Capsule())
                 }
+                accessory
             }
             content
                 .paneBox()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension Pane where Accessory == EmptyView {
+    init(title: String, count: Int?, mark: TextBox.Mark, @ViewBuilder content: () -> Content) {
+        self.init(title: title, count: count, mark: mark, content: content, accessory: { EmptyView() })
+    }
+}
+
+/// What NEAR counted for an answer: a small mark at the end of its title's
+/// line, the counts in its help and for VoiceOver, as "1,204 tokens in, 356
+/// out", the numbers as this Mac writes them.
+private struct TokenMark: View {
+    let tokens: Tokens
+
+    var body: some View {
+        let words = String(AttributedString(localized: "^[\(tokens.input) token](inflect: true) in, \(tokens.output) out").characters)
+        Image(systemName: "number.circle")
+            .imageScale(.small)
+            .foregroundStyle(.secondary)
+            .help(words)
+            .accessibilityLabel("Tokens")
+            .accessibilityValue(words)
     }
 }
 
@@ -877,10 +961,11 @@ extension View {
 /// ticked or Review off. In the agent's conversation, the box for the next
 /// task, with Run, or Stop while a task runs there, and a note when the
 /// agent starts without the earlier tasks. While the conversation is empty,
-/// what it is to be: V (Cloak's), NEAR Private AI or Local Llama, and in V
-/// the Agent switch, which makes it the agent's; beside them Modes, what
-/// each does and where each comes from. Above either box, its details; at
-/// the foot, the Tor and zkAPI switches. In a NEAR Private AI conversation,
+/// what it is to be: V, Token Inference, NEAR Private AI or Local Llama,
+/// and in V and Token Inference the Agent switch, which makes it the
+/// agent's; beside them Modes, which shows the Modes page. Above either
+/// box, its details; at the foot, the Tor and zkAPI switches. In a NEAR
+/// Private AI conversation,
 /// the box's button sends each message as written, with no details, and at
 /// the foot NEAR's Tor switch and what its hardware check last found. In a
 /// Local Llama conversation, it asks the model on this Mac, with Stop while
@@ -894,6 +979,7 @@ private struct Compose: View {
 
     var body: some View {
         let conversation = chat.selected
+        let mode = conversation.map(chat.kind(of:)) ?? chat.kind
         let agent = conversation.map(chat.isAgent) ?? false
         let near = conversation.map(chat.isNear) ?? false
         let llama = conversation.map(chat.isLlama) ?? false
@@ -966,13 +1052,13 @@ private struct Compose: View {
                     HStack(spacing: 6) {
                         ModeSwitch(kind: $chat.kind)
                             .fixedSize()
-                        if chat.kind.mode == .chat {
+                        if chat.kind.hasAgent {
                             SwitchPill(
-                                title: Chat.Kind.agent.name, symbol: Chat.Kind.agent.symbol,
-                                isOn: Binding(get: { chat.kind == .agent }, set: { chat.kind = $0 ? .agent : .chat }),
-                                help: Chat.Kind.agent.about)
+                                title: Chat.Kind.agentName, symbol: Chat.Kind.agentSymbol, isOn: $chat.agentOn,
+                                help: Chat.Kind.agentAbout)
                         }
-                        InfoButton("Modes", arrowEdge: .top) { Modes() }
+                        SymbolButton("Modes", symbol: "info.circle") { chat.showingModes = true }
+                            .foregroundStyle(.secondary)
                     }
                 }
                 if neverReword {
@@ -987,7 +1073,7 @@ private struct Compose: View {
                 }
                 Spacer(minLength: 0)
                 // While Cloak is not running, the notice above says so.
-                if agent, chat.supervisor.phase == .running, let block = chat.runBlock {
+                if agent, chat.supervisor.phase == .running, let block = chat.runBlock(in: mode) {
                     Text(block)
                         .foregroundStyle(.secondary)
                 }
@@ -1000,7 +1086,7 @@ private struct Compose: View {
             if near {
                 NearSwitches(settings: chat.settings, nearMode: chat.nearMode)
             } else if !llama {
-                Switches()
+                Switches(mode: mode)
             }
         }
         .padding(16)
@@ -1013,20 +1099,24 @@ private struct Compose: View {
 private let torSymbol = "point.3.connected.trianglepath.dotted"
 
 /// Tor and zkAPI, each a small glass pill of its symbol whose dot shows at
-/// a glance whether it is on. Tor is always on, and zkAPI is off, since one
-/// wallet pays for everything (the Development bar); neither changes here
-/// yet, and a press on either says so.
+/// a glance whether it is on. Tor is always on. zkAPI is on in V, which
+/// pays each request with a new key, and off in Token Inference, which
+/// pays from one wallet. Neither changes here, and a press on either says
+/// so.
 private struct Switches: View {
+    let mode: Chat.Kind
+
     var body: some View {
+        let v = mode == .v
         HStack(spacing: 6) {
             SwitchPill(
                 title: "Tor", symbol: torSymbol, isOn: .constant(true),
                 help: "Tor: your messages reach the AI service from a Tor address, not this Mac's.",
-                fixed: "Tor stays on in V chats for now.")
+                fixed: v ? "Tor stays on in V chats." : "Tor stays on in Token Inference chats.")
             SwitchPill(
-                title: "zkAPI", symbol: "ticket", isOn: .constant(false),
-                help: "zkAPI: a way to pay that doesn't link your chats to one wallet.",
-                fixed: "zkAPI payment isn't in this build yet.")
+                title: "zkAPI", symbol: "ticket", isOn: .constant(v),
+                help: v ? "Each request is paid with a new key." : "zkAPI is off: one wallet pays for every chat.",
+                fixed: v ? "zkAPI stays on in V chats." : "Token Inference pays from one wallet. V pays with zkAPI.")
             Spacer(minLength: 0)
         }
         .font(.callout)
@@ -1113,8 +1203,7 @@ private struct NearStatus: View {
     }
 }
 
-/// NEAR Private AI's mark, in place of Development mode's, with what goes
-/// and who pays as its help; and Limits, what NEAR's hardware check does
+/// NEAR Private AI's mark, with what goes and who pays as its help; and Limits, what NEAR's hardware check does
 /// not cover, behind the info button at the end.
 private struct NearBar: View {
     let settings: AppSettings
@@ -1131,8 +1220,8 @@ private struct NearBar: View {
     }
 }
 
-/// Local Llama's mark, in place of Development mode's, with where the
-/// answer comes from and what it needs as its help.
+/// Local Llama's mark, with where the answer comes from and what it needs
+/// as its help.
 private struct LlamaBar: View {
     var body: some View {
         HStack(spacing: 10) {
@@ -1187,10 +1276,9 @@ private struct Limits: View {
 }
 
 /// The mode switch under an empty chat's box: a segment a mode, each its
-/// symbol and the chosen one its name too. V's is the chosen one with
-/// Agent on as well as off, and pressing the chosen one changes nothing, so
-/// Agent stays as it is. A segment's help names its mode and says what it
-/// does and who pays. VoiceOver reads it as a radio group, each segment by
+/// symbol and the chosen one its name too. Agent stays as it is across a
+/// change, and shows again in a mode that has it. A segment's help names
+/// its mode and says what it does and who pays. VoiceOver reads it as a radio group, each segment by
 /// its mode's name. AppKit's own segmented control, since SwiftUI's draws a
 /// segment's symbol or its name, never both.
 private struct ModeSwitch: NSViewRepresentable {
@@ -1216,9 +1304,9 @@ private struct ModeSwitch: NSViewRepresentable {
     func updateNSView(_ control: NSSegmentedControl, context: Context) {
         context.coordinator.kind = $kind
         for (index, mode) in Chat.Kind.modes.enumerated() {
-            control.setLabel(mode == kind.mode ? mode.name : "", forSegment: index)
+            control.setLabel(mode == kind ? mode.name : "", forSegment: index)
         }
-        control.selectedSegment = Chat.Kind.modes.firstIndex(of: kind.mode) ?? -1
+        control.selectedSegment = Chat.Kind.modes.firstIndex(of: kind) ?? -1
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl, context: Context) -> CGSize? {
@@ -1233,28 +1321,27 @@ private struct ModeSwitch: NSViewRepresentable {
         }
 
         @objc func choose(_ control: NSSegmentedControl) {
-            let mode = Chat.Kind.modes[control.selectedSegment]
-            if mode != kind.wrappedValue.mode { kind.wrappedValue = mode }
+            kind.wrappedValue = Chat.Kind.modes[control.selectedSegment]
         }
     }
 }
 
 extension Chat.Kind {
-    /// The modes, in the switch's order. The agent's is V's, with the Agent
-    /// switch on.
-    static let modes: [Chat.Kind] = [.chat, .near, .llama]
+    /// The modes, in the switch's and the Modes page's order.
+    static let modes: [Chat.Kind] = [.v, .token, .near, .llama]
 
-    /// The mode it belongs to: V's for the agent's.
-    var mode: Chat.Kind {
-        self == .agent ? .chat : self
-    }
+    static let agentName = "Agent"
+    static let agentSymbol = "hammer"
+    /// The Agent switch's help.
+    static let agentAbout =
+        "Agent: your message becomes a task. Cloak's agent works on it step by step inside its sealed box on this Mac, through Tor. A remote model does the thinking, paid the same way as the chat."
 
     var name: String {
         switch self {
-        case .chat: "V"
+        case .v: "V"
+        case .token: "Token Inference"
         case .near: "NEAR Private AI"
         case .llama: "Local Llama"
-        case .agent: "Agent"
         }
     }
 
@@ -1262,70 +1349,158 @@ extension Chat.Kind {
     /// V's.
     var symbol: String {
         switch self {
-        case .chat: "theatermasks"
+        case .v: "theatermasks"
+        case .token: "dollarsign.circle"
         case .near: "cpu"
         case .llama: "laptopcomputer"
-        case .agent: "hammer"
         }
     }
 
-    /// Its help: a mode's name, then what it does and who pays, in one
-    /// sentence; the agent's, the Agent switch's.
+    /// Its help: its name, then what it does and who pays, in one sentence
+    /// or two.
     var about: String {
         switch self {
-        case .chat: "V: reworded on this Mac and sent through Tor, paid by the wallet on this Mac."
+        case .v: "V: reworded on this Mac and sent through Tor. Each request is paid with a new key, from a deposit of ETH."
+        case .token: "Token Inference: reworded on this Mac and sent through Tor, paid with USDC.e on Tempo from one wallet on this Mac."
         case .near: "NEAR Private AI: sent as you wrote it once NEAR's hardware check passes, paid by your NEAR key."
         case .llama: "Local Llama: the model on this Mac answers, nothing is sent and there's nothing to pay."
-        case .agent:
-            "Agent: your message becomes a task. Cloak's agent works on it step by step inside its sealed box on this Mac, through Tor. A remote model does the thinking, paid by the wallet on this Mac."
+        }
+    }
+
+    /// What pays for it, on the Modes page.
+    var paidWith: String {
+        switch self {
+        case .v: "ETH on Ethereum"
+        case .token: "USDC.e on Tempo"
+        case .near: "A NEAR key from cloud.near.ai"
+        case .llama: "Nothing to pay"
+        }
+    }
+
+    /// What Cloak does in it, on the Modes page, a short line each.
+    var lines: [String] {
+        switch self {
+        case .v:
+            [
+                "Each message is reworded on this Mac, and you see both.", "Sent through Tor.",
+                "Each request is paid from your deposit with a new key.", "Cards aren't accepted.",
+                "With Agent on, a message becomes a task.",
+            ]
+        case .token:
+            [
+                "Each message is reworded on this Mac, and you see both.", "Sent through Tor.",
+                "One wallet pays for every request, so the provider can link your chats.", "Cards aren't accepted.",
+                "With Agent on, a message becomes a task.",
+            ]
+        case .near:
+            ["Each message goes to NEAR as you wrote it.", "Sent once NEAR's hardware check passes.", "Through Tor when you turn it on."]
+        case .llama:
+            ["The model on this Mac answers.", "Nothing is sent.", "No need to start Cloak.", "Answers are simpler than a remote model's."]
+        }
+    }
+
+    /// Where it comes from, with a link to its X post, under its column.
+    var credit: LocalizedStringKey? {
+        switch self {
+        case .v: "Inspired by Vitalik's [X post](https://x.com/VitalikButerin/status/2111046730959433793) about his preferred AI usage."
+        case .token: nil
+        case .near: "Cloak is an alternate client to NEAR's own official one. [X post](https://x.com/NEARProtocol/status/2121041723992216043)"
+        case .llama: "Cloak is an alternate client to llama.cpp's own official one. [X post](https://x.com/ggerganov/status/2121246103312212124)"
         }
     }
 }
 
-/// What each mode does, by its symbol and name, and where each comes from,
-/// with a link to its X post; under V, indented, what its Agent switch does.
-private struct Modes: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Modes")
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
-            VStack(alignment: .leading, spacing: 6) {
-                row(
-                    .chat,
-                    "Each message is reworded on this Mac, and you see both. With Review on, you can edit the reworded one, then send it; with Review off, it's sent as soon as it's ready.",
-                    "Inspired by Vitalik's [X post](https://x.com/VitalikButerin/status/2111046730959433793) about his preferred AI usage.")
-                row(
-                    .agent,
-                    "With Agent on, each message is a task. It's reworded on this Mac before the model sees it. You see both, each step the agent takes, and its answer.",
-                    nil)
-                    .padding(.leading, 16)
-            }
-            row(
-                .near, "Each message goes to NEAR as you wrote it, once NEAR's hardware check passes.",
-                "Cloak is an alternate client to NEAR's own official one. [X post](https://x.com/NEARProtocol/status/2121041723992216043)")
-            row(
-                .llama,
-                "The model on this Mac answers each message as you wrote it, with the chat so far. Its answers are simpler than a remote model's.",
-                "Cloak is an alternate client to llama.cpp's own official one. [X post](https://x.com/ggerganov/status/2121246103312212124)")
-        }
-        .font(.callout)
-        .padding(16)
-        .frame(width: 340, alignment: .leading)
-    }
+/// The modes side by side, a column each: its symbol and name, what pays
+/// for it, and what Cloak does in it, with where it comes from under the
+/// column. Pressing a column makes the new chat that mode and closes the
+/// page. Shown on the first launch, and from Details and Chat's Modes
+/// button; it starts nothing.
+private struct ModesPage: View {
+    let chat: Chat
 
-    private func row(_ kind: Chat.Kind, _ does: String, _ about: LocalizedStringKey?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Label(kind.name, systemImage: kind.symbol)
-                .fontWeight(.semibold)
-            Text(does)
-                .fixedSize(horizontal: false, vertical: true)
-            if let about {
-                Text(about)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Modes")
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(Chat.Kind.modes, id: \.self) { mode in
+                    VStack(alignment: .leading, spacing: 8) {
+                        ModeColumn(mode: mode, chosen: chat.kind == mode) {
+                            chat.kind = mode
+                            chat.newConversation()
+                            chat.showingModes = false
+                        }
+                        if let credit = mode.credit {
+                            Text(credit)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(width: 176)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Text("Cloak lives in the menu bar and stays paused until you press Start.")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 16)
+                Button("Close") { chat.showingModes = false }
+                    .keyboardShortcut(.cancelAction)
             }
         }
+        .padding(20)
+    }
+}
+
+/// One mode's column on the Modes page, the whole of it a button: the
+/// chosen mode's has the accent edge, and the help is the mode's own.
+private struct ModeColumn: View {
+    let mode: Chat.Kind
+    let chosen: Bool
+    let choose: () -> Void
+
+    var body: some View {
+        Button(action: choose) {
+            VStack(alignment: .leading, spacing: 12) {
+                Image(systemName: mode.symbol)
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                    .frame(height: 28)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(mode.name)
+                        .font(.headline)
+                    Label(mode.paidWith, systemImage: "creditcard")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .help("Paid with")
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(mode.lines, id: \.self) { line in
+                        Text(line)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(chosen ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator), lineWidth: chosen ? 2 : 1))
+            .contentShape(.rect(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .hover(RoundedRectangle(cornerRadius: 12))
+        .help(mode.about)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 }
 
@@ -1361,7 +1536,7 @@ private struct NearStopRow: View {
 /// One switch, as a small glass pill: a dot, filled while on and hollow
 /// while off, then its symbol; read by VoiceOver as a switch with its name
 /// and state. Its help says what the switch controls. One with `fixed`
-/// can't be changed here yet: its symbol is dimmed, and a press shows those
+/// can't be changed here: its symbol is dimmed, and a press shows those
 /// words, why.
 private struct SwitchPill: View {
     let title: String

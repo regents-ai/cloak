@@ -7,9 +7,10 @@ import os
 import SwiftUI
 
 /// The menu-bar app: one supervisor, each model's download, its menu, its
-/// Chat, Agents, Details and Settings windows, the quick prompt, a welcome
-/// on the first launch, NEAR mode's helper, the door other apps and the
-/// agent in the guest send through while Cloak is Running, its AppleScript
+/// Chat, Agents, Darkbloom, Details and Settings windows, the quick prompt,
+/// Chat's Modes page on the first launch, NEAR mode's helper, the one way to
+/// V's payer, the door other apps and the agent in the guest send through
+/// while Cloak is Running, its AppleScript
 /// commands (`StartCommand` and the others), the control channel `cloak`
 /// uses to drive the same supervisor, and its updater (`Updates`).
 @main
@@ -54,21 +55,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Made at its window's first show or the quick prompt's first Return.
     private lazy var conversations = Chat(
         supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
-        door: door, nearMode: nearMode, downloads: downloads)
+        queue: Launch.payQueue, door: door, nearMode: nearMode, downloads: downloads)
     private lazy var chat = AppWindow { [unowned self] in
         ChatView.window(
             conversations, showDetails: { self.showDetails() }, showNearSettings: { self.showSettings(on: .near) },
             showLlamaSettings: { self.showSettings(on: .llama) })
     }
-    private lazy var details = AppWindow { [supervisor, download] in DetailsView.window(supervisor, download) }
+    private lazy var details = AppWindow { [unowned self, supervisor, download] in
+        DetailsView.window(supervisor, download, showModes: { self.showModes() })
+    }
     private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
+    /// Made at its window's first show; it follows Darkbloom only while the
+    /// window is open.
+    private lazy var darkbloomMode = DarkbloomMode(manifest: Launch.manifest, settings: .standard)
+    private lazy var darkbloom = AppWindow { [darkbloomMode] in DarkbloomView.window(darkbloomMode) }
     private let settingsSelection = SettingsView.Selection()
     private lazy var settings = AppWindow { [supervisor, prompt, door, updates, nearMode, downloads, settingsSelection] in
         SettingsView.window(
             .standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode,
             downloads: downloads, selection: settingsSelection)
     }
-    private lazy var welcome = AppWindow { WelcomeView.window() }
     private lazy var prompt = QuickPrompt(settings: .standard) { [unowned self] text in
         conversations.compose(text)
         showChat()
@@ -82,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             file: Launch.layout.agents, wallet: Launch.layout.wallet,
             parts: Door.Parts(
                 reword: { texts throws(RewriteStop) in try await supervisor.rewrite(texts) },
+                queue: Launch.payQueue,
                 exchange: { request, keep in try await supervisor.exchange(request: request, keep: keep) },
                 wallet: { try await WalletKeychain.address() },
                 key: { try WalletKeychain.key() },
@@ -104,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         logger.notice("opened \(Launch.manifest.release, privacy: .public) (\(Launch.manifest.build, privacy: .public))")
         menu = StatusMenu(
             supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest.rewordingModel), showChat: showChat,
-            showAgents: showAgents, showDetails: showDetails, showSettings: showSettings,
+            showAgents: showAgents, showDarkbloom: showDarkbloom, showDetails: showDetails, showSettings: showSettings,
             checkForUpdates: updates.check)
         // Made now, so the shortcut chosen works from launch.
         _ = prompt
@@ -145,18 +152,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         // Once, on the first launch; it starts nothing.
-        if !UserDefaults.standard.bool(forKey: WelcomeView.key) {
-            UserDefaults.standard.set(true, forKey: WelcomeView.key)
-            welcome.show()
+        if !UserDefaults.standard.bool(forKey: Self.welcomed) {
+            UserDefaults.standard.set(true, forKey: Self.welcomed)
+            showModes()
         }
     }
+
+    /// The flag in the defaults, set as the first launch shows Chat's Modes
+    /// page.
+    private static let welcomed = "welcomed"
 
     func showChat() {
         chat.show()
     }
 
+    /// Chat, with its Modes page on it.
+    func showModes() {
+        conversations.showingModes = true
+        chat.show()
+    }
+
     func showAgents() {
         agents.show()
+    }
+
+    func showDarkbloom() {
+        darkbloom.show()
+        darkbloomMode.open()
     }
 
     func showDetails() {
@@ -207,6 +229,10 @@ enum Launch {
     }()
 
     static let layout = Layout(bundle: Bundle.main.resourceURL!, support: Places.support)
+
+    /// The one way to V's payer in the guest, Chat's and the door's, so
+    /// their requests take their turns in one queue.
+    static let payQueue = PayQueue { [supervisor] ask, payload in try await supervisor.pay(ask, payload) }
 
     static let supervisor: Supervisor = {
         do {

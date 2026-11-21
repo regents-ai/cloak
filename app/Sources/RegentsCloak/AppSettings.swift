@@ -20,7 +20,8 @@ import ServiceManagement
 final class AppSettings {
     static let standard = AppSettings(.standard)
 
-    /// Every key, one per setting.
+    /// Every key: one per setting, and one for the deposit's expiry, a fact
+    /// kept rather than a setting.
     enum Key: String, CaseIterable {
         case freeMemory
         case shortcut
@@ -32,6 +33,8 @@ final class AppSettings {
         case nearTor
         case proofFreshness
         case answerModel
+        case vModel
+        case depositExpires
     }
 
     /// Each setting until it is chosen, and again after Restore Defaults.
@@ -184,6 +187,33 @@ final class AppSettings {
         }
     }
 
+    /// The model V chats are answered with, as its owner chose it in V's
+    /// wallet; nil, the one whose requests cost least at most
+    /// (`Payer.model`). A model the service no longer lists is passed over
+    /// the same way until it lists it again.
+    var vModel: String? {
+        get {
+            access(keyPath: \.vModel)
+            return defaults.string(forKey: Key.vModel.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.vModel) { defaults.set(newValue, forKey: Key.vModel.rawValue) }
+        }
+    }
+
+    /// When V's deposit may be sent to the service's operator, as the payer
+    /// last read it, so Chat can warn while Cloak is paused; nil without a
+    /// deposit. Set only by `Payer`, and kept through Restore Defaults.
+    var depositExpires: Date? {
+        get {
+            access(keyPath: \.depositExpires)
+            return defaults.object(forKey: Key.depositExpires.rawValue) as? Date
+        }
+        set {
+            withMutation(keyPath: \.depositExpires) { defaults.set(newValue, forKey: Key.depositExpires.rawValue) }
+        }
+    }
+
     /// Why a port can't be the door's.
     enum PortRefusal: Error, Equatable {
         /// Not a whole number in `doorPorts`.
@@ -228,7 +258,8 @@ final class AppSettings {
     }
 
     /// Puts every setting kept here back to its default, each change told
-    /// to whatever watches that setting.
+    /// to whatever watches that setting. The deposit's expiry is not a
+    /// setting, and stays.
     func restore() {
         for key in Key.allCases {
             let remove = { self.defaults.removeObject(forKey: key.rawValue) }
@@ -243,6 +274,8 @@ final class AppSettings {
             case .nearTor: withMutation(keyPath: \.nearTor, remove)
             case .proofFreshness: withMutation(keyPath: \.proofFreshness, remove)
             case .answerModel: withMutation(keyPath: \.answerModel, remove)
+            case .vModel: withMutation(keyPath: \.vModel, remove)
+            case .depositExpires: break
             }
         }
     }

@@ -24,81 +24,80 @@ struct AgentsView: View {
     @State private var opened: AgentRequest?
 
     var body: some View {
-        VStack(spacing: 0) {
-            DevelopmentBar()
-            Form {
-                Section {
-                    LabeledContent {
-                        Copyable(text: door.address)
-                    } label: {
-                        HStack(spacing: 2) {
-                            Text("Address")
-                            InfoButton("About Address", note: "Cloak rewords what you write on this Mac before it leaves; your apps' instructions, tools, tool results and the model's earlier answers go as the apps send them.")
-                        }
-                    }
-                    LabeledContent("Status") {
-                        switch door.state {
-                        case .open:
-                            Label("Open", systemImage: "circle.fill")
-                                .foregroundStyle(.green)
-                        case .closed:
-                            Text("Closed while Cloak isn't running.")
-                                .foregroundStyle(.secondary)
-                        case .refused(let words):
-                            Label(words, systemImage: "exclamationmark.triangle.fill")
-                                .symbolRenderingMode(.multicolor)
-                        }
+        Form {
+            Section {
+                LabeledContent {
+                    Copyable(text: door.address)
+                } label: {
+                    HStack(spacing: 2) {
+                        Text("Address")
+                        InfoButton(
+                            "About Address",
+                            note: "Cloak rewords what you write on this Mac before it leaves; your apps' instructions, tools, tool results and the model's earlier answers go as the apps send them. Each request is paid from V's deposit, with a new key.")
                     }
                 }
-                if let problem = door.problem {
-                    Section {
-                        Label(problem, systemImage: "exclamationmark.triangle.fill")
+                LabeledContent("Status") {
+                    switch door.state {
+                    case .open:
+                        Label("Open", systemImage: "circle.fill")
+                            .foregroundStyle(.green)
+                    case .closed:
+                        Text("Closed while Cloak isn't running.")
+                            .foregroundStyle(.secondary)
+                    case .refused(let words):
+                        Label(words, systemImage: "exclamationmark.triangle.fill")
                             .symbolRenderingMode(.multicolor)
                     }
                 }
+            }
+            if let problem = door.problem {
                 Section {
-                    if door.apps.isEmpty {
-                        Text("No apps yet.")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(door.apps) { app in
-                        AppRow(app: app) { removing = app }
-                    }
-                } header: {
-                    HStack {
-                        Text("Apps")
-                        Spacer()
-                        SymbolButton("Add", symbol: "plus") { adding = true }
-                    }
-                }
-                Section {
-                    if door.requests.isEmpty {
-                        Text("Nothing sent yet.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        // Drawn again each minute, so the last 24 hours stay true.
-                        TimelineView(.everyMinute) { context in
-                            let summary = summary(at: context.date)
-                            LabeledContent("24 hours") {
-                                Text(summary.joined(separator: " · "))
-                                    .accessibilityLabel(summary.joined(separator: ", "))
-                            }
-                        }
-                        ForEach(door.requests.prefix(Door.latest)) { request in
-                            RequestRow(
-                                request: request, sender: sender(of: request),
-                                open: request.messages.isEmpty ? nil : { opened = request })
-                        }
-                    }
-                } header: {
-                    HStack(spacing: 2) {
-                        Text("Activity")
-                        InfoButton("About Activity", note: "Kept in memory only, and gone when Cloak quits.")
-                    }
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .symbolRenderingMode(.multicolor)
                 }
             }
-            .formStyle(.grouped)
+            Section {
+                if door.apps.isEmpty {
+                    Text("No apps yet.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(door.apps) { app in
+                    AppRow(app: app) { removing = app }
+                }
+            } header: {
+                HStack {
+                    Text("Apps")
+                    Spacer()
+                    SymbolButton("Add", symbol: "plus") { adding = true }
+                }
+            }
+            Section {
+                if door.requests.isEmpty {
+                    Text("Nothing sent yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    // Drawn again each minute, so the last 24 hours stay true.
+                    TimelineView(.everyMinute) { context in
+                        let summary = summary(at: context.date)
+                        LabeledContent("24 hours") {
+                            Text(summary.joined(separator: " · "))
+                                .accessibilityLabel(summary.joined(separator: ", "))
+                        }
+                    }
+                    ForEach(door.requests.prefix(Door.latest)) { request in
+                        RequestRow(
+                            request: request, sender: sender(of: request),
+                            open: request.messages.isEmpty ? nil : { opened = request })
+                    }
+                }
+            } header: {
+                HStack(spacing: 2) {
+                    Text("Activity")
+                    InfoButton("About Activity", note: "Kept in memory only, and gone when Cloak quits.")
+                }
+            }
         }
+        .formStyle(.grouped)
         .frame(width: 520, height: 560)
         .task { await door.load() }
         .sheet(isPresented: $adding) {
@@ -439,7 +438,7 @@ private struct AddApp: View {
 }
 
 /// Text to paste elsewhere, in full, with Copy.
-private struct Copyable: View {
+struct Copyable: View {
     let text: String
 
     var body: some View {

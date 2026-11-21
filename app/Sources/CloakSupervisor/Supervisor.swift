@@ -17,10 +17,12 @@ import Synchronization
 /// guest's sender is ready: the guest stays up while Running, and its end is
 /// a failure. The worker rests (`Relay.Resting`) once it has had nothing to
 /// reword for the time `restAfter` gives, and the next request starts a new
-/// one as the first was started. The sender is Development mode's way to a
-/// remote model (decision 10 in docs/plan.md), and the guest's runner runs
-/// the owner's agent tasks (decision 12); sessions and the daemon's payment
-/// are not built yet. While the guest is up, its daemon runs its own cover
+/// one as the first was started. The sender is Token Inference's way to a
+/// remote model, paid from the Tempo wallet (decisions 10 and 25 in
+/// docs/plan.md); the payer, which the guest runs with its payment disk
+/// (`PaymentDisk`), attached to every run, is V's, paid through zkAPI
+/// (decision 24); and the guest's runner runs the owner's agent tasks
+/// (decision 12). While the guest is up, its daemon runs its own cover
 /// traffic through Tor from the one list in reference/cover.json: the
 /// reference's background noise, about three page fetches a minute. When
 /// the owner's Cover setting is off as the guest's boot files are written,
@@ -398,6 +400,16 @@ public final class Supervisor {
         return try await Sender.exchange(socket, request: request, keep: keep)
     }
 
+    /// One exchange with the guest's payer while Running (`Pay.exchange`):
+    /// the payer's frames as they come, the answer last. Ending the stream
+    /// first closes the exchange's connection, which the payer takes as its
+    /// cancel. One under way when Cloak pauses, stops or quits ends without
+    /// an answer.
+    public func pay(_ ask: Pay.Ask, _ payload: Data) async throws -> AsyncThrowingStream<Pay.Event, any Error> {
+        guard case .running = phase, let guest = stack.guest else { throw Pay.Failure(description: "Cloak is not running") }
+        return Pay.exchange(try await guest.connect(to: Pay.port), ask, payload)
+    }
+
     /// Runs one of the owner's agent tasks in the guest while Running
     /// (`Runner.run`): Pi's events as they come, undecoded, ending with how
     /// it exited. Ending the stream first, as a consumer that stops does,
@@ -433,7 +445,7 @@ public final class Supervisor {
         var lines = [String]()
         switch phase {
         case .running:
-            lines.append("Running: tor is up, the worker is up or resting, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready (Development mode). Sessions and the daemon's payment are not built yet.")
+            lines.append("Running: tor is up, the worker is up or resting, the guest opened its payment disk for V's payer, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready for Token Inference.")
             lines.append(
                 cover == false
                     ? "Cover traffic is off in this run: the setting was off at Start, so the guest's daemon started no cover worker."
@@ -449,7 +461,7 @@ public final class Supervisor {
                     ? "Paused: nothing is running, and nothing starts by itself."
                     : "Paused: only the worker is running, for Local Llama chats, and nothing else starts by itself.")
         case .preparing:
-            lines.append("Starting: checking the parts, then starting tor, the worker and the guest, which runs the startup check and then the sender.")
+            lines.append("Starting: checking the parts, then starting tor, the worker and the guest, which opens its payment disk, runs the startup check and then starts the sender and the payer.")
         case .stopping:
             lines.append("Stopping: the guest, the worker and tor, in that order.")
         case .needsAttention(let reason):
@@ -535,12 +547,15 @@ public final class Supervisor {
             })
             try Task.checkCancellation()
 
+            let disk = try await PaymentDisk.attach(layout.paymentDisk)
+            try Task.checkCancellation()
+
             let verification = Verification()
             stack.verification = verification
             let guest: Guest
             do {
                 guest = try Guest(kernel: layout.url(.kernel, in: manifest), console: verification.console.fileHandleForWriting,
-                                  bootFolder: layout.bootFiles)
+                                  bootFolder: layout.bootFiles, disk: disk)
                 let cover = wantsCover()
                 try guest.prepare(base: layout.url(.initrd, in: manifest), cases: Verification.cases,
                                   model: manifest.model, relay: relay, tor: tor, cover: cover, serve: true, door: door)

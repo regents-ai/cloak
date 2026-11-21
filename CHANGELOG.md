@@ -2,6 +2,96 @@
 
 ## Unreleased
 
+- NEAR Private AI answers show the tokens NEAR counted for them (the
+  public page's "See where your tokens go"; the chief's choice of 20
+  November 2026: counts only, never a price). A small mark at the end of
+  an answer's title line says, in its tooltip and to VoiceOver, "1,204
+  tokens in, 356 out"; the NEAR Wallet sheet has a "Tokens" row with the
+  open chat's totals. The counts are NEAR's own, from the `usage` it
+  returns with each answer, saved sealed with the chat. An answer whose
+  reply has no counts shows none. Nothing sent to NEAR changed.
+  - Checked by the chief after the merge: the app builds with no
+    warnings and its 30 checks pass. Not yet seen on screen, and not yet
+    seen against a real NEAR answer.
+  - Known: a message sent twice keeps only its last answer's counts, so
+    a chat's total can read low; "in" counts the whole chat again with
+    each message, as NEAR counts it.
+- A Darkbloom window (Sean, 20 November 2026, his pasted review of
+  Layr-Labs/d-inference v0.10.16 and "add this as a new section to the
+  app"). Held out of every release until Darkbloom's makers give written
+  permission (`docs/release.md`, Standing limits); never yet run against
+  the real Darkbloom, which is not installed on Sean's Mac.
+  - "Darkbloom" in the menu, and `show darkbloom` in AppleScript, open a
+    window that sets Darkbloom up, offers the one model that fits beside
+    Cloak, starts and stops serving, shows the local address and key for
+    other apps, and can also serve Darkbloom's network ("Serve Network",
+    off at first, linked by a code entered on Darkbloom's own page).
+    Nothing of Darkbloom's runs until the window first opens, and Cloak
+    adds no login item.
+  - Install fetches Darkbloom's own installer from api.darkbloom.dev at
+    that moment and runs it, as Darkbloom's own app does. Before Cloak
+    runs anything of Darkbloom's it checks the signature against
+    Darkbloom's developer team with the system's own check, and takes
+    release 0.10.16 or later only.
+  - Start serves with the person's requests kept on this Mac and the
+    address open to this Mac only (`--local --route this-mac --bind
+    127.0.0.1`, or `--me-first` with Serve Network on). A setup made
+    outside Cloak that Start would change is listed first, and Start
+    asks. The window says what it can read of where requests go, and
+    "Can't confirm" when it cannot.
+  - Darkbloom needs macOS 27; on an older system the window says so and
+    offers nothing else.
+  - Checked by the chief after the merge: the app builds with no
+    warnings and its 30 checks pass. The worker ran 46 checks against a
+    stand-in control service and 7 process checks, none of them kept.
+  - The licence (Eigen Labs, at v0.10.16), as it reads: section 1
+    forbids using the software "to power, enable, or operate any
+    service, platform, or product other than the Darkbloom platform"
+    without written permission; section 6 gives no right to the name
+    beyond attribution. Serving Darkbloom's own network is allowed.
+- Four modes, and zkAPI step 6's Mac half (Sean, 20 November 2026:
+  "25. a", "26. a" and his own design for decision 28). Not in Sean's
+  running Cloak, and V cannot pay yet: the guest's payer does not answer
+  the new frames until step 6's guest half is built.
+  - Chat's modes are V, Token Inference, NEAR Private AI and Local
+    Llama. V pays only through zkAPI, with ETH on Ethereum, each request
+    with a new key. Token Inference is what V was until now: reworded on
+    the Mac, sent through Tor, paid from the one USDC.e wallet on Tempo,
+    with the line "The provider can link your chats, because one wallet
+    pays for all of them." A saved chat stays the mode it began in; a
+    chat saved before today reads as V.
+  - Agent is a switch in V and in Token Inference, and an agent pays the
+    way its chat pays. Other apps through the door pay from V's deposit,
+    behind Chat's own requests.
+  - V's wallet sheet: the payer's address with Copy and a code, ETH on
+    hand, Send Out…, the deposit with its balance and expiry, Deposit,
+    Withdraw (always to the payer's own address, decision 23) and the
+    model. Every money press asks the payer for a quote and shows it;
+    the review's button is the one place an approve is sent from, and an
+    expired quote is quoted again and shown, never approved unseen. A
+    money button is off only where the chain at the latest block read
+    shows the press certain to fail, with why beside it.
+  - Start opens Chat. A first-time owner sees the Modes page, four
+    columns with what each mode needs and gives; Details opens it again.
+    The old Welcome page is gone.
+  - Each run's guest gets the payment disk: a 1 GB sparse image under
+    the support folder's `pay/`, its key a new item in the login
+    keychain (`sh.regents.cloak.paydisk`). The Mac holds the disk's key
+    and no payment secret.
+  - The Mac's end of the payer: `host/Sources/CloakHost/Pay.swift`
+    (port 8021; frames `R`, `C`, `V`, `H`, `A`), `PayQueue` (one request
+    out at a time, Chat's before the door's), `Payer` (the wallet's
+    state from one read, never stored). The exact frames are in
+    `docs/zkapi-mac-side.md`, section 1, which the guest half is built
+    to.
+  - Checked by the chief after the merge: the app and the host build,
+    and 30 checks pass, nine of them new in
+    `app/Tests/CloakTests/PayTests.swift` against a stand-in payer
+    (money moves only on a press; opening, refreshing and following send
+    no quote and no approve; one request out at a time in its order;
+    nothing is sent before rewording; a hold that goes quiet ends with
+    nothing sent).
+  - Not yet seen on screen, and unproven against the real payer.
 - Venice (venice.ai), first pass, with nothing on screen yet (Sean, 20
   November 2026, his pasted review and "make a new subagent, as before,
   that works on this"). `app/Sources/CloakChat/Venice.swift` and
