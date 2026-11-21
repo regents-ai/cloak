@@ -64,8 +64,11 @@ struct VeniceTransfer: Sendable, Equatable {
 enum VeniceWallet {
     static let domain = "api.venice.ai"
     static let statement = "Sign in to Venice AI"
-    /// Base's USDC: the one asset a top-up is paid in.
+    /// Base's USDC: the one asset a top-up is paid in, and its EIP-712
+    /// domain's name and version.
     static let usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    static let usdcName = "USD Coin"
+    static let usdcVersion = "2"
 
     /// The EIP-4361 message a sign-in signs, as Venice rebuilds it from the
     /// header's fields.
@@ -170,7 +173,9 @@ extension VeniceTransfer {
 
 extension Venice {
     /// Venice's terms for a top-up: `POST /x402/top-up` with nothing, which
-    /// Venice answers with `402` and its terms. Costs nothing.
+    /// Venice answers with `402` and its terms. Costs nothing. Terms that
+    /// name no exact payment in Base's USDC, by its address and its domain's
+    /// name and version, stop with `notUSDC`.
     public func topUpTerms() async throws(VeniceStop) -> VeniceTopUpTerms {
         let request = VeniceRequest(method: "POST", url: URL(string: Self.base + "x402/top-up")!, headers: [:], body: nil)
         let response = try await Self.carry(request, transport)
@@ -187,21 +192,34 @@ extension Venice {
                 let version: String
             }
         }
-        guard let challenge = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let accepts = challenge["accepts"] as? [[String: Any]],
+        guard let challenge = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let accepts = challenge["accepts"] as? [[String: Any]]
+        else { throw VeniceStop(.failed, sent: true, "Venice's terms did not read") }
+        guard
             let base = accepts.first(where: {
                 $0["scheme"] as? String == "exact" && $0["network"] as? String == "eip155:8453"
                     && ($0["asset"] as? String)?.lowercased() == VeniceWallet.usdc.lowercased()
             }),
-            let entry = try? JSONDecoder().decode(Entry.self, from: JSONSerialization.data(withJSONObject: base))
-        else { throw VeniceStop(.failed, sent: true, "Venice's terms name no Base USDC top-up that reads") }
+            let entry = try? JSONDecoder().decode(Entry.self, from: JSONSerialization.data(withJSONObject: base)),
+            entry.extra.name == VeniceWallet.usdcName, entry.extra.version == VeniceWallet.usdcVersion
+        else { throw VeniceStop(.notUSDC, sent: true, "Venice's terms name no Base USDC top-up") }
         return VeniceTopUpTerms(
             payTo: entry.payTo, least: entry.amount, timeout: entry.maxTimeoutSeconds, name: entry.extra.name, version: entry.extra.version)
     }
 
+    /// One press of Add: reads Venice's terms afresh, then buys exactly
+    /// `amount` on them (`topUp`). One bare request, at most one signature,
+    /// one payment.
+    public func add(_ amount: Amount, by signer: VeniceSigner) async throws(VeniceStop) -> VeniceTopUp {
+        try await topUp(amount, on: try await topUpTerms(), by: signer)
+    }
+
     /// Buys `amount` of Venice credit for `signer`'s wallet on `terms`: signs
     /// a USDC transfer of exactly `amount` to Venice, which Venice settles
-    /// on Base when it takes it.
+    /// on Base when it takes it. An amount below the terms' least stops with
+    /// `belowLeast`, unsigned: Venice would refuse it, and paying the least
+    /// instead would pay more than was asked.
     public func topUp(_ amount: Amount, on terms: VeniceTopUpTerms, by signer: VeniceSigner) async throws(VeniceStop) -> VeniceTopUp {
+        guard amount >= terms.least else { throw VeniceStop(.belowLeast, sent: false, "below Venice's least") }
         let now = Int(self.now().timeIntervalSince1970)
         let transfer = VeniceTransfer(
             from: signer.address, to: terms.payTo, value: amount, validAfter: now - 600, validBefore: now + terms.timeout,

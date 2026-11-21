@@ -90,8 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 reword: { texts throws(RewriteStop) in try await supervisor.rewrite(texts) },
                 queue: Launch.payQueue,
                 exchange: { request, keep in try await supervisor.exchange(request: request, keep: keep) },
-                wallet: { try await WalletKeychain.address() },
-                key: { try WalletKeychain.key() },
+                wallet: { try await WalletKeychain.tempo.address() },
+                key: { try WalletKeychain.tempo.key() },
                 sealing: { try await ConversationStore.key(for: conversations, find: Keychain.find, make: Keychain.make) }),
             port: { AppSettings.standard.doorPort })
     }()

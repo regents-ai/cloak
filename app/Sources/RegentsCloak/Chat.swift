@@ -635,7 +635,7 @@ final class Chat {
                 do throws(RemoteStop) {
                     result = .success(try await Remote.send(
                         turn, in: conversation, model: model, identity: identity,
-                        key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange))
+                        key: { try WalletKeychain.tempo.key() }, deposits: deposits, exchange: exchange))
                 } catch {
                     result = .failure(.tempo(error))
                 }

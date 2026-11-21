@@ -149,8 +149,28 @@ do {
                     let answer: Data
                     do {
                         let socket = try await guest.connect(to: Sender.port)
-                        answer = try await Sender.exchange(socket, request: { Data(line.utf8) }) { deposit in
-                            FileHandle.standardOutput.write(Data(#"{"keep":"#.utf8) + deposit + Data("}\n".utf8))
+                        let request = Data(line.utf8)
+                        if (try? JSONSerialization.jsonObject(with: request) as? [String: Any])?["op"] as? String == "venice" {
+                            // Venice's answer as it comes: its head as one
+                            // line, its body's bytes as they are, then the
+                            // sender's answer.
+                            var ended = Data()
+                            for try await piece in Sender.stream(socket, request: request) {
+                                switch piece {
+                                case .head(let status, let headers):
+                                    let head = try JSONSerialization.data(withJSONObject: ["head": ["status": status, "headers": headers]])
+                                    FileHandle.standardOutput.write(head + Data("\n".utf8))
+                                case .body(let bytes):
+                                    FileHandle.standardOutput.write(bytes)
+                                case .end(let last):
+                                    ended = last
+                                }
+                            }
+                            answer = ended
+                        } else {
+                            answer = try await Sender.exchange(socket, request: { request }) { deposit in
+                                FileHandle.standardOutput.write(Data(#"{"keep":"#.utf8) + deposit + Data("}\n".utf8))
+                            }
                         }
                     } catch {
                         answer = (try? JSONEncoder().encode(["host": "\(error)"])) ?? Data()

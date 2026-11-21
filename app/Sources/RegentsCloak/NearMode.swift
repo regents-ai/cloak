@@ -9,9 +9,9 @@ import os
 /// (`Near`, the helper's owner). Direct, NEAR and Intel see this Mac's
 /// internet address; through Tor, which needs Cloak running, they see a Tor
 /// address, NEAR's connections and Intel's each under a name of their own,
-/// new at each launch. The key is in the keychain only (`NearKeychain`).
-/// Every press of Send reaches the helper, which takes one line at a time;
-/// none is refused here for one already under way.
+/// new at each launch. The key is in the keychain only
+/// (`ProviderKeychain.near`). Every press of Send reaches the helper, which
+/// takes one line at a time; none is refused here for one already under way.
 @MainActor
 @Observable
 final class NearMode {
@@ -94,7 +94,7 @@ final class NearMode {
         sendStop = nil
         do throws(NearStop) {
             let answer = try await near.ask(
-                route: route, proofAge: settings.proofFreshness, key: { try NearKeychain.key() }, turn: turn, in: conversation)
+                route: route, proofAge: settings.proofFreshness, key: { try ProviderKeychain.near.key() }, turn: turn, in: conversation)
             proof = answer.proof
             checkStop = nil
             return (answer.text, answer.tokens)
@@ -116,7 +116,7 @@ final class NearMode {
     /// Asks the keychain whether a key is kept, without reading it.
     func find() async {
         do throws(Keychain.Failure) {
-            hasKey = try await NearKeychain.has()
+            hasKey = try await ProviderKeychain.near.has()
             keyFailed = false
         } catch {
             logger.error("cannot read whether a NEAR key is kept: \(error.description, privacy: .public)")
@@ -128,7 +128,7 @@ final class NearMode {
     /// Keeps `key` in place of any before; returns whether it was kept.
     func save(_ key: String) async -> Bool {
         do throws(Keychain.Failure) {
-            try await NearKeychain.store(key)
+            try await ProviderKeychain.near.store(key)
             hasKey = true
             keyFailed = false
             return true
@@ -142,7 +142,7 @@ final class NearMode {
     /// Removes the key.
     func remove() async {
         do throws(Keychain.Failure) {
-            try await NearKeychain.remove()
+            try await ProviderKeychain.near.remove()
             hasKey = false
             keyFailed = false
         } catch {

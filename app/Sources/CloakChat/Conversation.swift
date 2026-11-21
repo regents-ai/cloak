@@ -5,7 +5,8 @@ import Foundation
 /// were added. Or, when its first turn is a task, a conversation with the
 /// agent (decision 12): its tasks in the order they ran. A V conversation,
 /// chat or agent, is paid through zkAPI; one whose first message or task
-/// went the Token Inference way is paid from the Tempo wallet (decision 25).
+/// went the Token Inference way is paid from the Tempo wallet (decision 25),
+/// or, when its first message went to Venice, by Venice's key or wallet.
 /// Or, when its first message went to NEAR, a NEAR Private AI conversation:
 /// each message as written, its answer, and the tokens NEAR counted for it.
 /// Or, when its first message went to the model on this Mac, a Local Llama
@@ -18,6 +19,10 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     /// paid from the Tempo wallet; absent otherwise, as in every V
     /// conversation. Every later one goes that way too.
     public var token: Bool?
+    /// Set once its first message went to Venice inside Token Inference
+    /// (with `token`): its model, tier and way to pay, never changed after.
+    /// Absent otherwise.
+    public var venice: VeniceChat?
     /// True once its first message went to NEAR (NEAR Private AI); absent
     /// otherwise. Every later message goes to NEAR too.
     public var near: Bool?
@@ -46,6 +51,11 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     /// way.
     public var isToken: Bool {
         token == true
+    }
+
+    /// A Token Inference conversation whose first message went to Venice.
+    public var isVenice: Bool {
+        venice != nil
     }
 
     /// A NEAR Private AI conversation: its first message went to NEAR.

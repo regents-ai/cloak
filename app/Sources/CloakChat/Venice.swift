@@ -119,15 +119,23 @@ public struct VeniceModel: Sendable, Equatable, Identifiable {
     public let output: Decimal
 }
 
-/// What a Venice chat keeps: its model and the tier it had when the chat
-/// began. A chat never moves to another model or tier.
+/// What a Venice chat keeps: its model, the tier it had when the chat
+/// began, and how it pays. A chat never moves to another model, tier or
+/// way to pay.
 public struct VeniceChat: Codable, Sendable, Equatable {
+    /// The owner's own Venice key, or the Venice wallet's credit.
+    public enum Pays: String, Codable, Sendable, CaseIterable {
+        case key, wallet
+    }
+
     public let model: String
     public let tier: VeniceTier
+    public let pays: Pays
 
-    public init(model: String, tier: VeniceTier) {
+    public init(model: String, tier: VeniceTier, pays: Pays) {
         self.model = model
         self.tier = tier
+        self.pays = pays
     }
 
     /// Stops, before anything is sent, unless `models` still has the chat's
@@ -180,6 +188,11 @@ public struct VeniceStop: Error, Sendable, Equatable {
         case spendLimit
         /// Venice did not take a top-up's payment (400, 401 or 402 to it).
         case paymentRefused
+        /// A top-up's amount is below the least Venice's terms ask for;
+        /// nothing is signed.
+        case belowLeast
+        /// Venice's terms name no top-up in USDC on Base; nothing is signed.
+        case notUSDC
         /// Too many requests (429).
         case rateLimit
         /// The chat's model is not listed, or Venice may answer for it from
@@ -215,6 +228,8 @@ public struct VeniceStop: Error, Sendable, Equatable {
             case .noBalance: "No funds"
             case .spendLimit: "Spend limit"
             case .paymentRefused: "Not paid"
+            case .belowLeast: "Too little"
+            case .notUSDC: "Not USDC"
             case .rateLimit: "Try later"
             case .gone: "Model gone"
             case .tierChanged: "Tier changed"
@@ -232,20 +247,22 @@ public struct VeniceStop: Error, Sendable, Equatable {
         public var words: String {
             switch self {
             case .key: "Venice turned down your key. Check it in Settings."
-            case .signIn: "Venice turned down the wallet's sign-in. Send again."
-            case .signing: "Cloak could not sign for the wallet. Send again."
+            case .signIn: "Venice turned down the wallet's sign-in. Try again."
+            case .signing: "Cloak could not sign for the wallet. Try again."
             case .noBalance: "Your Venice balance is too low. Add funds, then send again."
             case .spendLimit: "Your key reached the spending limit set on it at Venice."
             case .paymentRefused: "Venice did not take the payment. Check the wallet's USDC on Base, then try again."
-            case .rateLimit: "Venice is limiting requests. Wait a minute, then send again."
+            case .belowLeast: "Venice asks for more than this amount. Nothing was signed."
+            case .notUSDC: "Venice asked for a payment other than USDC on Base. Nothing was signed."
+            case .rateLimit: "Venice is limiting requests. Wait a minute, then try again."
             case .gone: "Venice no longer offers this chat's model. Start a new chat."
             case .tierChanged: "Venice changed this model's tier since the chat began. Start a new chat."
             case .otherModel: "Venice answered from a different model, so the answer is not shown."
             case .refused: "Venice refused this request. Check your key's settings at Venice."
             case .tooLong: "This chat is too long for its model. Start a new chat."
-            case .busy: "This model is busy or offline at Venice. Send again in a minute."
-            case .unreachable: "Cloak could not reach Venice. Send again."
-            case .failed: "Venice did not answer. Send again."
+            case .busy: "This model is busy or offline at Venice. Try again in a minute."
+            case .unreachable: "Cloak could not reach Venice. Try again."
+            case .failed: "Venice did not answer. Try again."
             case .cancelled: "You stopped this message."
             }
         }
@@ -492,6 +509,7 @@ public struct Venice: Sendable {
         do {
             return try await transport(request)
         } catch {
+            guard !Task.isCancelled else { throw VeniceStop(.cancelled, sent: error.sent, "cancelled while sending \(request)") }
             throw VeniceStop(.unreachable, sent: error.sent, "the transport did not carry \(request)")
         }
     }

@@ -400,6 +400,15 @@ public final class Supervisor {
         return try await Sender.exchange(socket, request: request, keep: keep)
     }
 
+    /// One Venice request through the guest's sender while Running
+    /// (`Sender.stream`): Venice's answer as it comes. Ending the stream
+    /// first closes its connection. One under way when Cloak pauses, stops
+    /// or quits fails, as an exchange does.
+    public func venice(_ request: Data) async throws -> AsyncThrowingStream<Sender.Piece, any Error> {
+        guard case .running = phase, let guest = stack.guest else { throw Sender.Failure(description: "Cloak is not running") }
+        return Sender.stream(try await guest.connect(to: Sender.port), request: request)
+    }
+
     /// One exchange with the guest's payer while Running (`Pay.exchange`):
     /// the payer's frames as they come, the answer last. Ending the stream
     /// first closes the exchange's connection, which the payer takes as its

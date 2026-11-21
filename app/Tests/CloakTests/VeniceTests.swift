@@ -68,12 +68,12 @@ struct VeniceTests {
     }
 
     static let refusals: [(VeniceChat, VeniceStop.Kind)] = [
-        (VeniceChat(model: "retired-long-ago", tier: .private), .gone),
-        (VeniceChat(model: "gemma-4-uncensored", tier: .private), .gone),
-        (VeniceChat(model: "llama-3.3-70b", tier: .tee), .tierChanged),
-        (VeniceChat(model: "e2ee-glm-5-3-flash", tier: .private), .tierChanged),
-        (VeniceChat(model: "gemini-4-carbon", tier: .private), .tierChanged),
-        (VeniceChat(model: "resting", tier: .private), .busy),
+        (VeniceChat(model: "retired-long-ago", tier: .private, pays: .key), .gone),
+        (VeniceChat(model: "gemma-4-uncensored", tier: .private, pays: .key), .gone),
+        (VeniceChat(model: "llama-3.3-70b", tier: .tee, pays: .key), .tierChanged),
+        (VeniceChat(model: "e2ee-glm-5-3-flash", tier: .private, pays: .key), .tierChanged),
+        (VeniceChat(model: "gemini-4-carbon", tier: .private, pays: .key), .tierChanged),
+        (VeniceChat(model: "resting", tier: .private, pays: .key), .busy),
     ]
 
     @Test(arguments: refusals)
@@ -92,7 +92,7 @@ struct VeniceTests {
     func chatCarriesExactlyItsFields() async throws {
         let standIn = StandIn(answer: Self.venice)
 
-        let answer = try await Self.ask(Venice(auth: .key("sk-test"), transport: standIn.transport), VeniceChat(model: "llama-3.3-70b", tier: .private), earlier: true)
+        let answer = try await Self.ask(Venice(auth: .key("sk-test"), transport: standIn.transport), VeniceChat(model: "llama-3.3-70b", tier: .private, pays: .key), earlier: true)
 
         #expect(answer.text == "pong")
         let chat = try #require(standIn.sent.last)
@@ -115,7 +115,7 @@ struct VeniceTests {
         }
         let venice = Venice(auth: .key(key), transport: standIn.transport)
 
-        let asked = await #expect(throws: VeniceStop.self) { try await Self.ask(venice, VeniceChat(model: "llama-3.3-70b", tier: .private)) }
+        let asked = await #expect(throws: VeniceStop.self) { try await Self.ask(venice, VeniceChat(model: "llama-3.3-70b", tier: .private, pays: .key)) }
         let checked = await #expect(throws: VeniceStop.self) { try await venice.account() }
 
         for stop in [asked, checked] {
@@ -142,7 +142,7 @@ struct VeniceTests {
         }
 
         let stop = await #expect(throws: VeniceStop.self) {
-            try await Self.ask(Venice(auth: .key(key), transport: standIn.transport), VeniceChat(model: "llama-3.3-70b", tier: .private))
+            try await Self.ask(Venice(auth: .key(key), transport: standIn.transport), VeniceChat(model: "llama-3.3-70b", tier: .private, pays: .key))
         }
 
         #expect(stop?.kind == .failed)
@@ -240,6 +240,8 @@ struct VeniceTests {
         #"{"scheme":"exact","network":"eip155:1","amount":"5000000","asset":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","payTo":"0x2670B922ef37C7Df47158725C0CC407b5382293F","maxTimeoutSeconds":300,"extra":{"name":"USD Coin","version":"2"}}"#,
         #"{"scheme":"exact","network":"eip155:8453","amount":"5000000","asset":"0x0000000000000000000000000000000000000001","payTo":"0x2670B922ef37C7Df47158725C0CC407b5382293F","maxTimeoutSeconds":300,"extra":{"name":"USD Coin","version":"2"}}"#,
         #"{"scheme":"upto","network":"eip155:8453","amount":"5000000","asset":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","payTo":"0x2670B922ef37C7Df47158725C0CC407b5382293F","maxTimeoutSeconds":300,"extra":{"name":"USD Coin","version":"2"}}"#,
+        #"{"scheme":"exact","network":"eip155:8453","amount":"5000000","asset":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","payTo":"0x2670B922ef37C7Df47158725C0CC407b5382293F","maxTimeoutSeconds":300,"extra":{"name":"USDC","version":"2"}}"#,
+        #"{"scheme":"exact","network":"eip155:8453","amount":"5000000","asset":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","payTo":"0x2670B922ef37C7Df47158725C0CC407b5382293F","maxTimeoutSeconds":300,"extra":{"name":"USD Coin","version":"1"}}"#,
     ])
     func topUpTakesOnlyBaseUSDC(entry: String) async throws {
         let standIn = StandIn { _ in (402, [:], Self.terms(base: entry)) }
@@ -248,7 +250,7 @@ struct VeniceTests {
             try await Venice(auth: .key("sk-test"), transport: standIn.transport).topUpTerms()
         }
 
-        #expect(stop?.kind == .failed)
+        #expect(stop?.kind == .notUSDC)
         #expect(standIn.sent.count == 1)
     }
 
@@ -267,7 +269,7 @@ struct VeniceTests {
                 let standIn = StandIn { request in request.url.path == "/api/v1/models" ? (200, [:], Self.list) : (402, [:], body) }
                 let venice = Venice(auth: auth, transport: standIn.transport)
 
-                let asked = await #expect(throws: VeniceStop.self) { try await Self.ask(venice, VeniceChat(model: "llama-3.3-70b", tier: .private)) }
+                let asked = await #expect(throws: VeniceStop.self) { try await Self.ask(venice, VeniceChat(model: "llama-3.3-70b", tier: .private, pays: .key)) }
                 let checked = await #expect(throws: VeniceStop.self) { try await venice.account() }
 
                 #expect(asked?.kind == expected)
