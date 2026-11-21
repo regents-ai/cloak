@@ -533,13 +533,45 @@ needs the bridge token cloak-pay makes for it at each start. The companion's
 only way out is the proxy, the proxy's is the payer's Tor port, and that
 port's is vsock to the host's tor (section 7a). vsock is not split by
 namespace, so cloak-pay's own vsock port, 8021, takes a connection from the
-host (CID 2) alone. Nothing reaches the wallet over 8021 yet, and the funding
-routes, behind a token kept only in memory, are reached by no frame.
+host (CID 2) alone.
+
+One connection is one exchange, in the frames of `docs/zkapi-mac-side.md`,
+section 1 (`serve` in `guest/pay/zz_cloak_pay.go`):
+
+```
+R that reads --> waiting for its turn (payTurns) --> its turn --> the hold (WaitSettled)
+the hold, nothing unfinished --> key asked for --> A
+the hold, automatic settlement under way or the wallet's settlement unfinished
+  --H {"held": true}--> settling --nothing pending--> H {"held": false} --> key asked for --> A
+R that does not read --> A 400, nothing sent
+C, an allowed method and path --> the daemon's route, with the key and management token --> A
+C, anything else --> A 404, nothing reached
+V --> the wallet read --with "chain"--> the chain read at one block --> A 200
+V, a read that fails --> A 502, no part of the deposit
+any other first frame --> closed, no answer
+host hangs up --> cancelled: out of the queue, or ended before its key is asked for
+an H that cannot be written --> ended before its key is asked for
+```
+
+`C` and `V` take no turn. The allowed routes are `payRoutes`, the Mac's
+sixteen, matched exactly, with no query. The management token and the
+API's key are added in cloak-pay and kept only in memory; neither is in a
+frame. A `V`'s wallet part is only `has_note`, `pending_request` and the
+note's `note_id` and `expiry_ts`. Its chain part (`ReadChain`,
+`guest/pay/zz_cloak_chain.go`) checks the RPC's network, reads the funding
+address as `GET /admin/funding/address` does, which makes the payer's key
+on the first read, then reads the block `eth_getBlockByNumber "latest"`
+gives and every value at that block's number, over the daemon's own RPC
+route through Tor. A hold that ends in an error or a hang-up sends no
+`{"held": false}`.
 
 Checks: `tests/test_pay_disk.py` (started on a new disk and again on the
-state it left; none without a disk), `tests/test_escape_path.py` (the
-sandbox reaches neither listener nor the payer's files) and
-`guest/pay/check.sh` (Docker, no network).
+state it left; none without a disk), `tests/test_pay_frames.py` (C and V
+through the host, on a guest with no way out), `tests/test_escape_path.py`
+(the sandbox reaches neither listener nor the payer's files, and a frame of
+each kind to 8021 is not answered) and `guest/pay/check.sh` (Docker, no
+network: the allowlist, the secrets, the deposit's keys, the one-block read
+and the hold's frames, against stand-ins).
 
 ## 7. One request in the guest adapter (`guest/adapter/main.go`)
 
