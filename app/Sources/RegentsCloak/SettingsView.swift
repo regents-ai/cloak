@@ -702,8 +702,8 @@ private struct AdvancedPane: View {
         rewording, Review, Saved chats and Cover traffic turn back on, \
         Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
         Freshness to “\(AppSettings.defaultProofFreshness.title)”, \
-        Local Llama to \(supervisor.manifest.rewordingModel.label) \
-        and new Token Inference chats to Boundless, paid with a key, with no Venice model chosen, \
+        Local Llama to \(supervisor.manifest.rewordingModel.label), \
+        new Token Inference chats to Boundless, Venice's Pay with to “Key”, the chosen Venice model is cleared, \
         the quick prompt loses its shortcut, and the door goes back to port \(AppSettings.defaultDoorPort).
         """
     }
