@@ -295,7 +295,7 @@ struct SendTests {
             }
             frame("Y", "")
             let request = StandIn.frame(other)
-            frame("V", #"{"status":200,"headers":{"content-type":"text/event-stream"}}"#)
+            frame("L", #"{"status":200,"headers":{"content-type":"text/event-stream"}}"#)
             frame("P", "data: {}\n\n")
             ended.yield(request?.0 == UInt8(ascii: "R") && StandIn.frame(other) == nil)
             ended.finish()

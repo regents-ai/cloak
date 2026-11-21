@@ -15,7 +15,7 @@
 //! host:   R <request>  JSON, below
 //! sender: S <deposit>  the deposit's new state (JSON, or null when gone),
 //! host:   K            once it is sealed on the Mac; zero or more of these
-//! sender: V <head>     a Venice answer's {"status", "headers"}, once
+//! sender: L <head>     a Venice answer's {"status", "headers"}, once
 //! sender: P <bytes>    its body as it arrives; zero or more of these
 //! sender: A <reply>    {"ok": ...} or {"stop": {"code", "detail"}}
 //! ```
@@ -69,7 +69,7 @@ const REQUEST: u8 = b'R';
 const KEEP: u8 = b'S';
 const KEPT: u8 = b'K';
 const ANSWER: u8 = b'A';
-const HEAD: u8 = b'V';
+const HEAD: u8 = b'L';
 const PIECE: u8 = b'P';
 /// The largest frame either side takes.
 const MAX_FRAME: usize = 16 << 20;

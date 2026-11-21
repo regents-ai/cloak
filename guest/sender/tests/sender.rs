@@ -203,7 +203,7 @@ impl Stage {
                         kept.push(serde_json::from_slice(&payload).unwrap());
                         frames.write(b'K', &[]).unwrap();
                     }
-                    b'V' => {
+                    b'L' => {
                         assert!(head.is_none(), "a second head");
                         head = Some(serde_json::from_slice(&payload).unwrap());
                     }
@@ -958,7 +958,7 @@ fn a_venice_answer_the_host_stops_taking_ends_its_request() {
         frames
             .write(b'R', &serde_json::to_vec(&request).unwrap())
             .unwrap();
-        assert_eq!(frames.read().unwrap().unwrap().0, b'V');
+        assert_eq!(frames.read().unwrap().unwrap().0, b'L');
         assert_eq!(frames.read().unwrap().unwrap().0, b'P');
         drop(frames);
         let stopped = Instant::now();

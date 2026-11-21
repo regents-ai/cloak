@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 
 /// The host end of the guest's sender (guest/sender), Development mode's one
 /// way to a remote model: one request per connection, in the frames
@@ -19,7 +18,7 @@ public enum Sender {
     static let keep = UInt8(ascii: "S")
     static let kept = UInt8(ascii: "K")
     static let answer = UInt8(ascii: "A")
-    static let head = UInt8(ascii: "V")
+    static let head = UInt8(ascii: "L")
     static let piece = UInt8(ascii: "P")
 
     public struct Failure: Error, CustomStringConvertible {
@@ -132,28 +131,6 @@ public enum Sender {
             }
         }
         throw Failure(description: "the sender closed before answering")
-    }
-
-    /// A stream's socket: shut only while it is open, and closed once, under
-    /// one lock, so that a shut never reaches a socket number reused since.
-    private final class Connection: Sendable {
-        private let socket: Int32
-        private let open = Mutex(true)
-
-        init(_ socket: Int32) {
-            self.socket = socket
-        }
-
-        func shut() {
-            open.withLock { if $0 { shutdown(socket, SHUT_RDWR) } }
-        }
-
-        func close() {
-            open.withLock {
-                $0 = false
-                Darwin.close(socket)
-            }
-        }
     }
 
     private static func frame(_ socket: Int32) -> (UInt8, Data)? {
