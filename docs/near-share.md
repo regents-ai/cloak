@@ -24,7 +24,7 @@ All copies are under `/tmp/cloak-build/near-traces-ref/`. The new ones for this 
 | `ingest/…` | `/tmp/cloak-build/near-traces-ref/repo/crates/trace-commons-ingest/src/bin/trace_commons_ingest_internal/…` (AGPL; read only) |
 | `repo/…` | `/tmp/cloak-build/near-traces-ref/repo/…`, Trace Commons at commit `46aa4201fa7ebc122587a99b8d821a23953560a7` |
 | `nearai/…` | `/tmp/cloak-build/near-traces-ref/nearai-docs/…`, NEAR AI's public docs at commit `4c1f716e1779780c76f31fe9cd21903500a5ca9d` |
-| `cloud-api/…` | `/tmp/cloak-build/near-traces-ref/cloud-api/…`, NEAR AI's public `cloud-api` source at commit `c77cfb0347ba2cd7719a2308b53731ffe7720c82`, saved flat: `auth.rs` is `crates/api/src/routes/auth.rs`, `auth-service.rs` is `crates/services/src/auth/mod.rs`, `api-lib.rs` is `crates/api/src/lib.rs`, `routes-api.rs` is `crates/api/src/routes/api.rs`, `credit_transfers.rs` is `crates/api/src/routes/credit_transfers.rs` and `org-credentials.rs` is `crates/api/src/middleware/organization_credentials.rs` |
+| `cloud-api/…` | `/tmp/cloak-build/near-traces-ref/cloud-api/…`, NEAR AI's public `cloud-api` source at commit `c77cfb0347ba2cd7719a2308b53731ffe7720c82`, saved flat: `auth.rs` is `crates/api/src/routes/auth.rs`, `auth-service.rs` is `crates/services/src/auth/mod.rs`, `api-lib.rs` is `crates/api/src/lib.rs`, `routes-api.rs` is `crates/api/src/routes/api.rs`, `credit_transfers.rs` is `crates/api/src/routes/credit_transfers.rs`, `org-credentials.rs` is `crates/api/src/middleware/organization_credentials.rs`, `chat_signatures.rs` is `crates/services/src/attestation/chat_signatures.rs` and `models.rs` is `crates/services/src/attestation/models.rs` |
 | `tc-terms.json`, `tc-privacy.txt` | `/tmp/cloak-build/near-traces-ref/…`, the live terms (version `2026-11-10-draft.2`, not in effect) and privacy page |
 | Cloak paths | `/Users/sean/.t3/worktrees/cloak/t3-fbee151c-e032f46ed7cb9ba3/…`, this checkout at `0aafe59`. The later commits on `main` change none of the Cloak files cited here. |
 
@@ -95,6 +95,7 @@ There are seven steps. Step 1 happens once, at setup. Steps 2 to 7 happen for ea
   - The endpoint is published by the commons at sign-up (`native-admission-session.md:22-29`).
   - NEAR's docs send the account's API key with it.
 - **What it holds:** `text`, `signature`, `signing_address`, `signing_algo` and `signature_kind`.
+- **Whose key signs it.** For a `provider_tee` receipt, NEAR's gateway passes on the model server's own signature and signing address unchanged (`cloud-api/chat_signatures.rs:140-172`). The same server's attestation carries that signing address, bound in its quote's report data (`cloud-api/models.rs:167-190`). So Cloak takes a receipt only when its signing address is the model key the message's proof found in the quotes, and its Ed25519 signature verifies under that key (`guest/near/src/share.rs:878-890`).
 - **What `text` says** (`response-signatures.mdx:43-48`):
   - For a `provider_tee` receipt, `text` is `<model>:<request_hash>:<response_hash>`, signed inside the model's enclave.
   - For a `gateway` receipt, it is `<request_hash>:<response_hash>`, signed by NEAR's gateway.
