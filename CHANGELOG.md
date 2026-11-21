@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A reading, with nothing built: `docs/near-share.md` sets out how
+  NEAR's trace sharing admits a chat on a NEAR AI receipt, from the
+  commons' public source. An app other than NEAR's Gateway can
+  complete it as the source reads. It needs two choices first
+  (decisions 38 and 39 in `docs/plan.md`): the shared message cannot
+  keep Cloak's end-to-end encryption, and the chat goes to the commons'
+  witness for redaction before the person can see the result.
+  `docs/near-traces-incloak.md` now names the production enrolment
+  routes.
 - Venice's carrying part, with no caller in the app yet. The guest's
   sender takes four new requests: `venice` (one request to Venice's
   API through Tor as the conversation's identity, its answer handed on

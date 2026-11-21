@@ -3504,6 +3504,27 @@ candidates, so the split has to be re-declared before any holdout opens.
     by the chief, reported after. Decided 21 November 2026 (Sean,
     "37. a"). It needs his Cloak rebuilt from main first, which waits
     for zkAPI step 6's guest half so the rebuild is one batch.
+38. Open, put to Sean 21 November 2026: how a shared NEAR chat's
+    message reaches NEAR. The helper's reading (`docs/near-share.md`,
+    checked by the chief against `guest/near/src/chat.rs`, NEAR's
+    response-signature page and the commons' `admission_evidence.rs`)
+    is that a client other than the Gateway can complete the receipt
+    route as the source reads, but NEAR's receipt covers the exact
+    bytes sent and Cloak seals every word in them, so a readable
+    shared chat needs one message sent without Cloak's encryption.
+    a) only a chat the person readies sends its next message that way;
+    b) every NEAR message does while Share Traces is on; c) keep every
+    message sealed and drop trace sharing. Recommended: a.
+39. Open, put to Sean 21 November 2026: whether the commons' witness
+    is accepted as the one redactor. The raw chat goes to the witness
+    before a before-and-after view can exist, the witness passes
+    part-redacted text to NEAR AI's classifier, and the upload must be
+    the witness's exact bytes, so Cloak's own redactor cannot be used.
+    a) yes, in two presses (Review, then Share); b) yes, in one press,
+    unseen; c) no, and no trace sharing. Recommended: a. Nothing of
+    trace sharing is built until 38 and 39 are answered. Nothing was
+    copied from the Gateway's `macos/` folder: the repository's
+    licence names no terms for it.
 
 Two more sections asked for by Sean on 20 November 2026, each with a
 helper in its own checkout and nothing merged yet: a Darkbloom serving
