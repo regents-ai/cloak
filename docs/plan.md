@@ -1021,7 +1021,31 @@ Mac already takes so. Not proven until step 7: a read of the deposit
 while the real companion settles, and the chain read against the
 deployed vault.
 
-- **For step 7.** The companion's route through the payer's Tor port to
+**Step 7, first pass (21 November 2026, the chief).** The payer in the
+real guest, through the real tor, against the real chain and service, on
+a blank payment disk in a temporary folder, with no deposit and nothing
+approved (`/tmp/cloak-build/step7.py`; the answers are not kept in the
+repository). What it showed:
+
+- The guest serves 11 seconds after start. A read of the deposit with
+  the chain takes about 3.5 seconds and gives one block's values
+  (unpaused, balance 0); the address, withdrawal and leftover reads
+  take 1.5 to 2 seconds each; the model list takes about 10 seconds.
+- A chat request with no deposit is refused 402 `funding_required` in
+  about 4 seconds, with no hold. The refusal is the payer's own.
+- A deposit quote for $5 takes about 26 seconds to make and lives 30
+  seconds from then. It asked 0.0032 ETH for the deposit and up to
+  0.0026 ETH in network fees, so about $4 of fees on a $5 deposit at
+  that hour's price. Sean is told this before step 8.
+- One fault in the Mac half, fixed the same day: a quote's `expires_at`
+  is in milliseconds, and the Mac read it as seconds, so a quote would
+  never have shown as run out and its countdown would have been wrong.
+- Every answer's shape matches what the Mac reads.
+
+- **Still for step 7.** Memory in the guest during a real proof and the
+  hold during a real settlement, both of which need a deposit, so they
+  join step 8; and what happens when the payer ends after "ready".
+- **For step 7, as first listed.** The companion's route through the payer's Tor port to
   the host's real tor; a call to the real service with no note,
   expecting 402; memory in the guest during a real proof; and what
   happens when the payer ends after "ready".

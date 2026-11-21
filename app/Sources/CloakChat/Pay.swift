@@ -239,14 +239,15 @@ public struct PayQuote: Decodable, Sendable, Equatable {
     public let requiredFeeWei: String
     public let requiredTotalWei: String
     public let shortfallWei: String
-    /// In seconds since 1970.
+    /// In milliseconds since 1970, as the payer counts it.
     public let expiresAt: Int64
+
+    /// When the payer stops taking an approve of it.
+    public var expires: Date { Date(timeIntervalSince1970: Double(expiresAt) / 1000) }
 
     /// Expired now: the payer refuses an approve of it, so it is quoted
     /// again rather than approved unseen.
-    public func expired(at now: Date) -> Bool {
-        Double(expiresAt) <= now.timeIntervalSince1970
-    }
+    public func expired(at now: Date) -> Bool { expires <= now }
 }
 
 /// One model in the service's list, as the payer reads it: its name, and

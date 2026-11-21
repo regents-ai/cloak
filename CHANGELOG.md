@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fixed: a deposit, withdrawal or send quote's expiry is read in
+  milliseconds, as the payer gives it. The Mac read it as seconds, so a
+  quote would never have shown as run out, its countdown would have been
+  wrong, and a stale quote would have been sent for approval and refused
+  by the payer instead of being quoted again. Found by trying the payer
+  against the real chain and service through the real tor with no
+  deposit (step 7's first pass, in `docs/plan.md`).
 - zkAPI step 6, the guest half: the guest's payer answers the Mac's
   frames, so a V chat's wallet has something real behind it.
   - `C`, a call to a money route: only the sixteen exact method and

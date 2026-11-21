@@ -89,7 +89,7 @@ The allowlist, all routed in `daemon:internal/zkapi/funding_admin.go` (`ServeAdm
 Facts about these calls that the Mac must respect:
 
 - POST needs `Content-Type: application/json` (19-23) and a body under 1024 bytes (24). Errors come back as 502 `{"error": "<message>"}` (128-131).
-- A quote lives 30 seconds (`address_quote.go:253`), and an approve of a stale or replaced quote fails closed (`checkedAddressQuote`, `address_quote.go:200-207`).
+- A quote lives 30 seconds, its `expires_at` in milliseconds since 1970 (`address_quote.go:253`), and an approve of a stale or replaced quote fails closed (`checkedAddressQuote`, `address_quote.go:200-207`).
 - Each admin call has a 10-minute limit (line 17).
 - The follow call cannot sign. For native ETH, signing without an approved quote is refused (`address_funding.go:646-649`); a saved transaction is only re-sent as identical bytes (`address_funding.go:323-337`).
 - The Mac may call follow on its own only in the phases listed below, and always with the saved amount. With no deposit saved, the same call would write an amount into the record (`address_funding.go:264`).
