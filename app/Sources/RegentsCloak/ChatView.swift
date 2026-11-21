@@ -1096,7 +1096,7 @@ private struct Compose: View {
                         }
                         SymbolButton("Modes", symbol: "info.circle") { chat.showingModes = true }
                             .foregroundStyle(.secondary)
-                        if chat.kind == .token {
+                        if chat.kind == .token, !chat.veniceChosen {
                             BoundlessTempoButton(arrowEdge: .top)
                         }
                     }
