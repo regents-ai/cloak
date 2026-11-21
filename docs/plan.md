@@ -3450,6 +3450,18 @@ candidates, so the split has to be re-declared before any holdout opens.
     Gateway. A second read of NEAR's source for that build is with a
     helper; nothing is built until the try shows a plain chat is
     accepted and step 6's Mac half is merged.
+    That second read is `docs/near-traces-incloak.md` (20 November).
+    Its finding, spot-checked by the chief in NEAR's source at commit
+    `46aa4201`: for an account made by NEAR AI sign-in, the commons'
+    server takes an upload only with a session identity from one of
+    five named coding tools (codex, claude-code, opencode, cline,
+    gemini-cli; `trace_contribution.rs:217-225`) or a signed NEAR AI
+    receipt for a call the commons set a challenge on
+    (`ingest/admission.rs:286-293`). A Cloak chat honestly has
+    neither, and a chat file imported by the Gateway never gets the
+    first, so Sean's try would most likely be refused too. Nothing is
+    built; the choice of what next is put to Sean as decision 34,
+    which replaces the chief's question 30 (the steps of the try).
 
 Two more sections asked for by Sean on 20 November 2026, each with a
 helper in its own checkout and nothing merged yet: a Darkbloom serving
