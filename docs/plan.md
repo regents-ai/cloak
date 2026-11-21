@@ -1005,13 +1005,22 @@ requests (rule 11); the fee figure in dollars, the trial's times and the
 Wallet button from ten days before the expiry; an empty amount on Send
 Out sends everything. The chief kept "Cards aren't accepted." on the
 Modes page, since "taken" already names a deposit anyone may claim.
-Until the guest half is in, a V chat cannot send; Sean's running Cloak
-is not rebuilt from this.
 
-- **For step 6, the guest half.** `cloak-pay` has the daemon's
-  `FundingHandler` and the real companion client; the `C`, `V` and `H`
-  frames, the allowlist of money routes and the chain read are still to
-  add, to the wire shapes in `docs/zkapi-mac-side.md`, section 1.
+**Step 6, the guest half (merged 21 November 2026).** Built by a worker on
+`t3/guest-zkapi-step6-frames`, read by the chief against the Mac half and
+the vault's source (`Types.sol`'s `Note` and `NoteStatus`, the vault's
+own `paused`), and checked by the chief in the real guest; what it is and
+its checks are in CHANGELOG.md. Where the daemon differs from what the
+brief expected, with neither side changed: `GET /admin/withdrawal` reads
+the chain first, so with no network it answers 502, not 200; the first
+read of the deposit with the chain makes the payer's Ethereum key, as
+`GET /admin/funding/address` does; with no network the whole read fails,
+so the Mac's refresh shows a failure; and a hold that ends in an error
+sends no second `H`, the answer or the hang-up being its end, which the
+Mac already takes so. Not proven until step 7: a read of the deposit
+while the real companion settles, and the chain read against the
+deployed vault.
+
 - **For step 7.** The companion's route through the payer's Tor port to
   the host's real tor; a call to the real service with no note,
   expecting 402; memory in the guest during a real proof; and what

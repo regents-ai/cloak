@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- zkAPI step 6, the guest half: the guest's payer answers the Mac's
+  frames, so a V chat's wallet has something real behind it.
+  - `C`, a call to a money route: only the sixteen exact method and
+    path pairs the Mac uses reach the daemon, with the key and the
+    management token added by the payer itself; anything else is
+    answered 404 before the daemon sees it. A call never waits for a
+    chat request's turn.
+  - `V`, a read of the deposit: whether there is a note, whether a
+    settlement is unfinished, and the note's number and expiry, and
+    nothing else of the companion's. With the chain asked for, every
+    value is read at the one block `latest` gave (its number and time,
+    the vault's pause, the funding address's balance, the note's status
+    and expiry), through the daemon's own route over Tor
+    (`guest/pay/zz_cloak_chain.go`). A read that fails answers 502 with
+    no part of the deposit.
+  - `H`, the hold: a held chat request hears held once and released
+    once, just before its key is asked for; one not held hears neither.
+    Hanging up during a hold cancels the request with nothing sent or
+    spent.
+  - Checks: sixteen in `guest/pay/zz_cloak_pay_test.go` against
+    stand-ins, run ten times over with the race detector; in the real
+    guest, `tests/test_pay_frames.py`, and whole `C` and `V` frames
+    from the agent's sandbox in `tests/test_escape_path.py`, which get
+    no answer.
+  - Not proven: a read while the real companion settles, and the chain
+    read against the deployed vault. Both wait for step 7.
 - A reading, with nothing built: `docs/near-share.md` sets out how
   NEAR's trace sharing admits a chat on a NEAR AI receipt, from the
   commons' public source. An app other than NEAR's Gateway can
