@@ -1,6 +1,6 @@
 # Trace sharing in NEAR Private AI, the receipt way
 
-A reading for the Cloak chief, 21 November 2026, following Sean's decision 34 c. Part 1 of the brief only: nothing was built. Nothing was signed in, enrolled, keyed, uploaded or run of NEAR's or the commons'. All reading was of saved copies of public source and documents.
+A reading for the Cloak chief, 21 November 2026, following Sean's decision 34 c. Part 1 of the brief, written before the build; section 7.1 records what was built. Nothing was signed in, enrolled, keyed, uploaded or run of NEAR's or the commons'. All reading was of saved copies of public source and documents.
 
 ## Short answer
 
@@ -308,6 +308,23 @@ Checks, against a stand-in server under a temporary folder:
 
 **Size, honestly.** It is about ten new network calls against wire formats read from source and never seen live, plus a second enclave check and two browser sign-ins. It is a multi-day build. Its first real proof is a real share, which only Sean can make.
 
+### 7.1 As built
+
+Sean chose 1 a and 2 a (`docs/plan.md`, decisions 38 and 39), and the build follows the plan above, on branch `t3/near-trace-sharing`, checked only against stand-ins. Where it differs, or where the plan left a choice open:
+
+- **Sign In is its own press.** Turning Share Traces on reads the commons' published capabilities and shows Sign In, a menu of GitHub and Google. Choosing one opens NEAR AI's sign-in in the browser; the browser hands the session back to a listener on this Mac's loopback address, and Cloak enrols at once, then drops that session. Cancel stops the wait.
+- **The terms are a link, and no acceptance is recorded.** The Wallet's Terms row and the Share sheet open `https://tracecommons.ai/about/tnc/`. The Gateway also records an acceptance with the commons (`/v1/account/terms-acceptance`); Cloak does not (section 8, item 9).
+- **The data-use choices** are Debugging, always granted, and Benchmarks, Ranking, Training and Attribution, each off until turned on. A chat readied carries the choices made at that moment.
+- **The receipt is fetched as the answer comes back, not at Review.** The readied message goes through the same NEAR proof check and certificate pin as any NEAR message, only without Cloak's encryption, and the receipt is fetched straight after on a connection to the same pinned gateway. A chat whose receipt could not be fetched shows "No receipt", with Review off and Ready Again beside it.
+- **Before is the exchange as NEAR saw it:** the request's bytes, then the answer's. After is the witness's envelope exactly as it came, shown as text, and Share uploads those bytes and no others, with the four headers.
+- **The witness's Intel quote is checked before anything goes to it.** It must pass against the pin the commons published at sign-in; one that does not stops Review with "Witness refused", and nothing is sent. Review waits up to 570 seconds for the witness.
+- **Two Gateway checks are not made.** Cloak does not check the witness's certificate itself, which the commons' ingest checks, and it does not refuse an envelope that still holds the raw chat word for word, which the Gateway does. The person sees After before Share either way.
+- **Status is read at a trace's Refresh, for that trace alone,** and nothing is polled. Words: Sent, In review, Accepted, Not accepted, Withdrawn, the commons' own word for anything else, and credit when there is some.
+- **Withdraw always tries.** Cloak does not track when the account session runs out. If the commons answers that the sign-in is no longer good, the trace's line says "Sign in again, then withdraw." with Sign In beside it, which signs in through the browser again and enrols with the same device key.
+- **Every stop names its step** and, where it matters, says whether anything may have been sent, and Try Again or Ready Again is beside it where one helps.
+- **The share control is never hidden.** It is dimmed while the switch is off, says "Sign in to share" before sign-in, and says "Time ran out" once a readied chat's 15 minutes are over, with Ready Again.
+- **No crates were added** to cloak-near.
+
 ---
 
 ## 8. What is unproven
@@ -320,6 +337,10 @@ Checks, against a stand-in server under a temporary folder:
 6. **Whether a reviewer accepts a plain chat,** and whether it earns anything.
 7. **Whether the commons' terms admit another app's calls.** The terms are a draft and name only NEAR's app. This is a plain reading, not a legal one.
 8. **The witness's quote check from Cloak.** Its pin comes from the commons on first use. Whether Cloak's Intel checker fits the witness's dstack quote as it fits NEAR's is untried.
+9. **Whether the commons takes a share with no terms acceptance recorded.** The Gateway records one; Cloak only links the terms (section 7.1).
+10. **Whether the commons lets the same device key enrol again,** which Sign In does when a session has run out.
+11. **Whether the witness's envelope reads as text.** After shows its bytes as UTF-8; where it is not, After shows a replacement mark, and Share still uploads the bytes exactly.
+12. **Every wire format of section 7.1,** from the sign-in hand-off to withdraw, is read from source and checked only against stand-ins.
 
 ---
 

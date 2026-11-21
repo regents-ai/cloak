@@ -563,7 +563,7 @@ NEAR Private AI conversation, Wallet shows instead whether a key is saved,
 with Open Settings, a gear, beside it, which opens Settings on NEAR, that
 the key comes from cloud.near.ai, and, once NEAR has counted any of the
 chat's answers, Tokens: its tokens in and out, added up ("12,040 in, 3,560
-out"); in a Local Llama conversation,
+out"), and Share Traces (below); in a Local Llama conversation,
 "Nothing to pay." Neither uses the wallet.
 A small deposit, at the size the provider suggests (1 USDC.e), pays for chats and is topped up by
 that much when it cannot pay for the next one; Close ends it with the
@@ -638,6 +638,30 @@ a message is sent and goes to the helper with that message alone, never to
 the log or to disk. After a rebuild, the Mac asks again whether the new
 build may use it. A NEAR conversation is kept like any other, marked in
 the list by a chip icon.
+
+Share Traces, a switch in a NEAR conversation's Wallet, off at first, lets
+you share one NEAR chat at a time with Trace Commons
+(`docs/near-share.md`). Off, nothing about sharing runs and every NEAR
+message goes as above. On, Sign In (GitHub or Google) opens NEAR AI's
+sign-in in your browser, and Cloak then enrols this Mac with the commons;
+Debugging is always granted, Benchmarks, Ranking, Training and
+Attribution are off until you turn them on, and the commons' Terms are a
+press away. At the foot of a NEAR chat, the share symbol (dimmed while
+the switch is off) opens Share: your next message in that chat goes to
+NEAR without end-to-end encryption, carrying the commons' challenge, and
+Ready readies it for up to 15 minutes ("Next message shares", then "Time
+ran out" with Ready Again). Every other NEAR message stays sealed. Once
+the answer is back, Review shows that exchange as Before; its Review
+button sends it to the commons' witness, only once the witness's Intel
+quote passes against the pin the commons gave at sign-in, and shows the
+witness's redacted After exactly as it came; Share uploads exactly that.
+Each trace shared shows under its message as the commons last said:
+Sent, In review, Accepted, Not accepted or Withdrawn, its credit when
+there is some, Refresh, and Withdraw, asked first. Every step is a
+press, and nothing is shared without Review and then Share. What sharing
+keeps (its device key, the account and its session, your choices and the
+traces shared) is one item in the login keychain, this Mac only; NEAR
+AI's own sign-in is dropped once the enrolment is sent.
 
 Or pick Local Llama: the model on this Mac chosen in Settings answers
 each message itself, as you wrote it, with the conversation so far, through
