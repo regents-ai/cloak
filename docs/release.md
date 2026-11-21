@@ -486,7 +486,7 @@ announcement text: all Sean's.
   menu item and `show darkbloom`) is in no release until Darkbloom's
   makers give written permission for it; their licence forbids using
   their software to power another product without it. Until then a
-  release is built with those three files and their two callers taken
+  release is built with those three files and what opens them taken
   out, or not at all.
 
 ## What could make this plan wrong
