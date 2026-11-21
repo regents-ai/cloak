@@ -1052,9 +1052,14 @@ repository). What it showed:
   Nothing was approved, and nothing could have been: the address holds
   nothing. The fee had been up to 0.002627 ETH on the same 5 dollars a
   few hours before (the first pass above), so it moves with Ethereum's
-  fees and can be several times a small deposit. Starting Cloak for
-  this made the payment disk and the payer's address on this Mac, as
-  any first Start does.
+  fees and can be several times a small deposit. It is a ceiling, and
+  that one was quoted at a peak: half an hour later a public node gave
+  Ethereum's base fee as 0.36 gwei, with a median of 0.5 and a peak of
+  5.9 over the three and a half hours before. The trial of 17 November
+  had a ceiling of 0.0013 ETH and paid 0.00086. Review now says the fee
+  and total in dollars too, so a peak is plain before anything is
+  approved. Starting Cloak for this made the payment disk and the
+  payer's address on this Mac, as any first Start does.
 - **Still for step 7.** Memory in the guest during a real proof and the
   hold during a real settlement, both of which need a deposit, so they
   join step 8; and what happens when the payer ends after "ready".
