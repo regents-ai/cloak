@@ -59,7 +59,7 @@ private struct AddressSection: View {
     let funding: FundingStatus
 
     var body: some View {
-        Section("Address") {
+        Section("Wallet") {
             LabeledContent("Address") {
                 HStack(spacing: 4) {
                     Text(funding.address)

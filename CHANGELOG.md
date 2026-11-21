@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Two small things seen on screen: V's wallet headed its first box
+  "Address" over a row also named Address, and now heads it "Wallet",
+  as Token Inference's does; and in NEAR Private AI's wallet "Key" sits
+  level with "Saved" beside it.
 - Darkbloom's window is out of every release until its makers allow it
   (decision 36): its menu item, window, `show darkbloom` and all of its
   code are compiled only by `app/build.sh darkbloom`, the build for this
