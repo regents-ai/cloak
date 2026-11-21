@@ -1042,6 +1042,19 @@ repository). What it showed:
   never have shown as run out and its countdown would have been wrong.
 - Every answer's shape matches what the Mac reads.
 
+- **Seen in the app (21 November 2026, the chief, on Sean's Mac, with
+  no deposit).** Started from Chat, V's wallet showed the payer's own
+  address on Ethereum, 0 ETH on hand, Send Out off with "Nothing to
+  send", and Deposit. A deposit of 5 dollars typed in and Deposit
+  pressed brought the real service's quote into Review: 0.003172 ETH
+  to deposit, a fee of up to 0.0126 ETH, 0.015772 ETH in all, "Needs
+  0.015772 ETH more", and New Quote once its 30 seconds were over.
+  Nothing was approved, and nothing could have been: the address holds
+  nothing. The fee had been up to 0.002627 ETH on the same 5 dollars a
+  few hours before (the first pass above), so it moves with Ethereum's
+  fees and can be several times a small deposit. Starting Cloak for
+  this made the payment disk and the payer's address on this Mac, as
+  any first Start does.
 - **Still for step 7.** Memory in the guest during a real proof and the
   hold during a real settlement, both of which need a deposit, so they
   join step 8; and what happens when the payer ends after "ready".
