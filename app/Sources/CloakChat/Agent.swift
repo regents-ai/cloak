@@ -40,7 +40,7 @@ public final class Agent {
     }
 
     /// How a task ended without an answer.
-    public enum End: Sendable, Equatable {
+    public enum End: Error, Sendable, Equatable {
         /// Its owner pressed Stop.
         case stopped
         /// Cloak paused, stopped or quit with the task under way, or was not
@@ -49,7 +49,8 @@ public final class Agent {
         /// The door was not open, so the agent had no way to the model.
         case unreachable
         /// The agent ended without an answer: the door's sentence for why,
-        /// when the door refused its last request.
+        /// when the door refused its last request; or, before it ran, why
+        /// its model could not be had.
         case failed(String?)
     }
 
@@ -71,27 +72,22 @@ public final class Agent {
         ran = []
     }
 
-    /// Runs `task` as a new turn of `conversation` with `model`, its model
-    /// requests paid as `payment` says, unless a task runs there already,
-    /// which the guest would refuse. `keep` takes the turn as it starts,
+    /// Runs `task` as a new turn of `conversation`, under way from now, its
+    /// model requests paid as `payment` says, unless a task runs there
+    /// already, which the guest would refuse. The model comes from `model`
+    /// first, which may take a while or throw how the task ends; only then
+    /// is the door's pass asked for and the task run in the guest, so a task
+    /// stopped meanwhile never runs. `keep` takes the turn as it starts,
     /// then as it ends.
-    public func run(_ task: String, in conversation: UUID, model: String, paying payment: Payment, keep: @escaping (Turn) -> Void) {
+    public func run(
+        _ task: String, in conversation: UUID, paying payment: Payment,
+        model: @escaping @MainActor () async throws(End) -> String, keep: @escaping (Turn) -> Void
+    ) {
         guard runs[conversation] == nil else { return }
-        guard let pass = parts.pass(conversation, payment) else {
-            refuse(task, .unreachable, keep: keep)
-            return
-        }
         let turn = Turn(original: task, reworded: nil, steps: [])
-        let events = parts.run(Runner.Request(task: task, session: conversation.uuidString, model: model, pass: pass))
-        runs[conversation] = Run(turn: turn, started: .now, task: Task { await follow(events, in: conversation, keep: keep) })
-        keep(turn)
-    }
-
-    /// Keeps `task` as a new turn that ended as `end` before it ran: `keep`
-    /// takes it once.
-    public func refuse(_ task: String, _ end: End, keep: (Turn) -> Void) {
-        let turn = Turn(original: task, reworded: nil, steps: [])
-        ends[turn.id] = end
+        runs[conversation] = Run(turn: turn, started: .now, task: Task {
+            await follow(task, in: conversation, paying: payment, model: model, keep: keep)
+        })
         keep(turn)
     }
 
@@ -100,10 +96,34 @@ public final class Agent {
         runs[conversation]?.task.cancel()
     }
 
+    /// Has the model, then the door's pass, runs the task in the guest, and
+    /// keeps how it ended.
+    private func follow(
+        _ task: String, in conversation: UUID, paying payment: Payment, model: () async throws(End) -> String,
+        keep: (Turn) -> Void
+    ) async {
+        let ending: Result<String, End>
+        do throws(End) {
+            let model = try await model()
+            guard !Task.isCancelled else { throw .stopped }
+            guard let pass = parts.pass(conversation, payment) else { throw .unreachable }
+            let request = Runner.Request(task: task, session: conversation.uuidString, model: model, pass: pass)
+            ending = await answer(parts.run(request), in: conversation)
+        } catch {
+            ending = .failure(Task.isCancelled ? .stopped : error)
+        }
+        guard var turn = runs.removeValue(forKey: conversation)?.turn else { return }
+        switch ending {
+        case .success(let answer): turn.answer = answer
+        case .failure(let end): ends[turn.id] = end
+        }
+        keep(turn)
+    }
+
     /// Takes the task's events until they end, then how it ended: its
     /// answer when there is one; else its owner's Stop; else Cloak no longer
     /// running; else its last failure, unless the agent went on after it.
-    private func follow(_ events: AsyncThrowingStream<Runner.Event, any Error>, in conversation: UUID, keep: (Turn) -> Void) async {
+    private func answer(_ events: AsyncThrowingStream<Runner.Event, any Error>, in conversation: UUID) async -> Result<String, End> {
         var last: PiEvent?
         var stop: (any Error)?
         do {
@@ -129,16 +149,14 @@ public final class Agent {
         } catch {
             stop = error
         }
-        guard var turn = runs.removeValue(forKey: conversation)?.turn else { return }
         switch (last, stop as? Runner.Stop) {
         // A blank answer is no answer: the task did not finish.
-        case (.answer(let answer)?, _) where !answer.allSatisfy(\.isWhitespace): turn.answer = answer
-        case _ where Task.isCancelled: ends[turn.id] = .stopped
-        case (_, .stopped?), (_, .notRunning?): ends[turn.id] = .cloakStopped
-        case (.failure(let sentence)?, _): ends[turn.id] = .failed(sentence)
-        default: ends[turn.id] = .failed(nil)
+        case (.answer(let answer)?, _) where !answer.allSatisfy(\.isWhitespace): return .success(answer)
+        case _ where Task.isCancelled: return .failure(.stopped)
+        case (_, .stopped?), (_, .notRunning?): return .failure(.cloakStopped)
+        case (.failure(let sentence)?, _): return .failure(.failed(sentence))
+        default: return .failure(.failed(nil))
         }
-        keep(turn)
     }
 
     /// The task as the door reworded it, once a model request of this task

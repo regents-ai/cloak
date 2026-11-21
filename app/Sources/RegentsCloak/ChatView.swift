@@ -111,7 +111,7 @@ private struct Sidebar: View {
                 Button("New", systemImage: "square.and.pencil") { chat.newConversation() }
                     .keyboardShortcut("n")
                     .help("New")
-                    .disabled(!chat.canCompose)
+                    .disabled(!chat.isOpen)
             }
             ToolbarItem {
                 Button("Delete", systemImage: "trash") { deleting = chat.selected }
@@ -165,6 +165,8 @@ private struct Detail: View {
             WalletView(
                 wallet: chat.wallet, payer: chat.payer, settings: chat.settings, nearMode: chat.nearMode, kind: kind,
                 tokens: chat.selected?.tokens, showDetails: showDetails, showNearSettings: showNearSettings)
+                // For its Start row's fix (`StartRow`).
+                .environment(chat.rewordingDownload)
         }
         .sheet(isPresented: $chat.showingModes) {
             ModesPage(chat: chat)
@@ -366,9 +368,11 @@ private struct Turns: View {
 /// provider can link the chats. While it has a reworded text, the drop-down
 /// beside Send holds Send Original Text, which sends it as written instead,
 /// and Never reword. Another unsent one is shrunk, marked so, and opens when
-/// pressed anywhere. A NEAR message is shown as written alone, and the open
-/// one has Send, with no lights and no rewording; its answer, when NEAR
-/// counted its tokens, has a mark that says how many.
+/// pressed anywhere, unless a rewording is under way in its chat. Why its
+/// last send stopped, and why its own Reword stopped, stay on it until
+/// dismissed or pressed again. A NEAR message is shown as written alone, and
+/// the open one has Send, with no lights and no rewording; its answer, when
+/// NEAR counted its tokens, has a mark that says how many.
 private struct TurnCard: View {
     let chat: Chat
     let conversation: UUID
@@ -382,10 +386,13 @@ private struct TurnCard: View {
     var body: some View {
         let near = mode == .near
         let sending = chat.sending[turn.id]
+        let sendStop = chat.sendStops[turn.id]
         let shrunk = !open && turn.answer == nil
         let notSent = rewording == nil && shrunk && sending == nil
+        // A rewording in this chat keeps its own card open.
+        let opens = shrunk && chat.rewording?.conversation != conversation
         // The accent edge says a press opens it.
-        Card(highlighted: hovering && shrunk && chat.rewording == nil) {
+        Card(highlighted: hovering && opens) {
             if let reworded = turn.reworded {
                 let diff = WordDiff(original: turn.original, reworded: reworded)
                 HStack(alignment: .top, spacing: 12) {
@@ -397,7 +404,7 @@ private struct TurnCard: View {
                             text: open
                                 ? Binding(get: { reworded }, set: { chat.edit(turn.id, in: conversation, to: $0) })
                                 : .constant(reworded),
-                            label: "Reworded", editable: open && sending == nil && chat.rewording == nil, marks: diff.added,
+                            label: "Reworded", editable: open && sending == nil && rewording == nil, marks: diff.added,
                             mark: .added)
                     }
                 }
@@ -416,22 +423,25 @@ private struct TurnCard: View {
                     }
                 }
             }
-            if !near, let stop = chat.sendStop, stop.turn == turn.id {
+            if let sendStop, !sendStop.dismissed {
+                let dismiss: () -> Void = { chat.sendStops[turn.id]?.dismissed = true }
                 Group {
-                    switch stop.stop {
+                    switch sendStop.reason {
                     case .tempo(let stop):
-                        StopRow(stop: stop, showWallet: { chat.showingWallet = true }) { chat.sendStop = nil }
+                        StopRow(stop: stop, showWallet: { chat.showingWallet = true }, dismiss: dismiss)
                     case .zkapi(let stop):
-                        PayStopRow(stop: stop, showWallet: { chat.showingWallet = true }) { chat.sendStop = nil }
+                        PayStopRow(stop: stop, showWallet: { chat.showingWallet = true }, dismiss: dismiss)
+                    case .near(let stop):
+                        NearStopRow(stop: stop, showSettings: showNearSettings, dismiss: dismiss)
                     }
                 }
                 .padding(12)
                 .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             }
-            if near, let stop = chat.nearMode.sendStop, stop.turn == turn.id {
-                NearStopRow(stop: stop.stop, showSettings: showNearSettings) { chat.nearMode.sendStop = nil }
-                    .padding(12)
-                    .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            if let stop = chat.stops[conversation], stop.turn == turn.id {
+                Notice(symbol: "exclamationmark.circle.fill", tint: .orange, title: stop.title, detail: stop.detail) {
+                    chat.stops[conversation] = nil
+                }
             }
             if let rewording {
                 Progress(chat: chat, started: rewording.started)
@@ -482,14 +492,14 @@ private struct TurnCard: View {
             } else if turn.answer == nil {
                 // Only its room: the mark is drawn over the press that opens
                 // the card, so its help shows.
-                NotSent()
+                NotSent(mayHaveGone: false)
                     .hidden()
             }
         }
         .overlay(alignment: .bottomLeading) {
             // Over the whole card, text boxes included, so a press anywhere
-            // opens it. Off while a rewording is under way, which keeps its
-            // own card open.
+            // opens it. Off while a rewording is under way in this chat,
+            // which keeps its own card open.
             if shrunk {
                 Button { chat.opened = turn.id } label: {
                     Color.clear
@@ -498,10 +508,10 @@ private struct TurnCard: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open")
                 .help("Open")
-                .disabled(chat.rewording != nil)
+                .disabled(!opens)
             }
             if notSent {
-                NotSent()
+                NotSent(mayHaveGone: sendStop?.reason.mayHaveGone == true)
                     .padding(16)
             }
         }
@@ -509,15 +519,20 @@ private struct TurnCard: View {
     }
 }
 
-/// A shrunk card's mark while it isn't sent: a small hollow circle, dashed,
-/// as the switches' hollow dot means off.
+/// A shrunk card's mark while it has no answer: a small hollow circle,
+/// dashed, as the switches' hollow dot means off; with a question mark in
+/// it when its last send stopped after the message may have gone out, as
+/// that send's stop says.
 private struct NotSent: View {
+    let mayHaveGone: Bool
+
     var body: some View {
-        Image(systemName: "circle.dashed")
+        let words = mayHaveGone ? "May have been sent" : "Not sent"
+        Image(systemName: mayHaveGone ? "questionmark.circle.dashed" : "circle.dashed")
             .font(.callout)
             .foregroundStyle(.secondary)
-            .help("Not sent")
-            .accessibilityLabel("Not sent")
+            .help(words)
+            .accessibilityLabel(words)
     }
 }
 
@@ -969,8 +984,10 @@ extension View {
 }
 
 /// The box for the next message, with a warning under it while Never
-/// reword is ticked, what stopped the last rewording, and, unless Cloak is
-/// running, the state and a Start button. Its button rewords, its symbol
+/// reword is ticked, what stopped this chat's last new message's rewording,
+/// unless Cloak is running, the state and its way on, and, while another
+/// chat's rewording runs in a chat that would reword, that, with Cancel.
+/// Its button rewords, its symbol
 /// Reword's, or sends when nothing is left to review: with Never reword
 /// ticked or Review off. In the agent's conversation, the box for the next
 /// task, with Run, or Stop while a task runs there, and a note when the
@@ -1004,9 +1021,10 @@ private struct Compose: View {
         let sends = neverReword || near || (!agent && !chat.settings.review)
         let label = agent ? "Task" : "Message"
         VStack(alignment: .leading, spacing: 10) {
-            if let stop = chat.stop {
+            // A turn's own Reword that stopped says so on its card.
+            if let conversation, let stop = chat.stops[conversation.id], stop.turn == nil {
                 Notice(symbol: "exclamationmark.circle.fill", tint: .orange, title: stop.title, detail: stop.detail) {
-                    chat.stop = nil
+                    chat.stops[conversation.id] = nil
                 }
             }
             if let problem = chat.problem {
@@ -1022,10 +1040,17 @@ private struct Compose: View {
                 }
             } else if near {
                 if chat.nearMode.route == nil {
-                    Waiting(supervisor: chat.supervisor, to: "send through Tor", showDetails: showDetails)
+                    Waiting(
+                        supervisor: chat.supervisor, download: chat.rewordingDownload, to: "send through Tor",
+                        showDetails: showDetails)
                 }
             } else if chat.supervisor.phase != .running {
-                Waiting(supervisor: chat.supervisor, to: agent ? "run" : sends ? "send" : "reword", showDetails: showDetails)
+                Waiting(
+                    supervisor: chat.supervisor, download: chat.rewordingDownload,
+                    to: agent ? "run" : sends ? "send" : "reword", showDetails: showDetails)
+            }
+            if chat.rewordsElsewhere {
+                RewordingElsewhere(cancel: chat.cancel)
             }
             if !near, !llama {
                 DetailsRow(chat: chat)
@@ -1046,7 +1071,6 @@ private struct Compose: View {
                     .padding(.vertical, 4)
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
-                    .disabled(!chat.canCompose)
                 if running || answering, let conversation {
                     Button("Stop", systemImage: "stop.fill") {
                         if llama { chat.stopAnswer(in: conversation.id) } else { chat.agent.stop(conversation.id) }
@@ -1622,18 +1646,21 @@ private struct SwitchPill: View {
 
 /// Cloak's state while it is not running, as its symbol, and Start; why
 /// rewording, sending as written or the agent waits is the symbol's help
-/// and what VoiceOver reads first. Without the model, the way to its
-/// download in Details takes the place of Start; while Cloak starts or
-/// stops, a spinner does. A failure says why in words, beside Start.
+/// and what VoiceOver reads first. A failure says why in words, beside its
+/// fix (`Fix`) in Start's place, or, with none, what to do; while Cloak
+/// starts or stops, a spinner takes Start's place.
 private struct Waiting: View {
     let supervisor: Supervisor
+    /// The model that rewords', whose files the fix reads.
+    let download: ModelDownload
     /// What waits, as the verb ending each sentence: reword, send or run.
     let to: String
     let showDetails: () -> Void
 
     var body: some View {
         let phase = supervisor.phase
-        let words = text(phase)
+        let fix = phase.reason.flatMap { Fix(for: $0, download: download) }
+        let words = text(phase, fix: fix)
         // A failure, a missing model among them, keeps its words on screen;
         // the rest are help.
         let failed = if case .needsAttention = phase { true } else { false }
@@ -1650,9 +1677,14 @@ private struct Waiting: View {
                 Spacer()
             }
             switch phase {
-            case .needsAttention(.modelMissing):
-                Button("Download Model…", action: showDetails)
-            case .paused, .ready, .needsAttention:
+            case .needsAttention:
+                switch fix {
+                case .start?: SymbolButton(Fix.start.title, symbol: "play.fill") { supervisor.send(.start) }
+                case .download(let underWay)?: Button(Fix.download(underWay: underWay).title, action: showDetails)
+                case .showModel?: Button(Fix.showModel.title, action: Fix.showModel)
+                case nil: EmptyView()
+                }
+            case .paused, .ready:
                 SymbolButton("Start", symbol: "play.fill") { supervisor.send(.start) }
             case .preparing, .stopping, .running:
                 ProgressView()
@@ -1669,16 +1701,44 @@ private struct Waiting: View {
         .accessibilityLabel(words)
     }
 
-    private func text(_ phase: Phase) -> String {
+    private func text(_ phase: Phase, fix: Fix?) -> String {
         switch phase {
         case .paused: "Cloak is paused. Start it to \(to)."
         case .ready: "Cloak isn't running. Start it to \(to)."
         case .preparing: "Cloak is starting."
         case .stopping: "Cloak is stopping."
-        case .needsAttention(.modelMissing): "The model isn't installed. Download it to \(to)."
-        case .needsAttention(let reason): "\(reason.title) Start it again to \(to)."
+        case .needsAttention(let reason):
+            switch fix {
+            case .start?: "\(reason.title) Start it again to \(to)."
+            case .download?: "\(reason.title) Download it to \(to)."
+            // No button does it all, so the words say what to do.
+            case .showModel?, nil: "\(reason.title) \(reason.remedy)"
+            }
         case .running: "Cloak is running."
         }
+    }
+}
+
+/// In a chat that would reword, while another chat's rewording runs: that,
+/// and Cancel, which cancels it there. One model on this Mac rewords one
+/// message at a time.
+private struct RewordingElsewhere: View {
+    let cancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "pencil.line")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text("Another chat is rewording.")
+            Spacer()
+            Button("Cancel", action: cancel)
+                .help("Cancel the other chat's rewording")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -1772,7 +1832,7 @@ extension Chat.Stop {
         case .cancelled: ""
         case .stopped: "Start Cloak, then try again."
         }
-        let back = newMessage ? "Your message is back in the box." : "The message is as it was."
+        let back = turn == nil ? "Your message is back in the box." : "The message is as it was."
         return next.isEmpty ? back : back + " " + next
     }
 }

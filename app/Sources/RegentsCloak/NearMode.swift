@@ -15,12 +15,6 @@ import os
 @MainActor
 @Observable
 final class NearMode {
-    /// The last NEAR message that stopped.
-    struct SendStop {
-        let turn: UUID
-        let stop: NearStop
-    }
-
     let near: Near
     let supervisor: Supervisor
     let settings: AppSettings
@@ -36,9 +30,6 @@ final class NearMode {
     private(set) var checking: Date?
     /// The last check that stopped, until one passes.
     private(set) var checkStop: NearStop?
-    /// The last message that stopped, until the next Send or it is
-    /// dismissed.
-    var sendStop: SendStop?
     @ObservationIgnored private var checks = 0
     private let nearIdentity = Chat.newIdentity()
     private let intelIdentity = Chat.newIdentity()
@@ -89,9 +80,8 @@ final class NearMode {
 
     /// Sends `turn` as written on `route`, once the check passes; returns
     /// NEAR's answer and the tokens it counted for it, when its reply says,
-    /// or nil when it stopped (`sendStop`).
-    func send(_ turn: UUID, in conversation: Conversation, route: NearRoute) async -> (text: String, tokens: Tokens?)? {
-        sendStop = nil
+    /// or throws why it stopped, which Chat keeps with the turn.
+    func send(_ turn: UUID, in conversation: Conversation, route: NearRoute) async throws(NearStop) -> (text: String, tokens: Tokens?) {
         do throws(NearStop) {
             let answer = try await near.ask(
                 route: route, proofAge: settings.proofFreshness, key: { try NearKeychain.key() }, turn: turn, in: conversation)
@@ -99,8 +89,6 @@ final class NearMode {
             checkStop = nil
             return (answer.text, answer.tokens)
         } catch {
-            logger.error("a NEAR message stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .private)")
-            sendStop = SendStop(turn: turn, stop: error)
             // The helper keeps no check after these, so the next message
             // checks again.
             switch error.kind {
@@ -109,7 +97,7 @@ final class NearMode {
                 checkStop = error
             case .line, .request, .connect, .send, .status, .key: break
             }
-            return nil
+            throw error
         }
     }
 

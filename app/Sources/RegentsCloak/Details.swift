@@ -4,7 +4,7 @@ import CloakSupervisor
 import SwiftUI
 
 /// The small window: the state, what Running and Paused each mean, why it
-/// needs attention and what to do, the
+/// needs attention and what to do, with its fix (`Fix`), the
 /// model's download while its files are not all in place, the release, the
 /// model and whether it is out of memory, what Cloak holds in memory now,
 /// the last check, and technical detail on demand, the build and each
@@ -39,12 +39,24 @@ struct DetailsView: View {
                         .foregroundStyle(status.state == .needsAttention ? Color.orange : Color.primary)
                 }
                 if let reason = status.reason {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(reason.title)
-                        Text(reason.remedy)
-                            .foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(reason.title)
+                            Text(reason.remedy)
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                        Spacer(minLength: 0)
+                        // Its fix once Cloak has stopped for it. The download's
+                        // own section, under this one, is its way on.
+                        if case .needsAttention = supervisor.phase {
+                            switch Fix(for: reason, download: download) {
+                            case .start?: Button(Fix.start.title) { supervisor.send(.start) }
+                            case .showModel?: Button(Fix.showModel.title, action: Fix.showModel)
+                            case .download?, nil: EmptyView()
+                            }
+                        }
                     }
-                    .accessibilityElement(children: .combine)
                 }
             } footer: {
                 // What Start and Pause change, both said, so the two can be
