@@ -406,6 +406,8 @@ Add, under the money rule:
   signs more than the amount typed.
 - Venice refused the payment (400, 401 or 402): "Venice did not take the
   payment. Check the wallet's USDC on Base, then try again."
+- Terms that do not come or do not read: the stop's words, and nothing
+  was signed.
 - Any other end after the payment went: the stop's words and "The payment
   may have gone through. Check Credit before adding again."
 - Taken: "Added $7.50." The credit and the USDC on Base are read again
@@ -528,8 +530,10 @@ What the plan above had, and what was built instead:
 - Three stops say truly whether anything went, where the plan's states had
   them otherwise: a list that stops before the message is `sent: false`
   in its own kind; a stop before Venice's head is `sent: false` only when
-  Tor could not connect; a paid top-up answered other than 400, 401 or
-  402 is `failed`, with "may have gone through", never a "try again" kind.
+  Tor could not connect; a top-up that stops at Venice's terms is
+  `sent: false`, since no payment went; a paid top-up answered other than
+  400, 401 or 402 is `failed`, with "may have gone through", never a
+  "try again" kind.
 
 ## Costs and limits
 

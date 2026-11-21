@@ -575,8 +575,8 @@ and the hold's frames, against stand-ins).
 
 ## 6e. One Venice request through the sender (`guest/sender/src/lib.rs`, `host/Sources/CloakHost/Sender.swift`)
 
-Built 21 November 2026, with no caller in the app yet; the plan is
-[venice.md](venice.md), Transport. In the guest:
+Built 21 November 2026; its caller in the app is section 9f, and the plan
+is [venice.md](venice.md), Transport. In the guest:
 
 ```
 connected --> turn (Y) --> request read (R) --> checked --> Tor connect as the chat's identity
@@ -1349,6 +1349,116 @@ runs ends when it ends, heard from its own termination handler, and one
 whose reader goes away first is stopped with all it started (its process
 group), as Darkbloom's own app stops its installer. Nothing here is under
 test.
+
+## 9f. A Venice chat (`app/Sources/CloakChat/Venice.swift`, `app/Sources/CloakChat/VeniceWallet.swift`, `app/Sources/RegentsCloak/VeniceMode.swift`, `app/Sources/RegentsCloak/Chat.swift`)
+
+Built 21 November 2026; the plan and every word on screen are in
+[venice.md](venice.md). A Token Inference conversation whose first message
+went to Venice (`Conversation.venice`, a `VeniceChat`: model, tier and
+way to pay, set with that message and never changed) sends each message to
+Venice only, through the guest's sender (section 6e), on the conversation's
+own Tor identity. It never goes to Boundless, and no other conversation
+goes to Venice. A Token Inference conversation with no turn yet is
+Venice's while the wallet sheet's Provider is Venice
+(`AppSettings.provider`), and its first message begins it with the model
+chosen there (`veniceModel`, an id and its tier) and the way to pay chosen
+there (`venicePays`). With Venice as the provider, the Agent switch is off
+and cannot be turned on.
+
+It pays one of two ways: the owner's Venice key (`ProviderKeychain.venice`,
+read only as a request is built), or the credit Cloak's one wallet bought
+at Venice (`WalletKeychain`: the same key and address that pay Boundless,
+decision 31). A wallet chat signs one sign-in per message, for its POST, in
+the guest (`venice_sign`); the list before it needs none.
+
+One message. Each press of Send is a run of its own (`VeniceMode.send`):
+a run under way never stops another, and the card shows the newest
+press's answer so far.
+
+```
+pressed --the key, or the wallet's address, does not read--> stopped (keychain, sent: false)
+pressed --> listing (Venice's list, fresh, on the chat's identity)
+listing --list stops (429, 503, another status, no connection, does not read)--> stopped (its kind, sent: false)
+listing --model not listed, or remapped--> stopped (gone, sent: false); chat retired
+listing --model at another tier--> stopped (tierChanged, sent: false); chat retired
+listing --model offline--> stopped (busy, sent: false)
+listing --listed as the chat began--> sending (wallet: the sign-in signed in the guest first)
+sending --the guest cannot sign--> stopped (signing, sent: false)
+sending --Tor could not connect--> stopped (unreachable, sent: false)
+sending --no head, or the connection breaks--> stopped (unreachable, sent: true)
+sending --a status other than 200--> stopped (by status and code, sent: true; 404 is gone and retires the chat)
+sending --head 200--> answering (text so far, VeniceMode.partial)
+answering --[DONE] after stop or length, text not blank--> answered (Turn.answer)
+answering --a chunk names another model--> stopped (otherModel, sent: true, text dropped)
+answering --error event mid-stream--> stopped (busy, tooLong or failed, sent: true)
+answering --breaks off--> stopped (unreachable, sent: true)
+answering --ends before [DONE], or a chunk does not read--> stopped (failed, sent: true)
+any step --Stop, ⌘., or the chat deleted--> stopped (cancelled; sent as far as it went)
+any step --Cloak pauses, stops or quits--> stopped (unreachable; sent once the request may have gone)
+stopped --Send--> pressed (a new run)
+```
+
+A retired chat (`VeniceMode.retired`, in memory only) is certain to stop
+again, so Send is off in it: "Start a new chat." Send is otherwise off
+only where a press is certain to stop (`Chat.veniceBlock`): Cloak not
+running, a key chat with no key kept, a wallet chat with no wallet, a new
+chat with no model chosen. No balance never holds it back: Venice answers
+402 and the card says so. The reword gate is Token Inference's: a message
+goes reworded, or as written only by Send Original Text. A stop's row says
+whether it may have reached Venice (`VeniceStop.sent`). The answer so far,
+the stops and the retired chats are in memory only; a message saved
+without an answer shows Send after a relaunch.
+
+One press of Add (`VeniceMode.add`, each press its own run; two presses
+pay twice; a stop is `sent` only once the payment may have gone):
+
+```
+pressed --amount does not read--> not sent ("Enter an amount in dollars, like 5."; nothing signed)
+pressed --> asking (bare POST of x402/top-up: Venice's terms, read afresh)
+asking --terms do not come or do not read--> stopped (their kind, sent: false; nothing signed)
+asking --no entry in USDC on Base--> stopped (notUSDC, sent: false; nothing signed)
+asking --amount below the terms' least--> stopped (belowLeast, sent: false; nothing signed)
+asking --terms read--> signing (EIP-3009 authorization of exactly the amount typed, in the guest)
+signing --the guest cannot sign--> stopped (signing, sent: false)
+signing --signed--> paying (POST with PAYMENT-SIGNATURE)
+paying --200 that reads--> added ("Added $7.50.")
+paying --400, 401 or 402--> stopped (paymentRefused, sent: true)
+paying --any other answer, a 200 that does not read, or no answer--> stopped (failed or unreachable, sent: true: "The payment may have gone through.")
+every end --> the wallet's USDC on Base, its credit and Venice's terms read again
+```
+
+Add is disabled only where a press is certain to fail: while Cloak is not
+running (the key signs in the guest), and while the wallet's USDC on Base,
+read at the latest block, is below the amount (`Amount.lacking(in:)`). A
+read that failed leaves it enabled.
+
+The sheet's reads (`VeniceMode.refresh(wallet:)`) run when it opens, when
+Provider, Pay with, the wallet's address or Cloak's running change
+(`.task(id:)` on `VeniceRead`), and on Refresh. They read the list on a
+Tor identity of their own, then, for Key, the key's balance on another,
+or, for Wallet, the address's USDC on Base (`venice_funds`, on a fresh
+identity in the guest), its credit and Venice's terms on a third. A list
+that no longer has the chosen model at its tier clears the choice. Reads
+cost nothing and sign only the wallet's sign-in.
+
+`app/Tests/CloakTests/VeniceTests.swift` checks, against stand-ins for
+Venice, the guest and Base, with test keys only:
+
+- proof before sending: `chatWhoseModelMovedSendsNothing`,
+  `aListThatStopsSendsNothingMore`, `aListThatDoesNotComeSendsNothingMore`,
+  `eachTurnGoesAsItsOwnerChose`, `aStopBeforeVenicesHeadSaysWhetherItWasSent`,
+  `chatCarriesExactlyItsFields`, `keyNeverInAStop`, `keyNeverInAStopMidway`,
+  `challengeIsNeverNoBalance`;
+- money: `signInIsVenicesExample`, `topUpPaysExactlyAsVenicesExample`,
+  `topUpTakesOnlyBaseUSDC`, `dollarsReadExactly`,
+  `whatIsNotDollarsReadsAsNothing`, `addLacksOnlyWhatTheWalletIsShort`,
+  `addSignsExactlyTheDollarsTyped`, `addBelowVenicesLeastSignsNothing`,
+  `termsThatDoNotReadPayNothing`, `termsThatDoNotComePayNothing`,
+  `aPaymentNotTakenIsSignedOnce`, `twoAddsAreTwoPayments`,
+  `realTopUpTermsRead`.
+
+The screens, `VeniceMode` and `Chat`'s gates are in the app's target,
+which has no tests; nothing there is under test.
 
 ## 10. Stages still implied (found 15 November 2026)
 
