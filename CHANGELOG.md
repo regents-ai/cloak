@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `docs/state-machines.md` has a new section 11: every place in the app
+  where a stage is still read off several fields, the menu, each window
+  and the two unmerged branches included, with the faults traced in
+  each. Section 9 is corrected where the run had moved on: the guest
+  stays up through Running, the payment disk is a step of Preparing, and
+  which commands are refused where. No code changes.
 - A place that says what is missing now carries the way on, after Sean's
   first try of V's wallet on 21 November. A wallet opened while Cloak is
   not running leads with Cloak's state and Start (Download Model… while

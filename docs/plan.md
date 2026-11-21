@@ -3640,6 +3640,21 @@ signed, accepted by Apple and running on his Mac. Still unpublished. His
 standing word from that day: every new build goes into his own Cloak
 immediately.
 
+The same day Sean asked for every stage the app still holds implicitly,
+its views and the menu included. Every file under `app/Sources` and both
+unmerged branches were read; the list, with the faults traced in each, is
+section 11 of `docs/state-machines.md`, and section 9 there is corrected
+where the run had moved on (the guest stays up, the payment disk, what is
+refused). Nothing in the code is changed by it. The faults that touch
+money or what is sent, to be fixed before the friends' build is
+published: an approve's stop that can read "Nothing was sent."; V's
+wallet spinning for good after a first read fails; Return in the Amount
+box quoting while Deposit is off; a reworded message sent with no press
+when Never reword is ticked meanwhile; a rewording's result landing in
+whichever chat is showing. On the branches, before either merges: a new
+chat still going to Venice after Provider is set back to Boundless, and
+a share or withdrawal cut short by Cancel ending with no word.
+
 NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
 November 2026), against stand-ins only: no sign-in, enrolment or upload
 has been made. An independent reader found 14 things and the helper

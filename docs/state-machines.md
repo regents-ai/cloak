@@ -809,14 +809,18 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   folder and renamed over it, and the file is then checked against the pin
   (`part_missing` when it cannot be put there, `part_changed` when it does
   not match), then tor, started and bootstrapped, then the worker, started and
-  ready, then a check guest, which sends one rewrite through the daemon, the
-  relay and the worker and powers off. The first failure is the reason.
+  ready, then the payment disk, attached with its key from the keychain
+  (`PaymentDisk.attach`), then the guest, which sends one rewrite through
+  the daemon, the relay and the worker and stays up, with its sender and
+  payer: the check has passed once its console shows the result line,
+  `check exited 0` and `sender ready`, in that order. The first failure is
+  the reason. The checks all run, the `near` pin among them, so a changed
+  NEAR helper stops a run that never uses it.
   A worker that exits before it is ready because the model folder is not
   exactly the pinned files (its exit status 3, section 1) is
   `model_changed`; any other is `worker_unavailable`.
-- **Running** means tor is up, the worker is up or resting, and that check
-  passed. No session guest is built yet: the guest is gone once the check
-  ends.
+- **Running** means tor is up, the worker is up or resting, that check
+  passed, and the guest that made it is still up.
 - **Resting**: while Running, the worker rests (section 3) once Cloak has
   reworded nothing for the time chosen as Free memory in the Settings window
   (5 minutes until chosen, 15 minutes, 1 hour, or Never, which keeps it),
@@ -840,12 +844,14 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   VoiceOver hint, while the two differ.
   Nothing else in the run depends on it.
 - **Watches**: from its start until the run ends, tor exiting raises
-  `tor_stopped`, and every worker exit the relay did not cause raises
-  `worker_stopped`; a rest never does. The relay replaces no lost worker
+  `tor_stopped`, every worker exit the relay did not cause raises
+  `worker_stopped`, and the guest ending raises `guest_failed`; a rest
+  never does. The relay replaces no lost worker
   (section 3): a worker the relay loses is stopped, and its exit is the
   failure.
 - **Stopping** is the one shutdown, for every destination: it cancels the
-  preparation and the watches, ends the worker for Local Llama chats,
+  preparation and the watches, ends the agent's tasks under way and the
+  worker for Local Llama chats,
   waits for the preparation and that worker to end, then stops the guest,
   the worker and tor, in that order, each within its limit
   (section 2); a worker that rested is already gone, and one loading after a
@@ -853,16 +859,23 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   stopped, a late failure) does not apply, and is dropped. Each wait in
   the preparation ends when it is cancelled: tor's bootstrap, the guest's
   boot and check, and the worker's model load, whose worker is stopped
-  there and then, so a pause or a quit takes effect at once in any step.
+  there and then, so a pause or a quit takes effect at once in those
+  steps. Three steps are not waits and run to their end first: the checks,
+  the worker's copy into place, and the payment disk's key read, which
+  lasts as long as a keychain question stays unanswered.
   Before (13 November): the worker's start was waited for until the model
   had loaded, so a pause or a quit during the load waited for it.
 - **Needs attention** keeps its reason, and the failure's technical detail,
   until the next start. Nothing is started again, and no other route or
   model is tried (REF04).
-- **Refused**: any command while Stopping (`busy`), and `resume` anywhere but
-  Paused (`not_paused`). A refused command changes nothing.
+- **Refused**: any command but quit while Stopping (`busy`); `verify`
+  while starting to run or Running (`busy`); and `resume` while checking,
+  Ready or Needs attention (`not_paused`). `resume` while starting to run
+  or Running is accepted and changes nothing. A refused command changes
+  nothing.
 - **Sleep** pauses, so a wake finds no run; a worker up for Local Llama
-  chats stays, and rests as ever. A relaunch starts
+  chats stays, and rests as ever, unless a run was up, whose shutdown ends
+  it. A relaunch starts
   Paused, having started nothing, the one after an update included
   (Sparkle installs it once the app has quit through its shutdown). So does the launch at login, which is
   off unless the Settings window's Launch at login switch turns it on (a
@@ -1500,6 +1513,177 @@ needs Cloak running, which a test cannot start.
 Looked at and found sound: a start of tor that is cancelled once its port
 is open returns a tor that has not bootstrapped, which the supervisor
 treats as a failure and drops, since it is already stopping.
+
+## 11. Stages still implied in the app (found 21 November 2026)
+
+A third read, of every file under `app/Sources` and of the two branches
+not yet merged (`t3/near-trace-sharing`, `t3/add-venice-provider`), for
+every place a stage is read off several fields. Section 10's entries
+still hold except where a line here says otherwise. Each entry gives what
+holds the stage, then the faults found in it, each traced in the code
+unless it says "likely". None is fixed yet; none has a check.
+
+### The menu and the app's shell
+
+- **The menu's header and items** (`app/Sources/RegentsCloak/Menu.swift`).
+  The phase, `supervisor.resting` and the download's state. A reason kept
+  from the last start is not read against the files now: after "The model
+  isn't installed." and a finished download, the header still offers
+  Download Model…, which opens Details with nothing to press. Start stays
+  on for the reasons the header gives no fix for (`unsupported_hardware`,
+  `part_missing`, `part_changed`), where it is certain to stop again.
+  Chat's `Waiting` row and the Wallet's `StartRow` offer Start for
+  `model_changed` too. A quit shows as any Stopping does.
+- **Windows and the Dock icon** (`AppWindow.swift`, `Updates.swift`). Each
+  window's optional, its visibility and the activation policy. Sparkle's
+  window and a minimised window are not counted, so closing the last
+  counted window takes Cloak out of the Dock under them.
+- **The quick prompt** (`QuickPrompt.swift`, `Chat.compose`). Hidden,
+  shown, handed to Chat. Return puts its text in Chat's one message box
+  over whatever was there, an empty Return included, and sets the mode
+  to V with Agent off.
+- **The quick prompt's shortcut** (`QuickPrompt.swift`,
+  `SettingsView.swift`). The saved shortcut, the hot key macOS holds, the
+  refusal's words and the recorder's key monitor. Recording drops every
+  key in every Cloak window and takes the first one with ⌘, ⌥ or ⌃ as the
+  shortcut, wherever it was typed. A refused new choice shows its words
+  beside the old one, which still works.
+- **Launch and quit** (`RegentsCloakApp.swift`). The order of statements.
+  A failure's alert may open behind other windows (likely). Windows stay
+  usable through a quit's shutdown, and NEAR's helper, stopped first, is
+  started again by a Send in those seconds (section 9b's "ended" is not a
+  stage the code holds).
+- **Review and Never reword** (`AppSettings.swift`). Turning Never reword
+  on turns Review off; turning it off again leaves Review off.
+- **Launch at login, Updates, the info note, the text box.** A view's copy
+  of a system value, or one flag with a timer. A login item macOS refuses
+  springs the switch back with no words.
+
+### Settings, Details and Agents
+
+- **The NEAR key's row** (`SettingsView.swift`, `NearMode.swift`).
+  `hasKey` (nil, false, true), `keyFailed`, the typed key, `replacing`,
+  `removing`. "The keychain said no. Try again." has nothing that tries
+  again; Replace has no way back to Saved; a save that fails has already
+  emptied the field; the Wallet's own read sets the same `keyFailed`.
+- **One model's row** (`SettingsView.swift`). A face over
+  `ModelDownload.State` (section 9a). Waiting for the network and trying
+  again look like downloading. The free space is read as the pane
+  appears, so its words go stale.
+- **Details' reason** (`Details.swift`). Shows the reason and its remedy
+  with no button: no Start Again, no Show in Finder.
+- **The rewording model's download in Details** (`DownloadSection.swift`).
+  Cancel's question says what has downloaded is deleted; files already in
+  place stay (section 9a).
+- **Agents** (`AgentsView.swift`). The door's named state beside
+  `problem`: no line it shows has a button (no Start, no way to the Door
+  pane, no Try Again). Adding an app: `adding`, `name`, `pass`, `working`;
+  Cancel while it adds keeps the app and never shows its pass (likely).
+  An open request is a copy taken at the press and does not follow its
+  stage.
+- **The log, Restore Defaults, the port field, Copy.** Copy Log before
+  the read lands copies nothing over the clipboard. Restore Defaults also
+  resets V's model, which the Wallet chooses. No Copy in the app shows
+  that it copied.
+
+### Chat
+
+- **Opening the saved chats** (`Chat.Access`, named). Retry has no stage:
+  two can run at once (likely), and a retry that fails again shows
+  nothing new. Locked has no way on.
+- **The one rewording** (`Chat.rewording`, `stop`, the draft given back).
+  All three are the window's, not a chat's. While any chat rewords, every
+  chat's box, New and a shrunk card's press are off with no reason shown.
+  Its stop and its given-back message land in the chat showing when it
+  ends, a NEAR chat included, where Return sends as written. Review is
+  read as the rewording ends (`Chat.reword`), so ticking Never reword
+  meanwhile sends the reworded text with no press.
+- **The box's text and details** (`draft`, `picks`, `askingDetails`,
+  `detailsAsk`). Section 10's four stages, and two more: the 1.2 second
+  wait before asking, and fixed with nothing picked
+  (`DetailPicks.swift`). One draft for every chat.
+- **One message card.** As section 10, with `sendStop` one for all chats
+  (and `NearMode.sendStop` one for all NEAR chats): a send in another
+  chat clears a card's stop, and a card whose send stopped with "may have
+  reached" is later marked "Not sent".
+- **One task card.** As section 10, with a stage before it for a V task:
+  the model list being read, during which nothing shows, Run stays on and
+  a second Run is dropped unseen (`Agent.run`'s guard). "Agents says why"
+  has no way to Agents.
+- **Saved or not, and disk problems** (`unsaved`, `problem`). One
+  `problem` for all chats, cleared by any later save.
+- **Sheets** (`showingWallet`, `showingModes`, `deleting`, `explaining`).
+  Two flags for one sheet's place.
+- **A delete** cancels the chat's rewording, answer and task before the
+  file's removal, which can fail and keep the chat.
+
+### The wallets
+
+- **V's reads** (`Payer.following`, `moving`, `readStop`). Idle, reading,
+  waiting 10 seconds, ended. A first read that fails leaves the state
+  unread: a spinner for good under a stop that says "Try again" with no
+  button. Refresh, and the read a pause asks for, do nothing while the
+  loop waits. An older read can land over an approve's answer (likely).
+  The loop also runs while a quote is under review, and after each quote
+  and each Try Again, which section 9d does not say.
+- **V's quote** (`review`, `working`, `stop`, `stopAsk`). Asked, shown,
+  expired, approving, approved, stopped, cancelled. `stopAsk` is set at
+  the press and shared, so a quote pressed while an approve is out makes
+  that approve's stop read "Nothing was sent." A stop shows at the top of
+  the sheet, not where the press was made. Withdraw stays on with no note
+  read, and every press then stops as "Failed".
+- **V's Amount field** (`text`, `wrong`). Return quotes while Deposit is
+  off. The red line outlives the text it was about.
+- **V's failed and taken states.** Failed hides the address and Send Out.
+  Taken shows no button.
+- **V's Send Out** (`returning.phase`). Not a case of `Payer.State`; a
+  phase other than `return_pending` is not read.
+- **V's model list** (`Payer.models`). A read that fails spins for good.
+- **Token Inference's wallet.** As section 10. One stop row for the press
+  and the read, both cleared by Dismiss; Close and Withdraw are on before
+  any read.
+- **The deposit's file** (`Remote.swift`, `ConversationStore.key`). Sealed
+  under the conversations' key, which is made anew when no conversation
+  file exists: a deposit kept then can no longer be opened.
+
+### The supervisor, the door, the tool
+
+- **Preparing's steps and the run's parts.** Section 9, corrected above.
+- **The run's worker.** Serving, resting, waking; waking is not shown.
+  A Local Llama answer served at the run's relay has no limit, and a
+  rewrite's limit runs while it queues behind one.
+- **The payment disk on the Mac** (`PaymentDisk.swift`). Read off the
+  image file, its first bytes and the keychain item. A disk with no key,
+  or a key read refused, ends every Start as `guest_failed`, whose words
+  are about memory.
+- **One model download.** Section 9a holds. Two at once each read the
+  free space alone.
+- **The door opening.** `listener` is set while `state` still says closed
+  or the last refusal: an opening stage section 10 says is not there. A
+  box's pass needs the Mac's listener open, so a taken port ends every
+  agent task as "No connection".
+- **One door connection** (`Door.serve`). Reading the head, admitted,
+  reading the body, routing, answering. Nothing reads the connection
+  while routing, so a request whose app has gone is still reworded, paid
+  for and listed as answered.
+- **One control command** (`ControlSocket.swift`, `Cloak.swift`). A
+  command waiting through a quit is refused; `cloak start` overtaken by a
+  pause exits 0; `cloak doctor` exits 0 with failed checks.
+
+### Not yet merged
+
+- **Trace sharing** (`TraceShare.swift`; that branch's own section 9f).
+  Named up to "shared". Cancel and a second Sign In move the epoch
+  without `interrupt()`, so a share or a withdrawal under way ends with
+  no word, and the commons may hold a trace Cloak has no record of. A
+  review cut short gets no notice. Deleting a chat leaves its shared
+  traces with no Withdraw.
+- **Venice** (`VeniceMode.swift`, `Chat.swift` on that branch; its own
+  section 9f, which must be renumbered). `Chat.newVenice` does not read
+  the Provider chosen, so with a Venice model picked and Provider back on
+  Boundless, a new chat's first message still goes to Venice. A started
+  chat's sheet reads the account of the new-chat setting. A list read
+  that fails keeps the old list with no word. No notice has its way on.
 
 ## Looked at, nothing to name
 
