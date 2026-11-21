@@ -382,6 +382,15 @@ final class Chat {
         }
     }
 
+    /// Whether Send and Run are off for a reason the wallet fixes: no
+    /// wallet, no funds, or a deposit closed.
+    func walletBlocks(in mode: Kind) -> Bool {
+        switch block(in: mode) {
+        case .noWallet?, .noFunds?, .closed?: true
+        case .notRunning?, nil: false
+        }
+    }
+
     private func block(in mode: Kind) -> Block? {
         let running = supervisor.phase == .running
         return mode == .token

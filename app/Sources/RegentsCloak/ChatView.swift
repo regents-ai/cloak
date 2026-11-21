@@ -164,7 +164,7 @@ private struct Detail: View {
         .sheet(isPresented: $chat.showingWallet) {
             WalletView(
                 wallet: chat.wallet, payer: chat.payer, settings: chat.settings, nearMode: chat.nearMode, kind: kind,
-                tokens: chat.selected?.tokens, showNearSettings: showNearSettings)
+                tokens: chat.selected?.tokens, showDetails: showDetails, showNearSettings: showNearSettings)
         }
         .sheet(isPresented: $chat.showingModes) {
             ModesPage(chat: chat)
@@ -192,9 +192,11 @@ private struct Detail: View {
         case .open:
             if let conversation = chat.selected {
                 VStack(spacing: 0) {
-                    Turns(chat: chat, conversation: conversation)
+                    Turns(chat: chat, conversation: conversation, showNearSettings: showNearSettings)
                     Divider()
-                    Compose(chat: chat, showDetails: showDetails, showLlamaSettings: showLlamaSettings)
+                    Compose(
+                        chat: chat, showDetails: showDetails, showNearSettings: showNearSettings,
+                        showLlamaSettings: showLlamaSettings)
                 }
                 .background(Color(nsColor: .windowBackgroundColor))
             } else {
@@ -293,6 +295,7 @@ private struct WalletButton: View {
 private struct Turns: View {
     let chat: Chat
     let conversation: Conversation
+    let showNearSettings: () -> Void
 
     var body: some View {
         let rewording = chat.rewording?.conversation == conversation.id ? chat.rewording : nil
@@ -323,7 +326,8 @@ private struct Turns: View {
                             TurnCard(
                                 chat: chat, conversation: conversation.id, turn: turn, mode: mode,
                                 open: chat.isOpen(turn, in: conversation),
-                                rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil })
+                                rewording: rewording.flatMap { $0.turn == turn.id ? $0 : nil },
+                                showNearSettings: showNearSettings)
                         }
                     }
                     if let rewording, rewording.turn == nil {
@@ -372,6 +376,7 @@ private struct TurnCard: View {
     let mode: Chat.Kind
     let open: Bool
     let rewording: Chat.Rewording?
+    let showNearSettings: () -> Void
     @State private var hovering = false
 
     var body: some View {
@@ -415,7 +420,7 @@ private struct TurnCard: View {
                 Group {
                     switch stop.stop {
                     case .tempo(let stop):
-                        StopRow(stop: stop) { chat.sendStop = nil }
+                        StopRow(stop: stop, showWallet: { chat.showingWallet = true }) { chat.sendStop = nil }
                     case .zkapi(let stop):
                         PayStopRow(stop: stop, showWallet: { chat.showingWallet = true }) { chat.sendStop = nil }
                     }
@@ -451,6 +456,12 @@ private struct TurnCard: View {
                         Text(words)
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                    }
+                    // The way on from a reason the wallet or the key fixes.
+                    if near, chat.nearMode.hasKey == false {
+                        Button("Settings…", action: showNearSettings)
+                    } else if !near, chat.walletBlocks(in: mode) {
+                        Button("Wallet…") { chat.showingWallet = true }
                     }
                     // Each press of Send or Send Original Text sends, one
                     // under way or not.
@@ -662,6 +673,9 @@ private struct TaskCard: View {
                         Text(block)
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                    }
+                    if chat.walletBlocks(in: mode) {
+                        Button("Wallet…") { chat.showingWallet = true }
                     }
                     SymbolButton("Run Again", symbol: "arrow.clockwise") { chat.runAgain(turn, in: conversation) }
                         .disabled(block != nil)
@@ -974,6 +988,7 @@ extension View {
 private struct Compose: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
+    let showNearSettings: () -> Void
     let showLlamaSettings: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -999,13 +1014,17 @@ private struct Compose: View {
                     chat.problem = nil
                 }
             }
-            // NEAR's status line and Send say what Cloak not running stops;
-            // Local Llama needs only the model.
+            // Local Llama needs only the model; NEAR needs Cloak running
+            // only to send through Tor.
             if llama {
                 if let block = chat.llamaBlock {
                     LlamaStop(block: block, showDetails: showDetails, showLlamaSettings: showLlamaSettings)
                 }
-            } else if !near, chat.supervisor.phase != .running {
+            } else if near {
+                if chat.nearMode.route == nil {
+                    Waiting(supervisor: chat.supervisor, to: "send through Tor", showDetails: showDetails)
+                }
+            } else if chat.supervisor.phase != .running {
                 Waiting(supervisor: chat.supervisor, to: agent ? "run" : sends ? "send" : "reword", showDetails: showDetails)
             }
             if !near, !llama {
@@ -1075,14 +1094,17 @@ private struct Compose: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-                // While Cloak is not running, the notice above says so.
+                // While Cloak is not running, the notice above says so. A
+                // reason the wallet or the key fixes comes with the way there.
                 if agent, chat.supervisor.phase == .running, let block = chat.runBlock(in: mode) {
                     Text(block)
                         .foregroundStyle(.secondary)
+                    Button("Wallet…") { chat.showingWallet = true }
                 }
-                if near, let block = chat.nearMode.sendBlock {
+                if near, chat.nearMode.hasKey == false, let block = chat.nearMode.sendBlock {
                     Text(block)
                         .foregroundStyle(.secondary)
+                    Button("Settings…", action: showNearSettings)
                 }
             }
             .font(.callout)

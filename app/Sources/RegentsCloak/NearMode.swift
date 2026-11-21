@@ -62,7 +62,7 @@ final class NearMode {
     /// certain to stop: no key kept, or Tor on while Cloak is not running. A
     /// check or a send under way never turns it off.
     var sendBlock: String? {
-        if hasKey == false { return "Add your NEAR key in Settings." }
+        if hasKey == false { return "Add your NEAR key to send." }
         if route == nil { return "Start Cloak to send through Tor." }
         return nil
     }

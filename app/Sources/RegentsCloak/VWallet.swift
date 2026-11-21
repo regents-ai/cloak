@@ -7,29 +7,27 @@ import SwiftUI
 /// each request is paid from with a new key, and the model V chats go to.
 /// Every figure is the payer's, in ETH; the one figure in dollars is the
 /// amount its owner asked to deposit. Deposit, Withdraw and Send Out each
-/// ask the payer for a quote and show it; the review's button is the one
-/// place an approve is sent from. A money button is off only where the
-/// chain at the latest block read shows its request certain to fail, with
-/// why beside it; never for a press under way, and every press is sent.
+/// ask the payer for a quote and show it where the press was made, in
+/// place of the button pressed; the review's button is the one place an
+/// approve is sent from. A money button is off only where the chain at the
+/// latest block read shows its request certain to fail, with why beside it;
+/// never for a press under way, and every press is sent. While Cloak is not
+/// running, nothing is read and none of this shows: the sheet's `StartRow`
+/// is the way on.
 struct VWallet: View {
     let payer: Payer
     @Bindable var settings: AppSettings
     let running: Bool
 
     var body: some View {
-        if !running {
+        if let stop = payer.stop {
             Section {
-                Text("Start Cloak to use the wallet.")
-                    .foregroundStyle(.secondary)
+                PayStopRow(stop: stop, ask: payer.stopAsk, dismiss: payer.dismiss)
             }
-        }
-        if let stop = payer.stop ?? payer.readStop {
+        } else if let stop = payer.readStop {
             Section {
-                PayStopRow(stop: stop, dismiss: payer.dismiss)
+                PayStopRow(stop: stop, ask: .read, dismiss: payer.dismiss)
             }
-        }
-        if let review = payer.review {
-            ReviewSection(payer: payer, review: review)
         }
         switch payer.state {
         case .unread:
@@ -53,7 +51,7 @@ struct VWallet: View {
 
 /// The payer's own address on Ethereum, to send ETH to, as Copy and a QR
 /// code; the ETH there now; and Send Out…, which sends all of it to an
-/// address typed in.
+/// address typed in, or its quote under review.
 private struct AddressSection: View {
     let payer: Payer
     let funding: FundingStatus
@@ -85,14 +83,18 @@ private struct AddressSection: View {
                     }
                 }
             }
-            HStack(spacing: 8) {
-                Spacer()
-                if let block = payer.sendOutBlock {
-                    Text(block.words)
-                        .foregroundStyle(.secondary)
+            if let review = payer.review, case .sendOut = review {
+                ReviewRows(payer: payer, review: review)
+            } else {
+                HStack(spacing: 8) {
+                    Spacer()
+                    if let block = payer.sendOutBlock {
+                        Text(block.words)
+                            .foregroundStyle(.secondary)
+                    }
+                    SendOutButton(payer: payer)
+                        .disabled(payer.sendOutBlock != nil)
                 }
-                SendOutButton(payer: payer)
-                    .disabled(payer.sendOutBlock != nil)
             }
         }
     }
@@ -144,8 +146,10 @@ private struct SendOutButton: View {
 }
 
 /// The deposit, as the payer and the chain show it: none, with the amount
-/// to deposit; on its way; held, with its balance, its expiry and
-/// Withdraw; being withdrawn; closed on the chain.
+/// to deposit, and, while the address holds no ETH, that ETH comes first;
+/// on its way; held, with its balance, its expiry and Withdraw; being
+/// withdrawn; closed on the chain. A deposit's quote under review takes the
+/// amount's place.
 private struct DepositSection: View {
     let payer: Payer
 
@@ -153,12 +157,17 @@ private struct DepositSection: View {
         Section("Deposit") {
             switch payer.state {
             case .none:
-                Amount(payer: payer)
+                if payer.sendOutBlock == .nothingToSend {
+                    Text("A deposit is paid in ETH from the address above. Send ETH there first; Deposit shows how much.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                amount
             case .depositing(let stage):
                 Moving(symbol: "arrow.down.circle", title: "Depositing", help: Self.stage(stage), hash: payer.funding?.transactionHash)
             case .ready, .settling:
                 Held(payer: payer)
-                Amount(payer: payer)
+                amount
             case .withdrawing(let phase):
                 Moving(
                     symbol: "arrow.up.circle", title: "Withdrawing", help: Self.phase(phase),
@@ -182,6 +191,14 @@ private struct DepositSection: View {
             case .unread, .failed:
                 EmptyView()
             }
+        }
+    }
+
+    @ViewBuilder private var amount: some View {
+        if let review = payer.review, case .deposit = review {
+            ReviewRows(payer: payer, review: review)
+        } else {
+            Amount(payer: payer)
         }
     }
 
@@ -278,25 +295,29 @@ private struct Held: View {
 }
 
 /// Withdraw: the whole deposit, to the payer's own address. Prominent when
-/// the expiry is near or past.
+/// the expiry is near or past. Its quote under review takes its place.
 private struct WithdrawRow: View {
     let payer: Payer
     let prominent: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            Spacer()
-            if let block = payer.withdrawBlock {
-                Text(block.words)
-                    .foregroundStyle(.secondary)
-            }
-            let withdraw = Button("Withdraw") { Task { await payer.quoteWithdrawal() } }
-                .help("Brings the whole deposit back to the address above.")
-                .disabled(payer.withdrawBlock != nil)
-            if prominent {
-                withdraw.buttonStyle(.borderedProminent)
-            } else {
-                withdraw
+        if let review = payer.review, case .withdrawal = review {
+            ReviewRows(payer: payer, review: review)
+        } else {
+            HStack(spacing: 8) {
+                Spacer()
+                if let block = payer.withdrawBlock {
+                    Text(block.words)
+                        .foregroundStyle(.secondary)
+                }
+                let withdraw = Button("Withdraw") { Task { await payer.quoteWithdrawal() } }
+                    .help("Brings the whole deposit back to the address above.")
+                    .disabled(payer.withdrawBlock != nil)
+                if prominent {
+                    withdraw.buttonStyle(.borderedProminent)
+                } else {
+                    withdraw
+                }
             }
         }
     }
@@ -363,17 +384,18 @@ private struct Amount: View {
     }
 }
 
-/// A quote, as the payer made it, for its owner to confirm: what it sends,
-/// where, the most it pays in fees, and how long it holds. Its button is the
-/// one place an approve is sent from; once the quote has expired, the
-/// button asks for a new one, shown before anything is approved.
-private struct ReviewSection: View {
+/// A quote, as the payer made it, for its owner to confirm, as rows in the
+/// section its press was made in: what it sends, where, the most it pays
+/// in fees, and how long it holds. Its button is the one place an approve
+/// is sent from; once the quote has expired, the button asks for a new one,
+/// shown before anything is approved.
+private struct ReviewRows: View {
     let payer: Payer
     let review: Payer.Review
 
     var body: some View {
         let quote = review.quote
-        Section("Review") {
+        Group {
             switch review {
             case .deposit(_, let microUSD):
                 LabeledContent("Amount") {
@@ -537,11 +559,14 @@ struct CopyButton: View {
 }
 
 /// Why a request to V's payer stopped, in plain words. A chat request with
-/// no deposit says to deposit, with the way to the wallet.
+/// no deposit says to deposit; that one, and one whose model the service
+/// can't use, come with the way to the wallet.
 struct PayStopRow: View {
     let stop: PayStop
     /// What the stopped request was to do: send or run.
     var verb = "send"
+    /// What a call from the wallet had asked for; nil for a chat request.
+    var ask: Payer.Ask?
     var showWallet: (() -> Void)?
     let dismiss: () -> Void
 
@@ -557,12 +582,12 @@ struct PayStopRow: View {
                 } else {
                     Text(stop.title)
                         .fontWeight(.medium)
-                    Text(stop.words)
+                    Text(stop.words(for: ask))
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer()
-            if stop.code == .noDeposit, let showWallet {
+            if stop.code == .noDeposit || stop.code == .modelUnavailable, let showWallet {
                 Button("Wallet…", action: showWallet)
             }
             Button("Dismiss", systemImage: "xmark", action: dismiss)
@@ -594,7 +619,23 @@ extension PayStop {
         }
     }
 
-    var words: String {
+    /// What happened and what to do, for a chat request (`ask` nil) or a
+    /// call from the wallet. A read or a quote sends nothing, so one that
+    /// got no answer says so; an approve may have been sent.
+    func words(for ask: Payer.Ask?) -> String {
+        switch (code, ask) {
+        case (.timedOut, .read?), (.ended, .read?), (.providerFailed, .read?):
+            "Cloak couldn't read V's wallet. Nothing was sent. Try again."
+        case (.timedOut, .quote?), (.ended, .quote?), (.providerFailed, .quote?):
+            "No quote came. Nothing was sent. Try again."
+        case (.timedOut, .approve?), (.ended, .approve?), (.providerFailed, .approve?):
+            "No answer came. It may have been sent: the Wallet shows it once the chain does."
+        default:
+            words
+        }
+    }
+
+    private var words: String {
         switch code {
         case .unreachable: "Cloak couldn't reach V's wallet. Pause and start Cloak, then try again."
         case .noDeposit: "Make a deposit in Wallet, then try again."
@@ -620,7 +661,7 @@ extension Payer.Block {
         case .paused: "Paused by operator"
         case .oneAtATime: "One deposit at a time"
         case .nothingToWithdraw: "Nothing to withdraw"
-        case .needs(let wei): "Needs \(Ether.text(Decimal(sign: .plus, exponent: -18, significand: wei), up: true)) more"
+        case .needs(let wei): "Address needs \(Ether.text(Decimal(sign: .plus, exponent: -18, significand: wei), up: true)) more"
         case .needsFee: "Needs ETH for the fee"
         case .nothingToSend: "Nothing to send"
         }

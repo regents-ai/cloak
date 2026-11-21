@@ -1,5 +1,6 @@
 import AppKit
 import CloakChat
+import CloakSupervisor
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
@@ -7,11 +8,13 @@ import SwiftUI
 /// V's wallet (`VWallet`): the deposit each request is paid from with a new
 /// key. In a Token Inference chat, Agent on or off, its one wallet: made
 /// here on Create, its address to add funds to, its balance, the deposit
-/// chats are paid from, and the model they go to. A button that reaches the
-/// network is off only where its request is certain to stop: Cloak not
-/// running, so nothing reaches the guest; no deposit, as the network last
-/// showed the wallet; or, for Withdraw, the network's waiting time still
-/// running. Never for a press under way. In a NEAR Private AI chat, the
+/// chats are paid from, and the model they go to. While Cloak is not
+/// running, nothing reaches the guest: Cloak's state and Start
+/// (`StartRow`) lead the sheet, and the buttons that need the guest are not
+/// shown. A button that reaches the network is off only where its request
+/// is certain to stop: no deposit, as the network last showed the wallet;
+/// or, for Withdraw, the network's waiting time still running, with why
+/// beside it. Never for a press under way. In a NEAR Private AI chat, the
 /// owner's NEAR key, whether one is saved, the way to Settings' NEAR pane,
 /// and the tokens NEAR counted for the chat; in a Local Llama chat, nothing
 /// to pay. The wallet is read each time this opens on a chat it pays for.
@@ -25,6 +28,7 @@ struct WalletView: View {
     /// The tokens NEAR counted for the conversation in front's answers,
     /// added up; nil while none has counts, as in every other mode.
     let tokens: Tokens?
+    let showDetails: () -> Void
     let showNearSettings: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -37,6 +41,14 @@ struct WalletView: View {
             case .near, .llama: EmptyView()
             }
             Form {
+                if kind == .v || kind == .token, !running {
+                    Section {
+                        StartRow(supervisor: wallet.supervisor) {
+                            dismiss()
+                            showDetails()
+                        }
+                    }
+                }
                 switch kind {
                 case .v:
                     VWallet(payer: payer, settings: settings, running: running)
@@ -62,14 +74,13 @@ struct WalletView: View {
                         .controlSize(.small)
                 }
                 Spacer()
+                // Only while there is something to read again.
                 switch kind {
-                case .v:
+                case .v where running:
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { payer.follow() }
-                        .disabled(!running)
-                case .token:
+                case .token where running && wallet.presence.address != nil:
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await wallet.refresh() } }
-                        .disabled(wallet.presence.address == nil || !running)
-                case .near, .llama:
+                case .v, .token, .near, .llama:
                     EmptyView()
                 }
                 Button("Done") { dismiss() }
@@ -83,12 +94,51 @@ struct WalletView: View {
         // the room the Chat window leaves a sheet, the form scrolls.
         .frame(width: 540)
         .frame(maxHeight: 640)
-        .task {
+        // As it opens, and again when Cloak starts or stops under it.
+        .task(id: running) {
             switch kind {
             case .v: payer.follow()
             case .token: await wallet.refresh()
             case .near, .llama: break
             }
+        }
+    }
+}
+
+/// In a wallet while Cloak is not running: Cloak's state in words and the
+/// way on beside it. Start; the model's download in Details while the
+/// model is missing; a spinner while Cloak starts or stops.
+struct StartRow: View {
+    let supervisor: Supervisor
+    let showDetails: () -> Void
+
+    var body: some View {
+        let phase = supervisor.phase
+        HStack(spacing: 8) {
+            Text(words(phase))
+                .foregroundStyle(.secondary)
+            Spacer()
+            switch phase {
+            case .needsAttention(.modelMissing):
+                Button("Download Model…", action: showDetails)
+            case .paused, .ready, .needsAttention:
+                Button("Start") { supervisor.send(.start) }
+            case .preparing, .stopping, .running:
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func words(_ phase: Phase) -> String {
+        switch phase {
+        case .paused: "Cloak is paused."
+        case .ready: "Cloak isn't running."
+        case .preparing: "Cloak is starting."
+        case .stopping: "Cloak is stopping."
+        case .needsAttention(.modelMissing): "The model isn't installed."
+        case .needsAttention(let reason): reason.title
+        case .running: "Cloak is running."
         }
     }
 }
@@ -99,12 +149,6 @@ private struct WalletSections: View {
     let running: Bool
 
     var body: some View {
-        if !running {
-            Section {
-                Text("Start Cloak to use the wallet.")
-                    .foregroundStyle(.secondary)
-            }
-        }
         if let stop = wallet.stop ?? wallet.readStop {
             Section {
                 StopRow(stop: stop) { wallet.dismiss() }
@@ -131,11 +175,13 @@ private struct WalletSections: View {
             Section {
                 Text("Cloak makes one wallet on this Mac. You add funds to it, and it pays for each chat you send.")
                     .foregroundStyle(.secondary)
-                HStack {
-                    Spacer()
-                    Button("Create") { Task { await wallet.create() } }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(wallet.presence == .creating || !running)
+                if running {
+                    HStack {
+                        Spacer()
+                        Button("Create") { Task { await wallet.create() } }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(wallet.presence == .creating)
+                    }
                 }
             }
         }
@@ -323,8 +369,8 @@ enum QRCode {
 }
 
 /// The deposit chats are paid from, at the size the provider suggests: what
-/// it holds, and the two ways to end it, side by side at the right. What
-/// each does is its help; why one is off is beside them.
+/// it holds, and, while Cloak runs, the two ways to end it, side by side at
+/// the right. What each does is its help; why one is off is beside them.
 private struct Holding: View {
     let wallet: Wallet
     let running: Bool
@@ -344,30 +390,37 @@ private struct Holding: View {
                     Unread(running: running, what: "deposit")
                 }
             }
-            TimelineView(.everyMinute) { context in
-                let wait = deposit?.withdrawAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
-                let waiting = wait.map { context.date < $0 } ?? false
-                let withdraw = wait == nil
-                    ? "Without the provider: asks the network to close it, then takes it back 15 minutes later."
-                    : "Takes it back now."
-                HStack {
-                    if none {
-                        Text("Nothing to refund.")
-                            .foregroundStyle(.secondary)
-                    } else if waiting, let wait {
-                        Text("Ready at \(wait.formatted(date: .omitted, time: .shortened)).")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Close") { Task { await wallet.close() } }
-                        .disabled(!running || none)
-                        .help("Refunds what's unspent.")
-                        .accessibilityHint("Refunds what's unspent.")
-                    Button("Withdraw") { Task { await wallet.withdraw() } }
-                        .disabled(!running || none || waiting)
-                        .help(withdraw)
-                        .accessibilityHint(withdraw)
+            if running {
+                ending(deposit, none: none)
+            }
+        }
+    }
+
+    /// Close and Withdraw, and why either is off.
+    private func ending(_ deposit: Look.Deposit?, none: Bool) -> some View {
+        TimelineView(.everyMinute) { context in
+            let wait = deposit?.withdrawAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+            let waiting = wait.map { context.date < $0 } ?? false
+            let withdraw = wait == nil
+                ? "Without the provider: asks the network to close it, then takes it back 15 minutes later."
+                : "Takes it back now."
+            HStack {
+                if none {
+                    Text("Nothing to refund.")
+                        .foregroundStyle(.secondary)
+                } else if waiting, let wait {
+                    Text("Ready at \(wait.formatted(date: .omitted, time: .shortened)).")
+                        .foregroundStyle(.secondary)
                 }
+                Spacer()
+                Button("Close") { Task { await wallet.close() } }
+                    .disabled(none)
+                    .help("Refunds what's unspent.")
+                    .accessibilityHint("Refunds what's unspent.")
+                Button("Withdraw") { Task { await wallet.withdraw() } }
+                    .disabled(none || waiting)
+                    .help(withdraw)
+                    .accessibilityHint(withdraw)
             }
         }
     }
@@ -444,9 +497,11 @@ struct TokenBar: View {
     }
 }
 
-/// Why a request stopped, in plain words.
+/// Why a request stopped, in plain words. In a chat, one the wallet fixes
+/// (no funds, or a model that can't be used) comes with the way there.
 struct StopRow: View {
     let stop: RemoteStop
+    var showWallet: (() -> Void)?
     let dismiss: () -> Void
 
     var body: some View {
@@ -460,6 +515,9 @@ struct StopRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if stop.code == .noFunds || stop.code == .modelUnavailable, let showWallet {
+                Button("Wallet…", action: showWallet)
+            }
             Button("Dismiss", systemImage: "xmark", action: dismiss)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)

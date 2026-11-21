@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- A place that says what is missing now carries the way on, after Sean's
+  first try of V's wallet on 21 November. A wallet opened while Cloak is
+  not running leads with Cloak's state and Start (Download Model… while
+  the model is missing, a spinner while it starts), and reads itself as
+  soon as Cloak runs; Refresh, Create, Close and Withdraw are not shown
+  where they could do nothing. In a chat, "Create a wallet to send",
+  "Add funds to send" and "Deposit closed" come with Wallet…, a stopped
+  request the wallet fixes (no funds, a model that can't be used) with
+  Wallet…, "Add your NEAR key to send" with Settings…, and a NEAR chat
+  that needs Tor with Start.
+- V's quote shows where the press was made: Deposit's in place of the
+  amount, Withdraw's and Send Out's in place of their buttons. It used
+  to open as a section at the top of the sheet, out of sight of someone
+  scrolled down to Deposit, so the press looked dead. While a quote
+  holds, the sheet reads the chain every 10 seconds, so ETH arriving at
+  the address turns the quote's button on without Refresh. While the
+  address holds no ETH, Deposit's section says a deposit is paid in ETH
+  from the address above and that Deposit shows how much.
+- A wallet request that got no answer no longer says "The request may
+  have been paid for": a read or a quote says nothing was sent, and an
+  approve says it may have been sent and that the Wallet shows it once
+  the chain does.
+- Seen rendered from the app's own views, off screen; 34 checks pass.
 - Release 0.6.0 prepared: the release number raised and the notes
   written for the friends' build (four kinds of chat and the Modes
   button; V and its deposit; Token Inference as Anon's new name; Local

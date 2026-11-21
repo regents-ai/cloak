@@ -80,6 +80,14 @@ public final class Payer {
         case nothingToSend
     }
 
+    /// What a call to the payer that stopped had asked for. The words for a
+    /// stop follow it: a read or a quote sends nothing, an approve may have.
+    public enum Ask: Sendable, Equatable {
+        case read
+        case quote
+        case approve
+    }
+
     /// How far ahead of the expiry the warning starts.
     public static let warning: TimeInterval = 10 * 24 * 60 * 60
 
@@ -97,6 +105,8 @@ public final class Payer {
     public private(set) var readStop: PayStop?
     /// Why the last press stopped; nil once one works.
     public private(set) var stop: PayStop?
+    /// What the press that stopped had asked for.
+    public private(set) var stopAsk = Ask.quote
     /// The expiry kept on the Mac, for while Cloak is paused.
     public private(set) var savedExpiry: Date?
     /// Presses under way: quotes and approves.
@@ -130,6 +140,8 @@ public final class Payer {
         guard running() else {
             state = .unread
             (funding, withdrawal, returning, view, readStop) = (nil, nil, nil, nil, nil)
+            // A quote can't be approved while Cloak is not running.
+            review = nil
             return
         }
         do throws(PayStop) {
@@ -215,8 +227,8 @@ public final class Payer {
     }
 
     /// Reads again, and again every 10 seconds while a deposit, a
-    /// withdrawal, a settlement or a send is on its way; one round at a
-    /// time.
+    /// withdrawal, a settlement or a send is on its way, or a quote is under
+    /// review; one round at a time.
     public func follow() {
         guard following == nil else { return }
         following = Task {
@@ -228,10 +240,12 @@ public final class Payer {
         }
     }
 
+    /// A quote under review counts while it holds: what its button waits
+    /// for, ETH arriving at the address, shows as the chain does.
     private var moving: Bool {
         switch state {
         case .depositing, .withdrawing, .settling: true
-        default: returning?.phase == "return_pending"
+        default: returning?.phase == "return_pending" || review.map { !$0.quote.expired(at: .now) } == true
         }
     }
 
@@ -258,6 +272,7 @@ public final class Payer {
     public func quoteWithdrawal() async {
         guard let address = funding?.address, let note = view?.wallet.note?.noteId else {
             stop = PayStop(.failed, "no address or note read to withdraw")
+            stopAsk = .quote
             return
         }
         await quote { () throws(PayStop) in
@@ -277,10 +292,12 @@ public final class Payer {
 
     private func quote(_ make: () async throws(PayStop) -> Review) async {
         stop = nil
+        stopAsk = .quote
         working += 1
         defer { working -= 1 }
         do {
             review = try await make()
+            follow()
         } catch {
             stop = error
         }
@@ -301,6 +318,7 @@ public final class Payer {
             return
         }
         stop = nil
+        stopAsk = .approve
         working += 1
         defer { working -= 1 }
         do throws(PayStop) {

@@ -175,9 +175,9 @@ It keeps today's frame (540 wide, grouped form, the Refresh symbol and Done) and
 
 | State | Contents |
 |---|---|
-| `unread` | "Start Cloak to use the wallet." as today |
-| `none` | **Address** with Copy and the QR button (reuse `QRCode`). **Network**: Ethereum. **Asset**: ETH. **On hand**: the address's ETH. **Amount**: a dollar field. Under it: "Fees are about $3.50 to deposit and withdraw." Over $50, in orange: "Over $50. Deposit only what you'll spend in 30 days." **Deposit**. |
-| Review (after Deposit) | The row turns into the quote: ETH amount, "fee up to" amount, **Expires** with the day. Cancel and **Deposit**. |
+| `unread` | While Cloak is not running, one row: its state in words ("Cloak is paused.") and **Start** beside it; Download Model… in Start's place while the model is missing; a spinner while Cloak starts or stops. No Refresh until Cloak runs. The sheet reads the wallet as soon as it does. |
+| `none` | **Address** with Copy and the QR button (reuse `QRCode`). **Network**: Ethereum. **Asset**: ETH. **On hand**: the address's ETH. **Amount**: a dollar field. Under it: "Fees are about $3.50 to deposit and withdraw." Over $50, in orange: "Over $50. Deposit only what you'll spend in 30 days." **Deposit**. While the address holds no ETH, above the amount: "A deposit is paid in ETH from the address above. Send ETH there first; Deposit shows how much." |
+| Review (after Deposit, Withdraw or Send Out…) | The row pressed turns into the quote, in its own section, never elsewhere in the sheet: ETH amount, "fee up to" amount, the total, how long the quote holds. Cancel and **Deposit**. While it holds, the sheet reads the chain every 10 seconds, so ETH arriving at the address turns the button on by itself. |
 | `depositing` | A down-arrow symbol, "Depositing", "About 3 minutes" (the trial's time). Tooltip per stage. |
 | `ready` | Balance large, in ETH, with dollars beneath. A check symbol, tooltip "Ready". **Expires** with the local day and time, and "in 29 days". **Withdraw**. **Deposit** visible, disabled: "One deposit at a time". **Model** picker. |
 | A request in turn | As `ready`, with an up-arrow symbol; tooltip "1 sending, 2 waiting". |
@@ -199,7 +199,7 @@ It keeps today's frame (540 wide, grouped form, the Refresh symbol and Done) and
 | Button | Condition at the latest block | Words beside it |
 |---|---|---|
 | Deposit, Withdraw | `paused()` is true | "Paused by operator" |
-| Review's Deposit | The address's balance is below the quote's `required_total_wei` | "Needs 0.0031 ETH more" |
+| Review's Deposit | The address's balance is below the quote's `required_total_wei` | "Address needs 0.0031 ETH more" |
 | Deposit | The note is `Active` | "One deposit at a time" |
 | Withdraw | The note is not `Active` | "Nothing to withdraw" |
 | Withdraw | The address cannot pay the fee | "Needs ETH for the fee" |
