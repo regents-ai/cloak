@@ -3476,6 +3476,34 @@ candidates, so the split has to be re-declared before any holdout opens.
     first, so Sean's try would most likely be refused too. Nothing is
     built; the choice of what next is put to Sean as decision 34,
     which replaces the chief's question 30 (the steps of the try).
+33. A real Venice trial, both steps: Sean's own Inference Only key
+    with a $2 limit, given through the secret card, then a $5 top-up
+    in USDC on Base to try the wallet route. Decided 21 November 2026
+    (Sean, "33. a"). It waits on the carrying part and a caller in the
+    app. Decisions 31 (which wallet pays) and 32 (asking Venice about
+    its terms) are still open; a separate key is assumed.
+34. Trace sharing is built the receipt way, in NEAR Private AI only.
+    Decided 21 November 2026 (Sean, "34. c - you can do this easily.
+    Make it 10x better than their version using our better llama.app
+    skeleton. for Near mode only . you have their github for their
+    macOS app for reference right? you can copy that"). Told to him:
+    the Gateway's Mac app is public in TraceCommons/trace-commons
+    under `macos/`, and its client crates are MIT or Apache-2.0;
+    whether a client other than the Gateway can get the commons'
+    challenge and a witnessed receipt is not yet known, and is the
+    first thing the helper settles.
+35. The NEAR line on regents.sh/cloak stays as it is (Sean, 21
+    November 2026, "35. see #34"; the chief's reading: the sharing it
+    promises is being built).
+36. The Darkbloom window stays out of every release until Darkbloom's
+    makers give permission; Sean is messaging them himself (21
+    November 2026, "36. hold until I get permission, I am messaging
+    them"). The chief drafts and sends nothing.
+37. Darkbloom is tried for real on Sean's Mac, this Mac alone, no
+    account: Install, Download, Start and Stop from Cloak's window,
+    by the chief, reported after. Decided 21 November 2026 (Sean,
+    "37. a"). It needs his Cloak rebuilt from main first, which waits
+    for zkAPI step 6's guest half so the rebuild is one batch.
 
 Two more sections asked for by Sean on 20 November 2026, each with a
 helper in its own checkout and nothing merged yet: a Darkbloom serving
