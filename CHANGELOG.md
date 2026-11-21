@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Venice (venice.ai), first pass, with nothing on screen yet (Sean, 20
+  November 2026, his pasted review and "make a new subagent, as before,
+  that works on this"). `app/Sources/CloakChat/Venice.swift` and
+  `VeniceWallet.swift` have no caller in the app: Venice's live model
+  list with Venice's own tier names, the key check, a streamed chat that
+  sends nothing when the chat's model is gone, swapped or at another
+  tier, sixteen plain stops made from the status and documented codes
+  alone, and the wallet route's sign-in and top-up messages (USDC on
+  Base only) over a signer the caller gives. `docs/venice.md` is the
+  plan for joining it to Token Inference once the four-mode work is
+  merged, and the size of verified encryption, which is not built.
+  - Checked: 7 checks in `app/Tests/CloakTests/VeniceTests.swift` (a
+    moved model sends nothing; a chat carries exactly its fields; the
+    key never reaches a stop's words; the wallet's messages match
+    Venice's examples byte for byte), and 41 against a stand-in server.
+  - Found by the chief on 20 November with the repository's own tor and
+    no key: Venice's public model list answered 200 through Tor on three
+    fresh circuits, and a chat with no key was answered 402 with
+    Venice's payment challenge. A request with a key through Tor is
+    untried.
+  - Unproven until a key or money is used: Venice's real answers to a
+    paid chat, the payment header's exact form, and whether stopping a
+    message stops its charge.
 - zkAPI step 5: the real companion and its proving keys are in the
   guest, and the payer starts when the payment disk opens (Sean, 20
   November 2026, "all of this work needs to be done asap"). No network,

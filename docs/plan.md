@@ -3459,6 +3459,19 @@ Token Inference, by the owner's own key or by USDC on Base (his pasted
 review; brief `/tmp/cloak-build/brief-venice.md`, first pass: the
 client, its checks and a joining plan, no interface yet).
 
+Venice's first pass is merged (20 November 2026): the client and its
+checks, with no caller, and `docs/venice.md`. Venice answers through
+Tor for its public list and its payment challenge (the chief's try,
+same day). The chief's choices: Venice is a provider inside Token
+Inference, on that mode's route (reworded, from the guest's sender
+through Tor); only models Venice calls Private or TEE are listed until
+the owner turns on All tiers; a chat keeps its model and tier and stops
+if either changes. Next, with the same helper: the sender's Venice
+requests in the guest and the host's stream. Waiting on Sean: which
+wallet pays (a separate key is assumed), whether to ask Venice about
+its terms (clauses 7.1, 7.3 and 12(d)), and a real try with his key and
+about $5 of USDC on Base.
+
 ## Gates
 
 | ID | Test | State | Evidence |
