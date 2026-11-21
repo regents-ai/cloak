@@ -1059,6 +1059,9 @@ private struct Compose: View {
                         }
                         SymbolButton("Modes", symbol: "info.circle") { chat.showingModes = true }
                             .foregroundStyle(.secondary)
+                        if chat.kind == .token {
+                            BoundlessTempoButton(arrowEdge: .top)
+                        }
                     }
                 }
                 if neverReword {
@@ -1399,11 +1402,12 @@ extension Chat.Kind {
         }
     }
 
-    /// Where it comes from, with a link to its X post, under its column.
+    /// Where it comes from, with a link to its makers' post, under its
+    /// column.
     var credit: LocalizedStringKey? {
         switch self {
         case .v: "Inspired by Vitalik's [X post](https://x.com/VitalikButerin/status/2111046730959433793) about his preferred AI usage."
-        case .token: nil
+        case .token: "Boundless runs the model, paid for each request on Tempo. [Blog post](https://boundless.network/news/mpp-payments)"
         case .near: "Cloak is an alternate client to NEAR's own official one. [X post](https://x.com/NEARProtocol/status/2121041723992216043)"
         case .llama: "Cloak is an alternate client to llama.cpp's own official one. [X post](https://x.com/ggerganov/status/2121246103312212124)"
         }
@@ -1466,11 +1470,18 @@ private struct ModeColumn: View {
     var body: some View {
         Button(action: choose) {
             VStack(alignment: .leading, spacing: 12) {
-                Image(systemName: mode.symbol)
-                    .font(.title2)
-                    .foregroundStyle(.tint)
-                    .frame(height: 28)
-                    .accessibilityHidden(true)
+                HStack {
+                    Image(systemName: mode.symbol)
+                        .font(.title2)
+                        .foregroundStyle(.tint)
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                    if mode == .token {
+                        BoundlessTempoMarks()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(height: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(mode.name)
                         .font(.headline)

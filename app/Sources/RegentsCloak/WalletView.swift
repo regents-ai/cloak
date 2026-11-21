@@ -227,7 +227,12 @@ private struct Account: View {
                     CodeButton(address: address)
                 }
             }
-            LabeledContent("Token", value: "USDC.e on Tempo")
+            LabeledContent("Token") {
+                HStack(spacing: 4) {
+                    Text("USDC.e on Tempo")
+                    BoundlessTempoButton()
+                }
+            }
             if let look = wallet.look {
                 if !look.setup {
                     Label("The provider no longer names USDC.e on Tempo. Don't add funds.", systemImage: "exclamationmark.triangle.fill")

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Token Inference shows who it uses: Boundless's mark and Tempo's, drawn
+  from each site's own icon, in three places. Under Chat's box while the
+  new chat is Token Inference, and beside "USDC.e on Tempo" in its
+  wallet, they are a button whose note says how the two are used
+  (Boundless runs the model; Cloak pays it for each request in USDC.e on
+  Tempo from the wallet on this Mac, with no account at Boundless and no
+  key to keep) and links to Boundless's own post about it,
+  boundless.network/news/mpp-payments. On the Modes page the marks sit
+  at the top of the Token Inference column, with a line and the same
+  link under it. The note button takes any mark now, an `info.circle`
+  unless another is given.
 - Fixed: a deposit, withdrawal or send quote's expiry is read in
   milliseconds, as the payer gives it. The Mac read it as seconds, so a
   quote would never have shown as run out, its countdown would have been
