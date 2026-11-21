@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Release 0.6.0 prepared: the release number raised and the notes
+  written for the friends' build (four kinds of chat and the Modes
+  button; V and its deposit; Token Inference as Anon's new name; Local
+  Llama while paused and its chosen model; the model as its own
+  download; NEAR's token counts). Venice's screens and NEAR trace
+  sharing are not in it.
 - Rows that end in a round symbol button sit level: the label was a few
   points high and the row taller than its neighbours in NEAR Private
   AI's wallet (Key), Details (Modes), Settings' NEAR key and each
