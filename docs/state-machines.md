@@ -1365,7 +1365,7 @@ opening --no item--> signedOut
 opening --an item--> signedIn(idle)
 opening --the keychain fails--> opening, with `stop` (switch on again reads again)
 signedOut, signedIn(any) --Sign In--> signingIn (listen; the browser opened; enrol waits for it)
-signingIn --the browser hands back a session, enrolled, item written--> signedIn(idle)
+signingIn --the browser hands back a session, enrolled, NEAR AI's session ended (else `stillOpen`), item written--> signedIn(idle)
 signingIn --stops, or Cancel--> signedIn(idle) with an item, else signedOut
 signingIn --ten minutes on, still the same sign-in--> signedIn(idle) with an item, else signedOut, with `stop` (Try Again)
 signedIn(any) --Sign Out, asked first--> signedOut (the keychain item removed)
@@ -1412,9 +1412,9 @@ any --switch off--> off (the sharing helper ended at once; a Share or Withdraw u
   submission id, when it was shared and its last status. Read when the
   switch turns on, and written after each change; every read, write and
   removal waits for the one before (`TraceShare.onVault`). Sign Out
-  removes it. NEAR AI's own session is the helper's alone and is dropped
-  once the enrolment is sent. What was readied, answered or reviewed is in
-  memory only.
+  removes it. NEAR AI's own session is the helper's alone: once the
+  enrolment is taken, the helper ends it at NEAR AI and drops its token.
+  What was readied, answered or reviewed is in memory only.
 - **Late answers.** `epoch` counts each turn of the switch, each sign-in,
   each sign-in that ran out and each Sign Out; an answer from before one
   changes nothing, except that an upload or a withdrawal the commons took
@@ -1431,6 +1431,10 @@ any --switch off--> off (the sharing helper ended at once; a Share or Withdraw u
   sheet the keychain's, the sign-in's and those two, with the switch off
   too; the Ready sheet Ready's for its chat; the Review sheet Review's and
   Share's for its chat; and a trace's line its Refresh and Withdraw.
+  Apart from `stop`, `stillOpen` says an enrolment's NEAR AI session
+  didn't end there. The Wallet sheet shows it as "Still open" until it
+  is dismissed, whatever is pressed since. It is in memory only, and
+  nothing tries again.
 - **Screens.** The Wallet sheet's Share Traces section: the switch, the
   account (its symbol a menu: sign in again with GitHub or Google, or Sign
   Out, asked first), the four scopes to grant and the terms. At the foot of
@@ -1465,8 +1469,10 @@ with the switch off at the press goes sealed, and turning it off forgets
 the chat readied. `guest/near/src/share.rs`'s own checks show that a
 witness quote that does not pass sends nothing, refused for its report
 data at a fixed time; that the readied message goes only after a passed
-proof and only on the connection its key covers; and that the upload's
-body is the envelope's bytes exactly.
+proof and only on the connection its key covers; that the upload's body
+is the envelope's bytes exactly; and that NEAR AI's session is ended only
+after the commons answered an enrolment the helper takes, only at NEAR
+AI's host, with the token in no answer line or stop.
 
 ## 10. Stages still implied (found 15 November 2026)
 

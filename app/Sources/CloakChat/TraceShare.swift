@@ -76,6 +76,10 @@ public final class TraceShare {
     public private(set) var state: State = .off
     /// The last step that stopped, until the next press or it is dismissed.
     public var stop: Stopped?
+    /// A sign-in whose NEAR AI session Cloak couldn't end there; the session
+    /// ends by itself within the hour. Until dismissed, and never tried
+    /// again.
+    public var stillOpen = false
     private var busy: [Step: Int] = [:]
     private var record: TraceRecord?
     /// Counts each turn of the switch and each sign-in, so that a step's
@@ -160,6 +164,7 @@ public final class TraceShare {
     /// then enrols this Mac once it finishes there, within `signInLimit`. A
     /// sign-in left waiting ends first. Signing in again keeps the device
     /// key, the choices and the traces shared, and forgets what was readied.
+    /// An enrolment whose NEAR AI session didn't end says so in `stillOpen`.
     public func signIn(with provider: TraceProvider, route: NearRoute, open: @MainActor (URL) -> Void) async {
         guard state != .off, state != .opening else { return }
         if state == .signingIn { sharing.stop() }
@@ -177,7 +182,9 @@ public final class TraceShare {
                 expire(mine)
             }
             defer { limit.cancel() }
-            let (account, session) = try await sharing.enrol(route: route, deviceKey: deviceKey)
+            let (account, session, signinEnded) = try await sharing.enrol(route: route, deviceKey: deviceKey)
+            // Open whether or not this sign-in still counts.
+            if !signinEnded { stillOpen = true }
             guard mine == epoch else { return }
             record = TraceRecord(
                 deviceKey: deviceKey, account: account, session: session, provider: provider, scopes: record?.scopes ?? [],

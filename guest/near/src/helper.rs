@@ -169,11 +169,13 @@ enum Answer {
         github: String,
         google: String,
     },
-    /// An `enrol` enrolled the device key.
+    /// An `enrol` enrolled the device key; `signin_ended`, whether NEAR AI
+    /// ended the sign-in's session.
     Enrolled {
         sent: bool,
         account: Account,
         session: String,
+        signin_ended: bool,
     },
     /// A `ready` got the commons' challenge.
     Admitted {
@@ -495,6 +497,7 @@ impl Helper {
             sent: true,
             account: enrolled.account,
             session: enrolled.session,
+            signin_ended: enrolled.signin_ended,
         })
     }
 

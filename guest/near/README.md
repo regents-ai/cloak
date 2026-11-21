@@ -554,12 +554,19 @@ Every field is required, and any other field is refused.
   deposit whose `Origin` is too, is taken. The NEAR AI session token comes
   from the fragment, and its refresh token is never read. The commons'
   enrolment ceremony runs under a PKCE challenge with the device key's
-  signature, and the session token is dropped once the finish is sent.
+  signature. Once the commons' answer to the finish is taken, the helper
+  ends NEAR AI's session with the one request NEAR AI offers for it,
+  `DELETE https://cloud-platform.near.ai/v1/users/me/refresh-tokens/{sid}`
+  under `Authorization: Bearer` and the session token, the `sid` read
+  from the token's own claims, on the line's route; then it drops the
+  token. If the claims name no session, nothing is sent. An enrolment
+  that stops sends no end.
   Answer `enrolled`: `account`, which every later line carries back and
   none of which is secret (the tenant, the device key's id, the issuer's
   address, the upload audience and the witness pin as the commons published
-  it); and `session`, the account session, a bearer for withdrawing, for
-  the Mac to keep with the device key.
+  it); `session`, the account session, a bearer for withdrawing, for
+  the Mac to keep with the device key; and `signin_ended`, true only when
+  NEAR AI answered 204 to that end.
 - `ready` (`route`, `device_key`, `account`, `scopes`): an upload claim
   from the issuer, its request signed by the device key, then the commons'
   admission challenge under that claim. Answer `admitted`:
@@ -709,9 +716,10 @@ The gate checks:
   any request byte reaches it.
 - `src/share.rs`, against a stand-in for every host trace sharing reaches
   (`src/stand_in.rs`: a SOCKS5 proxy at a socket file in a folder of its
-  own, then a TLS server for the commons' hosts and NEAR's gateway with a
-  certificate from an authority made for these checks alone, in
-  `tests/fixtures/share-stand-in`), which records every request. A witness
+  own, then a TLS server for the commons' hosts, NEAR's gateway and NEAR
+  AI's sign-in host with a certificate from an authority made for these
+  checks alone, in `tests/fixtures/share-stand-in`), which records every
+  request. A witness
   whose quote does not pass gets nothing: the stand-in witness serves a
   real quote that is not a witness's (the gateway's, from the saved
   report), with Intel's real collateral for it held, and a `review` line
@@ -725,6 +733,16 @@ The gate checks:
   for byte: an envelope written as no encoder would write it again reaches
   the stand-in ingest exactly, under the claim the stand-in issuer gave for
   a request the device key signed, with the witness's four headers.
+  NEAR AI's session ends only after the enrolment: a sign-in driven
+  through `listen`, the loopback page's deposit and `enrol` reaches NEAR
+  AI's host once, with the DELETE of the session its token names, after
+  the stand-in commons answered the finish; the token goes only in the
+  finish and that DELETE, the refresh token nowhere. The stand-in's 204
+  has no length and holds its connection open, as a server may, and is
+  taken at its headers. NEAR AI refusing while echoing the token, and a
+  token naming no session, still answer `enrolled`, with `signin_ended`
+  false; the commons refusing the finish while echoing the token stops
+  at `status` with the token withheld, and nothing is ended.
 
 The probe is for development. It takes exactly one route: `--socks
 HOST:PORT` (Tor's SOCKS5 port, one circuit for NEAR and one for Intel) or

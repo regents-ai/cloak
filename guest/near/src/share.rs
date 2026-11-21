@@ -9,7 +9,8 @@
 //!   AI sign-in the person makes in their browser;
 //! - [`enrol`] waits for that sign-in, runs the commons' enrolment ceremony
 //!   with this Mac's device key and the NEAR AI session the browser handed
-//!   over, and drops that session at once; its refresh token is never read;
+//!   over, then ends that session at NEAR AI and drops its token; its
+//!   refresh token is never read;
 //! - [`ready`] asks the issuer for an upload claim signed by the device key,
 //!   then the commons for the admission challenge the readied message
 //!   carries; [`crate::ask_readied`] sends that message, and [`receipt`]
@@ -57,8 +58,9 @@ pub(crate) const INGEST: &str = "ingest.tracecommons.ai";
 const ISSUER: &str = "issuer.tracecommons.ai";
 const WITNESS: &str =
     "2904b99d74bc6ff9ffda211479b0a95cb9237a38-8088.dstack-pha1-prod5.phala.network";
-/// Where NEAR AI's sign-in starts, followed by the provider.
-const SIGNIN: &str = "https://cloud-platform.near.ai/v1/auth";
+/// NEAR AI's host, where its sign-in starts and where [`enrol`] ends the
+/// session the sign-in made.
+const NEAR_AI: &str = "cloud-platform.near.ai";
 const PROVIDERS: [&str; 2] = ["github", "google"];
 /// The page NEAR AI sends the browser back to, followed by the sign-in's
 /// state, and the one that page posts to.
@@ -343,7 +345,9 @@ pub(crate) fn listen(net: &Net) -> Result<(Signin, Vec<String>), Halt> {
     let callback = percent_encode(&format!("{origin}{CALLBACK}/{state}"));
     let urls = PROVIDERS
         .iter()
-        .map(|provider| format!("{SIGNIN}/{provider}?frontend_callback={callback}"))
+        .map(|provider| {
+            format!("https://{NEAR_AI}/v1/auth/{provider}?frontend_callback={callback}")
+        })
         .collect();
     Ok((
         Signin {
@@ -356,17 +360,22 @@ pub(crate) fn listen(net: &Net) -> Result<(Signin, Vec<String>), Halt> {
     ))
 }
 
-/// An account [`enrol`] made, and its session.
+/// An account [`enrol`] made, its session, and whether NEAR AI ended the
+/// sign-in's own session.
 pub(crate) struct Enrolled {
     pub account: Account,
     /// The account session: a bearer for withdrawing.
     pub session: String,
+    pub signin_ended: bool,
 }
 
 /// Waits for the sign-in in the browser, then enrols this Mac's device key
 /// with the NEAR AI session it gave: the commons' ceremony, started under
 /// a PKCE challenge, the device's signature over the ceremony's nonce, and
-/// the finish. The NEAR AI session is dropped once the finish is sent.
+/// the finish. Once the commons' answer to the finish is taken, the NEAR AI
+/// session is ended at NEAR AI ([`end_session`]) and its token dropped. A
+/// session that did not end leaves the enrolment as it is; an enrolment
+/// that stops sends no end, and its token lapses within the hour.
 pub(crate) fn enrol(net: &Net, signin: Signin, device: &Device) -> Result<Enrolled, Halt> {
     let token = signin.token()?;
     let Signin { capabilities, .. } = signin;
@@ -434,7 +443,6 @@ pub(crate) fn enrol(net: &Net, signin: Signin, device: &Device) -> Result<Enroll
         }),
         &[&token],
     )?;
-    drop(token);
     if !anchored(&finished.tenant_id)
         || finished.device_key_id != device.key_id()
         || !header_safe(&finished.access_token)
@@ -443,6 +451,8 @@ pub(crate) fn enrol(net: &Net, signin: Signin, device: &Device) -> Result<Enroll
             "the enrolment is not for this device, or not in an account namespace".into(),
         ));
     }
+    let signin_ended = end_session(net, &token);
+    drop(token);
     Ok(Enrolled {
         account: Account {
             tenant_id: finished.tenant_id,
@@ -452,7 +462,47 @@ pub(crate) fn enrol(net: &Net, signin: Signin, device: &Device) -> Result<Enroll
             witness: capabilities.witness,
         },
         session: finished.access_token,
+        signin_ended,
     })
+}
+
+/// Ends the NEAR AI session `token` is from, by the one request NEAR AI's
+/// source offers for it that this token can make: a DELETE of the session
+/// the token's own claims name (docs/near-share.md, section 3). Whether NEAR
+/// AI answered that it ended it; of its answer only the status is read.
+/// Nothing is sent for a token whose session cannot be read from it.
+fn end_session(net: &Net, token: &str) -> bool {
+    let Some(sid) = session_id(token) else {
+        return false;
+    };
+    let Ok((mut tls, _)) = connect(&net.route, NEAR_AI, net.roots) else {
+        return false;
+    };
+    let authorization = format!("Bearer {token}");
+    request(
+        &mut tls,
+        "DELETE",
+        NEAR_AI,
+        &format!("/v1/users/me/refresh-tokens/{sid}"),
+        &[("Authorization", &authorization)],
+        None,
+        ANSWER_LIMIT,
+    )
+    .is_ok_and(|answer| answer.status == 204)
+}
+
+/// The session a NEAR AI access token is from: the UUID NEAR AI writes as
+/// `sid` in the claims of the JWT it signs. None for a token that is not
+/// three parts whose middle one reads so. The signature is NEAR AI's to
+/// check, not Cloak's.
+fn session_id(token: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Claims {
+        sid: String,
+    }
+    let [_, claims, _] = <[&str; 3]>::try_from(token.split('.').collect::<Vec<_>>()).ok()?;
+    let claims: Claims = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(claims).ok()?).ok()?;
+    uuid_shape(&claims.sid).then_some(claims.sid)
 }
 
 /// The bytes the device signs to enrol: the commons' own preimage
@@ -1411,15 +1461,21 @@ fn no_randomness() -> Halt {
 /// leaves it.
 #[cfg(test)]
 mod checks {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use base64::engine::general_purpose::STANDARD;
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
     use base64::Engine;
     use ring::signature::{UnparsedPublicKey, ED25519};
     use serde_json::{json, Value};
 
-    use super::{review, subject, Account, Device, Exchange, Halt, Net, WITNESS};
-    use crate::stand_in::{self, StandIn};
+    use super::{
+        percent_decode, review, subject, Account, Device, Exchange, Halt, Net, CALLBACK, DEPOSIT,
+        INGEST, NEAR_AI, WITNESS,
+    };
+    use crate::stand_in::{self, Reply, Seen, StandIn};
     use crate::{
         Collateral, GpuProof, Helper, IntelProof, Kept, Passed, Pins, Proof, Refusal, TcbStatus,
         Who,
@@ -1626,6 +1682,223 @@ mod checks {
         assert_eq!(body["metadata"]["trace_commons_admission"], admission);
         assert_eq!(body["messages"][0]["content"], "ping");
         assert_eq!(sent[0].header("x-signing-algo"), None);
+    }
+
+    const CAPABILITIES: &str = "/v1/account/near/provision/capabilities";
+    const START: &str = "/v1/account/near-ai/provision/start";
+    const FINISH: &str = "/v1/account/near-ai/provision/finish";
+    /// The session a stand-in NEAR AI token is from, and where it is ended.
+    const SID: &str = "6f1c2a9e-4b7d-4e2a-9c3f-0a1b2c3d4e5f";
+    const END: &str = "/v1/users/me/refresh-tokens/6f1c2a9e-4b7d-4e2a-9c3f-0a1b2c3d4e5f";
+    const REFRESH: &str = "refresh-token-never-read";
+
+    /// A NEAR AI access token as NEAR AI writes one: a JWT with `claims`,
+    /// signed with a key this check does not have.
+    fn near_ai_token(claims: Value) -> String {
+        let part = |value: Value| URL_SAFE_NO_PAD.encode(serde_json::to_vec(&value).unwrap());
+        format!(
+            "{}.{}.c2lnbmVkLWJ5LW5lYXItYWk",
+            part(json!({ "typ": "JWT", "alg": "HS256" })),
+            part(claims)
+        )
+    }
+
+    /// The commons and NEAR AI: the commons publishes its capabilities,
+    /// starts a ceremony and answers its finish with `finish`; NEAR AI
+    /// answers `end` to the DELETE of the session [`SID`] once the commons
+    /// has answered the finish, and 404 to anything before it.
+    fn commons_and_near_ai(finish: Reply, end: Reply) -> StandIn {
+        let witness = account()["witness"].clone();
+        let expires_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 300;
+        StandIn::start(move |seen, before| {
+            let finished = before.iter().any(|s| s.path == FINISH);
+            match (seen.host.as_str(), seen.method.as_str(), seen.path.as_str()) {
+                (INGEST, "GET", CAPABILITIES) => stand_in::json(
+                    200,
+                    json!({
+                        "near_ai_login_ready": true,
+                        "issuer_url": "https://issuer.tracecommons.ai",
+                        "audience": "trace-commons-ingest",
+                        "witness": witness
+                    }),
+                ),
+                (INGEST, "POST", START) => stand_in::json(
+                    200,
+                    json!({
+                        "ceremony_id": "ceremony-1",
+                        "nonce": STANDARD.encode([5u8; 32]),
+                        "expires_at": expires_at
+                    }),
+                ),
+                (INGEST, "POST", FINISH) => finish.clone(),
+                (NEAR_AI, "DELETE", END) if finished => end.clone(),
+                _ => stand_in::json(404, json!({})),
+            }
+        })
+    }
+
+    /// Signs in through `helper` as the person and their browser would:
+    /// `listen`, then the loopback page's deposit of the sign-in's fragment,
+    /// `token` with a refresh token, its answer read as it comes, then
+    /// `enrol`. The enrol answer's line, as the helper wrote it.
+    fn sign_in(helper: &mut Helper, stand_in: &StandIn, token: &str) -> String {
+        let route = stand_in.route();
+        let listening = answer(helper, &json!({ "request": "listen", "route": route }));
+        assert_eq!(listening["answer"], "listening", "{listening}");
+        let address = listening["github"].as_str().unwrap();
+        let callback = percent_decode(address.split_once("frontend_callback=").unwrap().1).unwrap();
+        let (origin, state) = callback.split_once(CALLBACK).unwrap();
+        let host = origin.strip_prefix("http://").unwrap().to_owned();
+        let body = json!({
+            "state": state.strip_prefix('/').unwrap(),
+            "fragment": format!("token={token}&refresh_token={REFRESH}")
+        })
+        .to_string();
+        let deposit = format!(
+            "POST {DEPOSIT} HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let browser = thread::spawn(move || {
+            let mut browser = TcpStream::connect(host).unwrap();
+            browser.write_all(deposit.as_bytes()).unwrap();
+            let mut page = String::new();
+            browser.read_to_string(&mut page).unwrap();
+            page
+        });
+        let enrol =
+            json!({ "request": "enrol", "route": route, "device_key": STANDARD.encode(SEED) });
+        let line = helper.respond(enrol.to_string().as_bytes());
+        let page = browser.join().unwrap();
+        assert!(page.starts_with("HTTP/1.1 204"), "{page}");
+        line
+    }
+
+    /// Everything a request carried, as text.
+    fn carried(seen: &Seen) -> String {
+        format!(
+            "{} {:?} {}",
+            seen.path,
+            seen.headers,
+            String::from_utf8_lossy(&seen.body)
+        )
+    }
+
+    /// Proof before sending, for NEAR AI's session: the helper ends it only
+    /// once the commons has answered an enrolment it takes, only at NEAR
+    /// AI's own host, by the DELETE of the session the token's claims name,
+    /// and the token is in no answer line or stop. A session NEAR AI does
+    /// not confirm ended, or a token whose session does not read, leaves
+    /// the sign-in done and says so; an enrolment that stops ends nothing.
+    /// The refresh token goes nowhere.
+    #[test]
+    fn the_near_ai_session_ends_only_after_the_enrolment() {
+        let token = near_ai_token(json!({
+            "sub": "0b7e6c1d-2f3a-4b5c-8d9e-1f2a3b4c5d6e",
+            "exp": 1900003600,
+            "iat": 1900000000,
+            "sid": SID
+        }));
+        let enrolled = stand_in::json(
+            200,
+            json!({
+                "access_token": "account-session",
+                "tenant_id": account()["tenant_id"],
+                "device_key_id": device().key_id()
+            }),
+        );
+        let echoing = |status| {
+            (
+                status,
+                vec![("Content-Type".into(), "text/plain".into())],
+                format!("no thanks, {token}").into_bytes(),
+            )
+        };
+        let routes = |stand_in: &StandIn| -> Vec<(String, String, String)> {
+            stand_in
+                .seen()
+                .iter()
+                .map(|s| (s.host.clone(), s.method.clone(), s.path.clone()))
+                .collect()
+        };
+        let enrolment = [
+            (INGEST, "GET", CAPABILITIES),
+            (INGEST, "POST", START),
+            (INGEST, "POST", FINISH),
+        ]
+        .map(|(h, m, p)| (h.to_owned(), m.to_owned(), p.to_owned()));
+        let helper = || helper(Kept::new(Duration::from_secs(3600)).unwrap());
+
+        // Enrolled, and NEAR AI ends the session: the DELETE comes after
+        // the finish's answer, at NEAR AI alone, under the token.
+        let stand_in = commons_and_near_ai(enrolled.clone(), (204, Vec::new(), Vec::new()));
+        let line = sign_in(&mut helper(), &stand_in, &token);
+        let answer: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(answer["answer"], "enrolled", "{answer}");
+        assert_eq!(
+            (&answer["signin_ended"], &answer["session"]),
+            (&json!(true), &json!("account-session"))
+        );
+        assert!(!line.contains(&token), "{line}");
+        let mut ended = enrolment.to_vec();
+        ended.push((NEAR_AI.into(), "DELETE".into(), END.into()));
+        assert_eq!(routes(&stand_in), ended);
+        let seen = stand_in.seen();
+        assert_eq!(
+            seen[3].header("authorization"),
+            Some(format!("Bearer {token}").as_str())
+        );
+        assert!(seen[3].body.is_empty());
+        let carrying: Vec<_> = seen
+            .iter()
+            .filter(|s| carried(s).contains(&token))
+            .map(|s| s.path.as_str())
+            .collect();
+        assert_eq!(carrying, [FINISH, END]);
+        assert!(!seen.iter().any(|s| carried(s).contains(REFRESH)));
+
+        // Enrolled, and NEAR AI refuses, echoing the token: the sign-in is
+        // done, it says the session is open, and the echo goes nowhere.
+        let stand_in = commons_and_near_ai(enrolled.clone(), echoing(500));
+        let line = sign_in(&mut helper(), &stand_in, &token);
+        let answer: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            (&answer["answer"], &answer["signin_ended"]),
+            (&json!("enrolled"), &json!(false)),
+            "{answer}"
+        );
+        assert!(!line.contains(&token), "{line}");
+        assert_eq!(routes(&stand_in), ended);
+
+        // A token whose claims name no session: nothing is guessed, and
+        // nothing goes to NEAR AI.
+        let sessionless = near_ai_token(json!({ "sub": "0b7e6c1d", "exp": 1900003600 }));
+        let stand_in = commons_and_near_ai(enrolled, (204, Vec::new(), Vec::new()));
+        let line = sign_in(&mut helper(), &stand_in, &sessionless);
+        let answer: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            (&answer["answer"], &answer["signin_ended"]),
+            (&json!("enrolled"), &json!(false)),
+            "{answer}"
+        );
+        assert_eq!(routes(&stand_in), enrolment);
+
+        // The commons refuses the finish, echoing the token: the sign-in
+        // stops, the stop's words withhold the token, and nothing is ended.
+        let stand_in = commons_and_near_ai(echoing(403), (204, Vec::new(), Vec::new()));
+        let line = sign_in(&mut helper(), &stand_in, &token);
+        let answer: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            (&answer["answer"], &answer["stop"], &answer["code"]),
+            (&json!("stopped"), &json!("status"), &json!(403)),
+            "{answer}"
+        );
+        assert!(!line.contains(&token), "{line}");
+        assert!(answer["text"].as_str().unwrap().contains("[withheld]"));
+        assert_eq!(routes(&stand_in), enrolment);
     }
 
     /// The upload is the envelope the person was shown, byte for byte. The

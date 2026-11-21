@@ -579,7 +579,11 @@ pub(crate) fn request(
     {
         return Err(FetchError::Malformed("a compressed body".into()));
     }
-    answer.body = if answer
+    // A 204 ends at its headers (RFC 9110, section 15.3.5), whatever the
+    // server does with the connection after it.
+    answer.body = if answer.status == 204 {
+        Vec::new()
+    } else if answer
         .header("transfer-encoding")
         .is_some_and(|v| v.eq_ignore_ascii_case("chunked"))
     {

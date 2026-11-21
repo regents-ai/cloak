@@ -1,15 +1,15 @@
 //! A stand-in on this machine for every host trace sharing reaches, for its
 //! checks: a SOCKS5 proxy on a socket file in a folder of its own, with a
-//! TLS server behind it whose certificate names the commons' hosts and
-//! NEAR's gateway (tests/fixtures/share-stand-in, from a certificate
-//! authority made for these checks alone). It answers each request from a
-//! table its check gives and records every request that came, in order.
-//! Nothing leaves this machine.
+//! TLS server behind it whose certificate names the commons' hosts, NEAR's
+//! gateway and NEAR AI's sign-in host (tests/fixtures/share-stand-in, from a
+//! certificate authority made for these checks alone). It answers each
+//! request from a table its check gives and records every request that
+//! came, in order. Nothing leaves this machine.
 //!
 //! The certificates were made with OpenSSL 3.6.4 on 21 November 2026: P-256,
 //! valid until 2126, the server's for ingest.tracecommons.ai,
-//! issuer.tracecommons.ai, the witness's Phala address and
-//! cloud-api.near.ai.
+//! issuer.tracecommons.ai, the witness's Phala address, cloud-api.near.ai
+//! and cloud-platform.near.ai.
 
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -183,16 +183,26 @@ fn serve(mut socket: UnixStream, table: &Table, recorded: &Mutex<Vec<Seen>>) {
     let before = recorded.lock().unwrap().clone();
     let (status, headers, body) = table(&seen, &before);
     recorded.lock().unwrap().push(seen);
-    let mut head = format!(
-        "HTTP/1.1 {status} Stand-in\r\nContent-Length: {}\r\nConnection: close\r\n",
-        body.len()
-    );
+    // A 204 ends at its headers, with no length, and the stand-in then holds
+    // the connection until the client hangs up, as a server may.
+    let mut head = match status {
+        204 => format!("HTTP/1.1 {status} Stand-in\r\n"),
+        _ => format!(
+            "HTTP/1.1 {status} Stand-in\r\nContent-Length: {}\r\nConnection: close\r\n",
+            body.len()
+        ),
+    };
     for (name, value) in headers {
         head.push_str(&format!("{name}: {value}\r\n"));
     }
     head.push_str("\r\n");
     let _ = tls.write_all(head.as_bytes());
     let _ = tls.write_all(&body);
+    if status == 204 {
+        let _ = tls.flush();
+        let _ = tls.sock.set_read_timeout(None);
+        let _ = tls.read(&mut [0u8; 1]);
+    }
     tls.conn.send_close_notify();
     let _ = tls.flush();
 }

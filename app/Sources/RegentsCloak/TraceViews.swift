@@ -15,7 +15,8 @@ private let terms = URL(string: "https://tracecommons.ai/about/tnc/")!
 /// choices: Debugging always granted, the other four off until granted,
 /// each for chats readied from then on. The terms are a press away. A stop
 /// of no one chat or trace shows here, on or off: the keychain's, the
-/// sign-in's, and a share or withdrawal that sharing ended under way.
+/// sign-in's, and a share or withdrawal that sharing ended under way; and
+/// so does a NEAR AI sign-in Cloak couldn't end, until dismissed.
 struct TraceSharing: View {
     @Bindable var settings: AppSettings
     let share: TraceShare
@@ -41,6 +42,11 @@ struct TraceSharing: View {
                     }
                 } else {
                     TraceStopRow(stop: stop.stop) { share.stop = nil }
+                }
+            }
+            if share.stillOpen {
+                TraceNotice(title: "Still open", words: "Cloak couldn't end the NEAR AI sign-in. It ends by itself within an hour.") {
+                    share.stillOpen = false
                 }
             }
             if case .signedIn = share.state {
@@ -567,10 +573,13 @@ private struct TraceStatusRow: View {
     }
 }
 
-/// A sharing step that stopped: its few words, what it means, and whether
-/// anything may have gone; with `retry` beside Dismiss, when it has one.
-private struct TraceStopRow<Retry: View>: View {
-    let stop: NearStop
+/// A notice in sharing's screens, until dismissed: its few words, what it
+/// means, and a line more when there is one; with `retry` beside Dismiss,
+/// when it has one.
+private struct TraceNotice<Retry: View>: View {
+    let title: String
+    let words: String
+    var more: String?
     let dismiss: () -> Void
     @ViewBuilder let retry: Retry
 
@@ -580,12 +589,12 @@ private struct TraceStopRow<Retry: View>: View {
                 .foregroundStyle(.orange)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(stop.shareTitle)
+                Text(title)
                     .fontWeight(.medium)
-                Text(stop.shareWords)
+                Text(words)
                     .foregroundStyle(.secondary)
-                if let gone {
-                    Text(gone)
+                if let more {
+                    Text(more)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -599,6 +608,24 @@ private struct TraceStopRow<Retry: View>: View {
         }
         .padding(10)
         .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+extension TraceNotice where Retry == EmptyView {
+    init(title: String, words: String, dismiss: @escaping () -> Void) {
+        self.init(title: title, words: words, dismiss: dismiss) { EmptyView() }
+    }
+}
+
+/// A sharing step that stopped: its notice, saying whether anything may
+/// have gone.
+private struct TraceStopRow<Retry: View>: View {
+    let stop: NearStop
+    let dismiss: () -> Void
+    @ViewBuilder let retry: Retry
+
+    var body: some View {
+        TraceNotice(title: stop.shareTitle, words: stop.shareWords, more: gone, dismiss: dismiss) { retry }
     }
 
     /// Whether anything may have gone. None for the keychain's stops, this

@@ -171,18 +171,20 @@ extension Near {
     }
 
     /// Waits for the sign-in `listen` opened, then enrols the device key
-    /// whose seed is `deviceKey`. The account and its session; the NEAR AI
-    /// session is dropped by the helper once the enrolment is sent.
-    func enrol(route: NearRoute, deviceKey: Data) throws(NearStop) -> (account: TraceAccount, session: String) {
+    /// whose seed is `deviceKey`. The account, its session, and whether NEAR
+    /// AI ended the sign-in's own session, which the helper asks it to once
+    /// the enrolment is taken, before it drops that session's token.
+    func enrol(route: NearRoute, deviceKey: Data) throws(NearStop) -> (account: TraceAccount, session: String, signinEnded: Bool) {
         struct Enrolled: Decodable {
             let account: TraceAccount
             let session: String
+            let signinEnded: Bool
         }
         let line = try exchange(sends: true) { () throws(NearStop) -> [String: Any] in
             ["request": "enrol", "route": route.line, "device_key": deviceKey.base64EncodedString()]
         }
         let enrolled: Enrolled = try answer(line, named: "enrolled", sends: true)
-        return (enrolled.account, enrolled.session)
+        return (enrolled.account, enrolled.session, enrolled.signinEnded)
     }
 
     /// An upload claim, then the commons' challenge under it: the binding

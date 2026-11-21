@@ -671,8 +671,10 @@ without Review and then Share. Sharing reaches only the commons' issuer
 and witness this Cloak knows; if the commons names others, sharing stops
 until Cloak is updated. What sharing keeps (its device key, the account
 and its session, your choices and the traces shared) is one item in the
-login keychain, this Mac only; NEAR AI's own sign-in is dropped once the
-enrolment is sent.
+login keychain, this Mac only. Cloak ends NEAR AI's own sign-in as soon
+as the enrolment is through; if NEAR AI doesn't confirm it, Share Traces
+says "Still open" until you dismiss it, and it ends by itself within an
+hour.
 
 Or pick Local Llama: the model on this Mac chosen in Settings answers
 each message itself, as you wrote it, with the conversation so far, through
