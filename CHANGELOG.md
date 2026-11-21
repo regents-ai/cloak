@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Darkbloom's window is out of every release until its makers allow it
+  (decision 36): its menu item, window, `show darkbloom` and all of its
+  code are compiled only by `app/build.sh darkbloom`, the build for this
+  Mac. `app/build.sh` with nothing after it, which is what
+  `app/release.sh` runs, builds the app without any of it, and leaves
+  `show darkbloom` out of the AppleScript dictionary it copies in.
 - Token Inference shows who it uses: Boundless's mark and Tempo's, drawn
   from each site's own icon, in three places. Under Chat's box while the
   new chat is Token Inference, and beside "USDC.e on Tempo" in its

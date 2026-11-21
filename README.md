@@ -442,8 +442,9 @@ osascript -e 'tell application "Cloak" to show chat'
 ```
 
 The commands are `start`, `pause`, `show chat`, `show agents`, `show
-darkbloom`, `show details` and `show settings`; a start or pause that
-doesn't apply now fails with the reason, as `cloak` would give it.
+details` and `show settings`, and `show darkbloom` in a build that has
+Darkbloom's window (below); a start or pause that doesn't apply now fails
+with the reason, as `cloak` would give it.
 
 The app downloads the model, the small lead (5.4 GiB), while it is not
 installed: the Details window, opened by Download Model in the menu, says
@@ -753,6 +754,12 @@ first, the changed words marked as in Chat; system prompts, tools, tool
 results and the model's answers are not shown. Up to 200 requests are held
 in memory until Cloak quits, never on disk, and only the latest 20 keep
 their text. No request's text is ever logged or written to disk.
+
+Darkbloom's window is in no release until its makers allow it (decision 36
+in `docs/plan.md`): only `app/build.sh darkbloom` builds it in, for this
+Mac. A release (`app/build.sh` with nothing after it, as `app/release.sh`
+runs it) has no Darkbloom item, window, AppleScript command or code. In a
+build that has it:
 
 "Darkbloom" in the menu opens a window for Darkbloom (darkbloom.dev), which
 serves a model on this Mac to your other apps and, if you choose, to
