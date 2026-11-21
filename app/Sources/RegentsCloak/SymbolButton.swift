@@ -27,6 +27,15 @@ struct SymbolButton: View {
     }
 }
 
+extension View {
+    /// For a control 28 points tall beside a line of text in a form's row:
+    /// it overhangs the line, as an `InfoButton` does, so the row is no
+    /// taller and its label sits level with the words.
+    func overhanging() -> some View {
+        padding(.vertical, -6)
+    }
+}
+
 /// Send's look, for the button under Chat's message box and, smaller, a
 /// card's Send: the symbol, white on the accent colour, in a circle
 /// `diameter` points across, grey while off. At least 28 points square

@@ -64,6 +64,7 @@ struct DetailsView: View {
                 LabeledContent("Last check", value: lastCheck(status.check))
                 LabeledContent("Modes") {
                     SymbolButton("Show Modes", symbol: "square.grid.2x2", action: showModes)
+                        .overhanging()
                 }
             }
             Section {

@@ -253,6 +253,18 @@ struct PayTests {
         #expect(payer.review?.quote.expired(at: .now) == true)
     }
 
+    @Test func aDepositsFeeAndTotalAreShownInDollarsAtTheQuotesOwnRate() async {
+        var answers = Self.atRest
+        answers["POST /admin/funding/quote"] = Self.quote(expires: Int64(Date.now.timeIntervalSince1970 * 1000) + 30_000)
+        let payer = Self.payer(StandIn(answers: answers))
+
+        await payer.quoteDeposit(microUSD: 20_000_000)
+        // 20 dollars bought 0.005 ETH, so a fee of 0.0001 ETH is 40 cents.
+        let quote = payer.review?.quote
+        #expect(quote?.dollars(wei: "100000000000000") == Decimal(string: "0.4"))
+        #expect(quote?.dollars(wei: "5100000000000000") == Decimal(string: "20.4"))
+    }
+
     @Test func twoPressesSendTwoRequests() async throws {
         let standIn = StandIn(answers: ["GET /v1/models": Self.models, "R": SendTests.said("Bubbles.")])
         let payer = Self.payer(standIn)

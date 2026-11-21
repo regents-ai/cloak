@@ -141,8 +141,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }()
 }
 
-/// A menu item, its symbol before its words as in the Mac's own menus, that
-/// runs its closure when chosen.
+/// A menu item that runs its closure when chosen. Its symbol shows where the
+/// Mac shows symbols in menus: macOS 26 does, and macOS 27 hides them, which
+/// is left to the Mac (`preferredImageVisibility` stays automatic).
 private final class Action: NSMenuItem {
     private let run: () -> Void
 

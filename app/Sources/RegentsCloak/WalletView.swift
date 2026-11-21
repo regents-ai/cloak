@@ -523,6 +523,7 @@ private struct NearPayment: View {
                 HStack(spacing: 4) {
                     Text(key)
                     SymbolButton("Open Settings", symbol: "gearshape", action: openSettings)
+                        .overhanging()
                 }
             }
             if let tokens {

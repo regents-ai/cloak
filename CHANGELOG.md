@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- Release 0.6.0 prepared: the release number raised and the notes
+  written for the friends' build (four kinds of chat and the Modes
+  button; V and its deposit; Token Inference as Anon's new name; Local
+  Llama while paused and its chosen model; the model as its own
+  download; NEAR's token counts). Venice's screens and NEAR trace
+  sharing are not in it.
+- Rows that end in a round symbol button sit level: the label was a few
+  points high and the row taller than its neighbours in NEAR Private
+  AI's wallet (Key), Details (Modes), Settings' NEAR key and each
+  model's row. The button now overhangs the line of text, as the info
+  button always has, through one shared `overhanging()` (Darkbloom's
+  window had its own copy, now gone). The baseline change made for the
+  Key row on 21 November did nothing and is removed.
+- V's deposit amount: the dollar sign sits against the figure typed,
+  and the box grows with it, instead of the figure floating at the far
+  end of a wide box.
+- Both were found and checked by rendering the app's own views off
+  screen while the Mac was locked.
+- V's deposit Review says its fee and total in dollars too, as "Up to
+  0.0126 ETH, about $19.86", at the quote's own rate (the dollars asked
+  for over the ETH quoted for them). A real quote on 21 November put the
+  fee on a 5 dollar deposit at about four times the deposit, which ETH
+  alone does not make plain. A withdrawal and a send name no dollars and
+  stay in ETH. Seen rendered from the app's own view, off screen.
+- The menu's symbols: macOS 27 hides symbols in menus unless an item
+  asks for them, and macOS 26 shows them. Cloak leaves that to the Mac,
+  so its menu matches the Mac's own on each.
+- Two small things seen on screen: V's wallet headed its first box
+  "Address" over a row also named Address, and now heads it "Wallet",
+  as Token Inference's does; and in NEAR Private AI's wallet "Key" sits
+  level with "Saved" beside it.
 - Darkbloom's window is out of every release until its makers allow it
   (decision 36): its menu item, window, `show darkbloom` and all of its
   code are compiled only by `app/build.sh darkbloom`, the build for this
