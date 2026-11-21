@@ -2,12 +2,24 @@
 
 ## Unreleased
 
+- Rows that end in a round symbol button sit level: the label was a few
+  points high and the row taller than its neighbours in NEAR Private
+  AI's wallet (Key), Details (Modes), Settings' NEAR key and each
+  model's row. The button now overhangs the line of text, as the info
+  button always has, through one shared `overhanging()` (Darkbloom's
+  window had its own copy, now gone). The baseline change made for the
+  Key row on 21 November did nothing and is removed.
+- V's deposit amount: the dollar sign sits against the figure typed,
+  and the box grows with it, instead of the figure floating at the far
+  end of a wide box.
+- Both were found and checked by rendering the app's own views off
+  screen while the Mac was locked.
 - V's deposit Review says its fee and total in dollars too, as "Up to
   0.0126 ETH, about $19.86", at the quote's own rate (the dollars asked
   for over the ETH quoted for them). A real quote on 21 November put the
   fee on a 5 dollar deposit at about four times the deposit, which ETH
   alone does not make plain. A withdrawal and a send name no dollars and
-  stay in ETH. Not yet seen on screen.
+  stay in ETH. Seen rendered from the app's own view, off screen.
 - The menu's symbols: macOS 27 hides symbols in menus unless an item
   asks for them, and macOS 26 shows them. Cloak leaves that to the Mac,
   so its menu matches the Mac's own on each.

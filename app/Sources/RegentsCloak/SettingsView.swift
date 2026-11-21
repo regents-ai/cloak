@@ -250,7 +250,9 @@ private struct NearPane: View {
                                 Text("Saved")
                                     .foregroundStyle(.secondary)
                                 SymbolButton("Replace", symbol: "pencil") { replacing = true }
+                                    .overhanging()
                                 SymbolButton("Remove", symbol: "trash") { removing = true }
+                                    .overhanging()
                             }
                         } else {
                             HStack(spacing: 6) {
@@ -380,16 +382,20 @@ private struct ModelRow: View {
                         .progressViewStyle(.circular)
                         .controlSize(.small)
                         .frame(width: 28, height: 28)
+                        .overhanging()
                         .help(progress)
                         .accessibilityLabel("Download")
                         .accessibilityValue(progress)
                     SymbolButton("Pause", symbol: "pause.circle") { download.pause() }
+                        .overhanging()
                 } else if download.state != .installed {
                     SymbolButton(download.done > 0 ? "Continue" : "Download", symbol: "arrow.down.circle") { download.start() }
                         .disabled(download.blocked != nil)
+                        .overhanging()
                 }
                 if !download.rewords, download.isUnderWay || download.done > 0 {
                     SymbolButton("Remove", symbol: "trash") { removing = true }
+                        .overhanging()
                 }
             }
         } label: {

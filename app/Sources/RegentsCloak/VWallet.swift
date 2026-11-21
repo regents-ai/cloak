@@ -318,8 +318,7 @@ private struct Amount: View {
                     .foregroundStyle(.secondary)
                 TextField("Amount", text: $text, prompt: Text("20"))
                     .labelsHidden()
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 100)
+                    .fixedSize()
                     .onSubmit(deposit)
             }
         }

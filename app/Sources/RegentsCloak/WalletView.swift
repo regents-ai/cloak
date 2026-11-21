@@ -175,10 +175,10 @@ private struct NearPayment: View {
     var body: some View {
         Section {
             LabeledContent("Key") {
-                // On the words' baseline, so "Key" sits level with them.
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                HStack(spacing: 4) {
                     Text(key)
                     SymbolButton("Open Settings", symbol: "gearshape", action: openSettings)
+                        .overhanging()
                 }
             }
             if let tokens {
