@@ -446,7 +446,9 @@ private struct ReviewSheet: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 760, minHeight: 300)
+        // Opens at its least width, so the sentence above the panes wraps
+        // rather than widening the sheet.
+        .frame(minWidth: 760, idealWidth: 760, minHeight: 300)
     }
 
     private func press(_ step: @escaping @MainActor (NearRoute) async -> Void) {
