@@ -4,11 +4,16 @@ import Synchronization
 import Testing
 
 /// Proof before sending and money, for Venice: a chat whose model is gone,
-/// may be answered by another, or changed tier sends nothing; a chat request
-/// carries exactly the intended fields; the key never reaches a stop's words
-/// or a log line; and the wallet's sign-in and payment are Venice's
-/// documented messages byte for byte, paying only Base USDC. Against a
-/// stand-in transport; test-only keys and signers; never the network.
+/// may be answered by another, or changed tier, or whose list does not
+/// come, sends nothing; each turn goes as its owner chose, and a chat
+/// request carries exactly the intended fields; a stop before Venice's head
+/// is called unsent only when nothing went; the key never reaches a stop's
+/// words or a log line; the wallet's sign-in and payment are Venice's
+/// documented messages byte for byte, paying only Base USDC; and dollars
+/// typed are read exactly, each press of Add signing exactly them once with
+/// the one wallet's key, and nothing when Venice asks for more. Against
+/// stand-ins for the transport and the guest; test-only keys and signers;
+/// never the network.
 struct VeniceTests {
     /// Keeps each request and answers it from `answer`.
     final class StandIn: Sendable {
@@ -86,6 +91,91 @@ struct VeniceTests {
         #expect(stop?.sent == false)
         #expect(standIn.sent.map(\.description) == ["GET /api/v1/models"])
         #expect(standIn.sent.first?.headers == [:])
+    }
+
+    /// A list that does not read, or does not come, stops the message before
+    /// it goes: nothing more is sent, and the stop says nothing was.
+    @Test(arguments: [401, 429, 500, 503])
+    func aListThatStopsSendsNothingMore(status: Int) async throws {
+        let standIn = StandIn { _ in (status, [:], "{}") }
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await Self.ask(Venice(auth: .key("sk-test"), transport: standIn.transport), VeniceChat(model: "llama-3.3-70b", tier: .private, pays: .key))
+        }
+
+        #expect(stop?.sent == false)
+        #expect(standIn.sent.map(\.description) == ["GET /api/v1/models"])
+    }
+
+    @Test
+    func aListThatDoesNotComeSendsNothingMore() async throws {
+        let tries = Mutex(0)
+        let transport: VeniceTransport = { _ throws(VeniceUnreachable) in
+            tries.withLock { $0 += 1 }
+            throw VeniceUnreachable(sent: true)
+        }
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await Self.ask(Venice(auth: .key("sk-test"), transport: transport), VeniceChat(model: "llama-3.3-70b", tier: .private, pays: .key))
+        }
+
+        #expect(stop?.kind == .unreachable)
+        #expect(stop?.sent == false)
+        #expect(tries.withLock { $0 } == 1)
+    }
+
+    /// A turn its owner chose to send as written goes as written in its
+    /// place, and every reworded turn goes reworded alone: no original of a
+    /// reworded turn is ever in the request.
+    @Test
+    func eachTurnGoesAsItsOwnerChose() async throws {
+        let standIn = StandIn(answer: Self.venice)
+        let earlier = Turn(original: "first, as written", reworded: "first, reworded", answer: "first answer")
+        let now = Turn(original: "now, as written", reworded: nil)
+
+        _ = try await Venice(auth: .key("sk-test"), transport: standIn.transport).ask(
+            VeniceChat(model: "llama-3.3-70b", tier: .private, pays: .key), turn: now.id, in: Conversation(turns: [earlier, now]),
+            partial: { _ in })
+
+        let body = try #require(standIn.sent.last?.body)
+        let sent = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(
+            sent["messages"] as? [[String: String]] == [
+                ["role": "user", "content": "first, reworded"], ["role": "assistant", "content": "first answer"],
+                ["role": "user", "content": "now, as written"],
+            ])
+        #expect(!String(decoding: body, as: UTF8.self).contains("first, as written"))
+    }
+
+    /// What reaches the guest for a Venice request is that request, and a
+    /// stop before Venice's head says nothing was sent only when Tor was
+    /// down, so a message that may have reached Venice, and may be charged,
+    /// is never called unsent.
+    @Test(arguments: [("tor_down", false), ("failed", true), ("unreachable", true)])
+    func aStopBeforeVenicesHeadSaysWhetherItWasSent(code: String, sent: Bool) async throws {
+        let lines = Mutex<[Data]>([])
+        let transport = Remote.veniceTransport(identity: "conversation") { line in
+            lines.withLock { $0.append(line) }
+            return AsyncThrowingStream { pieces in
+                pieces.yield(.end(Data(#"{"stop":{"code":"\#(code)","detail":"test"}}"#.utf8)))
+                pieces.finish()
+            }
+        }
+        let headers = ["authorization": "Bearer sk-test", "content-type": "application/json"]
+        let request = VeniceRequest(
+            method: "POST", url: URL(string: "https://api.venice.ai/api/v1/chat/completions")!, headers: headers, body: Data(#"{"model":"m"}"#.utf8))
+
+        let unreachable = await #expect(throws: VeniceUnreachable.self) { try await transport(request) }
+
+        #expect(unreachable?.sent == sent)
+        let line = try #require(lines.withLock { $0.count == 1 ? $0.first : nil })
+        let fields = try #require(JSONSerialization.jsonObject(with: line) as? NSDictionary)
+        #expect(
+            fields
+                == [
+                    "op": "venice", "identity": "conversation", "method": "POST", "url": "https://api.venice.ai/api/v1/chat/completions",
+                    "headers": headers, "body": #"{"model":"m"}"#,
+                ] as NSDictionary)
     }
 
     @Test
@@ -245,13 +335,172 @@ struct VeniceTests {
     ])
     func topUpTakesOnlyBaseUSDC(entry: String) async throws {
         let standIn = StandIn { _ in (402, [:], Self.terms(base: entry)) }
+        let guest = Guest()
+        let signer = guest.signer
 
         let stop = await #expect(throws: VeniceStop.self) {
-            try await Venice(auth: .key("sk-test"), transport: standIn.transport).topUpTerms()
+            try await Venice(auth: .wallet(signer), transport: standIn.transport).add(Amount(units: 5_000_000), by: signer)
         }
 
         #expect(stop?.kind == .notUSDC)
+        #expect(stop?.sent == true)
+        #expect(guest.read.isEmpty)
         #expect(standIn.sent.count == 1)
+    }
+
+    // MARK: Money
+
+    /// The wallet's key, a test vector.
+    static let walletKey = Data(repeating: 0x11, count: 32)
+
+    /// A stand-in for the guest's sender, which signs for the one wallet:
+    /// it keeps each request and answers each with a signature.
+    final class Guest: Sendable {
+        let requests = Mutex<[[String: String]]>([])
+
+        var exchange: Exchange {
+            { request, _ in
+                let fields = try JSONSerialization.jsonObject(with: try request()) as? [String: String] ?? [:]
+                self.requests.withLock { $0.append(fields) }
+                return Data(#"{"ok":{"signature":"\#(VeniceTests.signature)"}}"#.utf8)
+            }
+        }
+
+        /// The wallet's signer for Venice, as the app makes it.
+        var signer: VeniceSigner {
+            Remote.veniceSigner(address: VeniceTests.address, key: { VeniceTests.walletKey }, exchange: exchange)
+        }
+
+        var read: [[String: String]] { requests.withLock { $0 } }
+
+        /// The transfer the guest was asked to sign in `signed`.
+        static func transfer(_ signed: [String: String]) throws -> [String: String] {
+            let text = try #require(signed["typed"])
+            let typed = try #require(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+            return try #require(typed["message"] as? [String: String])
+        }
+    }
+
+    /// Venice's answer to a top-up it took.
+    static let taken = #"{"success":true,"data":{"walletAddress":"\#(address)","amountCredited":5,"newBalance":5,"paymentId":"payment_1"}}"#
+
+    /// Answers a bare top-up with Venice's terms, least `least`, and a paid
+    /// one with `paid`.
+    static func topUps(least: String = "5000000", paid: (status: Int, body: String) = (200, taken)) -> StandIn {
+        StandIn { request in
+            request.headers["payment-signature"] == nil
+                ? (402, [:], Self.terms(base: Self.base.replacingOccurrences(of: #""amount":"5000000""#, with: #""amount":"\#(least)""#)))
+                : (paid.status, [:], paid.body)
+        }
+    }
+
+    /// Dollars as typed are read exactly, or not at all: never rounded.
+    @Test(arguments: [
+        ("5", 5_000_000), ("$7.50", 7_500_000), (" 12.345678 ", 12_345_678), ("0.000001", 1), ("$0.5", 500_000), ("5.", 5_000_000),
+        ("18446744073709.551615", 18_446_744_073_709_551_615),
+    ] as [(String, UInt64)])
+    func dollarsReadExactly(text: String, units: UInt64) {
+        #expect(Amount(dollars: text) == Amount(units: units))
+    }
+
+    @Test(arguments: [
+        "", " ", "0", "0.00", "$0", "-5", "+5", "5.0000001", "1,000", "5e3", "five", "$", ".5", "$$5", "5 5", "５", "18446744073710",
+        "18446744073709.551616",
+    ])
+    func whatIsNotDollarsReadsAsNothing(text: String) {
+        #expect(Amount(dollars: text) == nil)
+    }
+
+    /// Add is held back only by the wallet's USDC on Base as last read: by
+    /// what it lacks, and never when it was not read.
+    @Test
+    func addLacksOnlyWhatTheWalletIsShort() {
+        let five = Amount(units: 5_000_000)
+        #expect(five.lacking(in: nil) == nil)
+        #expect(five.lacking(in: Amount(units: 5_000_000)) == nil)
+        #expect(five.lacking(in: Amount(units: 9_000_000)) == nil)
+        #expect(five.lacking(in: Amount(units: 2_900_000)) == Amount(units: 2_100_000))
+        #expect(five.lacking(in: Amount(units: 0)) == five)
+    }
+
+    /// One press of Add for the dollars typed signs one transfer of exactly
+    /// them to Venice, in the guest with the one wallet's key, and sends that
+    /// payment once.
+    @Test
+    func addSignsExactlyTheDollarsTyped() async throws {
+        let standIn = Self.topUps()
+        let guest = Guest()
+        let amount = try #require(Amount(dollars: "7.25"))
+
+        _ = try await Venice(auth: .wallet(guest.signer), transport: standIn.transport).add(amount, by: guest.signer)
+
+        #expect(standIn.sent.count == 2)
+        let signed = try #require(guest.read.count == 1 ? guest.read.first : nil)
+        #expect(signed["op"] == "venice_typed")
+        #expect(signed["key"] == "0x" + String(repeating: "11", count: 32))
+        let message = try Guest.transfer(signed)
+        #expect(message["value"] == "7250000")
+        #expect(message["from"] == Self.address)
+        #expect(message["to"] == "0x2670B922ef37C7Df47158725C0CC407b5382293F")
+        let header = try #require(standIn.sent.last?.headers["payment-signature"].flatMap { Data(base64Encoded: $0) })
+        let payment = try #require(JSONSerialization.jsonObject(with: header) as? [String: Any])
+        #expect((payment["payload"] as? [String: Any])?["authorization"] as? [String: String] == message)
+    }
+
+    /// When Venice's terms ask for more than the dollars typed, nothing is
+    /// signed or paid.
+    @Test(arguments: [("5000000", "4.99"), ("10000000", "7.25"), ("5000000", "4.999999")])
+    func addBelowVenicesLeastSignsNothing(least: String, typed: String) async throws {
+        let standIn = Self.topUps(least: least)
+        let guest = Guest()
+        let amount = try #require(Amount(dollars: typed))
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await Venice(auth: .wallet(guest.signer), transport: standIn.transport).add(amount, by: guest.signer)
+        }
+
+        #expect(stop?.kind == .belowLeast)
+        #expect(stop?.sent == false)
+        #expect(guest.read.isEmpty)
+        #expect(standIn.sent.count == 1)
+    }
+
+    /// A payment Venice turns down, or answers otherwise, was signed once
+    /// and is never sent again; only Venice's own no says it was not taken.
+    @Test(arguments: [
+        (400, VeniceStop.Kind.paymentRefused), (401, .paymentRefused), (402, .paymentRefused), (403, .failed), (429, .failed), (500, .failed),
+        (503, .failed), (200, .failed),
+    ])
+    func aPaymentNotTakenIsSignedOnce(status: Int, kind: VeniceStop.Kind) async throws {
+        let standIn = Self.topUps(paid: (status, "{}"))
+        let guest = Guest()
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await Venice(auth: .wallet(guest.signer), transport: standIn.transport).add(Amount(units: 5_000_000), by: guest.signer)
+        }
+
+        #expect(stop?.kind == kind)
+        #expect(stop?.sent == true)
+        #expect(guest.read.count == 1)
+        #expect(standIn.sent.count == 2)
+    }
+
+    /// Two presses of Add are two payments, each signed on its own with a
+    /// nonce of its own.
+    @Test
+    func twoAddsAreTwoPayments() async throws {
+        let standIn = Self.topUps()
+        let guest = Guest()
+        let venice = Venice(auth: .wallet(guest.signer), transport: standIn.transport)
+
+        _ = try await venice.add(Amount(units: 5_000_000), by: guest.signer)
+        _ = try await venice.add(Amount(units: 5_000_000), by: guest.signer)
+
+        #expect(standIn.sent.count == 4)
+        let nonces = try guest.read.map { try Guest.transfer($0)["nonce"] }
+        #expect(nonces.count == 2)
+        #expect(nonces.allSatisfy { $0?.count == 66 })
+        #expect(Set(nonces).count == 2)
     }
 
     /// Venice's answer, through Tor on 20 November 2026, to a chat sent with
