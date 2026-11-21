@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- NEAR Private AI answers show the tokens NEAR counted for them (the
+  public page's "See where your tokens go"; the chief's choice of 20
+  November 2026: counts only, never a price). A small mark at the end of
+  an answer's title line says, in its tooltip and to VoiceOver, "1,204
+  tokens in, 356 out"; the NEAR Wallet sheet has a "Tokens" row with the
+  open chat's totals. The counts are NEAR's own, from the `usage` it
+  returns with each answer, saved sealed with the chat. An answer whose
+  reply has no counts shows none. Nothing sent to NEAR changed.
+  - Checked by the chief after the merge: the app builds with no
+    warnings and its 30 checks pass. Not yet seen on screen, and not yet
+    seen against a real NEAR answer.
+  - Known: a message sent twice keeps only its last answer's counts, so
+    a chat's total can read low; "in" counts the whole chat again with
+    each message, as NEAR counts it.
 - A Darkbloom window (Sean, 20 November 2026, his pasted review of
   Layr-Labs/d-inference v0.10.16 and "add this as a new section to the
   app"). Held out of every release until Darkbloom's makers give written

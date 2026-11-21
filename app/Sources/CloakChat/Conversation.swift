@@ -7,9 +7,9 @@ import Foundation
 /// chat or agent, is paid through zkAPI; one whose first message or task
 /// went the Token Inference way is paid from the Tempo wallet (decision 25).
 /// Or, when its first message went to NEAR, a NEAR Private AI conversation:
-/// each message as written. Or, when its first message went to the model on
-/// this Mac, a Local Llama conversation: each message as written and its
-/// answer.
+/// each message as written, its answer, and the tokens NEAR counted for it.
+/// Or, when its first message went to the model on this Mac, a Local Llama
+/// conversation: each message as written and its answer.
 public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let created: Date
@@ -58,6 +58,14 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     public var isLlama: Bool {
         llama == true
     }
+
+    /// The tokens NEAR counted for this chat's answers, added up; nil while
+    /// no answer has counts.
+    public var tokens: Tokens? {
+        let counted = turns.compactMap(\.tokens)
+        guard !counted.isEmpty else { return nil }
+        return Tokens(input: counted.map(\.input).reduce(0, +), output: counted.map(\.output).reduce(0, +))
+    }
 }
 
 /// One message: as written, as reworded then edited, and once it was sent,
@@ -75,6 +83,10 @@ public struct Turn: Codable, Identifiable, Sendable, Equatable {
     public var answer: String?
     /// A task's steps, in the order the agent took them; nil for a message.
     public var steps: [Step]?
+    /// The tokens NEAR counted for the answer, as its reply gave them; nil
+    /// for every other mode's turn, and for a NEAR answer whose reply had
+    /// none that read.
+    public var tokens: Tokens?
 
     public init(id: UUID = UUID(), original: String, reworded: String?, answer: String? = nil, steps: [Step]? = nil) {
         self.id = id
@@ -87,6 +99,18 @@ public struct Turn: Codable, Identifiable, Sendable, Equatable {
     /// The text that is sent: the reworded one, or the original when the
     /// message goes as written.
     public var sent: String { reworded ?? original }
+}
+
+/// Tokens as NEAR counts them for one answer: in, the message with the chat
+/// before it, as sent; out, the answer. Or, added up, a chat's.
+public struct Tokens: Codable, Sendable, Equatable {
+    public let input: Int
+    public let output: Int
+
+    public init(input: Int, output: Int) {
+        self.input = input
+        self.output = output
+    }
 }
 
 /// One tool the agent used: its name and, where it has one, what it worked

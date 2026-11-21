@@ -164,7 +164,7 @@ private struct Detail: View {
         .sheet(isPresented: $chat.showingWallet) {
             WalletView(
                 wallet: chat.wallet, payer: chat.payer, settings: chat.settings, nearMode: chat.nearMode, kind: kind,
-                showNearSettings: showNearSettings)
+                tokens: chat.selected?.tokens, showNearSettings: showNearSettings)
         }
         .sheet(isPresented: $chat.showingModes) {
             ModesPage(chat: chat)
@@ -363,7 +363,8 @@ private struct Turns: View {
 /// beside Send holds Send Original Text, which sends it as written instead,
 /// and Never reword. Another unsent one is shrunk, marked so, and opens when
 /// pressed anywhere. A NEAR message is shown as written alone, and the open
-/// one has Send, with no lights and no rewording.
+/// one has Send, with no lights and no rewording; its answer, when NEAR
+/// counted its tokens, has a mark that says how many.
 private struct TurnCard: View {
     let chat: Chat
     let conversation: UUID
@@ -404,6 +405,10 @@ private struct TurnCard: View {
             if let answer = turn.answer {
                 Pane(title: "Answer", count: nil, mark: .added) {
                     AnswerText(text: answer)
+                } accessory: {
+                    if let tokens = turn.tokens {
+                        TokenMark(tokens: tokens)
+                    }
                 }
             }
             if !near, let stop = chat.sendStop, stop.turn == turn.id {
@@ -884,12 +889,14 @@ struct Card<Content: View>: View {
     }
 }
 
-/// A titled text, with how many words are marked and how they look.
-struct Pane<Content: View>: View {
+/// A titled text, with how many words are marked and how they look, and
+/// at the end of its title's line any mark of its own.
+struct Pane<Content: View, Accessory: View>: View {
     let title: String
     let count: Int?
     let mark: TextBox.Mark
     @ViewBuilder let content: Content
+    @ViewBuilder let accessory: Accessory
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -905,11 +912,35 @@ struct Pane<Content: View>: View {
                         .padding(.vertical, 1)
                         .background(Color(nsColor: mark.tint).opacity(0.15), in: Capsule())
                 }
+                accessory
             }
             content
                 .paneBox()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension Pane where Accessory == EmptyView {
+    init(title: String, count: Int?, mark: TextBox.Mark, @ViewBuilder content: () -> Content) {
+        self.init(title: title, count: count, mark: mark, content: content, accessory: { EmptyView() })
+    }
+}
+
+/// What NEAR counted for an answer: a small mark at the end of its title's
+/// line, the counts in its help and for VoiceOver, as "1,204 tokens in, 356
+/// out", the numbers as this Mac writes them.
+private struct TokenMark: View {
+    let tokens: Tokens
+
+    var body: some View {
+        let words = String(AttributedString(localized: "^[\(tokens.input) token](inflect: true) in, \(tokens.output) out").characters)
+        Image(systemName: "number.circle")
+            .imageScale(.small)
+            .foregroundStyle(.secondary)
+            .help(words)
+            .accessibilityLabel("Tokens")
+            .accessibilityValue(words)
     }
 }
 
