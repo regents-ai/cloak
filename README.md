@@ -24,8 +24,9 @@ write them. Stage 5 has started with a development build of the app's
 core, running the small lead, and a Chat window that rewords messages and
 sends the reworded text through Tor to a remote model, paid one of two
 ways: in V, through zkAPI, each request with a new key, from a deposit of
-ETH held by the guest's payer; in Token Inference, from one wallet on the
-Mac, so the provider can link the chats (decisions 10, 24 and 25). V's
+ETH held by the guest's payer; in Token Inference, at Boundless or at
+Venice, from one wallet on the Mac or, at Venice, with your own Venice
+key, so the provider can link the chats (decisions 10, 24, 25 and 31). V's
 payment is built on the Mac and checked against a stand-in; the guest's
 half and a real deposit are not proven yet. Stages 1 and 2 stay open in
 [docs/plan.md](docs/plan.md). The one build meant to leave this Mac is the
@@ -400,7 +401,11 @@ words to copy for an agent that posts there. NEAR has the
 NEAR key (a field and Save; once saved, Saved with Replace and Remove,
 which asks first), Tor (off until turned on), Freshness (10 minutes until
 chosen, or Every message or 1 hour) and the model, Qwen3.8-27B, which
-can't be changed; see NEAR mode, below. Local Llama, listed only while
+can't be changed; see NEAR mode, below. Venice has the Venice key (an
+Inference Only key from venice.ai/settings/api: a field and Save; once
+saved, Saved with Replace and Remove, which asks first) and All tiers
+(off until turned on), which also lists the models Venice calls
+Anonymous; see Chat, below. Local Llama, listed only while
 another model fits this Mac or one is chosen, chooses the model that
 answers Local Llama chats, Qwen 3.5 9B until chosen, and holds each
 model's download; see Chat, below. Shortcut sets the quick prompt's
@@ -412,7 +417,7 @@ when it is saved, used from the next Start, and always on 127.0.0.1 only.
 Advanced shows exactly how the last start started tor and the worker, one
 command a line, and this session's lines of Cloak's log, each with Copy,
 and Restore Defaults, which puts these settings back and nothing else: not
-the wallet, the NEAR key, the chats or the downloaded models.
+the wallet, the NEAR and Venice keys, the chats or the downloaded models.
 
 Updates come through Sparkle 2.8.1, from the feed and the update key's
 public half in `app/release.json`: the feed is `appcast.xml` in the
@@ -474,7 +479,8 @@ words taken out and put in marked; the reworded text can be edited until
 it is sent. With Review on, the box's button is Reword, a pencil. With
 Review off (Settings, General), it is Send, an arrow, and each new message
 is sent as soon as it is reworded, through the same checks as Send: one
-that cannot go yet (in Token Inference, no wallet or no funds; in V, a
+that cannot go yet (in Token Inference, no wallet or no funds, or, at
+Venice, no key, no wallet or no model chosen; in V, a
 deposit the chain shows closed) stays open, saying why. A card's
 Reword, a pencil, rewords it again and never sends, Review on or off. The
 agent's tasks and the door never have this step. An answer's
@@ -499,7 +505,8 @@ the cloud's corner, and its help adds "Cover changes after Pause, then
 Start." Under the message box, two small pills show Tor and zkAPI, each by
 its symbol (three joined points, a ticket) with a dot, filled while on.
 Tor is always on. zkAPI is on in V, which pays each request with a new
-key, and off in Token Inference, which pays from one wallet; neither can
+key, and off in Token Inference, which pays from one wallet, or at Venice
+from one wallet or one key; neither can
 be changed, and a press on either says so. Resting the
 pointer on a pill for a second shows what it controls. In a NEAR
 conversation, one pill, Tor for NEAR (below), takes their place; a Local
@@ -515,7 +522,17 @@ with a new key and sends it through Tor. In Token Inference (decisions 10
 and 25), it goes from the guest's sender through Tor to a remote model at
 Boundless, paid through MPP on Tempo from one wallet, so the provider can
 link every chat; a third light on its cards, a link, always orange, says
-so. The technical preview for invited testers carries both
+so. Or, with Venice chosen as the provider in Wallet
+([docs/venice.md](docs/venice.md)), it goes the same way to the model
+chosen at Venice, its answer shown as it comes, with Stop (⌘.) beside
+it, and the chat keeps that model, its tier and its way to pay. Before
+each message, Venice's list is read again, and nothing is sent if the
+model is gone, at another tier or offline. Venice names each model's
+tier, Anonymous, Private or TEE, which Cloak shows in Venice's word and
+cannot check. Venice reads the messages it is sent, at every tier, and
+sees the key or the wallet's address that pays, so it can link every
+chat paid that way. Agent tasks stay at Boundless. The technical preview
+for invited testers carries both
 ([docs/release.md](docs/release.md), stage 1). A card's Send is a round arrow, and the drop-down beside it holds
 "Send Original Text", which sends that message as written instead, still
 through Tor; its card then shows the Original alone and its Reworded
@@ -558,7 +575,16 @@ Its balance and deposit are read through the guest, so until Cloak has run
 since it opened they show a dash, whose help says "Start Cloak to load the
 wallet balance." (or "the deposit"): nothing leaves this Mac for the wallet
 while Cloak is paused. The model picker shows each
-model's price per million tokens as "in | out", as its help says. In a
+model's price per million tokens as "in | out", as its help says. With
+Venice chosen as the provider, Wallet shows Pay with, Key or Wallet, for
+new chats. Key shows whether a Venice key is saved, with Open Settings,
+and its balance at Venice. Wallet shows the same address, its USDC on
+Base and its credit at Venice, with Amount and Add, which buys exactly
+the dollars typed with one signature in the guest (Venice's least is
+$5, and Venice keeps what is added). Add is off only while Cloak is not
+running, or while the address's USDC on Base is short of the amount;
+each press pays. The same address pays Boundless on Tempo and Venice on
+Base, so anyone can tie those payments to each other (decision 31). In a
 NEAR Private AI conversation, Wallet shows instead whether a key is saved,
 with Open Settings, a gear, beside it, which opens Settings on NEAR, that
 the key comes from cloud.near.ai, and, once NEAR has counted any of the
@@ -803,7 +829,11 @@ sealed, whether this Mac holds the wallet, that NEAR mode's line to its
 helper carries the freshness and route chosen, and V's payment against a
 stand-in payer: no money moves but on a press, one request is out at a
 time, yours ahead of the agent's and the apps', and nothing is sent that
-was not reworded):
+was not reworded; and Venice against stand-ins: nothing is sent when
+the model is gone, at another tier or offline, or when the list stops,
+each turn goes reworded or as written as chosen, and each press of Add
+signs exactly the dollars typed, once, and nothing when Venice asks for
+more or for anything but USDC on Base):
 
 ```bash
 swift test --package-path app
