@@ -3619,6 +3619,18 @@ wallet pays (a separate key is assumed), whether to ask Venice about
 its terms (clauses 7.1, 7.3 and 12(d)), and a real try with his key and
 about $5 of USDC on Base.
 
+Release 0.6.0 (build 247, from commit `f9e4cad`) is built, signed and
+accepted by Apple, and not published (21 November 2026). The image is
+151,979,333 bytes, with no Darkbloom and no Venice screen in it, and its
+feed entry is written; it is also the Cloak running on Sean's Mac. It
+waits on one question put to him as decision 40: whether he makes the
+first real deposit through V's own Deposit and Withdraw buttons before
+friends get the link (step 8 of the build order in `docs/release.md`),
+or friends get it first. The chief's own choices, told to him: Venice's
+screens (branch `t3/add-venice-provider`, read by the chief and brought
+to main's level rows and amount box) and NEAR trace sharing merge after
+this release is out, not into it.
+
 ## Gates
 
 | ID | Test | State | Evidence |

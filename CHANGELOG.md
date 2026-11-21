@@ -8,6 +8,8 @@
   Llama while paused and its chosen model; the model as its own
   download; NEAR's token counts). Venice's screens and NEAR trace
   sharing are not in it.
+  Built as 0.6.0 (247): signed, accepted by Apple, 151,979,333 bytes,
+  and held unpublished until Sean answers decision 40 in `docs/plan.md`.
 - Rows that end in a round symbol button sit level: the label was a few
   points high and the row taller than its neighbours in NEAR Private
   AI's wallet (Key), Details (Modes), Settings' NEAR key and each
