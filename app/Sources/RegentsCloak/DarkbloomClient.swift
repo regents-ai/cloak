@@ -1,3 +1,6 @@
+// Compiled only by `app/build.sh darkbloom`: Darkbloom's window is in no
+// release until its makers allow it (decision 36 in docs/plan.md).
+#if DARKBLOOM
 import Foundation
 import Security
 
@@ -651,3 +654,4 @@ struct DarkbloomSetup: Equatable, Sendable {
         address == "127.0.0.1" || address == "::1"
     }
 }
+#endif

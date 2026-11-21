@@ -59,7 +59,7 @@ private struct AddressSection: View {
     let funding: FundingStatus
 
     var body: some View {
-        Section("Address") {
+        Section("Wallet") {
             LabeledContent("Address") {
                 HStack(spacing: 4) {
                     Text(funding.address)
@@ -318,8 +318,7 @@ private struct Amount: View {
                     .foregroundStyle(.secondary)
                 TextField("Amount", text: $text, prompt: Text("20"))
                     .labelsHidden()
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 100)
+                    .fixedSize()
                     .onSubmit(deposit)
             }
         }
@@ -395,8 +394,8 @@ private struct ReviewSection: View {
                         .textSelection(.enabled)
                 }
             }
-            LabeledContent("Fee", value: Ether.text(wei: quote.requiredFeeWei).map { "Up to \($0)" } ?? "—")
-            LabeledContent("Total", value: Ether.text(wei: quote.requiredTotalWei) ?? "—")
+            LabeledContent("Fee", value: cost(wei: quote.requiredFeeWei).map { "Up to \($0)" } ?? "—")
+            LabeledContent("Total", value: cost(wei: quote.requiredTotalWei) ?? "—")
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let expired = quote.expired(at: context.date)
                 let block = payer.confirmBlock(review)
@@ -419,6 +418,14 @@ private struct ReviewSection: View {
                 }
             }
         }
+    }
+
+    /// "0.0126 ETH", and in a deposit's review "0.0126 ETH, about $19.86":
+    /// the fee can be several times a small deposit, and dollars say so.
+    private func cost(wei: String) -> String? {
+        guard let eth = Ether.text(wei: wei) else { return nil }
+        guard let dollars = review.quote.dollars(wei: wei) else { return eth }
+        return "\(eth), about \(dollars.formatted(.currency(code: "USD")))"
     }
 
     private var title: String {

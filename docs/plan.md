@@ -1042,6 +1042,24 @@ repository). What it showed:
   never have shown as run out and its countdown would have been wrong.
 - Every answer's shape matches what the Mac reads.
 
+- **Seen in the app (21 November 2026, the chief, on Sean's Mac, with
+  no deposit).** Started from Chat, V's wallet showed the payer's own
+  address on Ethereum, 0 ETH on hand, Send Out off with "Nothing to
+  send", and Deposit. A deposit of 5 dollars typed in and Deposit
+  pressed brought the real service's quote into Review: 0.003172 ETH
+  to deposit, a fee of up to 0.0126 ETH, 0.015772 ETH in all, "Needs
+  0.015772 ETH more", and New Quote once its 30 seconds were over.
+  Nothing was approved, and nothing could have been: the address holds
+  nothing. The fee had been up to 0.002627 ETH on the same 5 dollars a
+  few hours before (the first pass above), so it moves with Ethereum's
+  fees and can be several times a small deposit. It is a ceiling, and
+  that one was quoted at a peak: half an hour later a public node gave
+  Ethereum's base fee as 0.36 gwei, with a median of 0.5 and a peak of
+  5.9 over the three and a half hours before. The trial of 17 November
+  had a ceiling of 0.0013 ETH and paid 0.00086. Review now says the fee
+  and total in dollars too, so a peak is plain before anything is
+  approved. Starting Cloak for this made the payment disk and the
+  payer's address on this Mac, as any first Start does.
 - **Still for step 7.** Memory in the guest during a real proof and the
   hold during a real settlement, both of which need a deposit, so they
   join step 8; and what happens when the payer ends after "ready".
@@ -3600,6 +3618,18 @@ screens, per `docs/venice.md`. Waiting on Sean: which
 wallet pays (a separate key is assumed), whether to ask Venice about
 its terms (clauses 7.1, 7.3 and 12(d)), and a real try with his key and
 about $5 of USDC on Base.
+
+Release 0.6.0 (build 247, from commit `f9e4cad`) is built, signed and
+accepted by Apple, and not published (21 November 2026). The image is
+151,979,333 bytes, with no Darkbloom and no Venice screen in it, and its
+feed entry is written; it is also the Cloak running on Sean's Mac. It
+waits on one question put to him as decision 40: whether he makes the
+first real deposit through V's own Deposit and Withdraw buttons before
+friends get the link (step 8 of the build order in `docs/release.md`),
+or friends get it first. The chief's own choices, told to him: Venice's
+screens (branch `t3/add-venice-provider`, read by the chief and brought
+to main's level rows and amount box) and NEAR trace sharing merge after
+this release is out, not into it.
 
 ## Gates
 

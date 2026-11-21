@@ -1,5 +1,5 @@
-//! The guest's sender, Development mode's one way to a remote model
-//! (decision 10 in docs/plan.md). The host connects to it on the guest's
+//! The guest's sender, Token Inference's one way to a remote model
+//! (decisions 10 and 25 in docs/plan.md). The host connects to it on the guest's
 //! vsock port and, once it has its turn, sends one request; the sender pays
 //! for it through the official MPP toolkit, or carries it to Venice, and
 //! answers. Every connection it makes, to the provider, to the Tempo network,

@@ -1,3 +1,6 @@
+// Compiled only by `app/build.sh darkbloom`: Darkbloom's window is in no
+// release until its makers allow it (decision 36 in docs/plan.md).
+#if DARKBLOOM
 import AppKit
 import CloakSupervisor
 import SwiftUI
@@ -515,15 +518,6 @@ struct DarkbloomView: View {
     }
 }
 
-private extension View {
-    /// A 28-point symbol button in a row overhangs the row's line of text, as
-    /// `InfoButton` does, so the row is no taller and its words line up with
-    /// the label's.
-    func overhanging() -> some View {
-        padding(.vertical, -6)
-    }
-}
-
 /// A small spinner and what is under way.
 private struct Working: View {
     let words: String
@@ -554,3 +548,4 @@ private struct Failure: View {
         }
     }
 }
+#endif

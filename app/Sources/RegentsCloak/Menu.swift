@@ -6,7 +6,7 @@ import Observation
 /// The menu-bar item and its menu: the header (the app's name, the state's
 /// dot and its line, or a failure with its fix), the way to the model's
 /// download while its files are not all in place, Start or Pause, Chat,
-/// Agents, Darkbloom, Details, Settings, Check for Updates… (`Updates`),
+/// Agents, Details, Settings, Check for Updates… (`Updates`),
 /// Quit, and the release and build. Start, here or in the header, also
 /// shows Chat. Every action
 /// but Show in Finder is reachable from the keyboard, since the header's
@@ -18,7 +18,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let download: ModelDownload
     private let showChat: () -> Void
     private let showAgents: () -> Void
-    private let showDarkbloom: () -> Void
     private let showDetails: () -> Void
     private let showSettings: () -> Void
     private let checkForUpdates: () -> Void
@@ -32,14 +31,13 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     /// `model` is the model's folder, which Show in Finder reveals.
     init(
         supervisor: Supervisor, download: ModelDownload, model: URL, showChat: @escaping () -> Void,
-        showAgents: @escaping () -> Void, showDarkbloom: @escaping () -> Void, showDetails: @escaping () -> Void,
+        showAgents: @escaping () -> Void, showDetails: @escaping () -> Void,
         showSettings: @escaping () -> Void, checkForUpdates: @escaping () -> Void
     ) {
         self.supervisor = supervisor
         self.download = download
         self.showChat = showChat
         self.showAgents = showAgents
-        self.showDarkbloom = showDarkbloom
         self.showDetails = showDetails
         self.showSettings = showSettings
         self.checkForUpdates = checkForUpdates
@@ -120,7 +118,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
         menu.addItem(Action("Chat", symbol: "bubble.left", run: showChat))
         menu.addItem(Action("Agents", symbol: "hammer", run: showAgents))
-        menu.addItem(Action("Darkbloom", symbol: "server.rack", run: showDarkbloom))
+        #if DARKBLOOM
+        menu.addItem(Action("Darkbloom", symbol: "server.rack") { AppDelegate.current.showDarkbloom() })
+        #endif
         menu.addItem(Action("Details", symbol: "info.circle", key: "d", run: showDetails))
         menu.addItem(Action("Settings…", symbol: "gearshape", key: ",", run: showSettings))
         menu.addItem(.separator())
@@ -141,8 +141,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }()
 }
 
-/// A menu item, its symbol before its words as in the Mac's own menus, that
-/// runs its closure when chosen.
+/// A menu item that runs its closure when chosen. Its symbol shows where the
+/// Mac shows symbols in menus: macOS 26 does, and macOS 27 hides them, which
+/// is left to the Mac (`preferredImageVisibility` stays automatic).
 private final class Action: NSMenuItem {
     private let run: () -> Void
 

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The host end of the guest's sender (guest/sender), Development mode's one
+/// The host end of the guest's sender (guest/sender), Token Inference's one
 /// way to a remote model: one request per connection, in the frames
 /// guest/sender/src/lib.rs describes. The sender serves one connection at a
 /// time and gives each its turn, and only then is the request built, from
