@@ -435,6 +435,9 @@ Add, under the money rule:
     once it has stopped so: "Start a new chat."
   No balance does not hold Send back: Venice answers 402 and the card says
   so.
+- The Boundless and Tempo note beside Modes, under a new chat's message
+  box, shows only while Boundless is the provider; in the sheet it sits
+  beside "USDC.e on Tempo", which Venice's sheet does not show.
 - The reword gate is Token Inference's, unchanged: a message goes
   reworded, or as written only by Send Original Text.
 - A message under way shows its answer as it comes, Sending with its
