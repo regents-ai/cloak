@@ -8,34 +8,49 @@
 // identity, the conversation's identity goes on the inference request alone,
 // and the wallet client can hold a request until no settlement is unfinished.
 //
-// It serves the host only, over the guest's vsock port payPort, one request
+// It serves the host only, over the guest's vsock port payPort, one exchange
 // to a connection, in frames of a kind byte, a four-byte big-endian length
-// and the payload, as the guest's sender does:
+// and the payload, as the guest's sender does (docs/zkapi-mac-side.md,
+// section 1):
 //
 //	host:      R {"identity": "<64 hex>", "body": "<chat request, JSON>"}
+//	cloak-pay: H {"held": true}, then H {"held": false}, only if held
 //	cloak-pay: A {"status": <HTTP status>, "body": "<answer, JSON>"}
 //
-// The body is the Mac's request in OpenAI's chat shape, every user message
+//	host:      C {"method": "GET" or "POST", "path": "<route>", "body": "<JSON, or empty>"}
+//	cloak-pay: A {"status": <HTTP status>, "body": "<the route's answer>"}
+//
+//	host:      V {"chain": true or false}
+//	cloak-pay: A {"status": <HTTP status>, "body": "<the deposit, JSON>"}
+//
+// An R's body is the Mac's request in OpenAI's chat shape, every user message
 // already reworded there. It goes through the daemon's own inference API
 // (internal/server) as a POST to /v1/chat/completions, and the answer is what
 // that API gives: the provider's completion, or the daemon's error,
 // {"error": {...}}. The identity is the conversation's Tor identity, its
-// SOCKS user name. No key or wallet secret is in a frame.
+// SOCKS user name.
 //
 // Requests reach the API one at a time, in the order their frames have been
 // read in full. Each is held while the wallet reports an earlier request
 // whose settlement is unfinished, this run's or one an earlier run left in
 // the wallet's journal, and asks for its key once that settlement is done
-// (WaitSettled, in client.patch). A host that hangs up first cancels its
-// request, waiting or held, and nothing is sent or spent for it. A SIGTERM
-// stops it as the daemon's own serve stops (run says how).
+// (WaitSettled, in client.patch); the H frames tell the host when the hold
+// begins and ends. A host that hangs up first cancels its request, waiting
+// or held, and nothing is sent or spent for it. A SIGTERM stops it as the
+// daemon's own serve stops (run says how).
+//
+// A C calls one of the daemon's money routes, the exact methods and paths of
+// payRoutes, and nothing else; a V reads the deposit: the wallet's note and
+// settlement, and with "chain" the chain at one block (ReadChain, in
+// zz_cloak_chain.go). Neither waits for a request's turn. No key, token or
+// wallet secret is in a frame.
 //
 // The daemon's local API (127.0.0.1:8787), with its keyless loopback
 // inference, is never started. The API is called in this process, with
 // bearer authentication on and its key made at start and kept in memory. Its
 // admin routes are the daemon's FundingHandler, mounted as serveSnapshot
 // mounts it, behind a management token also made at start and kept in
-// memory: no frame reaches them yet (step 6 adds those frames).
+// memory.
 //
 // Its companion, the wallet and prover zkapi-walletd (payCompanion), runs as
 // serveSnapshot runs it: a child behind the daemon's authenticated CONNECT
@@ -54,6 +69,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -78,6 +94,9 @@ const (
 	payHostCID  = 2
 	payTorRoute = "tor://127.0.0.1:9050"
 	payRequest  = 'R'
+	payHeld     = 'H'
+	payCall     = 'C'
+	payView     = 'V'
 	payAnswer   = 'A'
 	// The largest frame either side takes, as the sender's; the daemon's API
 	// takes request bodies up to the same size.
@@ -105,12 +124,15 @@ func payConfig() (config.Config, error) {
 	return c, config.Validate(c)
 }
 
-// pay is the daemon's inference API, called in this process, and its wallet
-// client, which reads the companion in this process.
+// pay is the daemon's inference API, called in this process, with its key
+// and management token, its wallet client, which reads the companion in this
+// process, and its funding handler, which reads the chain.
 type pay struct {
 	api        http.Handler
 	key        string
+	token      string
 	wallet     *zkapi.Client
+	funding    *zkapi.FundingHandler
 	logger     *log.Logger
 	turns      payTurns
 	background sync.WaitGroup // the daemon's session reporting and automatic settlement
@@ -118,13 +140,17 @@ type pay struct {
 
 // payInference is the daemon's zkInference with WaitSettled in front of each
 // request: nothing asks for a key while the wallet reports a settlement
-// unfinished. The API answers a hold cancelled by the host or a stop as it
-// answers any cancelled request (408), and a wallet error from the hold as an
-// error it does not map (502).
+// unfinished. The request's context carries WaitSettled's held, under
+// payHeldKey. The API answers a hold cancelled by the host or a stop as it
+// answers any cancelled request (408), and a wallet error from the hold, or a
+// held whose frame did not go, as an error it does not map (502).
 type payInference struct{ zkInference }
 
+// payHeldKey is the context key of a request's held: its H frames.
+type payHeldKey struct{}
+
 func (p payInference) Complete(ctx context.Context, body json.RawMessage) (*http.Response, error) {
-	if err := p.Client.WaitSettled(ctx); err != nil {
+	if err := p.Client.WaitSettled(ctx, ctx.Value(payHeldKey{}).(func(bool) error)); err != nil {
 		return nil, err
 	}
 	return p.zkInference.Complete(ctx, body)
@@ -158,7 +184,7 @@ func newPay(ctx context.Context, c config.Config, dir string, logger *log.Logger
 	api.RequireAPIKey = true
 	api.ManagementToken = c.ManagementToken
 	api.Admin = http.HandlerFunc(funding.ServeAdminHTTP)
-	p := &pay{api: server.LogRequests(api, logger), key: c.APIKey, wallet: wallet, logger: logger}
+	p := &pay{api: server.LogRequests(api, logger), key: c.APIKey, token: c.ManagementToken, wallet: wallet, funding: funding, logger: logger}
 	p.background.Add(2)
 	go func() {
 		defer p.background.Done()
@@ -238,20 +264,49 @@ type payAnswerFrame struct {
 var payRefused = payAnswerFrame{Status: http.StatusBadRequest,
 	Body: `{"error":{"message":"The frame needs the request body and the conversation's identity, 64 hex characters.","type":"invalid_frame","code":"invalid_frame","param":null}}`}
 
-// serve answers one connection's request. A request that reads waits for its
-// turn, then goes to the API. A connection whose first frame is not a
-// request, or whose answer breaks off, gets no answer. If the host closes the
-// connection first, the request is cancelled, as the daemon's HTTP server
-// cancels one whose client goes away: while it waits for its turn it leaves
-// the queue, and in the API it ends before its key is asked for, if it has
-// not been.
+// payError is an answer of cloak-pay's own, in the daemon's admin error
+// shape.
+func payError(status int, message string) payAnswerFrame {
+	data, _ := json.Marshal(map[string]string{"error": message})
+	return payAnswerFrame{Status: status, Body: string(data)}
+}
+
+// payRoute is a route a C frame may call: a method and an exact path.
+type payRoute struct{ method, path string }
+
+// payRoutes are the money routes the Mac's payer calls, and the models, by
+// exact method and path (docs/zkapi-mac-side.md, section 1): nothing else,
+// no query and no other spelling, reaches the API.
+var payRoutes = map[payRoute]bool{
+	{http.MethodGet, "/admin/funding/address"}:     true,
+	{http.MethodPost, "/admin/funding/quote"}:      true,
+	{http.MethodPost, "/admin/funding/approve"}:    true,
+	{http.MethodPost, "/admin/funding/deposit"}:    true,
+	{http.MethodGet, "/admin/withdrawal"}:          true,
+	{http.MethodPost, "/admin/withdrawal/quote"}:   true,
+	{http.MethodPost, "/admin/withdrawal/approve"}: true,
+	{http.MethodPost, "/admin/withdrawal"}:         true,
+	{http.MethodGet, "/admin/return"}:              true,
+	{http.MethodPost, "/admin/return/quote"}:       true,
+	{http.MethodPost, "/admin/return/approve"}:     true,
+	{http.MethodPost, "/admin/return"}:             true,
+	{http.MethodGet, "/admin/funding/quote"}:       true,
+	{http.MethodGet, "/admin/withdrawal/quote"}:    true,
+	{http.MethodGet, "/admin/return/quote"}:        true,
+	{http.MethodGet, "/v1/models"}:                 true,
+}
+
+// serve answers one connection's frame. A request that reads waits for its
+// turn, then goes to the API; a call or a read goes at once. A connection
+// whose first frame is none of these, or whose answer breaks off, gets no
+// answer. If the host closes the connection first, what it asked is
+// cancelled, as the daemon's HTTP server cancels a request whose client goes
+// away: a request waiting for its turn leaves the queue, and one in the API
+// ends before its key is asked for, if it has not been.
 func (p *pay) serve(ctx context.Context, conn io.ReadWriter) error {
 	kind, payload, err := readPayFrame(conn)
 	if err != nil {
 		return err
-	}
-	if kind != payRequest {
-		return errors.New("the first frame is not a request")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -259,29 +314,148 @@ func (p *pay) serve(ctx context.Context, conn io.ReadWriter) error {
 		_, _ = conn.Read(make([]byte, 1))
 		cancel()
 	}()
-	var request struct {
-		Identity string `json:"identity"`
-		Body     string `json:"body"`
+	var answer payAnswerFrame
+	switch kind {
+	case payRequest:
+		answer, err = p.request(ctx, conn, payload)
+	case payCall:
+		answer, err = p.call(ctx, payload)
+	case payView:
+		answer, err = p.view(ctx, payload)
+	default:
+		return errors.New("the first frame is not a request, a call or a read")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	answer := payRefused
-	if decoder.Decode(&request) == nil && payIdentity(request.Identity) {
-		end, err := p.turns.take(ctx)
-		if err != nil {
-			return err
-		}
-		answer, err = p.complete(ctx, request.Identity, request.Body)
-		end()
-		if err != nil {
-			return err
-		}
+	if err != nil {
+		return err
 	}
 	data, err := json.Marshal(answer)
 	if err != nil {
 		return err
 	}
 	return writePayFrame(conn, payAnswer, data)
+}
+
+// payDecode reads a frame's payload, which may hold only the keys v names.
+func payDecode(payload []byte, v any) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(v)
+}
+
+// request posts an R's body to the API's chat route in its turn, with the
+// conversation's identity, and held, which writes the hold's H frames to
+// the host, in its context.
+func (p *pay) request(ctx context.Context, conn io.Writer, payload []byte) (payAnswerFrame, error) {
+	var request struct {
+		Identity string `json:"identity"`
+		Body     string `json:"body"`
+	}
+	if payDecode(payload, &request) != nil || !payIdentity(request.Identity) {
+		return payRefused, nil
+	}
+	end, err := p.turns.take(ctx)
+	if err != nil {
+		return payAnswerFrame{}, err
+	}
+	defer end()
+	held := func(held bool) error {
+		return writePayFrame(conn, payHeld, fmt.Appendf(nil, `{"held":%t}`, held))
+	}
+	ctx = context.WithValue(zkapi.WithConversation(ctx, request.Identity), payHeldKey{}, held)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", strings.NewReader(request.Body))
+	if err != nil {
+		return payAnswerFrame{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return p.serveAPI(req)
+}
+
+// call sends a C to its route, with the management token, if payRoutes holds
+// it; anything else is answered 404 without reaching the API.
+func (p *pay) call(ctx context.Context, payload []byte) (payAnswerFrame, error) {
+	var call struct {
+		Method string `json:"method"`
+		Path   string `json:"path"`
+		Body   string `json:"body"`
+	}
+	if payDecode(payload, &call) != nil {
+		return payError(http.StatusBadRequest, "the call does not read"), nil
+	}
+	if !payRoutes[payRoute{call.Method, call.Path}] {
+		return payError(http.StatusNotFound, "unknown route"), nil
+	}
+	req, err := http.NewRequestWithContext(ctx, call.Method, call.Path, strings.NewReader(call.Body))
+	if err != nil {
+		return payAnswerFrame{}, err
+	}
+	req.Header.Set("X-OA-Management-Token", p.token)
+	if call.Method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return p.serveAPI(req)
+}
+
+// payWallet is the wallet's part of a V's answer: of the companion's
+// /wallet/status, only whether there is a note, whether a settlement is
+// unfinished, and the note's number and expiry.
+type payWallet struct {
+	HasNote        bool           `json:"has_note"`
+	PendingRequest bool           `json:"pending_request"`
+	Note           *payWalletNote `json:"note,omitempty"`
+}
+
+type payWalletNote struct {
+	NoteID   uint32 `json:"note_id"`
+	ExpiryTs uint64 `json:"expiry_ts"`
+}
+
+// payDeposit is a V's answer.
+type payDeposit struct {
+	Wallet payWallet        `json:"wallet"`
+	Chain  *zkapi.ChainView `json:"chain,omitempty"`
+}
+
+// view answers a V with the wallet's status and, if asked, the chain at one
+// block. A read that fails is answered 502, with no part of the deposit.
+func (p *pay) view(ctx context.Context, payload []byte) (payAnswerFrame, error) {
+	var view struct {
+		Chain bool `json:"chain"`
+	}
+	if payDecode(payload, &view) != nil {
+		return payError(http.StatusBadRequest, "the read does not read"), nil
+	}
+	deposit, err := p.deposit(ctx, view.Chain)
+	if err != nil {
+		return payError(http.StatusBadGateway, err.Error()), nil
+	}
+	data, err := json.Marshal(deposit)
+	if err != nil {
+		return payAnswerFrame{}, err
+	}
+	return payAnswerFrame{Status: http.StatusOK, Body: string(data)}, nil
+}
+
+func (p *pay) deposit(ctx context.Context, chain bool) (payDeposit, error) {
+	status, err := p.wallet.WalletStatus(ctx)
+	if err != nil {
+		return payDeposit{}, err
+	}
+	var deposit payDeposit
+	if err := json.Unmarshal(status, &deposit.Wallet); err != nil {
+		return payDeposit{}, err
+	}
+	if chain {
+		var note *uint32
+		if deposit.Wallet.Note != nil {
+			note = &deposit.Wallet.Note.NoteID
+		}
+		view, err := p.funding.ReadChain(ctx, note)
+		if err != nil {
+			return payDeposit{}, err
+		}
+		deposit.Chain = &view
+	}
+	return deposit, nil
 }
 
 // payTurns gives requests to the API one at a time, in the order they ask:
@@ -319,15 +493,10 @@ func (t *payTurns) take(ctx context.Context) (func(), error) {
 	}
 }
 
-// complete posts the body to the API's chat route with the conversation's
-// identity in its context and returns what the API wrote.
-func (p *pay) complete(ctx context.Context, identity, body string) (answer payAnswerFrame, err error) {
-	req, err := http.NewRequestWithContext(zkapi.WithConversation(ctx, identity), http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
-	if err != nil {
-		return payAnswerFrame{}, err
-	}
+// serveAPI calls the API in this process with its key and returns what it
+// wrote.
+func (p *pay) serveAPI(req *http.Request) (answer payAnswerFrame, err error) {
 	req.Header.Set("Authorization", "Bearer "+p.key)
-	req.Header.Set("Content-Type", "application/json")
 	w := &payWriter{header: http.Header{}}
 	defer func() {
 		// The API ends an answer whose provider stream broke off with
