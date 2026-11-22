@@ -488,9 +488,11 @@ private struct Failed: View {
     }
 }
 
-/// The model V chats go to, from the service's list, each with the most one
-/// request to it may cost. The choice is kept in Settings' defaults. A read
-/// of the list that stops says so in the row, with Try Again.
+/// The model V chats go to, from the service's list, each with its price a
+/// million tokens where the provider lists one; which price is which, and
+/// what is set aside for a request, is the row's help. The choice is kept in
+/// Settings' defaults. A read of the list or of the prices that stops says
+/// so in the row, with Try Again.
 private struct ModelSection: View {
     let payer: Payer
     @Bindable var settings: AppSettings
@@ -500,16 +502,30 @@ private struct ModelSection: View {
 
     var body: some View {
         Section {
-            if let models = payer.models, let model = payer.model {
+            if let models = payer.models, let prices = payer.prices, let model = payer.model,
+                let chosen = models.first(where: { $0.id == model })
+            {
+                let help =
+                    "Prices per million tokens: in | out. Up to \(Self.price(Decimal(chosen.cap) / 1_000_000)) is set aside while a request to this model is out; what it doesn't use stays in your deposit."
                 Picker("Model", selection: Binding(get: { model }, set: { settings.vModel = $0 })) {
                     ForEach(models) { model in
-                        Text("\(model.id), up to \(Self.dollars(model.cap)) a request")
-                            .tag(model.id)
+                        if let price = prices[model.id]?.perMillion {
+                            let input = Self.price(price.input), output = Self.price(price.output)
+                            Text("\(model.id): \(input) | \(output)")
+                                // Read aloud, a bar says nothing of which side is which.
+                                .accessibilityLabel("\(model.id), \(input) in, \(output) out")
+                                .tag(model.id)
+                        } else {
+                            Text(model.id)
+                                .tag(model.id)
+                        }
                     }
                 }
+                .tip(help)
+                .accessibilityHint(help)
             } else {
                 LabeledContent("Model") {
-                    if payer.models != nil {
+                    if payer.models != nil, payer.prices != nil {
                         Text("None listed")
                             .foregroundStyle(.secondary)
                     } else if stopped {
@@ -531,18 +547,20 @@ private struct ModelSection: View {
         }
     }
 
-    /// Reads the service's models through the payer.
+    /// Reads the service's models and their prices through the payer.
     private func load() async {
         stopped = false
         do {
             try await payer.loadModels()
+            try await payer.loadPrices()
         } catch {
             stopped = true
         }
     }
 
-    private static func dollars(_ micro: UInt64) -> String {
-        (Decimal(micro) / 1_000_000).formatted(.currency(code: "USD").precision(.fractionLength(2...4)))
+    /// "$0.27"
+    private static func price(_ dollars: Decimal) -> String {
+        dollars.formatted(.currency(code: "USD").precision(.fractionLength(2...4)))
     }
 }
 

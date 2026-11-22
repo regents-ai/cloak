@@ -115,6 +115,10 @@ public final class Payer {
     public private(set) var view: DepositView?
     /// The service's models, as the payer read them; nil until read.
     public private(set) var models: [PayModel]?
+    /// What the provider's public list says each model costs, by model; nil
+    /// until read. Shown beside the models, and used for nothing else: a
+    /// request is charged what the service measures.
+    public private(set) var prices: [String: PayPrice]?
     /// The quote shown for its owner to confirm.
     public private(set) var review: Review?
     /// Why the last read stopped; nil once one works.
@@ -472,6 +476,13 @@ public final class Payer {
     public func loadModels() async throws(PayStop) {
         struct List: Decodable { let data: [PayModel] }
         models = try decode(await queue.call("GET", "/v1/models"), as: List.self).data
+    }
+
+    /// Reads what the models cost through the payer.
+    public func loadPrices() async throws(PayStop) {
+        struct List: Decodable { let data: [PayPrice] }
+        let listed = try decode(await queue.call("GET", "/cloak/prices"), as: List.self).data
+        prices = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// The model V chats are answered with: the one its owner chose, while

@@ -40,7 +40,8 @@
 // daemon's own serve stops (run says how).
 //
 // A C calls one of the daemon's money routes, the exact methods and paths of
-// payRoutes, and nothing else; a V reads the deposit: the wallet's note and
+// payRoutes, or asks cloak-pay what the models cost (payPrices), and nothing
+// else; a V reads the deposit: the wallet's note and
 // settlement, and with "chain" the chain at one block (ReadChain, in
 // zz_cloak_chain.go). Neither waits for a request's turn. No key, token or
 // wallet secret is in a frame.
@@ -296,6 +297,26 @@ var payRoutes = map[payRoute]bool{
 	{http.MethodGet, "/v1/models"}:                 true,
 }
 
+// payPrices is the one call cloak-pay answers itself, without the API: what
+// the service's models cost.
+var payPrices = payRoute{http.MethodGet, "/cloak/prices"}
+
+// prices answers payPrices with {"data": [{"id", "prompt", "completion"}]}:
+// each model of the provider's public list with its price in US dollars a
+// token, sent and answered, as the list writes them. A read that fails is
+// answered 502, as a view's is.
+func (p *pay) prices(ctx context.Context) (payAnswerFrame, error) {
+	prices, err := p.wallet.ModelPrices(ctx)
+	if err != nil {
+		return payError(http.StatusBadGateway, err.Error()), nil
+	}
+	data, err := json.Marshal(map[string]any{"data": prices})
+	if err != nil {
+		return payAnswerFrame{}, err
+	}
+	return payAnswerFrame{Status: http.StatusOK, Body: string(data)}, nil
+}
+
 // serve answers one connection's frame. A request that reads waits for its
 // turn, then goes to the API; a call or a read goes at once. A connection
 // whose first frame is none of these, or whose answer breaks off, gets no
@@ -380,6 +401,9 @@ func (p *pay) call(ctx context.Context, payload []byte) (payAnswerFrame, error) 
 	}
 	if payDecode(payload, &call) != nil {
 		return payError(http.StatusBadRequest, "the call does not read"), nil
+	}
+	if (payRoute{call.Method, call.Path}) == payPrices {
+		return p.prices(ctx)
 	}
 	if !payRoutes[payRoute{call.Method, call.Path}] {
 		return payError(http.StatusNotFound, "unknown route"), nil

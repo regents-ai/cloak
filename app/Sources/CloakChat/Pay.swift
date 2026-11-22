@@ -274,6 +274,25 @@ public struct PayModel: Decodable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// What one model costs in the provider's public list, as the payer reads
+/// it: US dollars a token, sent and answered, as the list writes them.
+public struct PayPrice: Decodable, Sendable, Equatable {
+    public let id: String
+    public let prompt: String
+    public let completion: String
+
+    /// US dollars a million tokens, sent and answered. Nil when the list
+    /// names no price for either, as it does for a model whose price varies
+    /// by request (it writes -1).
+    public var perMillion: (input: Decimal, output: Decimal)? {
+        let plain = Locale(identifier: "en_US_POSIX")
+        guard let input = Decimal(string: prompt, locale: plain), input >= 0,
+            let output = Decimal(string: completion, locale: plain), output >= 0
+        else { return nil }
+        return (input * 1_000_000, output * 1_000_000)
+    }
+}
+
 extension JSONDecoder {
     /// The payer's answers, whose keys are snake case.
     static let pay: JSONDecoder = {

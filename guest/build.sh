@@ -38,8 +38,9 @@ printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_guest.go":"%s/guest/daemon/zz
 	"$module" "$repo" "$rewriter" "$module" "$out" > "$out/daemon-overlay.json"
 (cd "$module" && nice -n 10 go build -p 2 -trimpath -overlay "$out/daemon-overlay.json" \
 	-ldflags="-X main.version=privacy-$(git rev-parse --short HEAD)-dev" -o "$out/cloak-daemon" ./cmd/zkapi-clientd)
-# cloak-pay: the mainnet daemon with guest/pay's three files added by
-# overlay, two to its command and the chain read to its zkapi package, and
+# cloak-pay: the mainnet daemon with guest/pay's four files added by
+# overlay, two to its command and the chain read and the price read to its
+# zkapi package, and
 # Tor as its only route patched into copies of three of its files
 # (guest/pay/check.sh checks it). The guest starts it when the payment disk
 # is open. The mainnet tree is untrusted (guest/zkapi/build.sh): this only
@@ -49,8 +50,8 @@ mainnet=$repo/reference/src/zkapi-mainnet/zkapi-clientd
 patch -s -o "$out/pay-relay.go" "$mainnet/internal/relay/relay.go" guest/pay/relay.patch
 patch -s -o "$out/pay-socks5.go" "$mainnet/internal/relay/socks5.go" guest/pay/socks5.patch
 patch -s -o "$out/pay-client.go" "$mainnet/internal/zkapi/client.go" guest/pay/client.patch
-printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_pay.go":"%s/guest/pay/zz_cloak_pay.go","%s/cmd/zkapi-clientd/zz_cloak_pay_linux.go":"%s/guest/pay/zz_cloak_pay_linux.go","%s/internal/relay/relay.go":"%s/pay-relay.go","%s/internal/relay/socks5.go":"%s/pay-socks5.go","%s/internal/zkapi/client.go":"%s/pay-client.go","%s/internal/zkapi/zz_cloak_chain.go":"%s/guest/pay/zz_cloak_chain.go"}}' \
-	"$mainnet" "$repo" "$mainnet" "$repo" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$repo" > "$out/pay-overlay.json"
+printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_pay.go":"%s/guest/pay/zz_cloak_pay.go","%s/cmd/zkapi-clientd/zz_cloak_pay_linux.go":"%s/guest/pay/zz_cloak_pay_linux.go","%s/internal/relay/relay.go":"%s/pay-relay.go","%s/internal/relay/socks5.go":"%s/pay-socks5.go","%s/internal/zkapi/client.go":"%s/pay-client.go","%s/internal/zkapi/zz_cloak_chain.go":"%s/guest/pay/zz_cloak_chain.go","%s/internal/zkapi/zz_cloak_prices.go":"%s/guest/pay/zz_cloak_prices.go"}}' \
+	"$mainnet" "$repo" "$mainnet" "$repo" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$repo" "$mainnet" "$repo" > "$out/pay-overlay.json"
 (cd "$mainnet" && nice -n 10 go build -p 2 -trimpath -buildvcs=false -overlay "$out/pay-overlay.json" -o "$out/cloak-pay" ./cmd/zkapi-clientd)
 
 # The sender (Development mode, decision 10 in docs/plan.md): Rust, built

@@ -554,7 +554,10 @@ an H that cannot be written --> ended before its key is asked for
 ```
 
 `C` and `V` take no turn. The allowed routes are `payRoutes`, the Mac's
-sixteen, matched exactly, with no query. The management token and the
+sixteen, matched exactly, with no query, and one more that cloak-pay
+answers itself without the API: `GET /cloak/prices`, the provider's public
+list of models with each one's price a token (`ModelPrices`, in
+`guest/pay/zz_cloak_prices.go`). The management token and the
 API's key are added in cloak-pay and kept only in memory; neither is in a
 frame. A `V`'s wallet part is only `has_note`, `pending_request` and the
 note's `note_id` and `expiry_ts`. Its chain part (`ReadChain`,

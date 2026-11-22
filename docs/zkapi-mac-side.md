@@ -85,6 +85,7 @@ The allowlist, all routed in `daemon:internal/zkapi/funding_admin.go` (`ServeAdm
 | Send Out: follow | `POST /admin/return` | 113 | none | `AddressReturnStatus` |
 | A saved quote | `GET /admin/{funding,withdrawal,return}/quote` | 34 | — | quote or none |
 | Models | `GET /v1/models` | `server.go:120` | — | ids with `oa_request_limit_micro_usd` (`model_budget.go:174-210`) |
+| Prices | `GET /cloak/prices` | cloak-pay's own (`guest/pay/zz_cloak_pay.go`, `prices`), not the daemon's | — | `{"data": [{"id", "prompt", "completion"}]}`: the provider's public list of models (`inference_base_url` + `/models`, the one `model_budget.go:142` reads for names), each with its price in US dollars a token as the list writes it (`guest/pay/zz_cloak_prices.go`) |
 
 Facts about these calls that the Mac must respect:
 

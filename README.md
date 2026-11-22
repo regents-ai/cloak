@@ -569,8 +569,11 @@ and fee in ETH and how long the quote holds; only the review's button
 sends it, and a quote past its time is quoted again and shown, never sent.
 A button is off only where the chain, read at the latest block, shows it
 is certain to fail, with a few words why. Model lists the service's
-models, each with the most a request can cost; until one is picked, V
-uses the one that costs least at most, and the pick is kept. A V Send or
+models, each with its price for a million tokens, in and out, as the
+provider's public list gives it (the payer reads that list in the guest,
+over Tor); the row's tooltip says which price is which and how much is
+set aside while a request to the picked model is out. Until one is
+picked, V uses the one with the least set aside, and the pick is kept. A V Send or
 Run is never held back for want of a deposit: the guest answers it, and
 the card says "Deposit to send." with Wallet…. The payer's key and the
 deposit's secrets stay in the guest, on its encrypted disk; the Mac keeps

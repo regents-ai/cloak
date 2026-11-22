@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- V's model list shows prices the way people know them: each model with
+  its price for a million tokens, in and out, as Token Inference's list
+  does. Before, each said "up to $1.00 a request", which is what is set
+  aside while a request is out, not what it costs; that figure is now in
+  the row's tooltip, for the picked model. The payer reads the prices in
+  the guest, over Tor, from the same public list it reads the models'
+  names from.
 - Switching Cover does something at once. Switched while Cloak is
   running, from Chat's toolbar or Settings, Cloak restarts by itself with
   the new setting: the menu says Restarting, then Starting, with no stop
