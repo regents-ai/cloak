@@ -860,7 +860,7 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   under review does not, since nothing is approved yet. Switched back
   before the restart begins, nothing restarts. Both switches' help says
   that switching while Cloak is running restarts Cloak, which takes about
-  15 seconds. While a restart waits, Chat's Cover toggle has a small clock
+  10 seconds (7 and 8 measured on 21 November). While a restart waits, Chat's Cover toggle has a small clock
   on its symbol's corner and "Cover switches once what's being sent has
   finished." at the end of its help and its VoiceOver hint, and the
   Settings row has the clock and those words under its switch. Before (21
@@ -1825,6 +1825,16 @@ card's start and the door's request whose app leaves have checks.
   a named value, so its line has no button; the door has no opening stage
   of its own (below), so a Try Again that fails again with the same words
   shows nothing new.
+- **Settings' switches and VoiceOver.** Before (21 November): every
+  switch in Settings was read out by VoiceOver and could not be switched
+  by it. A row hid its control's label (`labelsHidden`), and on macOS a
+  switch whose label is hidden, or is an empty view, offers no
+  accessibility press (tried in a throwaway app, eight ways of building
+  it; found when a scripted press on Cover traffic did nothing while
+  Chat's Cover took it). Now a row's switch is one view (`Switch`), drawn
+  as before, which gives VoiceOver a switch of its own in the same place
+  with a title, which keeps the press; the row no longer hides labels for
+  every control, and the two pop-up menus hide their own.
 - **The log, Restore Defaults, the port field, Copy.** Before (21
   November): Copy Log before the read landed copied nothing over the
   clipboard; Restore Defaults also reset V's model, which the Wallet

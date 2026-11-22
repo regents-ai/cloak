@@ -240,7 +240,7 @@ private struct CoverToggle: View {
     var body: some View {
         let waits = supervisor.coverChanged
         let later = "Cover switches once what's being sent has finished."
-        let help = "Cover traffic: while Cloak is running, it visits ordinary public pages in the background through Tor, so your real requests through Tor stand out less. Switching it while Cloak is running restarts Cloak, which takes about 15 seconds."
+        let help = "Cover traffic: while Cloak is running, it visits ordinary public pages in the background through Tor, so your real requests through Tor stand out less. Switching it while Cloak is running restarts Cloak, which takes about 10 seconds."
         Toggle(isOn: $settings.cover) {
             Label {
                 Text("Cover")

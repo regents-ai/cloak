@@ -11,6 +11,9 @@
   meanwhile, and says so beside the switch while it waits. Switched back
   first, nothing restarts. Before, a switch changed nothing until Pause,
   then Start. Restore Defaults says when it will restart Cloak for this.
+- VoiceOver can switch Settings' switches. It read each one out and its
+  press did nothing; the way the rows hid a switch's label had taken the
+  press away. They look as before.
 - A new port is used as soon as it is saved: the door moves to it and
   requests under way are not cut. Before, it waited for the next Start.
 - Settings and Details read what can change outside them (the login

@@ -117,7 +117,7 @@ private struct GeneralPane: View {
             Section {
                 Row("Launch at login", note: "Cloak opens paused, so nothing runs until you press Start or ask something in a Local Llama chat.") {
                     VStack(alignment: .trailing, spacing: 4) {
-                        Toggle("Launch at login", isOn: Binding(get: { login.isOn }, set: { login = LoginItem.set($0) }))
+                        Switch("Launch at login", isOn: Binding(get: { login.isOn }, set: { login = LoginItem.set($0) }))
                         if let words = login.words {
                             HStack(spacing: 2) {
                                 Text(words)
@@ -133,24 +133,24 @@ private struct GeneralPane: View {
             // Never both on (`AppSettings`), so side by side.
             Section {
                 Row(
-                    "Never reword text. Reduces your privacy.", about: "Never reword",
+                    NeverReword.title, about: "Never reword",
                     note: "Chat then sends each message as you wrote it. Tasks, and what other apps send through Cloak, are always reworded. Turning this on turns Review off."
                 ) {
-                    NeverReword(settings: settings)
+                    Switch(NeverReword.title, isOn: $settings.neverReword)
                 }
                 Row("Review", note: "Chat shows each reworded message for you to edit and send. Off, it's sent as soon as it's reworded. Turning this on turns Never reword off.") {
-                    Toggle("Review", isOn: $settings.review)
+                    Switch("Review", isOn: $settings.review)
                 }
             }
             Section {
                 Row("Saved chats", note: "Off, chats you start or continue aren't saved and are gone when Cloak quits. Chats already saved stay until you delete them.") {
-                    Toggle("Saved chats", isOn: $settings.savedChats)
+                    Switch("Saved chats", isOn: $settings.savedChats)
                 }
             }
             Section {
-                Row("Cover traffic", note: "Cloak visits ordinary public pages in the background, so your real requests stand out less. It uses some bandwidth. Switching it while Cloak is running restarts Cloak, which takes about 15 seconds.") {
+                Row("Cover traffic", note: "Cloak visits ordinary public pages in the background, so your real requests stand out less. It uses some bandwidth. Switching it while Cloak is running restarts Cloak, which takes about 10 seconds.") {
                     VStack(alignment: .trailing, spacing: 4) {
-                        Toggle("Cover traffic", isOn: $settings.cover)
+                        Switch("Cover traffic", isOn: $settings.cover)
                         // The restart waits for what is being sent.
                         if supervisor.coverChanged {
                             Label("Switches once what's being sent has finished.", systemImage: "clock")
@@ -165,6 +165,7 @@ private struct GeneralPane: View {
                     Picker("Free memory", selection: $settings.freeMemory) {
                         ForEach(FreeMemory.allCases) { Text($0.title).tag($0) }
                     }
+                    .labelsHidden()
                 }
             }
             UpdatesSection(updates: updates)
@@ -191,7 +192,7 @@ private struct UpdatesSection: View {
     var body: some View {
         Section {
             Row("Updates", note: "Each check goes straight from this Mac to the update server, which sees this Mac's internet address but nothing from your chats.") {
-                Toggle("Updates", isOn: Binding(get: { checks }, set: { updates.checksAutomatically = $0; checks = $0 }))
+                Switch("Updates", isOn: Binding(get: { checks }, set: { updates.checksAutomatically = $0; checks = $0 }))
             }
         }
         // Sparkle's own question about checking can be answered while the
@@ -254,7 +255,7 @@ private struct NearPane: View {
             }
             Section {
                 Row("Tor", note: "Sends your NEAR Private AI chats through the Tor network, so NEAR and Intel see a Tor address instead of your internet address. It's slower: checking NEAR's servers takes about half a minute, and Cloak needs to be started first.") {
-                    Toggle("Tor", isOn: $settings.nearTor)
+                    Switch("Tor", isOn: $settings.nearTor)
                 }
             }
             Section {
@@ -262,6 +263,7 @@ private struct NearPane: View {
                     Picker("Freshness", selection: $settings.proofFreshness) {
                         ForEach(ProofFreshness.allCases) { Text($0.title).tag($0) }
                     }
+                    .labelsHidden()
                 }
             }
             Section {
@@ -911,10 +913,37 @@ enum SessionLog {
 /// as written (decision 11 in docs/plan.md). Turning it on turns Review off
 /// (`AppSettings`).
 struct NeverReword: View {
+    static let title = "Never reword text. Reduces your privacy."
     @Bindable var settings: AppSettings
 
     var body: some View {
-        Toggle("Never reword text. Reduces your privacy.", isOn: $settings.neverReword)
+        Toggle(Self.title, isOn: $settings.neverReword)
+    }
+}
+
+/// A row's switch: the row has its name, so the switch draws none. On macOS
+/// a switch whose label is hidden offers VoiceOver no press, so it was read
+/// out and could not be switched (found 21 November, in every row here);
+/// VoiceOver is therefore given a switch of its own in the same place,
+/// with a title, which keeps the press, even an empty one, and the name.
+private struct Switch: View {
+    let name: String
+    @Binding var isOn: Bool
+
+    init(_ name: String, isOn: Binding<Bool>) {
+        self.name = name
+        _isOn = isOn
+    }
+
+    var body: some View {
+        Toggle(name, isOn: $isOn)
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .accessibilityRepresentation {
+                Toggle("", isOn: $isOn)
+                    .toggleStyle(.switch)
+                    .accessibilityLabel(name)
+            }
     }
 }
 
@@ -938,10 +967,8 @@ private struct Row<Control: View>: View {
 
     var body: some View {
         LabeledContent {
+            // Each control hides its own label; a switch has none (`Switch`).
             control
-                .labelsHidden()
-                // What a grouped form draws a toggle as when it is the row.
-                .toggleStyle(.switch)
                 .accessibilityHint(note)
         } label: {
             HStack(spacing: 2) {

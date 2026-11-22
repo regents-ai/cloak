@@ -303,7 +303,7 @@ about three page fetches a minute from `reference/cover.json`, unless Cover
 traffic is off in Settings as the guest starts: the guest's boot files
 then lay a list with no URLs over that one, the daemon's own cleared
 setting, and no cover worker starts in that run. Switching Cover traffic
-while Cloak is running restarts Cloak with it, in about 15 seconds, once
+while Cloak is running restarts Cloak with it, in about 10 seconds, once
 nothing a restart would cut is under way (Chat, below). It needs a Mac with
 Apple silicon whose graphics limit (Metal's recommended working set) holds
 the model's 7 GiB with 1 GiB to spare, and whose memory holds all of
@@ -510,7 +510,7 @@ Cover, in Chat's toolbar beside Wallet in every conversation, is a toggle
 shown as a fog cloud, filled while on. It turns cover traffic on and off,
 as in Settings, and resting the pointer on it says what cover traffic
 does and that switching it while Cloak is running restarts Cloak, which
-takes about 15 seconds. While Paused, Ready or Needs attention it only
+takes about 10 seconds. While Paused, Ready or Needs attention it only
 saves the setting, which the next Start uses. Switched while Running,
 Cloak restarts by itself, through the one shutdown and straight into
 Starting, with no stop at Paused: the menu says Restarting, then
