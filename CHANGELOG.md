@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Settings has four panes, not six. The quick prompt's shortcut and the
+  port (the pane that was called Door) are now rows at the top of
+  Advanced, under Shortcut and Agents, and each one's note says what it
+  is for. Change Port… in Agents opens Advanced. Settings no longer says
+  "door" anywhere but in the log's own lines.
 - Tooltips have room round their words. macOS draws its own with the
   words hard against the border and gives no way to change that, so
   every tooltip in the app (56 in its windows, two in the menu) is now

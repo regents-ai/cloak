@@ -406,14 +406,14 @@ chosen, or Every message or 1 hour) and the model, Qwen3.8-27B, which
 can't be changed; see NEAR mode, below. Local Llama, listed only while
 another model fits this Mac or one is chosen, chooses the model that
 answers Local Llama chats, Qwen 3.5 9B until chosen, and holds each
-model's download; see Chat, below. Shortcut sets the quick prompt's
-keys, none until chosen: its button takes only the keys typed into it
-while it records, and Escape stops it. Keys
+model's download; see Chat, below. Advanced starts with Quick prompt,
+the quick prompt's keys, none until chosen: its button takes only the
+keys typed into it while it records, and Escape stops it. Keys
 without Command, Option or Control are refused, as is a shortcut macOS
-won't take, whose words say what is still the shortcut. Door sets the port Agents answer on (below), 8742 until
+won't take, whose words say what is still the shortcut. Then Port, the port Agents answer on (below), 8742 until
 chosen: a number from 1024 to 65535 that nothing on this Mac listens on
 when it is saved, used from the next Start, and always on 127.0.0.1 only.
-Advanced shows exactly how the last start started tor and the worker, one
+Then it shows exactly how the last start started tor and the worker, one
 command a line, and this session's lines of Cloak's log, each with Copy
 (the log's once there are lines), and Restore Defaults, which puts these
 settings back and nothing else: not the wallet, V's model, the NEAR key,

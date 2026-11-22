@@ -14,9 +14,9 @@ import SwiftUI
 /// updates by itself), NEAR (the NEAR key, Tor, how
 /// long a passed check is used again, and the model), Local Llama (the
 /// model that answers its chats, and each model's download; listed only
-/// while there is a choice), Shortcut (the quick prompt's), Door (its port
-/// on 127.0.0.1) and Advanced (how Cloak started its parts, this session's
-/// log, and Restore Defaults).
+/// while there is a choice) and Advanced (the quick prompt's shortcut, the
+/// port on 127.0.0.1 that the door answers on, how Cloak started its
+/// parts, this session's log, and Restore Defaults).
 struct SettingsView: View {
     /// The pane shown, kept with the window, so the app can show it on one.
     @MainActor
@@ -53,7 +53,7 @@ struct SettingsView: View {
     }
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general, near, llama, shortcut, door, advanced
+        case general, near, llama, advanced
 
         var id: Self { self }
 
@@ -62,8 +62,6 @@ struct SettingsView: View {
             case .general: "General"
             case .near: "NEAR"
             case .llama: "Local Llama"
-            case .shortcut: "Shortcut"
-            case .door: "Door"
             case .advanced: "Advanced"
             }
         }
@@ -73,8 +71,6 @@ struct SettingsView: View {
             case .general: "gearshape"
             case .near: "cpu"
             case .llama: "laptopcomputer"
-            case .shortcut: "keyboard"
-            case .door: "door.left.hand.open"
             case .advanced: "wrench.and.screwdriver"
             }
         }
@@ -97,9 +93,8 @@ struct SettingsView: View {
                 case .general: GeneralPane(settings: settings, updates: updates)
                 case .near: NearPane(settings: settings, mode: near)
                 case .llama: LlamaPane(settings: settings, downloads: downloads, rewording: supervisor.manifest.rewordingModel)
-                case .shortcut: ShortcutPane(settings: settings, prompt: prompt)
-                case .door: DoorPane(settings: settings, door: door)
-                case .advanced: AdvancedPane(settings: settings, prompt: prompt, supervisor: supervisor, updates: updates)
+                case .advanced:
+                    AdvancedPane(settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates)
                 }
             }
             .formStyle(.grouped)
@@ -138,7 +133,7 @@ private struct GeneralPane: View {
             Section {
                 Row(
                     "Never reword text. Reduces your privacy.", about: "Never reword",
-                    note: "Chat then sends each message as you wrote it. Tasks, and what other apps send through the door, are always reworded. Turning this on turns Review off."
+                    note: "Chat then sends each message as you wrote it. Tasks, and what other apps send through Cloak, are always reworded. Turning this on turns Review off."
                 ) {
                     NeverReword(settings: settings)
                 }
@@ -594,21 +589,6 @@ private struct ModelRow: View {
     }
 }
 
-private struct ShortcutPane: View {
-    let settings: AppSettings
-    let prompt: QuickPrompt
-
-    var body: some View {
-        Form {
-            Section {
-                Row("Quick prompt", note: "Opens a box over any app. Return takes what you wrote to a new chat, unsent.") {
-                    ShortcutRecorder(shortcut: settings.shortcut, refusal: prompt.refusal, choose: prompt.choose)
-                }
-            }
-        }
-    }
-}
-
 /// The shortcut, or Record Shortcut. Pressed, it records: it takes the
 /// keyboard, and the next keys typed into it are the shortcut. Escape, a
 /// second press or the keyboard going elsewhere stops it with nothing
@@ -740,32 +720,33 @@ private final class RecorderButton: NSButton {
     }
 }
 
-private struct DoorPane: View {
+/// The door's port, in Advanced: a field and Save, with what refused the
+/// last Save under them until the field changes.
+private struct PortRow: View {
     let settings: AppSettings
     let door: Door
     @State private var text = ""
     @State private var problem: String?
 
     var body: some View {
-        Form {
-            Section {
-                Row("Port", note: "Only apps on this Mac can connect. A new port applies at the next Start.") {
-                    VStack(alignment: .trailing, spacing: 4) {
-                        HStack(spacing: 6) {
-                            TextField("Port", text: $text, prompt: Text(String(AppSettings.defaultDoorPort)))
-                                .labelsHidden()
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 80)
-                                .onSubmit(save)
-                            Button("Save", action: save)
-                                .disabled(text == String(settings.doorPort))
-                        }
-                        if let problem {
-                            Text(problem)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                    }
+        Row(
+            "Port",
+            note: "Apps you add in the Agents window, such as a coding agent, send their AI requests through Cloak at 127.0.0.1 on this port. Only apps on this Mac can connect. A new port applies at the next Start."
+        ) {
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack(spacing: 6) {
+                    TextField("Port", text: $text, prompt: Text(String(AppSettings.defaultDoorPort)))
+                        .labelsHidden()
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 80)
+                        .onSubmit(save)
+                    Button("Save", action: save)
+                        .disabled(text == String(settings.doorPort))
+                }
+                if let problem {
+                    Text(problem)
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
             }
         }
@@ -787,6 +768,7 @@ private struct AdvancedPane: View {
     let settings: AppSettings
     let prompt: QuickPrompt
     let supervisor: Supervisor
+    let door: Door
     let updates: Updates
     @State private var log: Result<[String], any Error>?
     @State private var restoring = false
@@ -794,6 +776,17 @@ private struct AdvancedPane: View {
     var body: some View {
         let commands = supervisor.commands.map(Self.line).joined(separator: "\n")
         Form {
+            Section("Shortcut") {
+                Row(
+                    "Quick prompt",
+                    note: "A keyboard shortcut that works in any app. It opens a small box: type a message and press Return, and Cloak opens a new chat with it written in, not sent."
+                ) {
+                    ShortcutRecorder(shortcut: settings.shortcut, refusal: prompt.refusal, choose: prompt.choose)
+                }
+            }
+            Section("Agents") {
+                PortRow(settings: settings, door: door)
+            }
             Section("Commands") {
                 if commands.isEmpty {
                     Text("Nothing has started yet.")
@@ -862,7 +855,7 @@ private struct AdvancedPane: View {
         Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
         Freshness to “\(AppSettings.defaultProofFreshness.title)” \
         and Local Llama to \(supervisor.manifest.rewordingModel.label), \
-        the quick prompt loses its shortcut, and the door goes back to port \(AppSettings.defaultDoorPort).
+        the quick prompt loses its shortcut, and the port goes back to \(AppSettings.defaultDoorPort).
         """
     }
 

@@ -1768,7 +1768,7 @@ card's start and the door's request whose app leaves have checks.
   opened), its words with Try Again, which opens the door again in turn
   with the app's own opens and closes (`AppDelegate.turnDoor`), and, while
   another app holds the port, Change Port… beside it, which opens Settings
-  on its Door pane; the port is read when the door opens, so a new port,
+  on Advanced, where the port is; the port is read when the door opens, so a new port,
   or the other app's quitting, needs Try Again. Adding is one value (`Adding`: naming, keeping,
   kept) that the window keeps: there is no Cancel while the app is kept,
   and its pass shows once it is; an Add that could not keep the app shows
@@ -1897,7 +1897,7 @@ card's start and the door's request whose app leaves have checks.
   box's pass needs the Mac's listener open, so a taken port ends every
   agent task as "No connection". Before (21 November): nothing led from
   there to the port. Now the task's card leads to Agents, whose line says
-  the port is in use and leads to Settings' Door pane, then has Try Again
+  the port is in use and leads to the port in Settings' Advanced, then has Try Again
   (Agents, above).
 - **One door connection** (`Door.serve`, `Door.routing`). Reading the
   head, admitted, reading the body, then one named stage (`Routing`):

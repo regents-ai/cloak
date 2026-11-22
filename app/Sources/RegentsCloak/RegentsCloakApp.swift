@@ -67,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var agents = AppWindow { [unowned self, door, supervisor, download] in
         AgentsView.window(
             door, supervisor: supervisor, download: download, openDoor: { self.turnDoor() },
-            showDetails: { self.showDetails() }, showDoorSettings: { self.showSettings(on: .door) })
+            showDetails: { self.showDetails() }, showDoorSettings: { self.showSettings(on: .advanced) })
     }
     #if DARKBLOOM
     /// Made at its window's first show; it follows Darkbloom only while the
