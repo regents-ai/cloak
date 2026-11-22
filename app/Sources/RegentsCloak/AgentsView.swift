@@ -215,6 +215,14 @@ private struct RequestRow: View {
                     .foregroundStyle(.orange)
             }
             .help(words)
+        case .left(let paid):
+            Label {
+                Text("Left")
+            } icon: {
+                Image(systemName: "minus.circle.fill")
+                    .foregroundStyle(paid ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            }
+            .help(Self.left(paid: paid))
         }
     }
 
@@ -224,7 +232,14 @@ private struct RequestRow: View {
         case .sending: "Sending"
         case .answered: "Answered"
         case .stopped(let words): "Stopped: \(words)"
+        case .left(let paid): "Left: \(Self.left(paid: paid))"
         }
+    }
+
+    private static func left(paid: Bool) -> String {
+        paid
+            ? "The app left after this was sent. It was paid for, and the answer went unread."
+            : "The app left before this was sent. Nothing was paid."
     }
 
     /// The model once read, the messages reworded once all are, and the time
@@ -253,10 +268,14 @@ private struct RequestTexts: View {
     let sender: String
     @Environment(\.dismiss) private var dismiss
 
-    /// False for a request that stopped: it may not have left this Mac,
-    /// so its texts are called reworded, not sent.
+    /// False for a request that stopped, or whose app left before it was
+    /// sent: it may not have left this Mac, so its texts are called
+    /// reworded, not sent.
     private var went: Bool {
-        if case .stopped = request.stage { false } else { true }
+        switch request.stage {
+        case .stopped, .left(paid: false): false
+        case .rewording, .sending, .answered, .left(paid: true): true
+        }
     }
 
     var body: some View {

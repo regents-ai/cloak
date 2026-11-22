@@ -2,6 +2,7 @@ import CloakChat
 import CloakDoor
 import CloakHost
 import CloakSupervisor
+import CryptoKit
 import Foundation
 import Synchronization
 import Testing
@@ -547,6 +548,58 @@ struct PayTests {
         #expect(response.contains("rewrite_failed"))
         #expect(standIn.routes == ["GET /v1/models"])
         await door.close()
+    }
+
+    /// An app that leaves while its request is reworded, before it is sent,
+    /// is not charged, whichever way the request would be paid: nothing
+    /// reaches the payer or the Tempo wallet's sender but the list of
+    /// models, and its line says it left with nothing paid.
+    @Test(.timeLimit(.minutes(1)), arguments: [Payment.zkapi, .tempo])
+    func anAppThatLeavesBeforeItsRequestIsSentIsNotCharged(paying payment: Payment) async throws {
+        let folder = URL(filePath: "/tmp").appending(path: "cloak-pay-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // A request sent either way would be answered, so one sent shows.
+        let payer = StandIn(answers: ["GET /v1/models": Self.models, "R": SendTests.said("Paid for nothing.")])
+        let models = try JSONSerialization.data(withJSONObject: ["ok": ["models": Self.models]])
+        let sender = SendTests.StandIn { request in
+            request["op"] as? String == "models" ? models : SendTests.completed(SendTests.said("Paid for nothing."))
+        }
+        let address = Self.address
+        let (rewording, began) = AsyncStream<Void>.makeStream()
+        let door = Door(
+            file: folder.appending(path: "apps"), wallet: folder.appending(path: "wallet"),
+            parts: Door.Parts(
+                reword: { _ throws(RewriteStop) in
+                    began.yield()
+                    // Until the door ends it.
+                    try? await Task.sleep(for: .seconds(600))
+                    throw .cancelled
+                },
+                queue: PayQueue(line: payer.line), exchange: sender.exchange, wallet: { address },
+                key: { SendTests.walletKey }, sealing: { SymmetricKey(size: .bits256) }),
+            port: { 0 })
+        await door.open()
+        await Self.until { door.state != .closed }
+        try #require(door.state == .open)
+        let pass = try #require(door.pass(for: UUID(), paying: payment))
+
+        var pair: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
+        door.accept(guest: pair[0])
+        let message = #"{"model":"cheap","messages":[{"role":"user","content":"um so what colour is calm"}]}"#
+        let request = Data(
+            ("POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer \(pass)\r\n"
+                + "Content-Type: application/json\r\nContent-Length: \(message.utf8.count)\r\n\r\n\(message)").utf8)
+        request.withUnsafeBytes { _ = write(pair[1], $0.baseAddress, $0.count) }
+        var started = rewording.makeAsyncIterator()
+        await started.next()
+        // The app leaves.
+        close(pair[1])
+
+        await Self.until { door.requests.first?.stage == .left(paid: false) }
+        await door.close()
+        #expect(payer.routes == (payment == .zkapi ? ["GET /v1/models"] : []))
+        #expect(sender.read.map { $0["op"] as? String } == (payment == .tempo ? ["models"] : []))
     }
 
     /// Writes `request` on `socket`, then reads until the other end closes,

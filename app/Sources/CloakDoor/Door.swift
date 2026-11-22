@@ -36,6 +36,10 @@ public struct AgentRequest: Identifiable, Sendable {
         case answered
         /// In the plain words the request was answered with.
         case stopped(String)
+        /// The app went before its answer: before the request was sent,
+        /// and nothing was paid; or after, when it was paid for and its
+        /// answer went unread.
+        case left(paid: Bool)
     }
 
     /// One user message's text as the app wrote it, and the text Cloak sent
@@ -431,32 +435,143 @@ public final class Door {
 
     /// One request, then the connection closes. Its head and body must
     /// arrive within `HTTPRequest.readLimit`; a pass is checked before the
-    /// body is read.
+    /// body is read; then it is routed while its connection is watched
+    /// (`routing`).
     private func serve(_ connection: some Link, from side: Side) async {
         let started = ContinuousClock.now
         let limit = Task {
             try? await Task.sleep(for: HTTPRequest.readLimit)
             if !Task.isCancelled { connection.cancel() }
         }
-        let response: HTTPResponse
         do {
             let (request, after) = try await HTTPRequest.head(connection)
             let (app, payment) = try admit(request, from: side)
             let body = try await request.body(after: after, from: connection)
             limit.cancel()
-            response = await route(request, body: body, for: app, paying: payment, from: side)
+            await routing(request, body: body, for: app, paying: payment, from: side, on: connection, since: started)
         } catch let failure as Failure {
             limit.cancel()
-            response = failure.response
+            await answer(failure.response, on: connection, since: started)
         } catch {
             // It ended, ran out of time or was cancelled before a whole request.
             limit.cancel()
             connection.cancel()
-            return
         }
+    }
+
+    /// Writes `response`, then closes the connection.
+    private func answer(_ response: HTTPResponse, on connection: some Link, since started: ContinuousClock.Instant) async {
         await connection.write(response.bytes, final: true)
         connection.cancel()
         logger.info("door answered \(response.status, privacy: .public) after \(started.duration(to: .now), privacy: .public)")
+    }
+
+    /// Where a request is from its body's reading to its connection's end.
+    private enum Routing {
+        /// Being read, checked, reworded and made ready to send (`route`):
+        /// an app that leaves ends it here, and nothing is paid.
+        case preparing
+        /// Its app left while it was being made ready; its work is ending.
+        case dropped
+        /// Sent (`send`), which pays for it: it goes on to its answer though
+        /// its app leaves, since one cut now may be charged.
+        case sending
+        /// Sent, and its app has left: its answer will go unread.
+        case unread
+        /// Answered, and its connection closed.
+        case answered
+    }
+
+    /// What one piece of a request's work came to.
+    private enum Routed: Sendable {
+        /// The answer to write: the list of models, or a refusal.
+        case answer(HTTPResponse)
+        /// A listed chat request that stopped before it was sent.
+        case stopped(AgentRequest.ID, Failure)
+        /// A listed chat request ready to send.
+        case ready(Ready)
+        /// A listed chat request sent: the provider's answer, or why it
+        /// stopped.
+        case sent(AgentRequest.ID, Result<HTTPResponse, Failure>)
+        /// The connection ended: its app left, or the door closed it.
+        case ended
+    }
+
+    /// A chat request with every user message reworded, ready to send.
+    /// Sending it pays for it.
+    private struct Ready: Sendable {
+        /// How it is paid: through the payer, in its turn, or from the Tempo
+        /// wallet, whose deposit is kept here.
+        enum Way: Sendable {
+            case payer
+            case wallet(DepositStore)
+        }
+
+        let listed: AgentRequest.ID
+        let body: Data
+        let identity: String
+        let streaming: Bool
+        let way: Way
+    }
+
+    /// Routes one request read whole while watching its connection, and
+    /// lists a chat request's end. An app that leaves before its request is
+    /// sent ends it there: nothing more is reworded, sent or paid. One sent
+    /// has been handed on to be paid for (`send`), and goes on to its
+    /// answer, which an app that has left never reads.
+    private func routing(
+        _ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side, on connection: some Link,
+        since started: ContinuousClock.Instant
+    ) async {
+        /// Writes `response` while the app is there to read it.
+        func finish(_ response: HTTPResponse, at stage: inout Routing) async {
+            guard stage == .preparing || stage == .sending else { return }
+            await answer(response, on: connection, since: started)
+            stage = .answered
+        }
+
+        await withTaskGroup(of: Routed.self) { group in
+            group.addTask {
+                await connection.ended()
+                return .ended
+            }
+            group.addTask { await self.route(request, body: body, for: app, paying: payment, from: side) }
+            var stage = Routing.preparing
+            while let routed = await group.next() {
+                switch routed {
+                case .ended:
+                    switch stage {
+                    case .preparing:
+                        stage = .dropped
+                        group.cancelAll()
+                    case .sending:
+                        stage = .unread
+                    case .dropped, .unread, .answered:
+                        continue
+                    }
+                    connection.cancel()
+                    logger.info("door request's app left after \(started.duration(to: .now), privacy: .public)")
+                case .answer(let response):
+                    await finish(response, at: &stage)
+                case .stopped(let listed, let failure):
+                    note(listed) { $0.end(stage == .dropped ? .left(paid: false) : .stopped(failure.message)) }
+                    await finish(failure.response, at: &stage)
+                case .ready(let ready):
+                    guard stage == .preparing else {
+                        note(ready.listed) { $0.end(.left(paid: false)) }
+                        continue
+                    }
+                    stage = .sending
+                    group.addTask { await self.send(ready) }
+                case .sent(let listed, .success(let response)):
+                    note(listed) { $0.end(stage == .unread ? .left(paid: true) : .answered) }
+                    await finish(response, at: &stage)
+                case .sent(let listed, .failure(let failure)):
+                    note(listed) { $0.end(.stopped(failure.message)) }
+                    await finish(failure.response, at: &stage)
+                }
+            }
+        }
     }
 
     /// Refuses a request from a web page, then one without a pass of this
@@ -489,15 +604,16 @@ public final class Door {
         return (apps[found].id, .zkapi)
     }
 
-    /// Answers one request. A chat request is listed in `requests` from here
-    /// until it is answered or stopped.
-    private func route(_ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side) async -> HTTPResponse {
+    /// Routes one request up to the point where sending it would pay for
+    /// it. A chat request is listed in `requests` from here; `routing` lists
+    /// its end.
+    private func route(_ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side) async -> Routed {
         do throws(Failure) {
             switch (request.method, request.target) {
             case ("GET", "/v1/models"):
                 let list = try await models(paying: payment)
                 guard (try? GoJSON.read([UInt8](list)))?.members != nil else { throw Self.unreadable }
-                return HTTPResponse(status: 200, body: list)
+                return .answer(HTTPResponse(status: 200, body: list))
             case ("POST", "/v1/chat/completions"):
                 let listed = AgentRequest(sender: side == .mac ? .app(app) : .agent)
                 requests.insert(listed, at: 0)
@@ -505,12 +621,9 @@ public final class Door {
                 // The one this pushed out of the newest drops its texts.
                 if requests.count > Self.latest { requests[Self.latest].messages = [] }
                 do throws(Failure) {
-                    let response = try await complete(request, body: body, for: app, paying: payment, listed: listed.id)
-                    note(listed.id) { $0.end(.answered) }
-                    return response
+                    return .ready(try await prepare(request, body: body, for: app, paying: payment, listed: listed.id))
                 } catch {
-                    note(listed.id) { $0.end(.stopped(error.message)) }
-                    throw error
+                    return .stopped(listed.id, error)
                 }
             case (_, "/v1/models"), (_, "/v1/chat/completions"):
                 throw Failure(405, "method_not_allowed", "Method not allowed.")
@@ -518,7 +631,7 @@ public final class Door {
                 throw Failure(404, "not_found", "Cloak answers /v1/chat/completions and /v1/models only.")
             }
         } catch {
-            return error.response
+            return .answer(error.response)
         }
     }
 
@@ -545,12 +658,13 @@ public final class Door {
     }
 
     /// Checks the request, then the model against the provider's list, then
-    /// rewords each user message on this Mac, then sends it: through the
-    /// payer, in its turn, or from the Tempo wallet. Nothing leaves this Mac
-    /// before every user message is reworded.
-    private func complete(
+    /// rewords each user message on this Mac, then, for the Tempo wallet,
+    /// checks there is one; returns the request ready to send (`send`).
+    /// Nothing leaves this Mac before every user message is reworded, and
+    /// nothing here pays.
+    private func prepare(
         _ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, listed: AgentRequest.ID
-    ) async throws(Failure) -> HTTPResponse {
+    ) async throws(Failure) -> Ready {
         try Asked.check(type: request.headers["content-type"])
         let asked = try await Asked.read(body)
         note(listed) { $0.model = asked.model }
@@ -571,39 +685,58 @@ public final class Door {
         if let index = requests.firstIndex(where: { $0.id == listed }), index < Self.latest {
             requests[index].messages = pairs
         }
-        guard case .tempo = payment else {
-            guard !Task.isCancelled else { throw .stopped }
-            let completion: Data
+        let way: Ready.Way
+        switch payment {
+        case .zkapi:
+            way = .payer
+        case .tempo:
+            let key = try await sealing()
             do {
-                completion = try await parts.queue.complete(asked.body(messages), identity: identity, rank: .door)
+                guard try await parts.wallet() != nil else {
+                    throw Failure(402, "no_wallet", "Cloak has no wallet yet. Create one in Chat, under Wallet.")
+                }
+            } catch let failure as Failure {
+                throw failure
             } catch {
-                logger.error("door payment stopped: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .private)")
-                throw Failure(error)
+                logger.error("cannot read the wallet: \(String(describing: error), privacy: .public)")
+                throw Failure(502, "failed", "Cloak couldn't read the wallet.")
             }
-            return try Asked.answer(completion, streaming: asked.streaming)
-        }
-        let key = try await sealing()
-        do {
-            guard try await parts.wallet() != nil else {
-                throw Failure(402, "no_wallet", "Cloak has no wallet yet. Create one in Chat, under Wallet.")
-            }
-        } catch let failure as Failure {
-            throw failure
-        } catch {
-            logger.error("cannot read the wallet: \(String(describing: error), privacy: .public)")
-            throw Failure(502, "failed", "Cloak couldn't read the wallet.")
+            way = .wallet(DepositStore(folder: walletFolder, key: key))
         }
         guard !Task.isCancelled else { throw .stopped }
-        let completion: Data
-        do {
-            completion = try await Remote.complete(
-                asked.body(messages), identity: identity, key: parts.key, deposits: DepositStore(folder: walletFolder, key: key),
-                exchange: parts.exchange)
+        return Ready(listed: listed, body: asked.body(messages), identity: identity, streaming: asked.streaming, way: way)
+    }
+
+    /// Sends a ready request, which pays for it: through the payer, in its
+    /// turn, or from the Tempo wallet. Once handed on it is not cut short
+    /// for an app that leaves (`routing`): the payer gives no sign of when
+    /// it asks for the request's key, and one cut after that may be charged;
+    /// the Tempo wallet's exchange, once begun, runs to its end.
+    private func send(_ ready: Ready) async -> Routed {
+        do throws(Failure) {
+            guard !Task.isCancelled else { throw .stopped }
+            let completion: Data
+            switch ready.way {
+            case .payer:
+                do {
+                    completion = try await parts.queue.complete(ready.body, identity: ready.identity, rank: .door)
+                } catch {
+                    logger.error("door payment stopped: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .private)")
+                    throw Failure(error)
+                }
+            case .wallet(let deposits):
+                do {
+                    completion = try await Remote.complete(
+                        ready.body, identity: ready.identity, key: parts.key, deposits: deposits, exchange: parts.exchange)
+                } catch {
+                    logger.error("door send stopped: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .private)")
+                    throw Failure(error)
+                }
+            }
+            return .sent(ready.listed, .success(try Asked.answer(completion, streaming: ready.streaming)))
         } catch {
-            logger.error("door send stopped: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .private)")
-            throw Failure(error)
+            return .sent(ready.listed, .failure(error))
         }
-        return try Asked.answer(completion, streaming: asked.streaming)
     }
 
     /// Each user message with text, as the app wrote it (its draft's texts)
