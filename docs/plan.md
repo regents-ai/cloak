@@ -3715,6 +3715,25 @@ pointer and left when told. A real pointer resting on a button in the
 running app has not been watched: the chief sends no pointer moves on
 Sean's Mac.
 
+That last gap cost a crash. Sean, minutes after build 268: "there is a
+strange flickering when using the app". With the Mac untouched for two
+minutes the chief rested the pointer on Copy Commands in the running
+app by a posted pointer move (inside the screen and click access Sean
+gave, decision 7), and Cloak ended at 8:13 pm: AppKit's "more Update
+Constraints in Window passes than there are views in the window", in
+the tip's panel, 66 by 56 points for two words. The throwaway test had
+no run loop, so its window never made those passes, and it tried only
+long words. The cause: the box was a SwiftUI view hosted as the panel's
+content, which sizes its window itself. Fixed the same evening: the box
+is an AppKit view drawn and measured by one call, with no constraints
+in the panel; a tip waits for a still pointer (a second, Sean's own
+figure of 15 November) and shows none in a window behind another app's.
+Proven in a throwaway app with a real run loop, seven tips in a row,
+short and long. Rule kept from this: anything that puts up a window is
+tried in a running app, with a run loop, before it reaches Sean's
+Cloak, and a new kind of window is tried under a real pointer while the
+Mac is untouched.
+
 NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
 November 2026), against stand-ins only: no sign-in, enrolment or upload
 has been made. An independent reader found 14 things and the helper

@@ -7,11 +7,18 @@ import SwiftUI
 /// of room each side and 7 above and below.
 ///
 /// One panel shows them all (`TipPanel`). A tip comes up under the pointer
-/// once it has rested on a view for 0.7 seconds, or after 0.1 where another
-/// tip went within the last half second, so moving along a row of symbols
-/// names each in turn. It goes when the pointer leaves, on any click, key
-/// or scroll, when a menu closes and when Cloak stops being the app in
-/// front. It never takes a click or the keyboard.
+/// once it has been on a view for a second and is still, or as soon as it
+/// is still where another tip went within the last half second, so pausing
+/// along a row of symbols names each in turn and a pointer passing over
+/// shows nothing. It goes when the pointer leaves, on any click, key or
+/// scroll, when a menu closes and when Cloak stops being the app in
+/// front; a window of Cloak's behind another app's shows none. It never
+/// takes a click or the keyboard.
+///
+/// The box is drawn and measured by hand (`TipBox`), with no SwiftUI view
+/// and no layout constraints in the panel: a hosting view as a panel's
+/// content sizes its window in passes, and for some words those passes
+/// never settled, which flickered and then ended the app (21 November).
 ///
 /// The words are the view's hint for VoiceOver too, as `help` made them.
 private struct Tip: ViewModifier {
@@ -22,7 +29,8 @@ private struct Tip: ViewModifier {
         content
             .accessibilityHint(words)
             .onHover { inside in
-                if inside {
+                // None in a window behind another app's.
+                if inside, NSApp.isActive {
                     TipPanel.shared.rest(id, words)
                 } else {
                     TipPanel.shared.leave(id)
@@ -75,7 +83,8 @@ final class TipPanel {
     private enum Stage {
         /// No tip, and none on its way.
         case away
-        /// The pointer rests on a view; its tip shows when the wait ends.
+        /// The pointer is on a view; its tip shows once the wait has ended
+        /// and the pointer is still.
         case resting(UUID, Task<Void, Never>)
         case showing(UUID)
 
@@ -91,13 +100,10 @@ final class TipPanel {
     /// When the last tip went, which makes the next one quick.
     private var went: ContinuousClock.Instant?
     private let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
-    private let host = NSHostingController(rootView: TipWords(words: ""))
+    private let box = TipBox(frame: .zero)
 
     private init() {
-        // The panel is sized here, from its words (`show`); the view never
-        // sizes it.
-        host.sizingOptions = []
-        panel.contentView = host.view
+        panel.contentView = box
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -122,7 +128,7 @@ final class TipPanel {
         }
     }
 
-    /// The pointer came to rest on `id`'s view.
+    /// The pointer came onto `id`'s view.
     func rest(_ id: UUID, _ words: String) {
         hide()
         guard !words.isEmpty else { return }
@@ -132,7 +138,16 @@ final class TipPanel {
             Task {
                 // Sleeping throws once cancelled, so a pointer that leaves
                 // first never shows it.
-                guard (try? await Task.sleep(for: .milliseconds(quick ? 100 : 700))) != nil else { return }
+                if !quick {
+                    guard (try? await Task.sleep(for: .milliseconds(880))) != nil else { return }
+                }
+                // Then once the pointer is where it was a moment ago, so
+                // nothing comes up under one that is passing over.
+                var place: NSPoint
+                repeat {
+                    place = NSEvent.mouseLocation
+                    guard (try? await Task.sleep(for: .milliseconds(120))) != nil else { return }
+                } while NSEvent.mouseLocation != place
                 show(id, words)
             })
     }
@@ -154,11 +169,8 @@ final class TipPanel {
 
     private func show(_ id: UUID, _ words: String) {
         stage = .showing(id)
-        host.rootView = TipWords(words: words)
-        // As wide as its words up to the widest box, and as tall as they
-        // then wrap to.
-        let size = host.sizeThatFits(in: NSSize(width: TipWords.widest, height: .greatestFiniteMagnitude))
-        panel.setFrame(Self.frame(for: size, at: NSEvent.mouseLocation), display: true)
+        box.words = words
+        panel.setFrame(Self.frame(for: TipBox.size(for: words), at: NSEvent.mouseLocation), display: true)
         panel.invalidateShadow()
         panel.orderFrontRegardless()
     }
@@ -189,24 +201,43 @@ final class TipPanel {
 }
 
 /// A tip's words and the box round them: the Mac's own tooltip size, with
-/// 10 points of room each side and 7 above and below. It is as wide as its
-/// words, which wrap where whoever sizes it stops them (`widest`).
-struct TipWords: View {
-    /// The box at its widest, its room included.
-    static let widest: CGFloat = 280
+/// 10 points of room each side and 7 above and below. The box is as wide
+/// as its words, which wrap at 260 points. Drawn by hand, and measured by
+/// the same call that draws, so the two always agree.
+final class TipBox: NSView {
+    private static let room = NSSize(width: 10, height: 7)
+    private static let widest: CGFloat = 260
+    private static let options: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
 
-    let words: String
-
-    var body: some View {
-        let box = RoundedRectangle(cornerRadius: 7, style: .continuous)
-        Text(words)
-            .font(.system(size: NSFont.smallSystemFontSize))
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(Color(nsColor: .windowBackgroundColor), in: box)
-            .overlay { box.strokeBorder(.separator) }
-            // The view it names reads the words out; the panel says nothing.
-            .accessibilityHidden(true)
+    var words = "" {
+        didSet { needsDisplay = true }
     }
+
+    private static func text(_ words: String) -> NSAttributedString {
+        NSAttributedString(
+            string: words,
+            attributes: [.font: NSFont.toolTipsFont(ofSize: 0), .foregroundColor: NSColor.labelColor])
+    }
+
+    /// The box `words` need.
+    static func size(for words: String) -> NSSize {
+        let text = text(words).boundingRect(with: NSSize(width: widest, height: .greatestFiniteMagnitude), options: options).size
+        return NSSize(width: ceil(text.width) + 2 * room.width, height: ceil(text.height) + 2 * room.height)
+    }
+
+    // Text is laid out from the top down.
+    override var isFlipped: Bool { true }
+
+    // Colours are read as it draws, so it follows a change to light or dark.
+    override func draw(_ dirtyRect: NSRect) {
+        let edge = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
+        NSColor.windowBackgroundColor.setFill()
+        edge.fill()
+        NSColor.separatorColor.setStroke()
+        edge.stroke()
+        Self.text(words).draw(with: bounds.insetBy(dx: Self.room.width, dy: Self.room.height), options: Self.options)
+    }
+
+    // The view it names reads the words out; the panel says nothing.
+    override func isAccessibilityElement() -> Bool { false }
 }

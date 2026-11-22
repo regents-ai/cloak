@@ -11,9 +11,14 @@
   words hard against the border and gives no way to change that, so
   every tooltip in the app (56 in its windows, two in the menu) is now
   Cloak's own: the same words at the same size, with 10 points of room
-  each side and 7 above and below. It comes up under the pointer after
-  0.7 seconds, at once after another one, and goes on any click, key or
-  scroll. An info mark has none, since resting on it opens its note.
+  each side and 7 above and below. It comes up under a pointer that has
+  been on a button for a second and is still, at once after another one,
+  never under a pointer passing over or in a window behind another
+  app's, and goes on any click, key or scroll. An info mark has none,
+  since resting on it opens its note. Its first form, in build 268 for
+  nine minutes, flickered and then ended the app on short words (a
+  hosted SwiftUI box that never stopped resizing its panel); the box is
+  now drawn and measured by hand.
 - The door stops working for an app that has gone. While a request is
   read, checked and reworded its connection is watched; an app that
   leaves before the request is handed on to be paid ends it there, with
