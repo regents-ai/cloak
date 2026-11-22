@@ -415,7 +415,9 @@ keys typed into it while it records, and Escape stops it. Keys
 without Command, Option or Control are refused, as is a shortcut macOS
 won't take, whose words say what is still the shortcut. Then Port, the port Agents answer on (below), 8742 until
 chosen: a number from 1024 to 65535 that nothing on this Mac listens on
-when it is saved, used from the next Start, and always on 127.0.0.1 only.
+when it is saved, used as soon as it is saved (the door moves to it, and
+requests under way are not cut; apps added earlier need the new address),
+and always on 127.0.0.1 only.
 Then it shows exactly how the last start started tor and the worker, one
 command a line, and this session's lines of Cloak's log, each with Copy
 (the log's once there are lines), and Restore Defaults, which puts these

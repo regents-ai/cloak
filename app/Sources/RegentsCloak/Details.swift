@@ -101,9 +101,7 @@ struct DetailsView: View {
         .fixedSize(horizontal: false, vertical: true)
         // The model's files and the free space on disk can change while the
         // window is away, so they are read again each time it comes back.
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            download.refresh()
-        }
+        .onReturn { download.refresh() }
     }
 
     private func lastCheck(_ check: StatusDocument.Check?) -> String {

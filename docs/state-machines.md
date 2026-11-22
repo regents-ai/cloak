@@ -1811,8 +1811,12 @@ card's start and the door's request whose app leaves have checks.
   opened), its words with Try Again, which opens the door again in turn
   with the app's own opens and closes (`AppDelegate.turnDoor`), and, while
   another app holds the port, Change Port… beside it, which opens Settings
-  on Advanced, where the port is; the port is read when the door opens, so a new port,
-  or the other app's quitting, needs Try Again. Adding is one value (`Adding`: naming, keeping,
+  on Advanced, where the port is; a port saved there is used at once
+  (the app opens the door again as the setting changes, and an open door
+  moves: `Door.open` swaps its listener and nothing else, so requests under
+  way keep their connections), while the other app's quitting needs Try
+  Again. Before (21 November): a new port waited for the next Start, or a
+  Try Again. Adding is one value (`Adding`: naming, keeping,
   kept) that the window keeps: there is no Cancel while the app is kept,
   and its pass shows once it is; an Add that could not keep the app shows
   the door's words in the sheet. An open request is read from the door's

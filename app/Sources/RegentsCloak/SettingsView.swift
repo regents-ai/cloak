@@ -173,9 +173,7 @@ private struct GeneralPane: View {
         // The login item can change in System Settings while the window is
         // away, so it is read again each time the window comes back, and the
         // words of a refused change go.
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            login = LoginItem.stage
-        }
+        .onReturn { login = LoginItem.stage }
     }
 }
 
@@ -198,9 +196,7 @@ private struct UpdatesSection: View {
         }
         // Sparkle's own question about checking can be answered while the
         // window is away, so the setting is read again when it comes back.
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            checks = updates.checksAutomatically
-        }
+        .onReturn { checks = updates.checksAutomatically }
     }
 }
 
@@ -482,7 +478,7 @@ private struct LlamaPane: View {
         // since a download that ends, stops or is removed changes the space
         // the others have. Download reads them again at its press.
         .onAppear(perform: refresh)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in refresh() }
+        .onReturn(perform: refresh)
         .onChange(of: downloads.map(\.state), refresh)
     }
 
@@ -740,7 +736,7 @@ private struct PortRow: View {
     var body: some View {
         Row(
             "Port",
-            note: "Apps you add in the Agents window, such as a coding agent, send their AI requests through Cloak at 127.0.0.1 on this port. Only apps on this Mac can connect. A new port applies at the next Start."
+            note: "Apps you add in the Agents window, such as a coding agent, send their AI requests through Cloak at 127.0.0.1 on this port. Only apps on this Mac can connect. A new port is used as soon as it's saved, so apps you added earlier need the new address from the Agents window."
         ) {
             VStack(alignment: .trailing, spacing: 4) {
                 HStack(spacing: 6) {
@@ -858,7 +854,7 @@ private struct AdvancedPane: View {
 
     /// What Restore Defaults does, from the defaults themselves.
     private var restored: String {
-        """
+        let settings = """
         Launch at login, Updates and Tor for NEAR turn off, \
         rewording, Review, Saved chats and Cover traffic turn back on, \
         Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
@@ -866,6 +862,10 @@ private struct AdvancedPane: View {
         and Local Llama to \(supervisor.manifest.rewordingModel.label), \
         the quick prompt loses its shortcut, and the port goes back to \(AppSettings.defaultDoorPort).
         """
+        // Cover back on under a guest that runs without it.
+        return supervisor.phase == .running && supervisor.cover == false
+            ? settings + " Cloak restarts to turn Cover traffic back on."
+            : settings
     }
 
     private func read() async {

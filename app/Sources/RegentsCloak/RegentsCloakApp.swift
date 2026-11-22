@@ -159,9 +159,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             logger.error("cannot serve the control channel: \(String(describing: error), privacy: .public)")
             Launch.stop("Cloak can't open.", "Quit Cloak, then open it again.")
         }
-        // The door is open only while Cloak is Running.
+        // The door is open only while Cloak is Running, and on the port
+        // chosen: a new port moves it at once.
         Task { [unowned self, supervisor] in
-            for await _ in Observations({ supervisor.phase == .running }) {
+            for await _ in Observations({ (supervisor.phase == .running, AppSettings.standard.doorPort) }) {
                 turnDoor()
             }
         }
@@ -216,8 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agents.show()
     }
 
-    /// Opens the door while Cloak is Running and closes it otherwise, once
-    /// its last open or close has ended.
+    /// Opens the door while Cloak is Running, or moves it to a new port,
+    /// and closes it otherwise, once its last open or close has ended.
     private func turnDoor() {
         let running = supervisor.phase == .running
         doorTurn = Task { [door, last = doorTurn] in

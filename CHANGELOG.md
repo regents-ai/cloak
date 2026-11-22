@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Switching Cover does something at once. Switched while Cloak is
+  running, from Chat's toolbar or Settings, Cloak restarts by itself with
+  the new setting: the menu says Restarting, then Starting, with no stop
+  at Paused. It waits while anything a restart would cut is under way (a
+  message being reworded, sent or answered, an agent's task, a request
+  from an app, a wallet press or money on its way), holds nothing back
+  meanwhile, and says so beside the switch while it waits. Switched back
+  first, nothing restarts. Before, a switch changed nothing until Pause,
+  then Start. Restore Defaults says when it will restart Cloak for this.
+- A new port is used as soon as it is saved: the door moves to it and
+  requests under way are not cut. Before, it waited for the next Start.
+- Settings and Details read what can change outside them (the login
+  item, the update setting, model files and free space) only when their
+  own window comes back, not each time any note or other window of
+  Cloak's opens or closes.
 - Settings has four panes, not six. The quick prompt's shortcut and the
   port (the pane that was called Door) are now rows at the top of
   Advanced, under Shortcut and Agents, and each one's note says what it

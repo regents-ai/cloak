@@ -3734,6 +3734,24 @@ tried in a running app, with a run loop, before it reaches Sean's
 Cloak, and a new kind of window is tried under a real pointer while the
 Mac is untouched.
 
+Cover's switch, the same evening. Sean: "if a user can click on and click
+off cover traffic, and nothing changes, that is not good UX. … couldnt a
+pause+start (call it a restart? or other word?) happen when cover traffic
+is switched?" Done as he asked: a restart is one more destination of the
+one shutdown (`Phase.stopping(.restart)`, then Preparing), and one place
+(`Supervisor.followCover`) sends it when the setting and the running
+guest's differ and nothing a restart would cut is under way, read through
+Observation with no timer. It blocks no press: new work only keeps it
+waiting. A check for the money side (`PayTests`): a paid request out
+when Cover is switched is answered before the restart begins. The same
+rule, a setting that is saved should be used, went to the port: the door
+moves to a new port at the next open, which the app now runs as the
+setting changes, swapping the listener and nothing else. And the four
+places that read outside state again on any of Cloak's windows becoming
+key now read it only as their own window comes back (`onReturn`,
+SwiftUI's `appearsActive`, tried in a throwaway app: no change for a
+popover, a change for another window, another app, and close then show).
+
 NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
 November 2026), against stand-ins only: no sign-in, enrolment or upload
 has been made. An independent reader found 14 things and the helper

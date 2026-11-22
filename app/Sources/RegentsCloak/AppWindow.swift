@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// One of the app's windows, made the first time it is shown and kept.
 ///
@@ -58,5 +59,26 @@ final class ClosingWindow: NSWindow {
             return true
         }
         return super.performKeyEquivalent(with: event)
+    }
+}
+
+/// Runs its action each time the view's own window comes back in front:
+/// from behind another window or another app, or shown again after it was
+/// closed. A note or a menu opened over the window is no return, and
+/// neither is another of Cloak's windows coming forward.
+private struct OnReturn: ViewModifier {
+    let action: () -> Void
+    @Environment(\.appearsActive) private var inFront
+
+    func body(content: Content) -> some View {
+        content.onChange(of: inFront) { if inFront { action() } }
+    }
+}
+
+extension View {
+    /// What can change while the window is away is read again as it comes
+    /// back.
+    func onReturn(perform action: @escaping () -> Void) -> some View {
+        modifier(OnReturn(action: action))
     }
 }

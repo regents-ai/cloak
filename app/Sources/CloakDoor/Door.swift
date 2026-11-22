@@ -180,7 +180,7 @@ public final class Door {
     /// The requests the Agents window lists, newest first, and the only
     /// ones that keep their messages' texts.
     public static let latest = 20
-    /// The port taken at the last open, until the door closes.
+    /// The port taken at the last open or move, until the door closes.
     private var opened: UInt16?
 
     private enum Access {
@@ -303,9 +303,14 @@ public final class Door {
     // MARK: Opening and closing
 
     /// Listens on 127.0.0.1 and the one port, and nowhere else; refused
-    /// (`Refusal`) when the port is taken or the apps can't be read.
+    /// (`Refusal`) when the port is taken or the apps can't be read. Open on
+    /// another port than the one chosen now, it moves to that one: only the
+    /// listener changes, so requests under way keep their connections and
+    /// the box passes stay.
     public func open() async {
-        guard listener == nil else { return }
+        guard listener == nil || opened != chosen() else { return }
+        listener?.cancel()
+        listener = nil
         await load()
         guard case .read = access else {
             state = .refused(.appsUnread)
