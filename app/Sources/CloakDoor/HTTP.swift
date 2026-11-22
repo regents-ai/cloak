@@ -125,6 +125,11 @@ protocol Link: Sendable {
     /// The next bytes, at most `limit`. Throws at the end of the stream, on
     /// an error, and when the task is cancelled, which cancels the link.
     func next(upTo limit: Int) async throws -> [UInt8]
+    /// Returns once the other side has closed the link or it has failed, or
+    /// once this side has ended it (`cancel`), dropping any bytes that come
+    /// meanwhile. Cancelling the task does not end it, and leaves the link
+    /// as it is.
+    func ended() async
     /// Writes `data`; `final` ends this side of the stream after it.
     func write(_ data: Data, final: Bool) async
     /// Ends the link: a read under way ends, and nothing more is written.
@@ -153,6 +158,17 @@ extension NWConnection: Link {
         }
     }
 
+    func ended() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            @Sendable func watch() {
+                receive(minimumIncompleteLength: 1, maximumLength: 64 << 10) { data, _, complete, error in
+                    if error == nil, !complete, let data, !data.isEmpty { watch() } else { continuation.resume() }
+                }
+            }
+            watch()
+        }
+    }
+
     /// Writes `data`; `final` ends this side of the stream after it.
     func write(_ data: Data, final: Bool) async {
         await withCheckedContinuation { continuation in
@@ -165,9 +181,9 @@ extension NWConnection: Link {
 /// A connection from the guest's door port: the socket the guest's
 /// connection came on, which it owns. It never blocks a thread: the socket
 /// does not block, and a read or write that must wait waits for the socket
-/// to be ready. Cancelling it, or cancelling the task under way, shuts the
-/// socket, which ends a read or write under way. The socket is closed once
-/// nothing holds the link.
+/// to be ready. Cancelling it, or cancelling the task of a read or write
+/// under way, shuts the socket, which ends every read and write under way,
+/// `ended` among them. The socket is closed once nothing holds the link.
 final class GuestLink: Link {
     private let socket: Int32
     private let queue = DispatchQueue(label: "sh.regents.cloak.door.guest")
@@ -204,6 +220,16 @@ final class GuestLink: Link {
             }
         } onCancel: {
             cancel()
+        }
+    }
+
+    func ended() async {
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let n = buffer.withUnsafeMutableBytes { read(socket, $0.baseAddress!, $0.count) }
+            if n > 0 { continue }
+            guard n < 0, errno == EAGAIN || errno == EINTR else { return }
+            await ready(DispatchSource.makeReadSource(fileDescriptor: socket, queue: queue))
         }
     }
 

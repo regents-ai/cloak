@@ -744,14 +744,20 @@ images by link, stored files, roles and parts the provider does not take,
 and a message over 10,000 characters. `stream: true` gets the whole answer
 as one server-sent chunk, then `data: [DONE]`. Every stop comes back as
 OpenAI's error shape with a plain message; pausing Cloak answers a request
-under way with 503. Only each app's name, when it was added, its count of
-requests and when it was last used are kept on disk, sealed in
+under way with 503. An app that closes its connection before its request
+is handed on to be paid for ends the request there: nothing more is
+reworded, sent or paid. One already handed on goes on to its answer even
+if the app has gone, since cutting it short could still be charged. Only
+each app's name, when it was added, its count of requests and when it was
+last used are kept on disk, sealed in
 `~/Library/Application Support/Regents Cloak/agents` under the
 conversations' key. Agents' Activity shows the last 24 hours' count of chat
 requests and the share answered, then the latest 20: who sent each (an app
 or Cloak's own agent), the model, how many messages went reworded, whether
-it is under way, answered or stopped and why, and how long it took. Once a
-request's messages are reworded, its row opens a sheet with each of its
+it is under way, answered, stopped and why, or left (its app went before
+the answer; holding the pointer over it says whether it was paid for), and
+how long it took. Once a request's messages are reworded, its row opens a
+sheet with each of its
 user messages' text as the app wrote it and as Cloak sent it, the newest
 first, the changed words marked as in Chat; system prompts, tools, tool
 results and the model's answers are not shown. Up to 200 requests are held

@@ -1331,8 +1331,10 @@ send two requests; one request is out at a time and the owner's go
 first; a request out is not cut for another; a hold that goes quiet ends
 at its limit with nothing sent; a phase the Mac does not know makes no
 call; an `R` frame carries only the identity and the reworded body; a
-rewording that stops sends no request through the door; an approve's stop
-stays an approve's though a quote was pressed while it was out; a call to
+rewording that stops sends no request through the door, and an app that
+leaves before its request is sent is not charged, either way it is paid;
+an approve's stop stays an approve's though a quote was pressed while it
+was out; a call to
 read now reads as soon as the round out ends and cuts the 10-second wait
 short, one round at a time; and a round's read begun before an approve's
 answer does not land over it.
@@ -1530,10 +1532,12 @@ its stages first.
   passes in place until the next close. Each chat request it takes past
   the pass is listed (`requests`, newest first, at most 200, in memory
   only until Cloak quits) with one named stage: rewording, sending,
-  answered, or stopped with the words it was answered with. `route` lists
-  it and ends it; `complete` notes the model once the request is read and
-  moves it to sending once every user message is reworded, so it shows as
-  rewording while the provider's list of models is asked for too. One that
+  answered, stopped with the words it was answered with, or left (its app
+  went before its answer, with whether it was paid for; section 11, "One
+  door connection"). `route` lists it, `prepare` notes the model once the
+  request is read and moves it to sending once every user message is
+  reworded, so it shows as rewording while the provider's list of models
+  is asked for too, and `routing` ends it. One that
   falls off the end of the list while under way is no longer updated.
   Its texts (`AgentRequest.messages`: each user message with text, as
   written and as sent) are filled once, when the move to sending is noted,
@@ -1615,8 +1619,8 @@ every place a stage is read off several fields. Section 10's entries
 still hold except where a line here says otherwise. Each entry gives what
 holds the stage, then the faults found in it, each traced in the code
 unless it says "likely". A fault fixed since says "Before (date): … Now
-…"; the rest are not fixed. Only the payer's stops and reads and the task
-card's start have checks.
+…"; the rest are not fixed. Only the payer's stops and reads, the task
+card's start and the door's request whose app leaves have checks.
 
 ### The menu and the app's shell
 
@@ -1790,10 +1794,28 @@ card's start have checks.
   or the last refusal: an opening stage section 10 says is not there. A
   box's pass needs the Mac's listener open, so a taken port ends every
   agent task as "No connection".
-- **One door connection** (`Door.serve`). Reading the head, admitted,
-  reading the body, routing, answering. Nothing reads the connection
-  while routing, so a request whose app has gone is still reworded, paid
-  for and listed as answered.
+- **One door connection** (`Door.serve`, `Door.routing`). Reading the
+  head, admitted, reading the body, then one named stage (`Routing`):
+  preparing, dropped, sending, unread, answered. Before (21 November):
+  nothing read the connection while routing, so a request whose app had
+  gone was still reworded, paid for and listed as answered. Now the
+  connection is watched from the end of the body (`Link.ended`). The
+  paying moment is the hand-off (`Door.send`): to `PayQueue.complete` for
+  a request paid through zkAPI, to `Remote.complete` for one paid from the
+  Tempo wallet. An app that leaves before it, while its request is read,
+  checked, its provider's models asked for, reworded and, for the Tempo
+  wallet, its wallet read, ends the request there: nothing more is
+  reworded, sent or paid, and its line says Left, nothing paid. A request
+  handed on is never cut for an app that leaves, since the payer gives no
+  sign of when it asks for the key and one cut after may be charged, and
+  the sender's exchange runs to its end: it goes on to its answer, and its
+  line says Left, paid for, the answer unread; one that stops instead
+  keeps its stop's words. A request still waiting its turn in `PayQueue`
+  counts as handed on, though the payer has not seen it yet: the queue
+  does not tell its caller when the turn comes. An app that shuts only its
+  sending side while it waits for the answer counts as gone. Check:
+  `anAppThatLeavesBeforeItsRequestIsSentIsNotCharged` in
+  `app/Tests/CloakTests/PayTests.swift`, for both ways of paying.
 - **One control command** (`ControlSocket.swift`, `Cloak.swift`). A
   command waiting through a quit is refused; `cloak start` overtaken by a
   pause exits 0; `cloak doctor` exits 0 with failed checks.
