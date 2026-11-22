@@ -722,7 +722,8 @@ as to any server that speaks OpenAI's chat format, each request paid as
 V's are, through the guest's payer with a new key, after your own
 messages. While Cloak is running it answers at `http://127.0.0.1:8742/v1`,
 or the port chosen in Settings, on 127.0.0.1 only; if another app holds
-that port, Agents says so and nothing opens. Add, a plus, gives an app a name and a pass, shown once with Copy;
+that port, nothing opens, and Agents says so, with Change Port… to choose
+another in Settings, then Try Again. Add, a plus, gives an app a name and a pass, shown once with Copy;
 Remove ends the pass at once. Point the app at the address with the pass as
 its key, for example with OpenAI's Python library:
 

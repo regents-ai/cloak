@@ -1532,8 +1532,9 @@ its stages first.
   is no "opening". How a request is paid is set by its pass: an app's
   always through V's payer (`Payment.zkapi`, rank `door` in the queue,
   section 9d), and a box's as its task's chat pays, through the payer for
-  a V task and from the Tempo wallet for a Token Inference one. The app opens and closes it from one loop, in turn, so
-  the two do not cross. A listener that fails after opening leaves the box
+  a V task and from the Tempo wallet for a Token Inference one. The app opens and closes it in turn, each after the
+  last has ended (`AppDelegate.turnDoor`), as Cloak starts and stops and
+  at Agents' Try Again, so the two do not cross. A listener that fails after opening leaves the box
   passes in place until the next close. Each chat request it takes past
   the pass is listed (`requests`, newest first, at most 200, in memory
   only until Cloak quits) with one named stage: rewording, sending,
@@ -1718,12 +1719,31 @@ card's start and the door's request whose app leaves have checks.
 - **The rewording model's download in Details** (`DownloadSection.swift`).
   Cancel's question says what has downloaded is deleted; files already in
   place stay (section 9a).
-- **Agents** (`AgentsView.swift`). The door's named state beside
-  `problem`: no line it shows has a button (no Start, no way to the Door
-  pane, no Try Again). Adding an app: `adding`, `name`, `pass`, `working`;
-  Cancel while it adds keeps the app and never shows its pass (likely).
-  An open request is a copy taken at the press and does not follow its
-  stage.
+- **Agents** (`AgentsView.swift`). Before (21 November): the door's
+  named state showed beside `problem`, and no line had a button: no Start
+  while Cloak was not running, no way to the port while another app held
+  it, no Try Again. Adding an app was read off `adding`, `name`, `pass`
+  and `working`, and Cancel while it added (traced: the add ran on in a
+  task the sheet did not hold) kept the app and never showed its pass, so
+  nobody held it. An open request was a copy taken at the press and did
+  not follow its stage. Now the door's line is one value read in one
+  place (`DoorLine`): while Cloak isn't running, the Wallet's Start row,
+  with Start or the start's own fix (`Fix`); while Cloak runs and the door
+  isn't open yet, Opening; while another app holds the port the door
+  takes next, so trying again is certain to fail, "Another app is using
+  port N." with Change Port…, which opens Settings on its Door pane; for
+  any other refusal, the door's words with Try Again, which opens the door
+  again in turn with the app's own opens and closes
+  (`AppDelegate.turnDoor`). The port is read again each time the window
+  comes to the front. Adding is one value (`Adding`: naming, keeping,
+  kept) that the window keeps: there is no Cancel while the app is kept,
+  and its pass shows once it is; an Add that could not keep the app shows
+  the door's words in the sheet. An open request is read from the door's
+  list by its id each time the list changes, and says so once newer
+  requests have pushed its texts out. Still: `problem` is a sentence, not
+  a named value, so its line has no button; the door has no opening stage
+  of its own (below), so a Try Again that fails again with the same words
+  shows nothing new.
 - **The log, Restore Defaults, the port field, Copy.** Before (21
   November): Copy Log before the read landed copied nothing over the
   clipboard; Restore Defaults also reset V's model, which the Wallet
@@ -1737,9 +1757,15 @@ card's start and the door's request whose app leaves have checks.
 
 ### Chat
 
-- **Opening the saved chats** (`Chat.Access`, named). Retry has no stage:
-  two can run at once (likely), and a retry that fails again shows
-  nothing new. Locked has no way on.
+- **Opening the saved chats** (`Chat.Access`, named). Before (21
+  November): Retry had no stage: two could run at once (traced: `open()`
+  set nothing before its first wait, so a second Retry, or the window
+  shown again, began a second open), and a retry that failed again showed
+  nothing new. Now an open under way is a stage of `Access` (`opening`,
+  the first time or again), during which a call does nothing; trying
+  again shows a spinner in place of Try Again, and one that fails again
+  says it was tried again and still couldn't open them. Locked has no way
+  on: the key is gone, and nothing in Cloak brings it back.
 - **The one rewording** (`Chat.rewording`, `stops`, the draft given back).
   Before (21 November): all three were the window's, not a chat's. While
   any chat reworded, every chat's box, New and a shrunk card's press were
@@ -1762,7 +1788,9 @@ card's start and the door's request whose app leaves have checks.
   showed, Run stayed on and a second Run was dropped unseen (`Agent.run`'s
   guard). Now the task is under way from the press, its card shows
   running with Stop, and a Stop before it runs means it never runs.
-  "Agents says why" has no way to Agents.
+  Before (21 November): "Agents says why" had no way to Agents. Now a
+  task that couldn't reach Cloak has Agents… beside it, which opens the
+  Agents window, where the door's line says why and carries its fix.
 - **Saved or not, and disk problems** (`unsaved`, `problem`). One
   `problem` for all chats, cleared by any later save.
 - **Sheets** (`showingWallet`, `showingModes`, `deleting`, `explaining`).
@@ -1833,7 +1861,10 @@ card's start and the door's request whose app leaves have checks.
 - **The door opening.** `listener` is set while `state` still says closed
   or the last refusal: an opening stage section 10 says is not there. A
   box's pass needs the Mac's listener open, so a taken port ends every
-  agent task as "No connection".
+  agent task as "No connection". Before (21 November): nothing led from
+  there to the port. Now the task's card leads to Agents, whose line says
+  the port is in use and leads to Settings' Door pane, then has Try Again
+  (Agents, above).
 - **One door connection** (`Door.serve`, `Door.routing`). Reading the
   head, admitted, reading the body, then one named stage (`Routing`):
   preparing, dropped, sending, unread, answered. Before (21 November):

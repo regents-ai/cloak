@@ -28,14 +28,20 @@ import os
 @MainActor
 @Observable
 final class Chat {
+    /// The saved chats' one stage, so one open runs at a time.
     enum Access {
-        case opening
+        /// Before the first open.
+        case unopened
+        /// Finding the key and reading the files: the first time, or
+        /// `again` after they did not open.
+        case opening(again: Bool)
         case open(ConversationStore)
         /// The key is missing while conversations are on disk, so none
         /// opens and no new key is made.
         case missingKey
-        /// The keychain did not give the key, or the folder did not open.
-        case failed
+        /// The keychain did not give the key, or the folder did not open;
+        /// `again` when trying again did not open them either.
+        case failed(again: Bool)
     }
 
     /// The one rewording under way, in all chats: one model on this Mac.
@@ -172,7 +178,7 @@ final class Chat {
     /// least memory first: read here for whether the chosen one is on this
     /// Mac, which a Local Llama chat needs.
     let downloads: [ModelDownload]
-    private(set) var access = Access.opening
+    private(set) var access = Access.unopened
     /// Newest first.
     private(set) var conversations: [Conversation] = []
     /// Conversation files that did not open; they are left as they are.
@@ -458,12 +464,17 @@ final class Chat {
     }
 
     /// Finds the key, or makes the first one, then opens every conversation
-    /// file. The keychain may ask first.
+    /// file. The keychain may ask first. After a failure it tries again;
+    /// while an open is under way, and once they are open or locked, it
+    /// does nothing.
     func open() async {
+        let again: Bool
         switch access {
-        case .opening, .failed: break
-        case .open, .missingKey: return
+        case .unopened: again = false
+        case .failed: again = true
+        case .opening, .open, .missingKey: return
         }
+        access = .opening(again: again)
         let folder = self.folder
         do {
             guard let key = try await ConversationStore.key(for: folder, find: Keychain.find, make: Keychain.make) else {
@@ -490,7 +501,7 @@ final class Chat {
             await wallet.find()
         } catch {
             logger.error("cannot open the conversations: \(String(describing: error), privacy: .public)")
-            access = .failed
+            access = .failed(again: again)
         }
     }
 

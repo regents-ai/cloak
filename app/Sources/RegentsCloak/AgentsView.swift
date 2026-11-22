@@ -1,29 +1,54 @@
 import AppKit
 import CloakChat
 import CloakDoor
+import CloakSupervisor
 import SwiftUI
 
 /// The owner's other apps that send through Cloak: the address to point
-/// them at, each app with a pass of its own, shown once when it is added,
-/// and the latest chat requests, each with its texts once reworded, as the
-/// app wrote them and as Cloak sent them. The door keeps those in memory
-/// only.
+/// them at, the door's state with the one way on from it (`DoorLine`), each
+/// app with a pass of its own, shown once when it is added, and the latest
+/// chat requests, each with its texts once reworded, as the app wrote them
+/// and as Cloak sent them. The door keeps those in memory only.
 struct AgentsView: View {
-    static func window(_ door: Door) -> NSWindow {
+    static func window(
+        _ door: Door, supervisor: Supervisor, download: ModelDownload, settings: AppSettings,
+        openDoor: @escaping () -> Void, showDetails: @escaping () -> Void, showDoorSettings: @escaping () -> Void
+    ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Agents"
-        window.contentViewController = NSHostingController(rootView: AgentsView(door: door))
+        window.contentViewController = NSHostingController(
+            rootView: AgentsView(
+                door: door, supervisor: supervisor, download: download, settings: settings, openDoor: openDoor,
+                showDetails: showDetails, showDoorSettings: showDoorSettings))
         return window
     }
 
     let door: Door
-    @State private var adding = false
+    let supervisor: Supervisor
+    /// The download of the model that rewords, for the Start row's fix.
+    let download: ModelDownload
+    /// Read for the port the door takes when it next opens.
+    let settings: AppSettings
+    /// Opens the door again, in turn with the app's own opens and closes.
+    let openDoor: () -> Void
+    let showDetails: () -> Void
+    /// Settings, on its Door pane, where the port is chosen.
+    let showDoorSettings: () -> Void
+    /// Read so the door's line is drawn again each time the window comes to
+    /// the front: the app holding the port may have quit meanwhile.
+    @Environment(\.appearsActive) private var appearsActive
+    /// Nil while no app is being added.
+    @State private var adding: Adding?
     @State private var removing: AgentApp?
-    @State private var opened: AgentRequest?
+    /// The request whose texts are open, by its id, so the sheet shows it
+    /// as it is now.
+    @State private var opened: AgentRequest.ID?
 
     var body: some View {
+        let _ = appearsActive
+        let line = DoorLine(door.state, running: supervisor.phase == .running, port: settings.doorPort)
         Form {
             Section {
                 LabeledContent {
@@ -37,16 +62,44 @@ struct AgentsView: View {
                     }
                 }
                 LabeledContent("Status") {
-                    switch door.state {
+                    switch line {
                     case .open:
                         Label("Open", systemImage: "circle.fill")
                             .foregroundStyle(.green)
-                    case .closed:
-                        Text("Closed while Cloak isn't running.")
+                    case .stopped:
+                        Text("Closed")
                             .foregroundStyle(.secondary)
-                    case .refused(let words):
-                        Label(words, systemImage: "exclamationmark.triangle.fill")
+                    case .opening:
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Opening")
+                        }
+                        .foregroundStyle(.secondary)
+                        .accessibilityElement(children: .combine)
+                    case .portTaken, .refused:
+                        Label("Can't open", systemImage: "exclamationmark.triangle.fill")
                             .symbolRenderingMode(.multicolor)
+                    }
+                }
+                switch line {
+                case .open, .opening:
+                    EmptyView()
+                case .stopped:
+                    StartRow(supervisor: supervisor, download: download, showDetails: showDetails)
+                case .portTaken(let port):
+                    HStack(spacing: 8) {
+                        Text("Another app is using port \(String(port)). Choose another, or quit that app.")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Change Port…", action: showDoorSettings)
+                    }
+                case .refused(let words):
+                    HStack(spacing: 8) {
+                        Text(words)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Try Again", action: openDoor)
                     }
                 }
             }
@@ -68,7 +121,7 @@ struct AgentsView: View {
                 HStack {
                     Text("Apps")
                     Spacer()
-                    SymbolButton("Add", symbol: "plus") { adding = true }
+                    SymbolButton("Add", symbol: "plus") { adding = .naming(stop: nil) }
                 }
             }
             Section {
@@ -86,8 +139,8 @@ struct AgentsView: View {
                     }
                     ForEach(door.requests.prefix(Door.latest)) { request in
                         RequestRow(
-                            request: request, sender: sender(of: request),
-                            open: request.messages.isEmpty ? nil : { opened = request })
+                            request: request, sender: door.sender(of: request),
+                            open: request.messages.isEmpty ? nil : { opened = request.id })
                     }
                 }
             } header: {
@@ -100,11 +153,17 @@ struct AgentsView: View {
         .formStyle(.grouped)
         .frame(width: 520, height: 560)
         .task { await door.load() }
-        .sheet(isPresented: $adding) {
-            AddApp(door: door)
+        .sheet(item: $adding) { stage in
+            AddApp(door: door, adding: stage) { adding = $0 }
         }
-        .sheet(item: $opened) { request in
-            RequestTexts(request: request, sender: sender(of: request))
+        // The request as it is now in the door's list, which keeps the
+        // latest 200; it closes once the request is gone from there.
+        .sheet(
+            item: Binding(
+                get: { opened.flatMap { id in door.requests.first { $0.id == id } } },
+                set: { opened = $0?.id })
+        ) { request in
+            RequestTexts(request: request, sender: door.sender(of: request))
         }
         .confirmationDialog(
             "Remove \(removing?.name ?? "")?",
@@ -128,10 +187,41 @@ struct AgentsView: View {
         let answered = Double(finished.count { $0.stage == .answered }) / Double(finished.count)
         return [count, "\(answered.formatted(.percent.precision(.fractionLength(0)).rounded(rule: .down))) answered"]
     }
+}
 
-    private func sender(of request: AgentRequest) -> String {
+/// The door's state as the Agents window shows it, read in one place, each
+/// with the one way on from it, by the rule the rest of the app uses for a
+/// start that stopped (`Fix`): while Cloak isn't running, the Start row,
+/// with Start or the start's own fix; while another app holds the port the
+/// door takes next, so trying again is certain to fail, the way to the
+/// port; for any other refusal, Try Again.
+private enum DoorLine {
+    case open
+    /// Cloak isn't running, so the door is closed.
+    case stopped
+    /// Cloak is running and the door isn't open yet.
+    case opening
+    /// Another app holds the port the door takes next.
+    case portTaken(UInt16)
+    /// The door couldn't open, in its words.
+    case refused(String)
+
+    /// With the port the door takes when it next opens, which another app
+    /// may hold.
+    init(_ state: Door.State, running: Bool, port: UInt16) {
+        switch state {
+        case .open: self = .open
+        case .closed: self = running ? .opening : .stopped
+        case .refused(let words): self = AppSettings.isFree(port) ? .refused(words) : .portTaken(port)
+        }
+    }
+}
+
+private extension Door {
+    /// Who sent `request`, by name.
+    func sender(of request: AgentRequest) -> String {
         switch request.sender {
-        case .app(let id): door.apps.first { $0.id == id }?.name ?? "Removed app"
+        case .app(let id): apps.first { $0.id == id }?.name ?? "Removed app"
         case .agent: "Cloak agent"
         }
     }
@@ -294,10 +384,17 @@ private struct RequestTexts: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    // Newer requests have pushed this one's texts out since
+                    // it was opened.
+                    if request.messages.isEmpty {
+                        Text("Cloak keeps the texts of the latest \(Door.latest) requests only.")
+                            .foregroundStyle(.secondary)
+                    }
                     ForEach(Array(request.messages.enumerated().reversed()), id: \.offset) { _, message in
                         MessageTexts(message: message, went: went)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
             Divider()
@@ -389,18 +486,36 @@ private struct AppRow: View {
     }
 }
 
-/// Asks the app's name, then shows its pass once, with the address.
+/// Adding an app, from its name to its pass, as one value. The window
+/// keeps it, not the sheet, and nothing closes the sheet while the app is
+/// being kept, so a pass that was made is always shown, once.
+private enum Adding: Identifiable {
+    /// Asking the app's name; with the door's words when the last Add
+    /// could not keep it.
+    case naming(stop: String?)
+    /// Keeping the app named.
+    case keeping(name: String)
+    /// Kept: its pass, shown this once.
+    case kept(name: String, pass: String)
+
+    /// Every stage is the one sheet, which stays as it was while it closes.
+    var id: Int { 0 }
+}
+
+/// Asks the app's name, then shows its pass once, with the address. While
+/// the app is kept there is no Cancel: the door keeps it either way.
 private struct AddApp: View {
     let door: Door
-    @Environment(\.dismiss) private var dismiss
+    let adding: Adding
+    /// The next stage; nil closes the sheet.
+    let move: (Adding?) -> Void
     @State private var name = ""
-    @State private var pass: String?
-    @State private var working = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let pass {
-                Text(name.trimmingCharacters(in: .whitespacesAndNewlines))
+            switch adding {
+            case .kept(let name, let pass):
+                Text(name)
                     .font(.headline)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Pass")
@@ -416,27 +531,35 @@ private struct AddApp: View {
                     .foregroundStyle(.secondary)
                 HStack {
                     Spacer()
-                    Button("Done") { dismiss() }
+                    Button("Done") { move(nil) }
                         .keyboardShortcut(.defaultAction)
                 }
-            } else {
+            case .naming(let stop):
                 Text("New App")
                     .font(.headline)
-                TextField("Name", text: $name)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("App name")
-                    .onSubmit(add)
-                if let problem = door.problem {
-                    Text(problem)
+                field
+                if let stop {
+                    Text(stop)
                         .foregroundStyle(.secondary)
                 }
                 HStack {
                     Spacer()
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { move(nil) }
                         .keyboardShortcut(.cancelAction)
                     Button("Add", action: add)
                         .keyboardShortcut(.defaultAction)
-                        .disabled(working || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            case .keeping:
+                Text("New App")
+                    .font(.headline)
+                field
+                    .disabled(true)
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Adding")
                 }
             }
         }
@@ -444,14 +567,30 @@ private struct AddApp: View {
         .frame(width: 460)
         // Its own height, so the pass and the words under it wrap in full.
         .fixedSize(horizontal: false, vertical: true)
+        .interactiveDismissDisabled(isKeeping)
+    }
+
+    private var field: some View {
+        TextField("Name", text: $name)
+            .textFieldStyle(.roundedBorder)
+            .accessibilityLabel("App name")
+            .onSubmit(add)
+    }
+
+    private var isKeeping: Bool {
+        if case .keeping = adding { true } else { false }
     }
 
     private func add() {
-        guard !working else { return }
-        working = true
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard case .naming = adding, !name.isEmpty else { return }
+        move(.keeping(name: name))
         Task {
-            pass = await door.add(name)
-            working = false
+            if let pass = await door.add(name) {
+                move(.kept(name: name, pass: pass))
+            } else {
+                move(.naming(stop: door.problem))
+            }
         }
     }
 }
