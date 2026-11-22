@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Settings rows say what stopped and carry the way on. The NEAR key's
+  row is one stage: a check that fails says "Couldn't check" with Try
+  Again, a save that fails keeps what was typed and says so, a remove
+  that fails keeps the key shown as saved, and Replace has Cancel; the
+  Wallet's own check keeps its stop in the Wallet. A model's row shows
+  when its download waits for the network or for its next try. The
+  shortcut recorder takes only keys typed into it, and a choice macOS
+  refuses says which shortcut still works. Launch at login says when
+  macOS wants approval or refused, with Open Login Items. Restore
+  Defaults leaves V's model, which the Wallet chooses. Every Copy shows a
+  checkmark for a second and a half; Copy Log shows only once there is a
+  log.
 - Chat and the menu keep each stage with its own chat and its own press.
   A message's rewording belongs to the chat it was asked in: its result,
   its stop and its text given back no longer land in whichever chat is

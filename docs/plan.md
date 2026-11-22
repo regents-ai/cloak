@@ -3675,6 +3675,15 @@ place and a Mac that can't run it, from a supervisor staged in a
 temporary folder. Chat's own rows were not pictured (their models read
 the keychain) and nothing was pressed in the real app.
 
+Settings' share (the NEAR key's row, a model's row, the shortcut
+recorder, Launch at login, Restore Defaults and one Copy button for the
+whole app) was fixed by a third helper on branch
+`t3/fix-settings-feedback` (commit `e304dde`), read by the chief and
+merged to main the same evening; 40 checks pass, no warnings. None of it
+can be pictured off screen (the rows are private to the Settings window
+and its key row reads the keychain), so it is looked at in the running
+app after the next build.
+
 NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
 November 2026), against stand-ins only: no sign-in, enrolment or upload
 has been made. An independent reader found 14 things and the helper
