@@ -117,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // with no "quit" ended some other way (`app/log.sh`).
         logger.notice("opened \(Launch.manifest.release, privacy: .public) (\(Launch.manifest.build, privacy: .public))")
         menu = StatusMenu(
-            supervisor: supervisor, download: download, model: Launch.layout.model(Launch.manifest.rewordingModel), showChat: showChat,
+            supervisor: supervisor, download: download, showChat: showChat,
             showAgents: showAgents, showDetails: showDetails, showSettings: showSettings,
             checkForUpdates: updates.check)
         // Made now, so the shortcut chosen works from launch.

@@ -38,21 +38,27 @@ final class Chat {
         case failed
     }
 
-    /// The one rewording under way.
+    /// The one rewording under way, in all chats: one model on this Mac.
     struct Rewording {
         let conversation: UUID
         let original: String
-        /// The turn asked again, or nil for a new message.
-        let turn: UUID?
+        let asked: Asked
         let started: Date
         let task: Task<Void, Never>
+
+        /// The turn asked again, or nil for a new message.
+        var turn: UUID? {
+            if case .again(let turn) = asked { turn } else { nil }
+        }
     }
 
     /// What one rewording is for.
     enum Asked {
         /// A new message, with the box as it was written, picks and all, to
-        /// give back if the rewording stops, and the mode it was written in.
-        case new(draft: String, picks: DetailPicks, mode: Kind)
+        /// give back if the rewording stops; the mode it was written in; and
+        /// whether it is sent once reworded, as its press said: the box's
+        /// Send, with Review off, rather than its Reword.
+        case new(draft: String, picks: DetailPicks, mode: Kind, sends: Bool)
         /// A turn asked again.
         case again(UUID)
     }
@@ -68,10 +74,12 @@ final class Chat {
         var presses = 1
     }
 
-    /// The last send that stopped.
+    /// Why a turn's last send stopped, kept with the turn until its next
+    /// press of Send. Dismissing it hides its row only, so the card still
+    /// says whether that send may have gone.
     struct SendStop {
-        let turn: UUID
-        let stop: Reason
+        let reason: Reason
+        var dismissed = false
 
         /// Why, from the way it was paid.
         enum Reason: Error {
@@ -79,11 +87,14 @@ final class Chat {
             case tempo(RemoteStop)
             /// V's, through the payer.
             case zkapi(PayStop)
+            /// NEAR's, with the owner's NEAR key.
+            case near(NearStop)
 
             var code: String {
                 switch self {
                 case .tempo(let stop): stop.code.rawValue
                 case .zkapi(let stop): stop.code.rawValue
+                case .near(let stop): stop.kind.rawValue
                 }
             }
 
@@ -91,15 +102,40 @@ final class Chat {
                 switch self {
                 case .tempo(let stop): stop.detail
                 case .zkapi(let stop): stop.detail
+                case .near(let stop): stop.text
+                }
+            }
+
+            /// Whether the message may have reached the model, or been paid
+            /// for, as the stop's own words say: the model answered with no
+            /// text, or no answer came after the request went.
+            var mayHaveGone: Bool {
+                switch self {
+                case .tempo(let stop): stop.code == .answerRefused
+                case .zkapi(let stop): [.providerFailed, .answerRefused, .timedOut, .ended].contains(stop.code)
+                case .near(let stop): stop.sent
                 }
             }
         }
     }
 
-    /// The last rewording that ended without a reworded text.
-    struct Stop: Equatable {
+    /// A rewording that ended without a reworded text, kept with its
+    /// conversation until dismissed or the conversation's next rewording.
+    struct Stop {
         let reason: RewriteStop
-        let newMessage: Bool
+        /// The turn asked again, whose card says so; nil for a new message,
+        /// which the box says so for.
+        let turn: UUID?
+        /// The new message's box, until it goes back into the box: at once
+        /// when its conversation is shown as the rewording ends, else when
+        /// it is next shown.
+        var back: Back?
+    }
+
+    /// A new message's box as it was written.
+    struct Back {
+        let draft: String
+        let picks: DetailPicks
     }
 
     /// A Local Llama answer under way.
@@ -151,6 +187,7 @@ final class Chat {
             guard selection != oldValue else { return }
             picks = DetailPicks()
             askDetails()
+            giveBack()
         }
     }
     /// The message being written.
@@ -164,7 +201,7 @@ final class Chat {
     /// The details of the message being written, from the model on this Mac
     /// (decision 13), and what is picked for them. Cleared when the draft is
     /// emptied or another conversation is shown; given back with the draft
-    /// when a new message's rewording stops.
+    /// when a new message's rewording stops (`giveBack`).
     private(set) var picks = DetailPicks()
     /// The details of the draft are being asked for.
     private(set) var askingDetails = false
@@ -180,13 +217,15 @@ final class Chat {
     /// The Modes page is shown.
     var showingModes = false
     private(set) var rewording: Rewording?
-    var stop: Stop?
+    /// By conversation. In memory only.
+    var stops: [UUID: Stop] = [:]
     /// The unsent message last opened or added; see `isOpen(_:in:)`. In
     /// memory only.
     var opened: UUID?
     /// By turn.
     private(set) var sending: [UUID: Sending] = [:]
-    var sendStop: SendStop?
+    /// By turn. In memory only.
+    var sendStops: [UUID: SendStop] = [:]
     /// The Local Llama answer under way, by conversation: one at a time in
     /// each.
     private(set) var answering: [UUID: Answering] = [:]
@@ -237,15 +276,17 @@ final class Chat {
         if case .open = access { true } else { false }
     }
 
-    /// A new message can be written: the store is open and nothing is being
-    /// reworded.
-    var canCompose: Bool {
-        isOpen && rewording == nil
+    /// The download of the model that rewords, which every Start needs.
+    var rewordingDownload: ModelDownload {
+        // The manifest lists the model that rewords among those that answer
+        // Local Llama chats (decision 21).
+        downloads.first(where: \.rewords)!
     }
 
-    /// Rewording needs Cloak running.
+    /// Rewording needs the store open, Cloak running and no rewording under
+    /// way in any chat: one model on this Mac.
     var canReword: Bool {
-        canCompose && supervisor.phase == .running
+        isOpen && rewording == nil && supervisor.phase == .running
     }
 
     /// With Never reword ticked, a message is added without Cloak running;
@@ -260,22 +301,40 @@ final class Chat {
         if isAgent(selected) { return isOpen && runBlock(in: mode) == nil && agent.runs[selected.id] == nil }
         if mode == .near { return isOpen && nearMode.sendBlock == nil }
         if mode == .llama { return isOpen && llamaBlock == nil && answering[selected.id] == nil }
-        return settings.neverReword ? canCompose : canReword
+        return settings.neverReword ? isOpen : canReword
+    }
+
+    /// Whether the shown chat's messages would be reworded while another
+    /// chat's rewording runs, so its box says so, with Cancel: a V or Token
+    /// Inference chat that is not the agent's, with Never reword off.
+    var rewordsElsewhere: Bool {
+        guard !settings.neverReword, let selected, let rewording, rewording.conversation != selected.id else { return false }
+        let mode = kind(of: selected)
+        return (mode == .v || mode == .token) && !isAgent(selected)
     }
 
     /// The mode of `conversation`: as its first message made it, or, while
-    /// it has none, as chosen. A saved conversation with no mark is V's.
+    /// it has none, as the one being reworded was written in, or as chosen.
+    /// A saved conversation with no mark is V's.
     func kind(of conversation: Conversation) -> Kind {
-        guard !conversation.turns.isEmpty else { return kind }
+        guard !conversation.turns.isEmpty else { return firstMode(of: conversation.id) ?? kind }
         if conversation.isNear { return .near }
         if conversation.isLlama { return .llama }
         return conversation.isToken ? .token : .v
     }
 
     /// Whether `conversation` is the agent's: as its first turn is, or, while
-    /// it has none, as chosen.
+    /// it has none, as chosen, unless its first message is being reworded.
     func isAgent(_ conversation: Conversation) -> Bool {
-        conversation.turns.isEmpty ? agentOn && kind.hasAgent : conversation.isAgent
+        conversation.turns.isEmpty ? firstMode(of: conversation.id) == nil && agentOn && kind.hasAgent : conversation.isAgent
+    }
+
+    /// The mode the first message of the conversation, being reworded now,
+    /// was written in: chosen at its press, whatever is chosen since for
+    /// another new chat.
+    private func firstMode(of id: UUID) -> Kind? {
+        guard let rewording, rewording.conversation == id, case .new(_, _, let mode, _) = rewording.asked else { return nil }
+        return mode
     }
 
     func isNear(_ conversation: Conversation) -> Bool {
@@ -436,10 +495,11 @@ final class Chat {
     }
 
     /// Shows the empty conversation, made if there is none. It is saved with
-    /// its first turn.
+    /// its first turn. One whose first message is being reworded is not
+    /// empty for this.
     func newConversation() {
         guard isOpen else { return }
-        if let empty = conversations.first(where: \.turns.isEmpty) {
+        if let empty = conversations.first(where: { $0.turns.isEmpty && $0.id != rewording?.conversation }) {
             selection = empty.id
         } else {
             let conversation = Conversation()
@@ -448,19 +508,30 @@ final class Chat {
         }
     }
 
-    /// A new chat whose message box holds `text`, exactly as if typed there
-    /// (the quick prompt's): nothing is sent or reworded. Before the store
+    /// The quick prompt's Return: a new V chat whose box holds `text`, as if
+    /// typed there; nothing is sent or reworded. An empty Return changes
+    /// nothing here. The box is one for every chat and follows a change of
+    /// chat, so what it holds stays, `text` after it: its picks first go on
+    /// as lines of its text, as a change of chat clears them, and a message
+    /// given back to the new chat (`giveBack`) joins it. Before the store
     /// opens, the text waits for the empty conversation it opens on.
     func compose(_ text: String) {
+        guard !Self.isBlank(text) else { return }
         kind = .v
         agentOn = false
+        let held = picks.message(draft)
+        if held != draft {
+            picks = DetailPicks()
+            draft = held
+        }
         newConversation()
-        draft = text
+        draft = Self.isBlank(draft) ? text : draft + "\n\n" + text
     }
 
     func delete(_ id: UUID) {
         guard case .open(let store) = access, let conversation = conversations.first(where: { $0.id == id }) else { return }
         if rewording?.conversation == id { rewording?.task.cancel() }
+        stops[id] = nil
         answering[id]?.task.cancel()
         agent.stop(id)
         identities[id] = nil
@@ -474,6 +545,7 @@ final class Chat {
             }
         }
         conversations.removeAll { $0.id == id }
+        conversation.turns.forEach { sendStops[$0.id] = nil }
         unsaved.remove(id)
         if selection == id {
             selection = nil
@@ -482,7 +554,7 @@ final class Chat {
     }
 
     /// Rewords the message written, as a new turn of the conversation shown,
-    /// sent once reworded when Review is off;
+    /// sent once reworded when Review is off at the press;
     /// or, with Never reword ticked, adds it as written and sends it, the
     /// model on this Mac not asked; or, in the agent's conversation, runs it
     /// as its next task; or, in a NEAR conversation, adds it as written and
@@ -519,7 +591,7 @@ final class Chat {
             update(conversation)
             send(turn.id, in: conversation.id)
         } else {
-            start(conversation.id, original, .new(draft: written, picks: picked, mode: mode))
+            start(conversation.id, original, .new(draft: written, picks: picked, mode: mode, sends: !settings.review))
         }
     }
 
@@ -531,6 +603,7 @@ final class Chat {
         start(conversation, turn.original, .again(turn.id))
     }
 
+    /// Cancels the rewording under way, in whichever chat it is.
     func cancel() {
         rewording?.task.cancel()
     }
@@ -542,10 +615,10 @@ final class Chat {
         run(turn.original, in: id)
     }
 
-    /// Runs a task, its model requests paid as its chat's are: a V chat's
-    /// through the payer, with V's model, a Token Inference chat's from the
-    /// Tempo wallet, with its model. The first task marks its conversation
-    /// with its mode, saved with its turn.
+    /// Runs a task, running from the press, its model requests paid as its
+    /// chat's are: a V chat's through the payer, with V's model, read first,
+    /// a Token Inference chat's from the Tempo wallet, with its model. The
+    /// first task marks its conversation with its mode, saved with its turn.
     private func run(_ task: String, in id: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         let mode = kind(of: conversations[index])
@@ -558,20 +631,19 @@ final class Chat {
             if mode == .token { Task { await wallet.refresh() } } else { payer.follow() }
         }
         guard mode == .v else {
-            agent.run(task, in: id, model: wallet.model, paying: .tempo, keep: kept)
+            let model = wallet.model
+            agent.run(task, in: id, paying: .tempo, model: { model }, keep: kept)
             return
         }
-        Task {
+        agent.run(task, in: id, paying: .zkapi, model: { [payer, logger] () async throws(Agent.End) -> String in
             do throws(PayStop) {
-                let model = try await payer.modelForSend()
-                agent.run(task, in: id, model: model, paying: .zkapi, keep: kept)
+                return try await payer.modelForSend()
             } catch {
                 logger.error("V's models did not read: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .private)")
-                let words = error.code == .modelUnavailable
-                    ? "The service lists no model now. Try again later." : "Cloak couldn't read V's models. Try again."
-                agent.refuse(task, .failed(words), keep: kept)
+                throw .failed(error.code == .modelUnavailable
+                    ? "The service lists no model now. Try again later." : "Cloak couldn't read V's models. Try again.")
             }
-        }
+        }, keep: kept)
     }
 
     /// Puts a task's turn in its conversation, in place of its old self or at
@@ -626,8 +698,12 @@ final class Chat {
             guard nearMode.sendBlock == nil, let route = nearMode.route else { return }
             press(turn, at: index, in: &conversation)
             Task { [conversation] in
-                let answer = await nearMode.send(turn, in: conversation, route: route)
-                sent(turn, in: id, answer: answer?.text, tokens: answer?.tokens)
+                do throws(NearStop) {
+                    let answer = try await nearMode.send(turn, in: conversation, route: route)
+                    finish(turn, in: id, .success(answer.text), tokens: answer.tokens)
+                } catch {
+                    finish(turn, in: id, .failure(.near(error)))
+                }
             }
             return
         }
@@ -636,7 +712,6 @@ final class Chat {
         if mode == .token {
             guard let deposits = wallet.deposits else { return }
             press(turn, at: index, in: &conversation)
-            sendStop = nil
             let identity = identity(of: id)
             let (model, exchange) = (wallet.model, wallet.exchange)
             Task { [conversation] in
@@ -654,7 +729,6 @@ final class Chat {
             return
         }
         press(turn, at: index, in: &conversation)
-        sendStop = nil
         let identity = identity(of: id)
         Task { [conversation] in
             let result: Result<String, SendStop.Reason>
@@ -676,21 +750,25 @@ final class Chat {
         return identity
     }
 
-    private func finish(_ turn: UUID, in id: UUID, _ result: Result<String, SendStop.Reason>) {
+    /// One press of Send ended: why it stopped, kept with its turn, or its
+    /// answer, with the tokens NEAR counted for it.
+    private func finish(_ turn: UUID, in id: UUID, _ result: Result<String, SendStop.Reason>, tokens: Tokens? = nil) {
         if case .failure(let reason) = result {
             logger.error("a send stopped: \(reason.code, privacy: .public) \(reason.detail, privacy: .private)")
-            sendStop = SendStop(turn: turn, stop: reason)
+            sendStops[turn] = SendStop(reason: reason)
         }
-        sent(turn, in: id, answer: try? result.get(), tokens: nil)
+        sent(turn, in: id, answer: try? result.get(), tokens: tokens)
     }
 
-    /// Moves a turn sent after later ones to the end, and counts the press.
+    /// Moves a turn sent after later ones to the end, counts the press, and
+    /// clears why the turn's last send stopped.
     private func press(_ turn: UUID, at index: Int, in conversation: inout Conversation) {
         if index != conversation.turns.count - 1 {
             conversation.turns.append(conversation.turns.remove(at: index))
             update(conversation)
         }
         if sending[turn] == nil { sending[turn] = Sending(started: .now) } else { sending[turn]?.presses += 1 }
+        sendStops[turn] = nil
     }
 
     /// One press of Send on the turn ended; its answer, when one came, is
@@ -797,10 +875,9 @@ final class Chat {
     private func start(_ conversation: UUID, _ original: String, _ asked: Asked) {
         // A rewrite never waits on a details request.
         stopAskingDetails()
-        stop = nil
+        stops[conversation] = nil
         let task = Task { await reword(original, in: conversation, asked) }
-        let turn: UUID? = if case .again(let turn) = asked { turn } else { nil }
-        rewording = Rewording(conversation: conversation, original: original, turn: turn, started: .now, task: task)
+        rewording = Rewording(conversation: conversation, original: original, asked: asked, started: .now, task: task)
     }
 
     private func reword(_ original: String, in id: UUID, _ asked: Asked) async {
@@ -820,31 +897,43 @@ final class Chat {
                 conversation.turns[index].reworded = reworded
                 turn = again
             } else {
-                if case .new(_, _, let mode) = asked { mark(&conversation, as: mode) }
+                if case .new(_, _, let mode, _) = asked { mark(&conversation, as: mode) }
                 let new = Turn(original: original, reworded: reworded)
                 conversation.turns.append(new)
                 opened = new.id
                 turn = new.id
             }
             update(conversation)
-            // A new message, with Review off, goes now, as if Send were
-            // pressed: through the same checks, so one certain to stop stays
-            // open, saying why. A card's Reword only rewords.
-            if case .new = asked, !settings.review { send(turn, in: id) }
+            // A new message pressed as Send, with Review off then, goes now,
+            // as if Send were pressed: through the same checks, so one
+            // certain to stop stays open, saying why. A card's Reword only
+            // rewords.
+            if case .new(_, _, _, true) = asked { send(turn, in: id) }
         case .failure(let reason):
-            guard case .new(let written, let picked, _) = asked else {
-                stop = Stop(reason: reason, newMessage: false)
-                return
+            switch asked {
+            case .again(let turn):
+                stops[id] = Stop(reason: reason, turn: turn)
+            case .new(let written, let picked, _, _):
+                stops[id] = Stop(reason: reason, turn: nil, back: Back(draft: written, picks: picked))
+                giveBack()
             }
-            stop = Stop(reason: reason, newMessage: true)
-            // The message goes back into the box as it was written, its picks
-            // with it, to be written again; it is never shown as reworded. The
-            // picks go first, so the draft finds them fixed and no new
-            // details are asked for.
-            if draft.isEmpty {
-                picks = picked
-                draft = written
-            }
+        }
+    }
+
+    /// Gives the shown conversation's new message whose rewording stopped
+    /// back to the box, as it was written, to be written again; it is never
+    /// shown as reworded. Into an empty box with its picks, which go first,
+    /// so the draft finds them fixed and no new details are asked for; after
+    /// what the box holds otherwise, its picks as lines of its text, so
+    /// nothing in the box is lost.
+    private func giveBack() {
+        guard let id = selection, let back = stops[id]?.back else { return }
+        stops[id]?.back = nil
+        if Self.isBlank(draft) {
+            picks = back.picks
+            draft = back.draft
+        } else {
+            draft += "\n\n" + back.picks.message(back.draft)
         }
     }
 

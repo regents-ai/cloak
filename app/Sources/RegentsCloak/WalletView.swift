@@ -23,6 +23,8 @@ struct WalletView: View {
     let payer: Payer
     let settings: AppSettings
     let nearMode: NearMode
+    /// The download of the model that rewords, for the Start row's fix.
+    let download: ModelDownload
     /// The conversation in front's.
     let kind: Chat.Kind
     /// The tokens NEAR counted for the conversation in front's answers,
@@ -43,7 +45,7 @@ struct WalletView: View {
             Form {
                 if kind == .v || kind == .token, !running {
                     Section {
-                        StartRow(supervisor: wallet.supervisor) {
+                        StartRow(supervisor: wallet.supervisor, download: download) {
                             dismiss()
                             showDetails()
                         }
@@ -106,22 +108,31 @@ struct WalletView: View {
 }
 
 /// In a wallet while Cloak is not running: Cloak's state in words and the
-/// way on beside it. Start; the model's download in Details while the
-/// model is missing; a spinner while Cloak starts or stops.
+/// way on beside it. Start while paused or ready; a failure's fix (`Fix`),
+/// or, with none, its remedy in words; a spinner while Cloak starts or
+/// stops.
 struct StartRow: View {
     let supervisor: Supervisor
+    /// The download of the model that rewords.
+    let download: ModelDownload
     let showDetails: () -> Void
 
     var body: some View {
         let phase = supervisor.phase
+        let fix = phase.reason.flatMap { Fix(for: $0, download: download) }
         HStack(spacing: 8) {
-            Text(words(phase))
+            Text(words(phase, fix: fix))
                 .foregroundStyle(.secondary)
             Spacer()
             switch phase {
-            case .needsAttention(.modelMissing):
-                Button("Download Model…", action: showDetails)
-            case .paused, .ready, .needsAttention:
+            case .needsAttention:
+                switch fix {
+                case .start?: Button(Fix.start.title) { supervisor.send(.start) }
+                case .download(let underWay)?: Button(Fix.download(underWay: underWay).title, action: showDetails)
+                case .showModel?: Button(Fix.showModel.title, action: Fix.showModel)
+                case nil: EmptyView()
+                }
+            case .paused, .ready:
                 Button("Start") { supervisor.send(.start) }
             case .preparing, .stopping, .running:
                 ProgressView()
@@ -130,14 +141,18 @@ struct StartRow: View {
         }
     }
 
-    private func words(_ phase: Phase) -> String {
+    private func words(_ phase: Phase, fix: Fix?) -> String {
         switch phase {
         case .paused: "Cloak is paused."
         case .ready: "Cloak isn't running."
         case .preparing: "Cloak is starting."
         case .stopping: "Cloak is stopping."
-        case .needsAttention(.modelMissing): "The model isn't installed."
-        case .needsAttention(let reason): reason.title
+        case .needsAttention(let reason):
+            switch fix {
+            case .start?, .download?: reason.title(with: fix)
+            // No button does it all, so the words say what to do.
+            case .showModel?, nil: "\(reason.title) \(reason.remedy)"
+            }
         case .running: "Cloak is running."
         }
     }

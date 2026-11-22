@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Chat and the menu keep each stage with its own chat and its own press.
+  A message's rewording belongs to the chat it was asked in: its result,
+  its stop and its text given back no longer land in whichever chat is
+  showing, and another chat can be written in meanwhile ("Another chat
+  is rewording." with Cancel where a second rewording would wait).
+  Whether a reworded message sends by itself is settled at the press, so
+  ticking Never reword or Review while it rewords no longer sends it
+  unasked. A send's stop stays with its own message; a NEAR message that
+  may have left before the stop says "May have been sent". New Chat
+  works whenever Chat is open. A task's card appears at the press, before
+  the model is read. One rule (`Fix`) gives the menu, Details, Chat and
+  the Wallet the same way on for a start that stopped: Start Again where
+  it can work, Download Model… while the model's files are missing, Show
+  in Finder when they have changed, none where Cloak can do nothing; the
+  menu's Start is off where it is certain to stop again. After the
+  model's download finishes the line says "The model has downloaded."
+  beside Start Again, not "The model isn't installed." Three task checks
+  added (40 pass).
 - V's wallet says the truth about each press and each read. A press
   that stopped is one value with what it asked, so an approve's stop no
   longer reads "Nothing was sent." because a quote was pressed after it.

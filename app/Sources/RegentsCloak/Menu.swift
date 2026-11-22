@@ -8,7 +8,8 @@ import Observation
 /// download while its files are not all in place, Start or Pause, Chat,
 /// Agents, Details, Settings, Check for Updates… (`Updates`),
 /// Quit, and the release and build. Start, here or in the header, also
-/// shows Chat. Every action
+/// shows Chat; it is off while Cloak needs attention for a reason a start
+/// is certain to stop on again (`Fix.startStops`). Every action
 /// but Show in Finder is reachable from the keyboard, since the header's
 /// other fixes are also Start or Details. It is AppKit's menu, since a
 /// SwiftUI menu holds only plain items and the header is a view of its own.
@@ -28,9 +29,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let headerView = MenuHeaderView()
     private var open = false
 
-    /// `model` is the model's folder, which Show in Finder reveals.
     init(
-        supervisor: Supervisor, download: ModelDownload, model: URL, showChat: @escaping () -> Void,
+        supervisor: Supervisor, download: ModelDownload, showChat: @escaping () -> Void,
         showAgents: @escaping () -> Void, showDetails: @escaping () -> Void,
         showSettings: @escaping () -> Void, checkForUpdates: @escaping () -> Void
     ) {
@@ -50,8 +50,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 supervisor.send(.start)
                 showChat()
             case .download: showDetails()
-            // Reveals the folder; nothing in it is changed.
-            case .showModel: NSWorkspace.shared.activateFileViewerSelecting([model])
+            case .showModel: Fix.showModel()
             }
         }
         menu.autoenablesItems = false
@@ -92,7 +91,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     private func rebuild() {
         let phase = supervisor.phase
-        let shown = MenuHeader(phase: phase, resting: supervisor.resting, downloading: download.isUnderWay)
+        let shown = MenuHeader(phase: phase, resting: supervisor.resting, download: download)
         headerView.show(shown)
         menu.removeAllItems()
         menu.addItem(header)
@@ -111,10 +110,13 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             start.isEnabled = false
             menu.addItem(start)
         case .paused, .ready, .needsAttention:
-            menu.addItem(Action("Start", symbol: "play.fill", key: "s") { [supervisor, showChat] in
+            let start = Action("Start", symbol: "play.fill", key: "s") { [supervisor, showChat] in
                 supervisor.send(.start)
                 showChat()
-            })
+            }
+            // The header above says why.
+            if case .needsAttention(let reason) = phase { start.isEnabled = !Fix.startStops(for: reason, download: download) }
+            menu.addItem(start)
         }
         menu.addItem(Action("Chat", symbol: "bubble.left", run: showChat))
         menu.addItem(Action("Agents", symbol: "hammer", run: showAgents))
@@ -167,17 +169,10 @@ private final class Action: NSMenuItem {
 /// What the menu's header says. Its dot is the state now, grey while Cloak
 /// starts or stops, and its line says the state now, Starting or Stopping
 /// meanwhile. A failure takes the line, with its remedy
-/// and the one fix the menu can offer, once Cloak has stopped for it.
+/// and its one fix (`Fix`), once Cloak has stopped for it.
 struct MenuHeader: Equatable {
     enum Dot: Equatable {
         case running, stopped, attention, changing
-    }
-
-    enum Fix: Equatable {
-        case start
-        case download(underWay: Bool)
-        /// Reveal the model's folder in Finder.
-        case showModel
     }
 
     enum Line: Equatable {
@@ -191,7 +186,9 @@ struct MenuHeader: Equatable {
     var state: State
     var line: Line
 
-    init(phase: Phase, resting: Bool, downloading: Bool) {
+    /// `download` is the model that rewords'.
+    @MainActor
+    init(phase: Phase, resting: Bool, download: ModelDownload) {
         state = phase.state
         dot = switch phase {
         case .running: .running
@@ -200,20 +197,9 @@ struct MenuHeader: Equatable {
         case .preparing, .stopping: .changing
         }
         if case .needsAttention(let reason) = phase {
-            line = .failure(reason, fix: Self.fix(for: reason, downloading: downloading))
+            line = .failure(reason, fix: Fix(for: reason, download: download))
         } else {
-            line = .state(phase.state, unloaded: phase == .running && resting, downloading: downloading)
-        }
-    }
-
-    /// The fix the menu offers for a reason: the remedy's one step, or the
-    /// way to it, when Cloak can offer one.
-    static func fix(for reason: Reason, downloading: Bool) -> Fix? {
-        switch reason {
-        case .modelMissing: .download(underWay: downloading)
-        case .modelChanged: .showModel
-        case .torUnavailable, .torStopped, .workerUnavailable, .workerStopped, .guestFailed, .checkFailed: .start
-        case .unsupportedHardware, .partMissing, .partChanged: nil
+            line = .state(phase.state, unloaded: phase == .running && resting, downloading: download.isUnderWay)
         }
     }
 
@@ -234,14 +220,14 @@ final class MenuHeaderView: NSView {
     /// menu's edge in docs/shots/menu-paused-dark.png.
     static let inset: CGFloat = 16.5
 
-    var act: (MenuHeader.Fix) -> Void = { _ in }
+    var act: (Fix) -> Void = { _ in }
     private let dot = StateDot()
     private let line = NSTextField(labelWithString: "")
     private let problem = NSTextField(labelWithString: "")
     private let fixButton = NSButton(title: "", target: nil, action: nil)
     private let remedy = NSTextField(wrappingLabelWithString: "")
     private let failure: NSStackView
-    private var fix: MenuHeader.Fix?
+    private var fix: Fix?
 
     init() {
         let title = NSTextField(labelWithString: "Cloak")
@@ -308,16 +294,11 @@ final class MenuHeaderView: NSView {
             failure.isHidden = true
             remedy.isHidden = true
         case .failure(let reason, let fix):
-            problem.stringValue = reason.title
-            problem.toolTip = reason.title
-            remedy.stringValue = reason.remedy
+            problem.stringValue = reason.title(with: fix)
+            problem.toolTip = reason.title(with: fix)
+            remedy.stringValue = reason.remedy(with: fix)
             self.fix = fix
-            switch fix {
-            case .start: fixButton.title = "Start Again"
-            case .download(let underWay): fixButton.title = underWay ? "Downloading Model…" : "Download Model…"
-            case .showModel: fixButton.title = "Show in Finder"
-            case nil: break
-            }
+            fixButton.title = fix?.title ?? ""
             fixButton.isHidden = fix == nil
             line.isHidden = true
             failure.isHidden = false

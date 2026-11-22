@@ -3661,6 +3661,20 @@ chief (37 checks pass, no warnings, the new faces pictured off screen)
 and merged to main: nine faults, listed in CHANGELOG. Not pressed in the
 real app yet.
 
+Chat's and the menu's share was fixed by a second helper on branch
+`t3/implement-chat-fix` (commit `f3f104c`), read by the chief and merged
+to main the same evening: eight faults, listed in CHANGELOG. The chief
+changed two things in the merge: the Wallet's Start row is handed the
+model's download as a plain input, not through the environment, and a
+start that stopped for a missing model says "The model has downloaded."
+once its files are in place (`Reason.title(with:)`), which every friend
+would otherwise have met on a first run as "The model isn't installed."
+beside Start Again. 40 checks pass, no warnings; the Start row and the
+menu's header were pictured off screen for a missing model, a model in
+place and a Mac that can't run it, from a supervisor staged in a
+temporary folder. Chat's own rows were not pictured (their models read
+the keychain) and nothing was pressed in the real app.
+
 NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
 November 2026), against stand-ins only: no sign-in, enrolment or upload
 has been made. An independent reader found 14 things and the helper

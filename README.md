@@ -430,8 +430,9 @@ shutdown; the new app opens Paused. What a release needs is in
 
 The quick prompt is a small box over whatever app is in front, opened and
 closed by its shortcut; Escape closes it too. Return opens Chat with a new
-chat whose message box holds what you wrote, as if typed there: nothing is
-sent or reworded until you send it.
+chat whose message box holds what you wrote, after anything already in the
+box, as if typed there: nothing is sent or reworded until you send it. An
+empty Return only opens Chat.
 
 AppleScript can start and pause Cloak and show its windows, and nothing
 else: no command takes text, changes a setting, sends, spends or touches
@@ -466,15 +467,17 @@ When a file is missing or not its pinned size, Start needs attention with
 pinned files (the worker checks every file's hash as it loads), with "The
 model has changed": remove
 `~/Library/Application Support/Regents Cloak/models/small-lead-gguf-grammar/`
-(Show in Finder, in the menu, reveals it), download it again, and start
-again.
+(Show in Finder, in the menu, Details and Chat, reveals it), download it
+again, and start again. Once a download has finished, Start Again takes
+Download Model's place wherever Cloak offers it.
 
 "Chat" in the menu opens a Chat window. While Cloak is running, each
 message is reworded on the Mac and shown beside the original, with the
 words taken out and put in marked; the reworded text can be edited until
 it is sent. With Review on, the box's button is Reword, a pencil. With
 Review off (Settings, General), it is Send, an arrow, and each new message
-is sent as soon as it is reworded, through the same checks as Send: one
+pressed so is sent as soon as it is reworded, through the same checks as
+Send: one
 that cannot go yet (in Token Inference, no wallet or no funds; in V, a
 deposit the chain shows closed) stays open, saying why. A card's
 Reword, a pencil, rewords it again and never sends, Review on or off. The

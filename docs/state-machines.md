@@ -899,13 +899,32 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   and VoiceOver say the same word. Before (18 November): the line kept the
   last settled state's word through a start or stop, which takes 8 to 13
   seconds. Once settled in Needs attention, the reason's title and remedy
-  take the line's place, beside the one fix the menu can offer: Start Again
-  for `tor_unavailable`, `tor_stopped`, `worker_unavailable`,
-  `worker_stopped`, `guest_failed` and `check_failed`, Download Model… for
-  `model_missing` (section 9a), Show in Finder for `model_changed`, which
-  reveals the model's folder and changes nothing in it, and none for the
-  rest. The menu is rebuilt each time it opens, and while it is open
-  whenever the phase, the rest or the download changes.
+  take the line's place, beside its fix.
+- **The fix for a failure** (`Fix`, `app/Sources/RegentsCloak/Fix.swift`)
+  is one rule, which the menu's header, Details' reason, Chat's waiting
+  row and the Wallet's Start row all read, with the download of the model
+  that rewords as it last found the files (section 9a): Start Again for
+  `tor_unavailable`, `tor_stopped`, `worker_unavailable`,
+  `worker_stopped`, `guest_failed` and `check_failed`, and for
+  `model_missing` once every file is in place; Download Model… for
+  `model_missing` while some file is not; Show in Finder for
+  `model_changed`, which reveals the model's folder and changes nothing in
+  it; and none for `unsupported_hardware`, `part_missing` and
+  `part_changed`. Details shows no button for the download, whose own
+  section under the reason is its way on. Where the rule gives none, or
+  gives Show in Finder, the waiting row and the Start row say the remedy
+  in words. The menu's Start item is off while a start is certain to stop
+  again: where the rule gives no fix, or gives the download. For
+  `model_changed` it stays on, since the folder may have been put right by
+  hand, which Cloak cannot see. The menu is rebuilt each time it opens,
+  and while it is open whenever the phase, the rest or the download
+  changes. Before (21 November): the menu held the fix alone, and read the
+  reason kept from the last start without the files, so after a finished
+  download it still offered Download Model…, which opened Details with
+  nothing to press; Start stayed on for the three reasons with no fix;
+  Details offered nothing; and Chat's waiting row and the Wallet's Start
+  row offered Start for `model_changed` and every other reason. Now all
+  four read the one rule.
 
 - **Local Llama** (`Supervisor.answer`, `LocalLlama`) is no phase. A
   Local Llama chat's message goes to the model chosen for it (section 9c,
@@ -1002,8 +1021,9 @@ any state --remove--> Stopped, the model's folder removed   (not the model that 
   Download Model item in the menu then (the menu looks at the files again
   each time it opens), and in the chat window when the reason is
   `model_missing`. While Cloak needs attention for `model_missing`, the
-  menu's header offers it as the failure's button, in the item's place
-  (section 9). Before the button, the window says the size,
+  menu's header offers it as the failure's button, in the item's place,
+  until every file is in place, when Start Again takes its place (`Fix`,
+  section 9). Before the button, the window says the size,
   the host, and that this download goes straight from this Mac to that
   host, which sees this Mac's address, unlike Cloak's messages. Every
   model's download, that one's too, is offered in Settings' Local Llama
@@ -1410,7 +1430,8 @@ its stages first.
   `app/Sources/CloakChat/Conversation.swift`). Written, being reworded,
   reworded and open, sending, answered: read off `Turn.reworded`,
   `Turn.answer`, `Chat.rewording`, `Chat.sending[turn]` (with a count of
-  presses), `Chat.opened` and `Chat.stop`. Each press of Send is sent
+  presses), `Chat.opened`, `Chat.stops[conversation]` and
+  `Chat.sendStops[turn]`. Each press of Send is sent
   (the Chat rule), so two presses pay twice and the second answer takes
   the first one's place. A message goes as written by one of two paths
   (decision 11): with Never reword ticked (`AppSettings.neverReword`), a
@@ -1420,15 +1441,41 @@ its stages first.
   `Turn.reworded` is nil from then on. Send Original Text is sent on each
   press as Send is, so a press of it while the reworded text is still
   sending pays twice, and the turn is kept as sent as written. With Review
-  off (`AppSettings.review`), a new message's rewording that finishes
-  sends the turn at once, as a press of Send would, through the same
-  checks: one that cannot go stays reworded and open, saying why, so
-  "reworded and open" is skipped only when the send can start. A card's
+  off (`AppSettings.review`) at the press, a new message's rewording that
+  finishes sends the turn at once, as a press of Send would, through the
+  same checks: one that cannot go stays reworded and open, saying why, so
+  "reworded and open" is skipped only when the send can start. Whether it
+  goes is decided at the press and carried in the rewording
+  (`Chat.Asked.new`'s `sends`). A card's
   Reword only rewords: its turn stays reworded and open, Review on or
   off. Review and Never reword are never both on: turning either on turns
-  the other off (`AppSettings`). A NEAR
-  conversation's card (section 9b) is never reworded, and its stop is
-  `NearMode.sendStop`.
+  the other off (`AppSettings`). Why a turn's last send stopped is kept
+  with the turn until its next press (`Chat.sendStops`, in memory only),
+  a NEAR conversation's among them (section 9b); Dismiss hides its row
+  only. A shrunk card with no answer whose last send stopped where the
+  message may have gone, as that stop's own words say
+  (`SendStop.Reason.mayHaveGone`), is marked "May have been sent", not
+  "Not sent". A NEAR conversation's card is never reworded.
+- **The one rewording** (`Chat.rewording`, `Chat.stops`). One at a time in
+  all chats, since one model on this Mac rewords, and its chat's alone:
+  only the cards of the chat it is in stay shut while it runs. A
+  rewording that stops is kept with its conversation until dismissed or
+  that conversation's next rewording: a card's own Reword says so on that
+  card; a new message says so over the box, and its box as written, picks
+  and all, goes back into the box only once its conversation is shown,
+  after what the box holds then, if anything, so nothing in it is lost.
+  Another V or Token Inference chat that would reword says so over its
+  box, with Cancel, which cancels that rewording; NEAR, Local Llama and
+  agent chats, and Never reword, are never held back, and New stays on.
+  A first message's mode is the one chosen at its press while its chat is
+  still empty. Before (21 November): the rewording, its stop and the
+  message given back were the window's: while any chat reworded, every
+  chat's box, New and a shrunk card's press were off with no reason
+  shown; its stop and its message landed in whichever chat was showing
+  when it ended, a NEAR chat included, where Return sends as written; and
+  Review was read as it ended, so ticking Never reword meanwhile sent the
+  reworded text with no press. Now each is its chat's, and the press
+  decides.
 - **One conversation on disk** (`Chat.update`, `Chat.unsaved`). Saved, each
   change sealed and written, or in memory only: a conversation changed
   while Saved chats is off (`AppSettings.savedChats`) joins `unsaved`, and
@@ -1442,7 +1489,18 @@ its stages first.
   `Agent.ends[turn]` (in memory only), `Turn.reworded`, `Turn.steps` and
   `Turn.answer`. `Turn.steps == nil` is also what makes a turn a message
   and not a task, and `Turn.reworded == nil` means "goes as written" for a
-  message and "not reworded yet" for a task.
+  message and "not reworded yet" for a task. A task is under way from its
+  press (`Agent.run`): its model comes first, inside the run, which for a
+  V task means reading V's models through the payer; only then is the
+  door's pass asked for and the task run in the guest. A Stop meanwhile
+  ends it as stopped, and it never runs; a model that cannot be had ends
+  it with why; Run shows as Stop from the press, so a second task in the
+  chat cannot be pressed. Before (21 November): a V task's model was read
+  before the run began, during which its card did not show, Run stayed
+  on, and a second Run was dropped unseen. Now the card shows running
+  from the press. `AgentTests.swift` checks that a task stopped, or whose
+  model could not be had, before it runs is never run, and that a second
+  run meanwhile is refused.
 - **The draft's details** (`Chat.picks`, `askingDetails`, `detailsAsk`).
   Resting, asking, shown, fixed.
 - **Token Inference's wallet** (`app/Sources/RegentsCloak/Wallet.swift`).
@@ -1556,28 +1614,37 @@ not yet merged (`t3/near-trace-sharing`, `t3/add-venice-provider`), for
 every place a stage is read off several fields. Section 10's entries
 still hold except where a line here says otherwise. Each entry gives what
 holds the stage, then the faults found in it, each traced in the code
-unless it says "likely". None was fixed when found, and none had a check;
-an entry that says "Now" has been fixed since.
+unless it says "likely". A fault fixed since says "Before (date): … Now
+…"; the rest are not fixed. Only the payer's stops and reads and the task
+card's start have checks.
 
 ### The menu and the app's shell
 
 - **The menu's header and items** (`app/Sources/RegentsCloak/Menu.swift`).
-  The phase, `supervisor.resting` and the download's state. A reason kept
-  from the last start is not read against the files now: after "The model
-  isn't installed." and a finished download, the header still offers
-  Download Model…, which opens Details with nothing to press. Start stays
-  on for the reasons the header gives no fix for (`unsupported_hardware`,
-  `part_missing`, `part_changed`), where it is certain to stop again.
-  Chat's `Waiting` row and the Wallet's `StartRow` offer Start for
-  `model_changed` too. A quit shows as any Stopping does.
+  The phase, `supervisor.resting` and the download's state. Before (21
+  November): a reason kept from the last start was not read against the
+  files, so after "The model isn't installed." and a finished download
+  the header still offered Download Model…, which opened Details with
+  nothing to press; Start stayed on for the reasons the header gave no fix
+  for (`unsupported_hardware`, `part_missing`, `part_changed`), where it
+  is certain to stop again; and Chat's `Waiting` row and the Wallet's
+  `StartRow` offered Start for `model_changed` too. Now one rule (`Fix`,
+  section 9) gives all of them the same fix, read against the files, and
+  turns Start off where it is certain to stop again. The words follow the
+  fix (`Reason.title(with:)`): after a finished download the line says
+  "The model has downloaded." beside Start Again. A quit shows as any
+  Stopping does.
 - **Windows and the Dock icon** (`AppWindow.swift`, `Updates.swift`). Each
   window's optional, its visibility and the activation policy. Sparkle's
   window and a minimised window are not counted, so closing the last
   counted window takes Cloak out of the Dock under them.
 - **The quick prompt** (`QuickPrompt.swift`, `Chat.compose`). Hidden,
-  shown, handed to Chat. Return puts its text in Chat's one message box
-  over whatever was there, an empty Return included, and sets the mode
-  to V with Agent off.
+  shown, handed to Chat. Return sets the mode to V with Agent off.
+  Before (21 November): Return put its text in Chat's one message box
+  over whatever was there, an empty Return included. Now an empty Return
+  only shows Chat, and a Return with text starts a new chat with the text
+  after what the box held, its picks as lines of its text, since a change
+  of chat clears them; nothing in the box is lost.
 - **The quick prompt's shortcut** (`QuickPrompt.swift`,
   `SettingsView.swift`). The saved shortcut, the hot key macOS holds, the
   refusal's words and the recorder's key monitor. Recording drops every
@@ -1606,8 +1673,10 @@ an entry that says "Now" has been fixed since.
   `ModelDownload.State` (section 9a). Waiting for the network and trying
   again look like downloading. The free space is read as the pane
   appears, so its words go stale.
-- **Details' reason** (`Details.swift`). Shows the reason and its remedy
-  with no button: no Start Again, no Show in Finder.
+- **Details' reason** (`Details.swift`). Before (21 November): showed the
+  reason and its remedy with no button. Now Start Again or Show in Finder
+  beside it, as the rule gives (`Fix`, section 9); for a missing model,
+  the download's section under it is the way on.
 - **The rewording model's download in Details** (`DownloadSection.swift`).
   Cancel's question says what has downloaded is deleted; files already in
   place stay (section 9a).
@@ -1627,25 +1696,29 @@ an entry that says "Now" has been fixed since.
 - **Opening the saved chats** (`Chat.Access`, named). Retry has no stage:
   two can run at once (likely), and a retry that fails again shows
   nothing new. Locked has no way on.
-- **The one rewording** (`Chat.rewording`, `stop`, the draft given back).
-  All three are the window's, not a chat's. While any chat rewords, every
-  chat's box, New and a shrunk card's press are off with no reason shown.
-  Its stop and its given-back message land in the chat showing when it
-  ends, a NEAR chat included, where Return sends as written. Review is
-  read as the rewording ends (`Chat.reword`), so ticking Never reword
-  meanwhile sends the reworded text with no press.
+- **The one rewording** (`Chat.rewording`, `stops`, the draft given back).
+  Before (21 November): all three were the window's, not a chat's. While
+  any chat reworded, every chat's box, New and a shrunk card's press were
+  off with no reason shown. Its stop and its given-back message landed in
+  the chat showing when it ended, a NEAR chat included, where Return sends
+  as written. Review was read as the rewording ended (`Chat.reword`), so
+  ticking Never reword meanwhile sent the reworded text with no press.
+  Now each is its chat's, and the press decides (section 10).
 - **The box's text and details** (`draft`, `picks`, `askingDetails`,
   `detailsAsk`). Section 10's four stages, and two more: the 1.2 second
   wait before asking, and fixed with nothing picked
   (`DetailPicks.swift`). One draft for every chat.
-- **One message card.** As section 10, with `sendStop` one for all chats
-  (and `NearMode.sendStop` one for all NEAR chats): a send in another
-  chat clears a card's stop, and a card whose send stopped with "may have
-  reached" is later marked "Not sent".
-- **One task card.** As section 10, with a stage before it for a V task:
-  the model list being read, during which nothing shows, Run stays on and
-  a second Run is dropped unseen (`Agent.run`'s guard). "Agents says why"
-  has no way to Agents.
+- **One message card.** As section 10. Before (21 November): `sendStop`
+  was one for all chats (and `NearMode.sendStop` one for all NEAR chats),
+  so a send in another chat cleared a card's stop, and a card whose send
+  stopped with "may have reached" was later marked "Not sent". Now each
+  turn keeps its own, and such a card is marked "May have been sent".
+- **One task card.** As section 10. Before (21 November): a stage before
+  it for a V task, the model list being read, during which nothing
+  showed, Run stayed on and a second Run was dropped unseen (`Agent.run`'s
+  guard). Now the task is under way from the press, its card shows
+  running with Stop, and a Stop before it runs means it never runs.
+  "Agents says why" has no way to Agents.
 - **Saved or not, and disk problems** (`unsaved`, `problem`). One
   `problem` for all chats, cleared by any later save.
 - **Sheets** (`showingWallet`, `showingModes`, `deleting`, `explaining`).
