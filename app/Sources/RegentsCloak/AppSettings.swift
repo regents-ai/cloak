@@ -190,7 +190,8 @@ final class AppSettings {
     /// The model V chats are answered with, as its owner chose it in V's
     /// wallet; nil, the one whose requests cost least at most
     /// (`Payer.model`). A model the service no longer lists is passed over
-    /// the same way until it lists it again.
+    /// the same way until it lists it again. Kept through Restore Defaults,
+    /// since the Settings window doesn't show it.
     var vModel: String? {
         get {
             access(keyPath: \.vModel)
@@ -257,9 +258,10 @@ final class AppSettings {
         }
     }
 
-    /// Puts every setting kept here back to its default, each change told
-    /// to whatever watches that setting. The deposit's expiry is not a
-    /// setting, and stays.
+    /// Puts every setting the Settings window shows back to its default,
+    /// each change told to whatever watches that setting. V's model, chosen
+    /// in V's wallet, stays, and so does the deposit's expiry, which is not
+    /// a setting.
     func restore() {
         for key in Key.allCases {
             let remove = { self.defaults.removeObject(forKey: key.rawValue) }
@@ -274,8 +276,7 @@ final class AppSettings {
             case .nearTor: withMutation(keyPath: \.nearTor, remove)
             case .proofFreshness: withMutation(keyPath: \.proofFreshness, remove)
             case .answerModel: withMutation(keyPath: \.answerModel, remove)
-            case .vModel: withMutation(keyPath: \.vModel, remove)
-            case .depositExpires: break
+            case .vModel, .depositExpires: break
             }
         }
     }
@@ -352,19 +353,59 @@ struct Shortcut: Codable, Equatable {
 /// Whether the app opens at login: the system's login item.
 @MainActor
 enum LoginItem {
-    static var isOn: Bool { SMAppService.mainApp.status == .enabled }
+    /// The login item as macOS has it, or as the last change left it.
+    enum Stage: Equatable {
+        case on
+        case off
+        /// Added, and waiting for its owner's approval in Login Items, as
+        /// one they turned off there before does.
+        case needsApproval
+        /// macOS didn't add it (`adding`) or take it out, so it is as it was.
+        case refused(adding: Bool)
 
-    /// Adds the app to the login items, or takes it out, and returns whether
-    /// it is in now. One the user turned off in System Settings needs their
-    /// approval there, which opens.
-    static func set(_ on: Bool) -> Bool {
+        /// What the switch shows.
+        var isOn: Bool { self == .on || self == .refused(adding: false) }
+
+        /// What happened, for beside the switch, whose way on is Login
+        /// Items (`openSettings`); nil while it is as asked.
+        var words: String? {
+            switch self {
+            case .on, .off: nil
+            case .needsApproval: "Needs your approval in Login Items."
+            case .refused(adding: true): "macOS didn't add Cloak to Login Items."
+            case .refused(adding: false): "macOS didn't take Cloak out of Login Items."
+            }
+        }
+    }
+
+    /// As macOS has it now.
+    static var stage: Stage {
+        switch SMAppService.mainApp.status {
+        case .enabled: .on
+        case .requiresApproval: .needsApproval
+        default: .off
+        }
+    }
+
+    /// Adds the app to the login items, or takes it out, and returns the
+    /// stage after.
+    static func set(_ on: Bool) -> Stage {
         let app = SMAppService.mainApp
         do {
             try on ? app.register() : app.unregister()
         } catch {
             Logger(subsystem: "sh.regents.cloak.app", category: "app").error("cannot change the login item: \(String(describing: error), privacy: .public)")
         }
-        if app.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
-        return isOn
+        return switch (stage, on) {
+        case (.off, true): .refused(adding: true)
+        case (.on, false): .refused(adding: false)
+        case (let now, _): now
+        }
+    }
+
+    /// System Settings' Login Items, where its owner approves the app, or
+    /// adds or removes it themselves.
+    static func openSettings() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 }

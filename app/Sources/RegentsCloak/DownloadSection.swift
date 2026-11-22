@@ -24,7 +24,7 @@ struct DownloadSection: View {
                         .accessibilityLabel("Download")
                         .accessibilityValue("\(Self.text(download.done)) of \(Self.text(download.total))")
                     HStack {
-                        Text(status)
+                        Text(Self.status(download.state))
                         Spacer()
                         Text("\(Self.text(download.done)) of \(Self.text(download.total))")
                             .monospacedDigit()
@@ -65,8 +65,10 @@ struct DownloadSection: View {
         }
     }
 
-    private var status: String {
-        switch download.state {
+    /// What the download is doing: here, and in the help and VoiceOver's
+    /// words for its row in Settings' Local Llama while it is under way.
+    static func status(_ state: ModelDownload.State) -> String {
+        switch state {
         case .downloading: "Downloading"
         case .waitingForNetwork: "Waiting for the network"
         case .retrying: "Trying again"

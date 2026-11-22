@@ -446,19 +446,7 @@ struct Copyable: View {
             Text(text)
                 .font(.body.monospaced())
                 .textSelection(.enabled)
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
-            } label: {
-                // A larger target than the icon alone.
-                Label("Copy", systemImage: "doc.on.doc")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 24, height: 24)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.borderless)
-            .hover(Circle())
-            .help("Copy")
+            CopyButton(text: text)
         }
     }
 }

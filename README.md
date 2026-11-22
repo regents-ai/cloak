@@ -389,7 +389,9 @@ Tor pill in a NEAR conversation also turns on and off; no link, script,
 app or agent can set one. What each setting does is behind the info
 button beside its name, shown when the pointer rests on it or on a click.
 General has Launch
-at login (off until turned on; the app still opens Paused), "Never reword
+at login (off until turned on; the app still opens Paused; when macOS
+refuses the change or waits for approval, the words beside the switch
+say so, with Open Login Items), "Never reword
 text. Reduces your privacy." (off until ticked; see Chat, below) and
 Review (on until turned off; see Chat, below), side by side since they are
 never both on: turning either on turns the other off, wherever it is
@@ -397,22 +399,26 @@ turned on. Then Saved chats (on until turned off; see Chat, below), Cover
 traffic (on until turned off; used from the next Start), Free memory,
 Updates (below) and Help: a link to Patchbay's board for regents.sh, and
 words to copy for an agent that posts there. NEAR has the
-NEAR key (a field and Save; once saved, Saved with Replace and Remove,
-which asks first), Tor (off until turned on), Freshness (10 minutes until
+NEAR key (a field and Save; once saved, Saved with Replace, which has
+Cancel, and Remove, which asks first; a read, save or remove the keychain
+refuses says so there, and a save that fails keeps what was typed), Tor (off until turned on), Freshness (10 minutes until
 chosen, or Every message or 1 hour) and the model, Qwen3.8-27B, which
 can't be changed; see NEAR mode, below. Local Llama, listed only while
 another model fits this Mac or one is chosen, chooses the model that
 answers Local Llama chats, Qwen 3.5 9B until chosen, and holds each
 model's download; see Chat, below. Shortcut sets the quick prompt's
-keys, none until chosen; keys
+keys, none until chosen: its button takes only the keys typed into it
+while it records, and Escape stops it. Keys
 without Command, Option or Control are refused, as is a shortcut macOS
-won't take. Door sets the port Agents answer on (below), 8742 until
+won't take, whose words say what is still the shortcut. Door sets the port Agents answer on (below), 8742 until
 chosen: a number from 1024 to 65535 that nothing on this Mac listens on
 when it is saved, used from the next Start, and always on 127.0.0.1 only.
 Advanced shows exactly how the last start started tor and the worker, one
-command a line, and this session's lines of Cloak's log, each with Copy,
-and Restore Defaults, which puts these settings back and nothing else: not
-the wallet, the NEAR key, the chats or the downloaded models.
+command a line, and this session's lines of Cloak's log, each with Copy
+(the log's once there are lines), and Restore Defaults, which puts these
+settings back and nothing else: not the wallet, V's model, the NEAR key,
+the chats or the downloaded models. Every Copy in the app shows a
+checkmark for a moment once it has copied.
 
 Updates come through Sparkle 2.8.1, from the feed and the update key's
 public half in `app/release.json`: the feed is `appcast.xml` in the

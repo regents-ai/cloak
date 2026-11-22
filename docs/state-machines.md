@@ -1029,8 +1029,13 @@ any state --remove--> Stopped, the model's folder removed   (not the model that 
   model's download, that one's too, is offered in Settings' Local Llama
   pane (section 9c), whose note says the same of the host: a symbol to
   download or continue, a ring for its progress with Pause while under way,
-  and, for any model but the one that rewords, Remove. The pane looks at
-  every model's files again each time it shows.
+  a symbol before the ring while it waits for the network or for its next
+  try (its words, "Waiting for the network" or "Trying again", in the
+  help and in what VoiceOver reads of the ring), and, for any model but
+  the one that rewords, Remove. The pane reads every model's files and the
+  free space again as it shows, as its window comes back to the front and
+  as any model's download changes stage, and Download reads them again at
+  its press.
 - **Blocked**: Download and Continue are disabled, with the reason beside
   them, only when the download is certain to fail: this Mac fails the
   model's Mac check (`Manifest.answerCheck`, section 9), or the models
@@ -1647,10 +1652,17 @@ card's start have checks.
   of chat clears them; nothing in the box is lost.
 - **The quick prompt's shortcut** (`QuickPrompt.swift`,
   `SettingsView.swift`). The saved shortcut, the hot key macOS holds, the
-  refusal's words and the recorder's key monitor. Recording drops every
-  key in every Cloak window and takes the first one with ⌘, ⌥ or ⌃ as the
-  shortcut, wherever it was typed. A refused new choice shows its words
-  beside the old one, which still works.
+  refusal's words and the recorder's stage. Before (21 November):
+  recording dropped every key in every Cloak window and took the first one
+  with ⌘, ⌥ or ⌃ as the shortcut, wherever it was typed; and a refused new
+  choice showed its words beside the old one, which still worked, without
+  saying so. Now the recorder's stage is one value, idle or recording, and
+  its button (`RecorderButton`) holds the keyboard while it records: only
+  keys typed into it are taken, ⌘'s before the menus see them; Escape, a
+  second press or the keyboard going elsewhere ends it with the old
+  shortcut kept; and keys typed anywhere else go where they always go. A
+  refused choice's words name it and say the old one is still the
+  shortcut, or, when macOS had refused that one too, that neither works.
 - **Launch and quit** (`RegentsCloakApp.swift`). The order of statements.
   A failure's alert may open behind other windows (likely). Windows stay
   usable through a quit's shutdown, and NEAR's helper, stopped first, is
@@ -1659,20 +1671,42 @@ card's start have checks.
 - **Review and Never reword** (`AppSettings.swift`). Turning Never reword
   on turns Review off; turning it off again leaves Review off.
 - **Launch at login, Updates, the info note, the text box.** A view's copy
-  of a system value, or one flag with a timer. A login item macOS refuses
-  springs the switch back with no words.
+  of a system value, or one flag with a timer. Before (21 November): a
+  login item macOS refused sprang the switch back with no words, and one
+  waiting for approval opened System Settings by itself. Now the login
+  item is one value, `LoginItem.Stage` (on, off, waiting for approval,
+  refused), and beside the switch its words say which, with Open Login
+  Items, macOS's own place to approve, add or remove it. The window coming
+  back reads it again, and a refusal's words go.
 
 ### Settings, Details and Agents
 
 - **The NEAR key's row** (`SettingsView.swift`, `NearMode.swift`).
-  `hasKey` (nil, false, true), `keyFailed`, the typed key, `replacing`,
-  `removing`. "The keychain said no. Try again." has nothing that tries
-  again; Replace has no way back to Saved; a save that fails has already
-  emptied the field; the Wallet's own read sets the same `keyFailed`.
+  Before (21 November): read off `hasKey` (nil, false, true), `keyFailed`,
+  the typed key, `replacing` and `removing`. "The keychain said no. Try
+  again." had nothing that tried again; Replace had no way back to Saved;
+  a save that failed had already emptied the field; and the Wallet's own
+  read set the same `keyFailed`, so its failure showed in Settings as if
+  a save had failed. Now the row's stage is one value (`KeyRow.Stage`:
+  reading, unread, shown, replacing, saving, not saved, removing, not
+  removed) beside the keychain's last answer, `NearMode.hasKey`, which a
+  refused read, save or remove leaves as it was. A read that fails says
+  "Couldn't check" with Try Again; a save that fails keeps what was
+  typed and says so, Save being the retry; a remove that fails says so,
+  the key still shown as saved; and Replace has Cancel. Each read's stop
+  stays with whoever asked: the Wallet's shows in the Wallet, with its own
+  Try Again.
 - **One model's row** (`SettingsView.swift`). A face over
-  `ModelDownload.State` (section 9a). Waiting for the network and trying
-  again look like downloading. The free space is read as the pane
-  appears, so its words go stale.
+  `ModelDownload.State` (section 9a). Before (21 November): waiting for
+  the network and trying again looked like downloading, and the free
+  space was read as the pane appeared, so its words went stale. Now a
+  symbol before the ring says which, its words in the help and what
+  VoiceOver reads; and the pane reads the files and the free space again
+  as it shows, as its window comes back and as any model's download
+  changes stage, and Download reads them again at its press. A stopped
+  row's free space is still not read again while another model downloads
+  in front of it with nothing changing stage, so its words can lag that
+  download until its own press.
 - **Details' reason** (`Details.swift`). Before (21 November): showed the
   reason and its remedy with no button. Now Start Again or Show in Finder
   beside it, as the rule gives (`Fix`, section 9); for a missing model,
@@ -1686,10 +1720,16 @@ card's start have checks.
   Cancel while it adds keeps the app and never shows its pass (likely).
   An open request is a copy taken at the press and does not follow its
   stage.
-- **The log, Restore Defaults, the port field, Copy.** Copy Log before
-  the read lands copies nothing over the clipboard. Restore Defaults also
-  resets V's model, which the Wallet chooses. No Copy in the app shows
-  that it copied.
+- **The log, Restore Defaults, the port field, Copy.** Before (21
+  November): Copy Log before the read landed copied nothing over the
+  clipboard; Restore Defaults also reset V's model, which the Wallet
+  chooses; and no Copy in the app showed that it copied. Now Copy Log is
+  offered only once there are lines read; Restore Defaults leaves V's
+  model; and every Copy is one button (`CopyButton.swift`), whose symbol
+  becomes a checkmark for a second and a half, named "Copied" and said
+  by VoiceOver, cross-fading under Reduce Motion. A text read at the
+  press that comes back empty, as the Darkbloom key's can, copies nothing
+  and shows nothing.
 
 ### Chat
 

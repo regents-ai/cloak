@@ -12,10 +12,8 @@ import Observation
 @MainActor
 @Observable
 final class QuickPrompt {
-    static let refused = "macOS didn't accept this shortcut. Choose another."
-
-    /// Why the shortcut chosen isn't working, in plain words; nil when it is,
-    /// or there is none.
+    /// Why the shortcut last chosen isn't the one working, in plain words,
+    /// naming what is still the shortcut; nil when it is, or there is none.
     private(set) var refusal: String?
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let hotKey = HotKey()
@@ -27,15 +25,32 @@ final class QuickPrompt {
         panel = PromptPanel(submit: hand)
         hotKey.pressed = { [unowned self] in toggle() }
         if let shortcut = settings.shortcut, !hotKey.register(shortcut) {
-            refusal = Self.refused
+            refusal = "macOS didn't accept \(shortcut.title). Choose another."
         }
     }
 
     /// Makes `shortcut` the quick prompt's, or takes it away with nil. One
-    /// the system refuses changes nothing kept.
+    /// macOS refuses changes nothing kept: the shortcut before it stays,
+    /// and still works if it did.
     func choose(_ shortcut: Shortcut?) {
+        guard let shortcut else {
+            hotKey.clear()
+            refusal = nil
+            settings.shortcut = nil
+            return
+        }
+        // The shortcut already working needs nothing, and macOS may refuse
+        // to take it a second time.
+        guard shortcut != settings.shortcut || !hotKey.holds else {
+            refusal = nil
+            return
+        }
         guard hotKey.register(shortcut) else {
-            refusal = Self.refused
+            refusal = switch (settings.shortcut, hotKey.holds) {
+            case (let kept?, true): "macOS didn't accept \(shortcut.title). \(kept.title) is still the shortcut."
+            case (let kept?, false): "macOS didn't accept \(shortcut.title) or \(kept.title). Choose another."
+            case (nil, _): "macOS didn't accept \(shortcut.title). Choose another."
+            }
             return
         }
         refusal = nil
@@ -67,19 +82,26 @@ private final class HotKey {
         precondition(installed == noErr, "the quick prompt's key handler was not installed")
     }
 
-    /// Registers `shortcut` in place of the one before, or none; false, with
-    /// the one before kept, when the system refuses it.
-    func register(_ shortcut: Shortcut?) -> Bool {
+    /// Whether a shortcut is registered now, and so works.
+    var holds: Bool { registered != nil }
+
+    /// Registers `shortcut` in place of the one before; false, with the one
+    /// before kept, when the system refuses it.
+    func register(_ shortcut: Shortcut) -> Bool {
         var made: EventHotKeyRef?
-        if let shortcut {
-            let id = EventHotKeyID(signature: OSType(0x434C_4B51), id: 1)  // "CLKQ"
-            guard RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, id, GetApplicationEventTarget(), 0, &made) == noErr else {
-                return false
-            }
+        let id = EventHotKeyID(signature: OSType(0x434C_4B51), id: 1)  // "CLKQ"
+        guard RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, id, GetApplicationEventTarget(), 0, &made) == noErr else {
+            return false
         }
-        if let registered { UnregisterEventHotKey(registered) }
+        clear()
         registered = made
         return true
+    }
+
+    /// Unregisters the shortcut, if there is one.
+    func clear() {
+        if let registered { UnregisterEventHotKey(registered) }
+        registered = nil
     }
 }
 

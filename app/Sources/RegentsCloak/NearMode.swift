@@ -19,10 +19,10 @@ final class NearMode {
     let supervisor: Supervisor
     let settings: AppSettings
     /// Whether a NEAR key is kept, as the keychain last answered; nil until
-    /// it has, or when it could not.
+    /// it has. A read, save or remove the keychain refuses leaves it as it
+    /// was and throws to whoever asked, which shows the stop where it asked:
+    /// Settings' Key row, or the Wallet's.
     private(set) var hasKey: Bool?
-    /// The last keychain request from Settings failed.
-    private(set) var keyFailed = false
     /// The last check that passed, the one a message last went on included;
     /// nil once one stopped.
     private(set) var proof: NearProof?
@@ -39,7 +39,9 @@ final class NearMode {
         self.near = near
         self.supervisor = supervisor
         self.settings = settings
-        Task { await find() }
+        // For Send's block. A refusal here has nowhere to show; Settings and
+        // the Wallet each ask again as they appear, and show their own.
+        Task { try? await find() }
     }
 
     /// How the helper goes now: direct, or through Cloak's tor while Cloak
@@ -102,40 +104,34 @@ final class NearMode {
     }
 
     /// Asks the keychain whether a key is kept, without reading it.
-    func find() async {
+    func find() async throws(Keychain.Failure) {
         do throws(Keychain.Failure) {
             hasKey = try await NearKeychain.has()
-            keyFailed = false
         } catch {
             logger.error("cannot read whether a NEAR key is kept: \(error.description, privacy: .public)")
-            hasKey = nil
-            keyFailed = true
+            throw error
         }
     }
 
-    /// Keeps `key` in place of any before; returns whether it was kept.
-    func save(_ key: String) async -> Bool {
+    /// Keeps `key` in place of any before.
+    func save(_ key: String) async throws(Keychain.Failure) {
         do throws(Keychain.Failure) {
             try await NearKeychain.store(key)
             hasKey = true
-            keyFailed = false
-            return true
         } catch {
             logger.error("cannot keep the NEAR key: \(error.description, privacy: .public)")
-            keyFailed = true
-            return false
+            throw error
         }
     }
 
     /// Removes the key.
-    func remove() async {
+    func remove() async throws(Keychain.Failure) {
         do throws(Keychain.Failure) {
             try await NearKeychain.remove()
             hasKey = false
-            keyFailed = false
         } catch {
             logger.error("cannot remove the NEAR key: \(error.description, privacy: .public)")
-            keyFailed = true
+            throw error
         }
     }
 }

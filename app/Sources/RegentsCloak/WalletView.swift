@@ -232,12 +232,18 @@ private struct NearPayment: View {
     /// The chat's, added up; nil while no answer has counts.
     let tokens: Tokens?
     let openSettings: () -> Void
+    /// This row's own read of whether a key is kept stopped.
+    @State private var unread = false
 
     var body: some View {
         Section {
             LabeledContent("Key") {
                 HStack(spacing: 4) {
                     Text(key)
+                    if unread {
+                        SymbolButton("Try Again", symbol: "arrow.clockwise") { Task { await read() } }
+                            .overhanging()
+                    }
                     SymbolButton("Open Settings", symbol: "gearshape", action: openSettings)
                         .overhanging()
                 }
@@ -249,14 +255,24 @@ private struct NearPayment: View {
             Text("Paid with your NEAR key from [cloud.near.ai](https://cloud.near.ai).")
                 .foregroundStyle(.secondary)
         }
-        .task { await mode.find() }
+        .task { await read() }
+    }
+
+    private func read() async {
+        unread = false
+        do {
+            try await mode.find()
+        } catch {
+            unread = true
+        }
     }
 
     private var key: String {
-        switch mode.hasKey {
+        if unread { return "Couldn't check" }
+        return switch mode.hasKey {
         case true?: "Saved"
         case false?: "Not saved"
-        case nil: mode.keyFailed ? "Couldn't check" : "Checking…"
+        case nil: "Checking…"
         }
     }
 }

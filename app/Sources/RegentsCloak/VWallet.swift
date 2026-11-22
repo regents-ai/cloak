@@ -567,27 +567,6 @@ private struct Hash: View {
     }
 }
 
-/// Copy, as a symbol: puts `text` on the pasteboard.
-struct CopyButton: View {
-    let text: String
-
-    var body: some View {
-        Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-        } label: {
-            // A larger target than the icon alone.
-            Label("Copy", systemImage: "doc.on.doc")
-                .labelStyle(.iconOnly)
-                .frame(width: 24, height: 24)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.borderless)
-        .hover(Circle())
-        .help("Copy")
-    }
-}
-
 /// Why a press in V's wallet stopped, in plain words, with Dismiss. One
 /// that stopped for want of a read carries Try Again, which reads.
 private struct PressStopRow: View {

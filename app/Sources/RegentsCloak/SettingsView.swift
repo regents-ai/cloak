@@ -114,13 +114,24 @@ struct SettingsView: View {
 private struct GeneralPane: View {
     @Bindable var settings: AppSettings
     let updates: Updates
-    @State private var login = LoginItem.isOn
+    @State private var login = LoginItem.stage
 
     var body: some View {
         Form {
             Section {
                 Row("Launch at login", note: "Cloak opens paused, so nothing runs until you press Start or ask something in a Local Llama chat.") {
-                    Toggle("Launch at login", isOn: Binding(get: { login }, set: { login = LoginItem.set($0) }))
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Toggle("Launch at login", isOn: Binding(get: { login.isOn }, set: { login = LoginItem.set($0) }))
+                        if let words = login.words {
+                            HStack(spacing: 2) {
+                                Text(words)
+                                    .font(.caption)
+                                    .foregroundStyle(login == .needsApproval ? Color.secondary : Color.red)
+                                SymbolButton("Open Login Items", symbol: "arrow.up.forward.app", action: LoginItem.openSettings)
+                                    .overhanging()
+                            }
+                        }
+                    }
                 }
             }
             // Never both on (`AppSettings`), so side by side.
@@ -156,9 +167,10 @@ private struct GeneralPane: View {
             FeedbackSection()
         }
         // The login item can change in System Settings while the window is
-        // away, so it is read again each time the window comes back.
+        // away, so it is read again each time the window comes back, and the
+        // words of a refused change go.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            login = LoginItem.isOn
+            login = LoginItem.stage
         }
     }
 }
@@ -213,12 +225,8 @@ private struct FeedbackSection: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Spacer()
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(Self.words, forType: .string)
-                    }
-                    .accessibilityLabel("Copy Words")
-                    .accessibilityHint(Self.note)
+                    CopyButton("Copy Words", side: 28, text: Self.words)
+                        .accessibilityHint(Self.note)
                 }
             }
         } header: {
@@ -236,40 +244,12 @@ private struct FeedbackSection: View {
 private struct NearPane: View {
     @Bindable var settings: AppSettings
     let mode: NearMode
-    @State private var key = ""
-    @State private var replacing = false
-    @State private var removing = false
 
     var body: some View {
         Form {
             Section {
                 Row("Key", note: "Your API key from NEAR AI Cloud. You can create one at cloud.near.ai. It pays for the messages you send in NEAR Private AI chats, so NEAR can connect those messages to your account. Cloak keeps it in this Mac's keychain, and it can't be viewed here after you save it.") {
-                    VStack(alignment: .trailing, spacing: 4) {
-                        if mode.hasKey == true, !replacing {
-                            HStack(spacing: 2) {
-                                Text("Saved")
-                                    .foregroundStyle(.secondary)
-                                SymbolButton("Replace", symbol: "pencil") { replacing = true }
-                                    .overhanging()
-                                SymbolButton("Remove", symbol: "trash") { removing = true }
-                                    .overhanging()
-                            }
-                        } else {
-                            HStack(spacing: 6) {
-                                SecureField("NEAR key", text: $key, prompt: Text("NEAR key"))
-                                    .labelsHidden()
-                                    .frame(width: 220)
-                                    .onSubmit(save)
-                                Button("Save", action: save)
-                                    .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            }
-                        }
-                        if mode.keyFailed {
-                            Text("The keychain said no. Try again.")
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                    }
+                    KeyRow(mode: mode)
                 }
             }
             Section {
@@ -291,22 +271,163 @@ private struct NearPane: View {
                 }
             }
         }
-        .task { await mode.find() }
-        .alert("Remove key?", isPresented: $removing) {
-            Button("Remove", role: .destructive) { Task { await mode.remove() } }
+    }
+}
+
+/// The NEAR key's control: Saved, with Replace and Remove, which asks
+/// first, while a key is kept; the field and Save while none is, or over
+/// the one kept after Replace, with Cancel back to Saved. Each press's stop
+/// shows here, with its way on: a read's has Try Again; a save's keeps what
+/// was typed, so Save tries again; a remove's keeps the key shown as saved,
+/// so Remove tries again.
+private struct KeyRow: View {
+    let mode: NearMode
+    @State private var stage = Stage.reading
+    @State private var key = ""
+    @State private var confirmingRemove = false
+
+    /// The row's own stage. Whether a key is kept is the keychain's last
+    /// answer (`NearMode.hasKey`), which any read, the Wallet's included,
+    /// keeps; each read's stop stays with whoever asked.
+    enum Stage: Equatable {
+        /// Asking whether a key is kept, as the row appears and at Try Again.
+        case reading
+        /// The keychain didn't say.
+        case unread
+        /// As the keychain answered: Saved, or the field to add a key.
+        case shown
+        /// The field over the key kept, after Replace.
+        case replacing
+        case saving
+        /// The keychain didn't keep what was typed, which stays in the field.
+        case notSaved
+        case removing
+        /// The keychain didn't remove the key, which is still kept.
+        case notRemoved
+    }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            switch stage {
+            case .reading:
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Checking")
+            case .unread:
+                HStack(spacing: 2) {
+                    Text("Couldn't check")
+                        .foregroundStyle(.secondary)
+                    SymbolButton("Try Again", symbol: "arrow.clockwise") { Task { await read() } }
+                        .overhanging()
+                }
+            case .shown where mode.hasKey == true, .removing, .notRemoved:
+                saved
+            case .shown, .replacing, .saving, .notSaved:
+                field
+            }
+            if let stop {
+                Text(stop)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+        .task { await read() }
+        // The words about a save go once what was typed changes.
+        .onChange(of: key) {
+            if stage == .notSaved { stage = mode.hasKey == true ? .replacing : .shown }
+        }
+        .alert("Remove key?", isPresented: $confirmingRemove) {
+            Button("Remove", role: .destructive, action: remove)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("NEAR Private AI chats can't send until you save a key again.")
         }
     }
 
-    /// Keeps the key typed, and clears the field at once.
+    private var saved: some View {
+        HStack(spacing: 2) {
+            Text("Saved")
+                .foregroundStyle(.secondary)
+            if stage == .removing {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Removing")
+            } else {
+                SymbolButton("Replace", symbol: "pencil") { stage = .replacing }
+                    .overhanging()
+                SymbolButton("Remove", symbol: "trash") { confirmingRemove = true }
+                    .overhanging()
+            }
+        }
+    }
+
+    private var field: some View {
+        HStack(spacing: 6) {
+            SecureField("NEAR key", text: $key, prompt: Text("NEAR key"))
+                .labelsHidden()
+                .frame(width: 220)
+                .onSubmit(save)
+                .disabled(stage == .saving)
+            if stage == .saving {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Saving")
+            } else {
+                if mode.hasKey == true {
+                    Button("Cancel") {
+                        key = ""
+                        stage = .shown
+                    }
+                }
+                Button("Save", action: save)
+                    .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private var stop: String? {
+        switch stage {
+        case .notSaved: "Couldn't save the key."
+        case .notRemoved: "Couldn't remove the key."
+        case .reading, .unread, .shown, .replacing, .saving, .removing: nil
+        }
+    }
+
+    private func read() async {
+        stage = .reading
+        do {
+            try await mode.find()
+            stage = .shown
+        } catch {
+            stage = .unread
+        }
+    }
+
+    /// Keeps the key typed; the field empties once it is kept.
     private func save() {
         let typed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        key = ""
         guard !typed.isEmpty else { return }
+        stage = .saving
         Task {
-            if await mode.save(typed) { replacing = false }
+            do {
+                try await mode.save(typed)
+                key = ""
+                stage = .shown
+            } catch {
+                stage = .notSaved
+            }
+        }
+    }
+
+    private func remove() {
+        stage = .removing
+        Task {
+            do {
+                try await mode.remove()
+                stage = .shown
+            } catch {
+                stage = .notRemoved
+            }
         }
     }
 }
@@ -351,14 +472,27 @@ private struct LlamaPane: View {
                 }
             }
         }
-        .onAppear { downloads.forEach { $0.refresh() } }
+        // The files and the free space are read again, so the words about
+        // space and Download's state follow them: as the pane shows, as its
+        // window comes back, and as any model's download changes stage,
+        // since a download that ends, stops or is removed changes the space
+        // the others have. Download reads them again at its press.
+        .onAppear(perform: refresh)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in refresh() }
+        .onChange(of: downloads.map(\.state), refresh)
+    }
+
+    private func refresh() {
+        downloads.forEach { $0.refresh() }
     }
 }
 
 /// One model in Local Llama: its radio mark, which chooses it, its name,
 /// "Best for this Mac" under the name of the last one that fits, why its
 /// download stopped, its download size, and its download's symbols:
-/// Download or Continue, progress and Pause while under way, and Remove.
+/// Download or Continue; while under way, what it waits for when it isn't
+/// fetching (the network, or its next try), its progress and Pause; and
+/// Remove.
 private struct ModelRow: View {
     let download: ModelDownload
     let chosen: Bool
@@ -377,7 +511,14 @@ private struct ModelRow: View {
                     .foregroundStyle(download.fits ? .secondary : .tertiary)
                     .padding(.trailing, 4)
                 if download.isUnderWay {
-                    let progress = "\(DownloadSection.text(download.done)) of \(size)"
+                    let status = DownloadSection.status(download.state)
+                    let progress = "\(status), \(DownloadSection.text(download.done)) of \(size)"
+                    if let waiting {
+                        Image(systemName: waiting)
+                            .foregroundStyle(.secondary)
+                            .help(status)
+                            .accessibilityHidden(true)
+                    }
                     ProgressView(value: Double(download.done), total: Double(max(download.total, 1)))
                         .progressViewStyle(.circular)
                         .controlSize(.small)
@@ -435,6 +576,16 @@ private struct ModelRow: View {
         }
     }
 
+    /// The symbol for a download under way that isn't fetching: one waiting
+    /// for the network, or one waiting for its next try after a failed one.
+    private var waiting: String? {
+        switch download.state {
+        case .waitingForNetwork: "wifi.slash"
+        case .retrying: "exclamationmark.arrow.circlepath"
+        case .downloading, .installed, .stopped: nil
+        }
+    }
+
     /// Why the download stopped, or why it can't start for want of space.
     private var problem: String? {
         guard !download.isUnderWay else { return nil }
@@ -458,25 +609,39 @@ private struct ShortcutPane: View {
     }
 }
 
-/// The shortcut, or Record Shortcut. Pressed, it takes the next keys
-/// pressed as the shortcut; Escape stops it with nothing changed. Keys
-/// without Command, Option or Control are refused, with the words why, and
-/// so is a shortcut the system won't take.
+/// The shortcut, or Record Shortcut. Pressed, it records: it takes the
+/// keyboard, and the next keys typed into it are the shortcut. Escape, a
+/// second press or the keyboard going elsewhere stops it with nothing
+/// changed. Keys without Command, Option or Control are refused, with the
+/// words why, and so is a shortcut macOS won't take, with words that say
+/// what is still the shortcut (`QuickPrompt.refusal`).
 private struct ShortcutRecorder: View {
     let shortcut: Shortcut?
     let refusal: String?
     let choose: (Shortcut?) -> Void
-    @State private var monitor: Any?
-    @State private var problem: String?
+    @State private var stage = Stage.idle
+
+    enum Stage: Equatable {
+        case idle
+        /// Taking the keys typed into the recorder; `refused` once one came
+        /// without Command, Option or Control.
+        case recording(refused: Bool)
+    }
 
     var body: some View {
+        let recording = stage != .idle
         VStack(alignment: .trailing, spacing: 4) {
             HStack(spacing: 6) {
-                Button(monitor == nil ? shortcut?.title ?? "Record Shortcut" : "Press Keys…") {
-                    if monitor == nil { record() } else { stop() }
-                }
-                .accessibilityHint(monitor == nil ? "Records a new shortcut" : "Stops recording")
-                if shortcut != nil, monitor == nil {
+                RecorderButton.Field(
+                    title: recording ? "Press Keys…" : shortcut?.title ?? "Record Shortcut",
+                    hint: recording ? "Stops recording" : "Records a new shortcut",
+                    recording: recording,
+                    press: { stage = recording ? .idle : .recording(refused: false) },
+                    end: { stage = .idle },
+                    take: take
+                )
+                .fixedSize()
+                if shortcut != nil, !recording {
                     Button("Clear Shortcut", systemImage: "xmark.circle.fill") { choose(nil) }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
@@ -485,37 +650,93 @@ private struct ShortcutRecorder: View {
                         .help("Clear Shortcut")
                 }
             }
-            if let words = problem ?? refusal {
+            if let words = stage == .recording(refused: true) ? "Hold ⌘, ⌥ or ⌃ with the key." : refusal {
                 Text(words)
                     .font(.caption)
                     .foregroundStyle(.red)
             }
         }
-        .onDisappear(perform: stop)
-    }
-
-    private func record() {
-        problem = nil
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            MainActor.assumeIsolated { take(event) }
-            return nil
-        }
+        .onDisappear { stage = .idle }
     }
 
     private func take(_ event: NSEvent) {
         if let shortcut = Shortcut(event) {
-            stop()
+            stage = .idle
             choose(shortcut)
         } else if Int(event.keyCode) == kVK_Escape {
-            stop()
+            stage = .idle
         } else {
-            problem = "Hold ⌘, ⌥ or ⌃ with the key."
+            stage = .recording(refused: true)
         }
     }
+}
 
-    private func stop() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
+/// The recorder's button: an AppKit one, so that while it records it holds
+/// the keyboard and takes the keys typed into it, those with Command among
+/// them, before the menus do. Keys typed anywhere else go where they always
+/// go. It takes the keyboard at the press that starts recording; losing it
+/// ends recording.
+private final class RecorderButton: NSButton {
+    var recording = false
+    var press: () -> Void = {}
+    var end: () -> Void = {}
+    var take: (NSEvent) -> Void = { _ in }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    @objc private func pressed() {
+        // Recording starts only once this has the keyboard.
+        guard recording || window?.makeFirstResponder(self) == true else { return }
+        press()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if recording { take(event) } else { super.keyDown(with: event) }
+    }
+
+    // A key with Command or Control comes here before it reaches this as a
+    // key press, and before the menus see it.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard recording, window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
+        take(event)
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned, recording { end() }
+        return resigned
+    }
+
+    // Taken off screen, as when the pane changes, it records no more; the
+    // recorder's own stage ends as it disappears.
+    override func viewWillMove(toWindow window: NSWindow?) {
+        if window == nil { recording = false }
+        super.viewWillMove(toWindow: window)
+    }
+
+    struct Field: NSViewRepresentable {
+        let title: String
+        let hint: String
+        let recording: Bool
+        let press: () -> Void
+        let end: () -> Void
+        let take: (NSEvent) -> Void
+
+        func makeNSView(context: Context) -> RecorderButton {
+            let button = RecorderButton(title: title, target: nil, action: #selector(RecorderButton.pressed))
+            button.target = button
+            return button
+        }
+
+        func updateNSView(_ button: RecorderButton, context: Context) {
+            button.title = title
+            button.setAccessibilityHelp(hint)
+            button.recording = recording
+            button.press = press
+            button.end = end
+            button.take = take
+        }
     }
 }
 
@@ -587,7 +808,7 @@ private struct AdvancedPane: View {
                     }
                     HStack {
                         Spacer()
-                        SymbolButton("Copy Commands", symbol: "doc.on.doc") { copy(commands) }
+                        CopyButton("Copy Commands", side: 28, text: commands)
                     }
                 }
             }
@@ -608,7 +829,10 @@ private struct AdvancedPane: View {
                 HStack(spacing: 2) {
                     Spacer()
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await read() } }
-                    SymbolButton("Copy Log", symbol: "doc.on.doc") { copy(lines) }
+                    // Offered once there are lines read to copy.
+                    if case .success(let logged)? = log, !logged.isEmpty {
+                        CopyButton("Copy Log", side: 28, text: logged.joined(separator: "\n"))
+                    }
                 }
             }
             Section {
@@ -650,15 +874,10 @@ private struct AdvancedPane: View {
         }
     }
 
-    private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
     private func restore() {
         prompt.choose(nil)
         settings.restore()
-        if LoginItem.isOn { _ = LoginItem.set(false) }
+        if LoginItem.stage != .off { _ = LoginItem.set(false) }
         updates.checksAutomatically = false
     }
 

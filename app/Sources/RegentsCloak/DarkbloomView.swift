@@ -328,14 +328,8 @@ struct DarkbloomView: View {
                 SymbolButton("Show Key", symbol: "eye") { Task { await mode.showKey() } }
                     .overhanging()
             }
-            SymbolButton("Copy Key", symbol: "doc.on.doc") {
-                Task {
-                    guard let key = await mode.key() else { return }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(key, forType: .string)
-                }
-            }
-            .overhanging()
+            CopyButton("Copy Key", side: 28) { await mode.key() }
+                .overhanging()
         }
     }
 
