@@ -6,9 +6,10 @@ import SwiftUI
 /// notes, each Settings row's and Token Inference's two marks. The note
 /// opens when the pointer rests on the button for a moment, or on a click
 /// or from the keyboard, and closes as any popover does. Leaving the button
-/// doesn't close it, so the pointer can reach a link in the note. Its name
-/// is its help and what VoiceOver reads; a note of words is its hint too,
-/// so it is heard without opening.
+/// doesn't close it, so the pointer can reach a link in the note. It has
+/// no tip (`Tip.swift`), which would come up over the note the same rest
+/// opens. Its name is what VoiceOver reads; a note of words is its hint
+/// too, so it is heard without opening.
 struct InfoButton<Mark: View, Note: View>: View {
     let title: String
     let hint: String?
@@ -40,7 +41,6 @@ struct InfoButton<Mark: View, Note: View>: View {
         .foregroundStyle(.secondary)
         // A circle round the one symbol, a capsule round a wider mark.
         .hover(Capsule())
-        .tip(title)
         .accessibilityLabel(title)
         .accessibilityHint(hint ?? "")
         .onHover { inside in
