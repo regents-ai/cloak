@@ -602,6 +602,68 @@ struct PayTests {
         #expect(sender.read.map { $0["op"] as? String } == (payment == .tempo ? ["models"] : []))
     }
 
+    /// A run as Cover's switch sees it: the guest's Cover, nil once the
+    /// restart has begun, the setting, and the door's request then.
+    @Observable
+    final class CoverRun {
+        var cover: Bool? = true
+        var setting = true
+        var stageAtRestart: AgentRequest.Stage?
+    }
+
+    /// A Cover switch while a paid request is out does not restart Cloak,
+    /// which would cut it, until that request has ended: the payer has
+    /// answered it and the app has its answer.
+    @Test(.timeLimit(.minutes(1)))
+    func aCoverSwitchWhileAPaidRequestIsOutRestartsOnlyOnceItHasEnded() async throws {
+        let folder = URL(filePath: "/tmp").appending(path: "cloak-pay-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let standIn = StandIn(answers: ["GET /v1/models": Self.models])
+        let door = Door(
+            file: folder.appending(path: "apps"), wallet: folder.appending(path: "wallet"),
+            parts: Door.Parts(
+                reword: { texts throws(RewriteStop) in texts }, queue: PayQueue(line: standIn.line),
+                exchange: { _, _ in throw POSIXError(.EIO) }, wallet: { nil }, key: { Data() }, sealing: { nil }),
+            port: { 0 })
+        await door.open()
+        await Self.until { door.state != .closed }
+        try #require(door.state == .open)
+        let pass = try #require(door.pass(for: UUID(), paying: .zkapi))
+        let run = CoverRun()
+        let following = Task {
+            await Supervisor.followCover(
+                changed: { run.cover.map { $0 != run.setting } == true }, underWay: { door.underWay },
+                restart: {
+                    run.stageAtRestart = door.requests.first?.stage
+                    run.cover = nil
+                })
+        }
+        defer { following.cancel() }
+
+        var pair: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
+        door.accept(guest: pair[0])
+        let app = pair[1]
+        let message = #"{"model":"cheap","messages":[{"role":"user","content":"Name a calm colour."}]}"#
+        let request = Data(
+            ("POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer \(pass)\r\n"
+                + "Content-Type: application/json\r\nContent-Length: \(message.utf8.count)\r\n\r\n\(message)").utf8)
+        let response = Task { await Self.ask(app, request) }
+        var pending = standIn.pending.makeAsyncIterator()
+        let out = try #require(await pending.next())
+        #expect(out.route == "R")
+
+        run.setting = false
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(run.cover == true)
+
+        out.answer(SendTests.said("Sage green."))
+        #expect(String(decoding: await response.value, as: UTF8.self).hasPrefix("HTTP/1.1 200"))
+        await Self.until { run.cover == nil }
+        #expect(run.stageAtRestart == .answered)
+        await door.close()
+    }
+
     /// Writes `request` on `socket`, then reads until the other end closes,
     /// on a thread of its own, so the door goes on meanwhile; closes it.
     static func ask(_ socket: Int32, _ request: Data) async -> Data {

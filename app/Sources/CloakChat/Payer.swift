@@ -280,7 +280,10 @@ public final class Payer {
             await refresh()
             if reads == .reading(again: true) {
                 reads = .reading(again: false)
-            } else if moving {
+            } else if moving || review.map({ !$0.quote.expired(at: .now) }) == true {
+                // A quote under review counts while it holds: what its
+                // button waits for, ETH arriving at the address, shows as
+                // the chain does.
                 let nap = Task { _ = try? await Task.sleep(for: .seconds(10)) }
                 reads = .waiting(nap: nap)
                 await nap.value
@@ -297,12 +300,12 @@ public final class Payer {
         if case .reading = reads { true } else { false }
     }
 
-    /// A quote under review counts while it holds: what its button waits
-    /// for, ETH arriving at the address, shows as the chain does.
-    private var moving: Bool {
+    /// Money is on its way: a deposit, a withdrawal, a send settling, or the
+    /// funding address's ETH being sent out.
+    public var moving: Bool {
         switch state {
         case .depositing, .withdrawing, .settling: true
-        default: returning?.phase == "return_pending" || review.map { !$0.quote.expired(at: .now) } == true
+        default: returning?.phase == "return_pending"
         }
     }
 

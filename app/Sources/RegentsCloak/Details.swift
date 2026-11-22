@@ -35,7 +35,7 @@ struct DetailsView: View {
         Form {
             Section {
                 LabeledContent("Status") {
-                    Label(status.state.title, systemImage: supervisor.phase.symbol)
+                    Label(supervisor.phase.title, systemImage: supervisor.phase.symbol)
                         .foregroundStyle(status.state == .needsAttention ? Color.orange : Color.primary)
                 }
                 if let reason = status.reason {

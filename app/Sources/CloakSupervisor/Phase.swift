@@ -5,9 +5,11 @@ import CloakControl
 /// section 9 draws it.
 ///
 /// It starts Paused, on every launch: nothing resumes by itself after a
-/// relaunch, a restart, a login or a wake. Any failed requirement stops all work and
-/// ends in Needs attention with its reason; nothing is restarted, and no
-/// other route or model is tried (REF04).
+/// relaunch, a restart of the Mac, a login or a wake. A restart, asked for
+/// while Running, stops everything through the one shutdown and prepares to
+/// run again, with no stop at Paused between. Any failed requirement stops
+/// all work and ends in Needs attention with its reason; nothing is tried
+/// again, and no other route or model is tried (REF04).
 public enum Phase: Sendable, Equatable {
     /// What a preparation is for.
     public enum Goal: Sendable, Equatable {
@@ -24,6 +26,8 @@ public enum Phase: Sendable, Equatable {
         case needsAttention(Reason)
         /// The app ends once the shutdown has.
         case quit
+        /// Preparing to run again, once the shutdown has.
+        case restart
     }
 
     case paused
@@ -34,8 +38,9 @@ public enum Phase: Sendable, Equatable {
     case needsAttention(Reason)
 
     public enum Event: Sendable, Equatable {
-        // Asked for, by the menu or `cloak`.
-        case start, resume, verify, pause, stop, quit
+        // Asked for, by the menu or `cloak`; restart, by Cover's switch
+        // while Running.
+        case start, resume, verify, pause, stop, quit, restart
         // From the system.
         case sleep
         // From the supervisor's own work.
@@ -76,6 +81,15 @@ public enum Phase: Sendable, Equatable {
             .stopping(.ready)
         case (.ready, .pause), (.needsAttention, .pause):
             .paused
+
+        // Restarting: the one shutdown, then a start. A pause, a sleep or a
+        // stop while it stops keeps the shutdown and drops the start.
+        case (.running, .restart):
+            .stopping(.restart)
+        case (.stopping(.restart), .pause), (.stopping(.restart), .sleep):
+            .stopping(.paused)
+        case (.stopping(.restart), .stop):
+            .stopping(.ready)
         case (.paused, .pause), (.paused, .stop), (.ready, .stop), (.needsAttention, .stop),
              (.paused, .sleep), (.ready, .sleep), (.needsAttention, .sleep):
             self
@@ -89,6 +103,8 @@ public enum Phase: Sendable, Equatable {
             .ready
         case (.stopping(.needsAttention(let reason)), .stopped):
             .needsAttention(reason)
+        case (.stopping(.restart), .stopped):
+            .preparing(.run)
 
         default:
             nil
@@ -126,11 +142,18 @@ public enum Phase: Sendable, Equatable {
         }
     }
 
+    /// The state in a word, as the menu, Details and Chat say it:
+    /// Restarting while a restart's shutdown runs, which Starting then
+    /// follows; otherwise the state's own.
+    public var title: String {
+        self == .stopping(.restart) ? "Restarting" : state.title
+    }
+
     /// The spec's status for automation (INS02). Stopping blocks new work:
     /// it is paused, or failed when it ends in Needs attention.
     public var status: Status {
         switch self {
-        case .paused, .stopping(.paused), .stopping(.ready), .stopping(.quit): .paused
+        case .paused, .stopping(.paused), .stopping(.ready), .stopping(.quit), .stopping(.restart): .paused
         case .preparing: .checking
         case .running: .running
         case .ready: .ready

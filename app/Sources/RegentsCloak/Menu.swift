@@ -167,8 +167,8 @@ private final class Action: NSMenuItem {
 }
 
 /// What the menu's header says. Its dot is the state now, grey while Cloak
-/// starts or stops, and its line says the state now, Starting or Stopping
-/// meanwhile. A failure takes the line, with its remedy
+/// starts or stops, and its line says the state now, Starting, Stopping or
+/// Restarting meanwhile. A failure takes the line, with its remedy
 /// and its one fix (`Fix`), once Cloak has stopped for it.
 struct MenuHeader: Equatable {
     enum Dot: Equatable {
@@ -177,19 +177,20 @@ struct MenuHeader: Equatable {
 
     enum Line: Equatable {
         /// The state's word, with what the model is doing beside it.
-        case state(State, unloaded: Bool, downloading: Bool)
+        case state(String, unloaded: Bool, downloading: Bool)
         case failure(Reason, fix: Fix?)
     }
 
     var dot: Dot
-    /// The state now, which the line, the dot's tooltip and VoiceOver say.
-    var state: State
+    /// The state now in a word (`Phase.title`), which the line, the dot's
+    /// tooltip and VoiceOver say.
+    var word: String
     var line: Line
 
     /// `download` is the model that rewords'.
     @MainActor
     init(phase: Phase, resting: Bool, download: ModelDownload) {
-        state = phase.state
+        word = phase.title
         dot = switch phase {
         case .running: .running
         case .paused, .ready: .stopped
@@ -199,7 +200,7 @@ struct MenuHeader: Equatable {
         if case .needsAttention(let reason) = phase {
             line = .failure(reason, fix: Fix(for: reason, download: download))
         } else {
-            line = .state(phase.state, unloaded: phase == .running && resting, downloading: download.isUnderWay)
+            line = .state(phase.title, unloaded: phase == .running && resting, downloading: download.isUnderWay)
         }
     }
 
@@ -287,10 +288,10 @@ final class MenuHeaderView: NSView {
     }
 
     func show(_ header: MenuHeader) {
-        dot.show(header.dot, word: header.state.title)
+        dot.show(header.dot, word: header.word)
         switch header.line {
-        case .state(let state, let unloaded, let downloading):
-            line.stringValue = ([state.title] + (unloaded ? ["model unloaded"] : []) + (downloading ? ["downloading model"] : []))
+        case .state(let word, let unloaded, let downloading):
+            line.stringValue = ([word] + (unloaded ? ["model unloaded"] : []) + (downloading ? ["downloading model"] : []))
                 .joined(separator: ", ")
             line.isHidden = false
             failure.isHidden = true
@@ -420,16 +421,18 @@ enum MenuBarIcon {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "Cloak, \(phase.state.title)"
+        image.accessibilityDescription = "Cloak, \(phase.title)"
         return image
     }
 }
 
 extension Phase {
     /// The state's symbol in Details and Chat: one shape per state, so the
-    /// state never rests on colour alone.
+    /// state never rests on colour alone, and a restart's own while its
+    /// shutdown runs.
     var symbol: String {
-        switch state {
+        if self == .stopping(.restart) { return "arrow.clockwise.circle" }
+        return switch state {
         case .paused: "pause.circle"
         case .preparing: "circle.dotted"
         case .running: "play.circle.fill"
