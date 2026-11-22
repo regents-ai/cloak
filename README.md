@@ -404,7 +404,7 @@ Updates (below) and Help: a link to Patchbay's board for regents.sh, and
 words to copy for an agent that posts there. NEAR has the
 NEAR key (a field and Save; once saved, Saved with Replace, which has
 Cancel, and Remove, which asks first; a read, save or remove the keychain
-refuses says so there, and a save that fails keeps what was typed), Tor (off until turned on), Freshness (10 minutes until
+refuses says so there, and a save that fails keeps what was typed), Tor (off until turned on), Hardware check (10 minutes until
 chosen, or Every message or 1 hour) and the model, Qwen3.8-27B, which
 can't be changed; see NEAR mode, below. Local Llama, listed only while
 another model fits this Mac or one is chosen, chooses the model that
@@ -648,7 +648,7 @@ pin. Showing a NEAR conversation runs the check; beside its Tor pill, a
 spinner and a timer show it under way, a shield and its age ("9 min")
 show it passed, with what it covered as help ("Checked 9 min ago: 1
 server, 8 GPUs"), and words say why it stopped, with Check Again. A passed
-check is used again for the Freshness chosen in Settings; after that the
+check is used again for the Hardware check time chosen in Settings; after that the
 shield turns grey and its help says the next message checks again. The Tor pill (off until turned
 on) sends the check and the messages through Cloak's tor, NEAR's and
 Intel's connections each under a name of their own made at each launch,

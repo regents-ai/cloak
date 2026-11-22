@@ -1879,8 +1879,8 @@ extension NearStop {
         case .send: "Interrupted"
         case .status:
             switch code {
-            case 401, 403: "Key refused"
-            case 429: "Too many"
+            case 401, 403: "Invalid key"
+            case 429: "Rate limited"
             default: "NEAR error"
             }
         case .reply: "Answer refused"

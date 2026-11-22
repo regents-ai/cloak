@@ -10,7 +10,10 @@
   balance can't cover says Insufficient balance, and what the service
   turns away is Declined. In Agents an app gets an API Key and the Base
   URL, the names the app itself asks for, where Cloak said Pass and
-  Address, and an app that went away is Disconnected.
+  Address, and an app that went away is Disconnected. In Settings,
+  NEAR's Freshness is Hardware check and Help's Copy Words is Copy
+  Prompt; a NEAR key turned down is Invalid key, and too many requests
+  is Rate limited.
 - Both wallets say what alone may be sent to their address, under the
   address and under its QR code: only ETH on Ethereum Mainnet for V's,
   only USDC.e on Tempo for Token Inference's. Cloak can't return anything

@@ -218,7 +218,7 @@ private struct FeedbackSection: View {
         Section {
             Text("Something broke, or you have a question? Post it at [patchbay.help/regents.sh](https://patchbay.help/regents.sh).")
             VStack(alignment: .leading, spacing: 8) {
-                Text("Or give these words to your agent:")
+                Text("Or give this prompt to your agent:")
                 Text(Self.words)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -226,7 +226,7 @@ private struct FeedbackSection: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Spacer()
-                    CopyButton("Copy Words", side: 28, text: Self.words)
+                    CopyButton("Copy Prompt", side: 28, text: Self.words)
                         .accessibilityHint(Self.note)
                 }
             }
@@ -259,8 +259,8 @@ private struct NearPane: View {
                 }
             }
             Section {
-                Row("Freshness", note: "Before sending a message, Cloak checks proof from NEAR's servers, with Intel's help, that they are the hardware and software this version of Cloak accepts. This sets how long a successful check counts before Cloak checks again. “Every message” is the most careful and adds a few seconds to each one.") {
-                    Picker("Freshness", selection: $settings.proofFreshness) {
+                Row("Hardware check", note: "Before sending a message, Cloak checks proof from NEAR's servers, with Intel's help, that they are the hardware and software this version of Cloak accepts. This sets how long a successful check counts before Cloak checks again. “Every message” is the most careful and adds a few seconds to each one.") {
+                    Picker("Hardware check", selection: $settings.proofFreshness) {
                         ForEach(ProofFreshness.allCases) { Text($0.title).tag($0) }
                     }
                     .labelsHidden()
@@ -860,7 +860,7 @@ private struct AdvancedPane: View {
         Launch at login, Updates and Tor for NEAR turn off, \
         rewording, Review, Saved chats and Cover traffic turn back on, \
         Free memory goes back to “\(AppSettings.defaultFreeMemory.title)”, \
-        Freshness to “\(AppSettings.defaultProofFreshness.title)” \
+        Hardware check to “\(AppSettings.defaultProofFreshness.title)” \
         and Local Llama to \(supervisor.manifest.rewordingModel.label), \
         the quick prompt loses its shortcut, and the port goes back to \(AppSettings.defaultDoorPort).
         """
