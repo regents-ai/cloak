@@ -1311,7 +1311,7 @@ help.
 Every money press goes through a review:
 
 ```
-press (Deposit with an amount, Withdraw, Send Out with an address)
+press (Deposit with an amount, Withdraw, Transfer with an address and an amount)
   --quote, a C frame--> review shown (Payer.review: the quote, its fee and how long it holds)
 review --the review's button, quote unexpired--> approve, a C frame within 660 s --> following
 review --the review's button, quote expired--> quoted again and shown, nothing approved
@@ -1330,10 +1330,10 @@ Try Again, and the next read clears it). Each press clears the last
 stop, and Dismiss clears it. A button is off only where the chain,
 read at the latest block, shows it certain to fail, with a few words
 beside it: Deposit while the vault is paused or a note is `active`;
-Withdraw while paused or no note is `active`; Send Out while the address
+Withdraw while paused or no note is `active`; Transfer while the address
 holds no ETH; the review's button while paused, or while the address
-holds less than the quote needs (the total for a deposit, the fee for a
-withdrawal). Return in the Amount box does what Deposit does, so nothing
+holds less than the quote needs (the total for a deposit or a transfer,
+the fee for a withdrawal). Return in the Amount box does what Deposit does, so nothing
 while Deposit is off.
 
 A V chat request (`Payer.send`, then `PayQueue.complete`) goes to the
@@ -1926,9 +1926,9 @@ card's start and the door's request whose app leaves have checks.
   Deposit is off, and the red line goes as soon as the text changes. No
   check: the sheet is not under test.
 - **V's failed and taken states.** Taken shows no button. Before (21
-  November): Failed hid the address and Send Out. Now the address, On
-  hand and Send Out… show in it whenever the funding is read. No check.
-- **V's Send Out** (`returning.phase`). Not a case of `Payer.State`; a
+  November): Failed hid the address and Transfer. Now the address,
+  Balance and Transfer… show in it whenever the funding is read. No check.
+- **V's Transfer** (`returning.phase`). Not a case of `Payer.State`; a
   phase other than `return_pending` is not read.
 - **V's model list** (`Payer.models`). Before (21 November): a read that
   failed spun for good. Now the row says "Couldn't load the list", with

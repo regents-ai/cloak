@@ -49,12 +49,14 @@ public final class Payer {
         /// With the dollars asked for, to quote again.
         case deposit(PayQuote, microUSD: UInt64)
         case withdrawal(PayQuote)
-        /// With the address typed, to quote again.
-        case sendOut(PayQuote, to: String)
+        /// With the address and the amount typed, to quote again: the
+        /// amount in wei as a decimal string, or empty for all of the
+        /// address's ETH less the fee, as the payer takes it.
+        case transfer(PayQuote, to: String, wei: String)
 
         public var quote: PayQuote {
             switch self {
-            case .deposit(let quote, _), .withdrawal(let quote), .sendOut(let quote, _): quote
+            case .deposit(let quote, _), .withdrawal(let quote), .transfer(let quote, _, _): quote
             }
         }
 
@@ -63,7 +65,7 @@ public final class Payer {
             switch self {
             case .deposit: "funding"
             case .withdrawal: "withdrawal"
-            case .sendOut: "return"
+            case .transfer: "return"
             }
         }
     }
@@ -77,7 +79,7 @@ public final class Payer {
         /// The address needs this much more, in wei.
         case needs(Decimal)
         case needsFee
-        case nothingToSend
+        case nothingToTransfer
     }
 
     /// A press that stopped, as one value: what it had asked for, and why.
@@ -345,12 +347,15 @@ public final class Payer {
         }
     }
 
-    /// Quotes sending all of the funding address's ETH to `destination`, and
-    /// shows it for review.
-    public func quoteSendOut(to destination: String) async {
+    /// Quotes sending `wei` of the funding address's ETH to `destination`,
+    /// or all of it less the fee when `wei` is empty, and shows it for
+    /// review.
+    public func quoteTransfer(to destination: String, wei: String) async {
         await quote { () throws(PayStop) in
-            .sendOut(try decode(await queue.call(
-                "POST", "/admin/return/quote", body: json(["destination": destination, "amount_wei": ""]))), to: destination)
+            .transfer(
+                try decode(await queue.call(
+                    "POST", "/admin/return/quote", body: json(["destination": destination, "amount_wei": wei]))),
+                to: destination, wei: wei)
         }
     }
 
@@ -376,7 +381,7 @@ public final class Payer {
             switch review {
             case .deposit(_, let microUSD): await quoteDeposit(microUSD: microUSD)
             case .withdrawal: await quoteWithdrawal()
-            case .sendOut(_, let destination): await quoteSendOut(to: destination)
+            case .transfer(_, let destination, let wei): await quoteTransfer(to: destination, wei: wei)
             }
             return
         }
@@ -389,7 +394,7 @@ public final class Payer {
             switch review {
             case .deposit: funding = try decode(answer)
             case .withdrawal: withdrawal = try decode(answer)
-            case .sendOut: returning = try decode(answer)
+            case .transfer: returning = try decode(answer)
             }
             approved += 1
             if self.review == review { self.review = nil }
@@ -429,10 +434,10 @@ public final class Payer {
         return nil
     }
 
-    /// Why Send Out is certain to fail now.
-    public var sendOutBlock: Block? {
+    /// Why Transfer is certain to fail now.
+    public var transferBlock: Block? {
         guard let balance = view?.chain.flatMap({ Decimal(string: $0.balanceWei) }) else { return nil }
-        return balance == 0 ? .nothingToSend : nil
+        return balance == 0 ? .nothingToTransfer : nil
     }
 
     /// Why the review's button is certain to fail now: the address holds
@@ -448,8 +453,9 @@ public final class Payer {
             if chain.paused { return .paused }
             guard let fee = Decimal(string: quote.requiredFeeWei), balance < fee else { return nil }
             return .needsFee
-        case .sendOut:
-            return balance == 0 ? .nothingToSend : nil
+        case .transfer(let quote, _, _):
+            guard let total = Decimal(string: quote.requiredTotalWei), balance < total else { return nil }
+            return .needs(total - balance)
         }
     }
 

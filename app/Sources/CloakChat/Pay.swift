@@ -214,7 +214,7 @@ public struct WithdrawalStatus: Decodable, Sendable, Equatable {
     public let transactionHash: String?
 }
 
-/// `GET /admin/return`, and the answers of Send Out's approve and follow
+/// `GET /admin/return`, and the answers of Transfer's approve and follow
 /// call: the funding address's ETH and where a send of it is.
 public struct ReturnStatus: Decodable, Sendable, Equatable {
     /// In wei.

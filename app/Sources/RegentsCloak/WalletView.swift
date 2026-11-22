@@ -194,7 +194,7 @@ private struct WalletSections: View {
                 if running {
                     HStack {
                         Spacer()
-                        Button("Create") { Task { await wallet.create() } }
+                        Button("Create Wallet") { Task { await wallet.create() } }
                             .buttonStyle(.borderedProminent)
                             .disabled(wallet.presence == .creating)
                     }
@@ -287,11 +287,14 @@ private struct LlamaPayment: View {
     }
 }
 
-/// Where to add funds, and what is there.
+/// Where to add funds, with what alone may be sent there, and what is
+/// there.
 private struct Account: View {
     let wallet: Wallet
     let address: String
     let running: Bool
+    /// The wallet pays in USDC.e on Tempo and sends nothing else.
+    private static let only = "Send only USDC.e on Tempo. Cloak can't return anything else sent to this address."
 
     var body: some View {
         Section("Wallet") {
@@ -303,15 +306,17 @@ private struct Account: View {
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                     CopyButton(text: address)
-                    CodeButton(address: address)
+                    CodeButton(address: address, only: Self.only)
                 }
             }
-            LabeledContent("Token") {
+            LabeledContent("Network") {
                 HStack(spacing: 4) {
-                    Text("USDC.e on Tempo")
+                    Text("Tempo")
                     BoundlessTempoButton()
                 }
             }
+            LabeledContent("Asset", value: "USDC.e")
+            Only(words: Self.only)
             if let look = wallet.look {
                 if !look.setup {
                     Label("The provider no longer names USDC.e on Tempo. Don't add funds.", systemImage: "exclamationmark.triangle.fill")
@@ -329,11 +334,25 @@ private struct Account: View {
     }
 }
 
+/// What alone may be sent to a wallet's address, said where the address is
+/// copied from: a wrong coin or a wrong network sent there is beyond the
+/// app's reach.
+struct Only: View {
+    let words: String
+
+    var body: some View {
+        Label(words, systemImage: "exclamationmark.triangle.fill")
+            .symbolRenderingMode(.multicolor)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 /// The address as a QR code, for a phone's wallet to scan, in a popover
 /// from the button beside Copy, with the address in full under it to check
-/// against. Shown only.
+/// against, and under that what alone may be sent to it. Shown only.
 struct CodeButton: View {
     let address: String
+    let only: String
     @State private var open = false
 
     var body: some View {
@@ -365,6 +384,8 @@ struct CodeButton: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize()
+                    Only(words: only)
+                        .font(.caption)
                 }
                 .padding(16)
             }
@@ -413,7 +434,7 @@ private struct Holding: View {
         let deposit = look?.deposit.flatMap { $0.gone == true ? nil : $0 }
         let none = look != nil && deposit == nil
         Section("Deposit") {
-            LabeledContent("Held") {
+            LabeledContent("Amount") {
                 if let deposit {
                     Text("\(deposit.deposit.text), \(deposit.spent.text) spent")
                 } else if none {
@@ -434,8 +455,8 @@ private struct Holding: View {
             let wait = deposit?.withdrawAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
             let waiting = wait.map { context.date < $0 } ?? false
             let withdraw = wait == nil
-                ? "Without the provider: asks the network to close it, then takes it back 15 minutes later."
-                : "Takes it back now."
+                ? "Without the provider: asks the network to close it, then returns it to the wallet 15 minutes later."
+                : "Returns it to the wallet now."
             HStack {
                 if none {
                     Text("Nothing to refund.")
@@ -562,8 +583,8 @@ struct StopRow: View {
 extension RemoteStop {
     var title: String {
         switch code {
-        case .noFunds: "No funds"
-        case .walletRefused: "Wallet refused"
+        case .noFunds: "Insufficient funds"
+        case .walletRefused: "Wallet declined"
         case .modelUnavailable: "Model unavailable"
         case .torDown: "Tor down"
         case .answerRefused: "No answer"
@@ -575,7 +596,7 @@ extension RemoteStop {
     var words: String {
         switch code {
         case .noFunds: "Add USDC.e on Tempo to the wallet, then try again."
-        case .walletRefused: "The provider turned this wallet away."
+        case .walletRefused: "The provider declined this wallet."
         case .modelUnavailable: "This model can't be used now. Pick another in Wallet."
         case .torDown: "Cloak couldn't reach the network through Tor. Try again."
         case .answerRefused: "The model declined to answer."

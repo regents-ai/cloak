@@ -49,9 +49,9 @@ struct AgentsView: View {
                     Copyable(text: door.address)
                 } label: {
                     HStack(spacing: 2) {
-                        Text("Address")
+                        Text("Base URL")
                         InfoButton(
-                            "About Address",
+                            "About Base URL",
                             note: "Cloak rewords what you write on this Mac before it leaves; your apps' instructions, tools, tool results and the model's earlier answers go as the apps send them. Each request is paid from V's deposit, with a new key.")
                     }
                 }
@@ -163,7 +163,7 @@ struct AgentsView: View {
         ) { app in
             Button("Remove", role: .destructive) { door.remove(app.id) }
         } message: { _ in
-            Text("Its pass stops working at once.")
+            Text("Its API key stops working at once.")
         }
     }
 
@@ -304,7 +304,7 @@ private struct RequestRow: View {
             .tip(words)
         case .left(let paid):
             Label {
-                Text("Left")
+                Text("Disconnected")
             } icon: {
                 Image(systemName: "minus.circle.fill")
                     .foregroundStyle(paid ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
@@ -319,14 +319,14 @@ private struct RequestRow: View {
         case .sending: "Sending"
         case .answered: "Answered"
         case .stopped(let words): "Stopped: \(words)"
-        case .left(let paid): "Left: \(Self.left(paid: paid))"
+        case .left(let paid): "Disconnected: \(Self.left(paid: paid))"
         }
     }
 
     private static func left(paid: Bool) -> String {
         paid
-            ? "The app left after this was sent. It was paid for, and the answer went unread."
-            : "The app left before this was sent. Nothing was paid."
+            ? "The app disconnected after this was sent. It was paid for, and the answer went unread."
+            : "The app disconnected before this was sent. Nothing was paid."
     }
 
     /// The model once read, the messages reworded once all are, and the time
@@ -515,16 +515,16 @@ private struct AddApp: View {
                 Text(name)
                     .font(.headline)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Pass")
+                    Text("API Key")
                         .font(.subheadline.weight(.semibold))
                     Copyable(text: pass)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Address")
+                    Text("Base URL")
                         .font(.subheadline.weight(.semibold))
                     Copyable(text: door.address)
                 }
-                Text("Copy the pass now: Cloak shows it only once. Paste it where the app asks for its key, and the address where it asks for one.")
+                Text("Copy the API key now: Cloak shows it only once. Paste it where the app asks for an API key, and the base URL where it asks for one.")
                     .foregroundStyle(.secondary)
                 HStack {
                     Spacer()

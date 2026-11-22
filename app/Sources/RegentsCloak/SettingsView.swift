@@ -738,7 +738,7 @@ private struct PortRow: View {
     var body: some View {
         Row(
             "Port",
-            note: "Apps you add in the Agents window, such as a coding agent, send their AI requests through Cloak at 127.0.0.1 on this port. Only apps on this Mac can connect. A new port is used as soon as it's saved, so apps you added earlier need the new address from the Agents window."
+            note: "Apps you add in the Agents window, such as a coding agent, send their AI requests through Cloak at 127.0.0.1 on this port. Only apps on this Mac can connect. A new port is used as soon as it's saved, so apps you added earlier need the new base URL from the Agents window."
         ) {
             VStack(alignment: .trailing, spacing: 4) {
                 HStack(spacing: 6) {

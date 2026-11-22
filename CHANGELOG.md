@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- The words every wallet uses. V's wallet says Balance, not On hand, and
+  Transfer…, not Send Out…; a transfer takes an amount in ETH (Max for
+  all of it, less the fee) and its review no longer counts down, asking
+  to Update Fee only once the quote is 30 seconds old. Both wallets show
+  Network and Asset, a transfer on its way is Pending, a press the
+  balance can't cover says Insufficient balance, and what the service
+  turns away is Declined. In Agents an app gets an API Key and the Base
+  URL, the names the app itself asks for, where Cloak said Pass and
+  Address, and an app that went away is Disconnected.
+- Both wallets say what alone may be sent to their address, under the
+  address and under its QR code: only ETH on Ethereum Mainnet for V's,
+  only USDC.e on Tempo for Token Inference's. Cloak can't return anything
+  else sent there.
 - V's model list shows prices the way people know them: each model with
   its price for a million tokens, in and out, as Token Inference's list
   does. Before, each said "up to $1.00 a request", which is what is set

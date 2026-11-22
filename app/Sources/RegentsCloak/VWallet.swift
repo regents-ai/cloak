@@ -6,7 +6,7 @@ import SwiftUI
 /// section 3): the payer's Ethereum address to send ETH to, the deposit
 /// each request is paid from with a new key, and the model V chats go to.
 /// Every figure is the payer's, in ETH; the one figure in dollars is the
-/// amount its owner asked to deposit. Deposit, Withdraw and Send Out each
+/// amount its owner asked to deposit. Deposit, Withdraw and Transfer each
 /// ask the payer for a quote and show it where the press was made, in
 /// place of the button pressed; the review's button is the one place an
 /// approve is sent from. A money button is off only where the chain at the
@@ -55,11 +55,15 @@ struct VWallet: View {
 }
 
 /// The payer's own address on Ethereum, to send ETH to, as Copy and a QR
-/// code; the ETH there now; and Send Out…, which sends all of it to an
-/// address typed in, or its quote under review.
+/// code, with what alone may be sent to it; the ETH there now; and
+/// Transfer…, which sends an amount of it to an address, both typed in, or
+/// its quote under review.
 private struct AddressSection: View {
     let payer: Payer
     let funding: FundingStatus
+    /// The payer reads and sends ETH on Ethereum Mainnet and nothing else,
+    /// and its key never leaves the guest.
+    private static let only = "Send only ETH on Ethereum Mainnet. Cloak can't return anything else sent to this address."
 
     var body: some View {
         Section("Wallet") {
@@ -71,14 +75,15 @@ private struct AddressSection: View {
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                     CopyButton(text: funding.address)
-                    CodeButton(address: funding.address)
+                    CodeButton(address: funding.address, only: Self.only)
                 }
             }
-            LabeledContent("Network", value: "Ethereum")
+            LabeledContent("Network", value: "Ethereum Mainnet")
             LabeledContent("Asset", value: "ETH")
-            LabeledContent("On hand", value: Ether.text(wei: funding.ethBalance) ?? "—")
+            Only(words: Self.only)
+            LabeledContent("Balance", value: Ether.text(wei: funding.ethBalance) ?? "—")
             if let returning = payer.returning, returning.phase == "return_pending" {
-                LabeledContent("Sending") {
+                LabeledContent("Pending") {
                     HStack(spacing: 4) {
                         ProgressView()
                             .controlSize(.small)
@@ -88,43 +93,72 @@ private struct AddressSection: View {
                     }
                 }
             }
-            if let review = payer.review, case .sendOut = review {
+            if let review = payer.review, case .transfer = review {
                 ReviewRows(payer: payer, review: review)
             } else {
                 HStack(spacing: 8) {
                     Spacer()
-                    if let block = payer.sendOutBlock {
+                    if let block = payer.transferBlock {
                         Text(block.words)
                             .foregroundStyle(.secondary)
                     }
-                    SendOutButton(payer: payer)
-                        .disabled(payer.sendOutBlock != nil)
+                    TransferButton(payer: payer, balance: funding.ethBalance)
+                        .disabled(payer.transferBlock != nil)
                 }
             }
         }
     }
 }
 
-/// Send Out…: an address typed in a popover, checked as Ethereum's when
-/// Review is pressed, and the payer's quote for sending all of the
-/// address's ETH there.
-private struct SendOutButton: View {
+/// Transfer…: an address and an amount in ETH typed in a popover, checked
+/// when Review is pressed, and the payer's quote for sending that much
+/// there. Max types the whole balance, and the whole balance, typed or
+/// from Max, asks for all of it less the fee, which the review shows: no
+/// transfer can send all of an address's ETH and pay a fee on top.
+private struct TransferButton: View {
     let payer: Payer
+    /// The address's ETH, in wei as a decimal string.
+    let balance: String
     @State private var open = false
     @State private var destination = ""
-    @State private var wrong = false
+    @State private var amount = ""
+    @State private var wrong: Wrong?
+
+    private enum Wrong: String {
+        case address = "Enter an Ethereum address: 0x and 40 characters."
+        case amount = "Enter an amount in ETH, such as 0.005."
+        case tooMuch = "That's more than the balance."
+    }
 
     var body: some View {
-        Button("Send Out…") { open = true }
-            .tip("Sends all the ETH on hand to an address you type.")
+        Button("Transfer…") { open = true }
+            .tip("Sends ETH from this wallet to an address you type.")
             .popover(isPresented: $open, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 8) {
-                    TextField("To", text: $destination, prompt: Text("0x…"))
-                        .font(.body.monospaced())
-                        .frame(width: 360)
-                        .onSubmit(review)
-                    if wrong {
-                        Text("Enter an Ethereum address: 0x and 40 characters.")
+                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 8) {
+                        GridRow {
+                            Text("To")
+                            TextField("To", text: $destination, prompt: Text("0x…"))
+                                .font(.body.monospaced())
+                                .frame(width: 360)
+                        }
+                        GridRow {
+                            Text("Amount")
+                            HStack(spacing: 8) {
+                                TextField("Amount", text: $amount, prompt: Text("0.0"))
+                                    .monospacedDigit()
+                                    .frame(width: 160)
+                                Text("ETH")
+                                    .foregroundStyle(.secondary)
+                                Button("Max") { amount = Ether.exact(wei: balance) ?? "" }
+                                    .tip("All of the balance, less the fee.")
+                            }
+                        }
+                    }
+                    .labelsHidden()
+                    .onSubmit(review)
+                    if let wrong {
+                        Text(wrong.rawValue)
                             .font(.callout)
                             .foregroundStyle(.red)
                     }
@@ -139,14 +173,23 @@ private struct SendOutButton: View {
     }
 
     private func review() {
-        let typed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard typed.wholeMatch(of: /0x[0-9a-fA-F]{40}/) != nil else {
-            wrong = true
+        let to = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard to.wholeMatch(of: /0x[0-9a-fA-F]{40}/) != nil else {
+            wrong = .address
             return
         }
-        wrong = false
+        guard let wei = Ether.wei(eth: amount.trimmingCharacters(in: .whitespaces)) else {
+            wrong = .amount
+            return
+        }
+        let plain = Locale(identifier: "en_US_POSIX")
+        if let asked = Decimal(string: wei, locale: plain), let held = Decimal(string: balance, locale: plain), asked > held {
+            wrong = .tooMuch
+            return
+        }
+        wrong = nil
         open = false
-        Task { await payer.quoteSendOut(to: typed) }
+        Task { await payer.quoteTransfer(to: to, wei: wei == balance ? "" : wei) }
     }
 }
 
@@ -162,8 +205,8 @@ private struct DepositSection: View {
         Section("Deposit") {
             switch payer.state {
             case .none:
-                if payer.sendOutBlock == .nothingToSend {
-                    Text("A deposit is paid in ETH from the address above. Send ETH there first; Deposit shows how much.")
+                if payer.transferBlock == .nothingToTransfer {
+                    Text("Deposits are paid in ETH from this wallet. Add ETH first; Deposit shows how much.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -210,9 +253,9 @@ private struct DepositSection: View {
     private static func stage(_ stage: String) -> String {
         switch stage {
         case "fee_wait": "Waiting for ETH for the fee."
-        case "finalizing": "Waiting for the chain to finalize it."
-        case "activating": "Opening it with the service."
-        default: "Sent. Waiting for the chain."
+        case "finalizing": "Waiting for final confirmation."
+        case "activating": "Activating the deposit."
+        default: "Submitted. Waiting for confirmation."
         }
     }
 
@@ -221,7 +264,7 @@ private struct DepositSection: View {
         case "waiting_settlement": "Waiting for the last request to settle."
         case "waiting_funds": "Waiting for ETH for the fee."
         case "confirming": "Confirming with the service."
-        case "withdrawal_pending": "Sent. Waiting for the chain."
+        case "withdrawal_pending": "Submitted. Waiting for confirmation."
         default: "Quoted. Review it to withdraw."
         }
     }
@@ -281,7 +324,7 @@ private struct Held: View {
             } label: {
                 HStack(spacing: 2) {
                     Text("Expires")
-                    InfoButton("About Expiry", note: "After this day anyone can send this deposit to the service's operator, spent or not.")
+                    InfoButton("About Expiry", note: "After this date the service's operator can claim the deposit, spent or not. Withdraw before then.")
                 }
             }
             switch band {
@@ -289,7 +332,7 @@ private struct Held: View {
                 Label("Expires \(expiry.formatted(.dateTime.day().month())). Withdraw before then.", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
             case .due?:
-                Label("Can be taken now.", systemImage: "exclamationmark.octagon.fill")
+                Label("Expired. Withdraw now.", systemImage: "exclamationmark.octagon.fill")
                     .foregroundStyle(.red)
             case .far?, nil:
                 EmptyView()
@@ -316,7 +359,7 @@ private struct WithdrawRow: View {
                         .foregroundStyle(.secondary)
                 }
                 let withdraw = Button("Withdraw") { Task { await payer.quoteWithdrawal() } }
-                    .tip("Brings the whole deposit back to the address above.")
+                    .tip("Returns the whole deposit to this wallet.")
                     .disabled(payer.withdrawBlock != nil)
                 if prominent {
                     withdraw.buttonStyle(.borderedProminent)
@@ -396,7 +439,8 @@ private struct Amount: View {
 
 /// A quote, as the payer made it, for its owner to confirm, as rows in the
 /// section its press was made in: what it sends, where, the most it pays
-/// in fees, and how long it holds. Its button is the one place an approve
+/// in fees, and how long it holds (not counted down for a transfer). Its
+/// button is the one place an approve
 /// is sent from; once the quote has expired, the button asks for a new one,
 /// shown before anything is approved.
 private struct ReviewRows: View {
@@ -414,7 +458,7 @@ private struct ReviewRows: View {
                 LabeledContent("Deposit", value: Ether.text(wei: quote.principalWei) ?? "—")
             case .withdrawal:
                 LabeledContent("Amount", value: Ether.text(gwei: quote.amount))
-            case .sendOut:
+            case .transfer:
                 LabeledContent("Amount", value: Ether.text(wei: quote.principalWei) ?? "—")
             }
             if let destination = quote.destination {
@@ -432,7 +476,7 @@ private struct ReviewRows: View {
                 let expired = quote.expired(at: context.date)
                 let block = payer.confirmBlock(review)
                 HStack(spacing: 8) {
-                    if !expired {
+                    if !expired, timed {
                         Text(quote.expires, style: .timer)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
@@ -444,7 +488,7 @@ private struct ReviewRows: View {
                             .foregroundStyle(.secondary)
                     }
                     Button("Cancel", action: payer.cancelReview)
-                    Button(expired ? "New Quote" : title) { Task { await payer.confirm() } }
+                    Button(expired ? again : title) { Task { await payer.confirm() } }
                         .buttonStyle(.borderedProminent)
                         .disabled(!expired && block != nil)
                 }
@@ -464,8 +508,21 @@ private struct ReviewRows: View {
         switch review {
         case .deposit: "Deposit"
         case .withdrawal: "Withdraw"
-        case .sendOut: "Send"
+        case .transfer: "Transfer"
         }
+    }
+
+    /// Whether the time the quote holds for is counted down beside the
+    /// button. A deposit's and a withdrawal's are; a transfer's amount and
+    /// address are its owner's own, and only its fee can change.
+    private var timed: Bool {
+        if case .transfer = review { false } else { true }
+    }
+
+    /// The button once the quote has expired: it asks for a new one, shown
+    /// before anything is approved.
+    private var again: String {
+        timed ? "New Quote" : "Update Fee"
     }
 }
 
@@ -693,7 +750,7 @@ extension Payer.Stop {
     var title: String {
         switch self {
         case .quote(let stop), .approve(let stop): stop.title
-        case .unread: "Not read"
+        case .unread: "Unavailable"
         }
     }
 
@@ -716,13 +773,13 @@ extension Payer.Stop {
 extension PayStop {
     var title: String {
         switch code {
-        case .unreachable: "Not reached"
+        case .unreachable: "Unreachable"
         case .noDeposit: "No deposit"
         case .withdrawing: "Withdrawing"
         case .busy: "Busy"
         case .modelUnavailable: "Model unavailable"
         case .torDown: "Tor down"
-        case .refused: "Refused"
+        case .refused: "Declined"
         case .providerFailed: "Failed"
         case .answerRefused: "No answer"
         case .heldTooLong: "Settling"
@@ -757,7 +814,7 @@ extension PayStop {
         case .busy: "V's wallet is busy with another request. Try again."
         case .modelUnavailable: "The service can't use this model now. Pick another in Wallet."
         case .torDown: "Cloak couldn't reach the service through Tor. Try again."
-        case .refused: "The service turned the request away as it was."
+        case .refused: "The service declined the request."
         case .providerFailed: "The provider failed. The request may have been paid for."
         case .answerRefused: "The model declined to answer."
         case .heldTooLong: "The last request is still settling, so nothing was sent. Try again in a minute."
@@ -775,9 +832,9 @@ extension Payer.Block {
         case .paused: "Paused by operator"
         case .oneAtATime: "One deposit at a time"
         case .nothingToWithdraw: "Nothing to withdraw"
-        case .needs(let wei): "Address needs \(Ether.text(Decimal(sign: .plus, exponent: -18, significand: wei), up: true)) more"
-        case .needsFee: "Needs ETH for the fee"
-        case .nothingToSend: "Nothing to send"
+        case .needs(let wei): "Insufficient balance: \(Ether.text(Decimal(sign: .plus, exponent: -18, significand: wei), up: true)) more needed"
+        case .needsFee: "Insufficient ETH for the fee"
+        case .nothingToTransfer: "Nothing to transfer"
         }
     }
 }
@@ -792,6 +849,25 @@ enum Ether {
 
     static func text(gwei: UInt64) -> String {
         text(Decimal(sign: .plus, exponent: -9, significand: Decimal(gwei)))
+    }
+
+    /// ETH in full from wei as a decimal string, "0.01", as an amount field
+    /// takes it; nil when it does not read.
+    static func exact(wei: String) -> String? {
+        guard wei.wholeMatch(of: /[0-9]+/) != nil else { return nil }
+        let digits = String(repeating: "0", count: max(0, 19 - wei.count)) + wei
+        let whole = digits.dropLast(18).drop { $0 == "0" }
+        let fraction = String(digits.suffix(18)).replacing(/0+$/, with: "")
+        return (whole.isEmpty ? "0" : String(whole)) + (fraction.isEmpty ? "" : "." + fraction)
+    }
+
+    /// Wei as a decimal string from ETH as typed, "0.01" or ".5"; nil when
+    /// it is not an amount above zero of at most 18 decimals.
+    static func wei(eth typed: String) -> String? {
+        guard let match = typed.wholeMatch(of: /([0-9]*)(?:\.([0-9]{0,18}))?/) else { return nil }
+        let fraction = String(match.2 ?? "")
+        let digits = (match.1 + fraction + String(repeating: "0", count: 18 - fraction.count)).drop { $0 == "0" }
+        return digits.isEmpty ? nil : String(digits)
     }
 
     /// Up to six decimals, rounded up when `up`, for an amount still needed.

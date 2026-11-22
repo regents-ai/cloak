@@ -556,17 +556,20 @@ tasks and apps sending through Agents (below) are always reworded.
 
 Wallet, in Chat's toolbar, shows the wallet of the conversation in front.
 In V it is the guest's payer's, read through the guest, so it waits for
-Start: its own Ethereum address, with Copy and the QR button, on Ethereum,
-taking ETH, and the ETH on hand; Send Out… sends all of that ETH to an
-address you type. Deposit takes an amount in dollars (over $50, it says to
+Start: its own Ethereum address, with Copy and the QR button, on Ethereum
+Mainnet, taking ETH, with a warning that Cloak can't return anything else
+sent there, and its Balance; Transfer… sends an amount of that ETH you
+type (Max for all of it, less the fee) to an address you type. Deposit
+takes an amount in dollars (over $50, it says to
 deposit only what you'll spend). The deposit then shows its balance in
 ETH, whether the last request is still settling, and its expiry, after
 which anyone can send it to the service's operator: from 10 days before,
 a line says to withdraw, orange and then red, and a mark sits on Wallet's
-symbol. Withdraw brings the whole deposit back to the address above.
-Deposit, Withdraw and Send Out each show a review first, with the amounts
-and fee in ETH and how long the quote holds; only the review's button
-sends it, and a quote past its time is quoted again and shown, never sent.
+symbol. Withdraw returns the whole deposit to the wallet.
+Deposit, Withdraw and Transfer each show a review first, with the amounts
+and fee in ETH; a deposit's and a withdrawal's count down how long the
+quote holds, a transfer's does not. Only the review's button sends it, and
+a quote past its time is quoted again and shown, never sent.
 A button is off only where the chain, read at the latest block, shows it
 is certain to fail, with a few words why. Model lists the service's
 models, each with its price for a million tokens, in and out, as the
@@ -742,14 +745,14 @@ V's are, through the guest's payer with a new key, after your own
 messages. While Cloak is running it answers at `http://127.0.0.1:8742/v1`,
 or the port chosen in Settings, on 127.0.0.1 only; if another app holds
 that port, nothing opens, and Agents says so, with Change Port… to choose
-another in Settings, then Try Again. Add, a plus, gives an app a name and a pass, shown once with Copy;
-Remove ends the pass at once. Point the app at the address with the pass as
-its key, for example with OpenAI's Python library:
+another in Settings, then Try Again. Add, a plus, gives an app a name and an API key, shown once with Copy;
+Remove ends the key at once. Point the app at the base URL with that API
+key, for example with OpenAI's Python library:
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8742/v1", api_key="<the pass>")
+client = OpenAI(base_url="http://127.0.0.1:8742/v1", api_key="<the API key>")
 model = client.models.list().data[0].id
 client.chat.completions.create(
     model=model,
@@ -758,7 +761,7 @@ client.chat.completions.create(
 ```
 
 Only `POST /v1/chat/completions` and `GET /v1/models` (the service's own
-list) answer, each with `Authorization: Bearer` and the pass; a request
+list) answer, each with `Authorization: Bearer` and the API key; a request
 from a web page (with an `Origin` header) is refused. Each user message's
 text is reworded on this Mac first, as Chat and the pinned daemon do it:
 earlier user messages go as reworded before, and a history that is not the
