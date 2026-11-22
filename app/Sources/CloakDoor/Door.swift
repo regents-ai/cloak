@@ -198,7 +198,7 @@ public final class Door {
     /// Settings window's.
     @ObservationIgnored private let chosen: () -> UInt16
     @ObservationIgnored private var listener: NWListener?
-    @ObservationIgnored private var serving: [UUID: Task<Void, Never>] = [:]
+    private var serving: [UUID: Task<Void, Never>] = [:]
     /// By app, and by the agent's conversation.
     @ObservationIgnored private var memories: [UUID: Memory] = [:]
     /// The box passes, by the agent's conversation, and how each
@@ -372,6 +372,10 @@ public final class Door {
         for task in serving { task.cancel() }
         for task in serving { await task.value }
     }
+
+    /// A request is at the door: from its connection's start until it has
+    /// been answered or has ended.
+    public var underWay: Bool { !serving.isEmpty }
 
     // MARK: The agent in the guest
 

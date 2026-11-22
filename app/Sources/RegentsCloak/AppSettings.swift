@@ -109,8 +109,8 @@ final class AppSettings {
 
     /// Whether the guest's daemon sends cover traffic: its own background
     /// fetches of the public pages in the one list (reference/cover.json).
-    /// The supervisor reads it as it writes a guest's boot files, so a
-    /// change applies from the next Start.
+    /// The supervisor reads it as it writes a guest's boot files; a change
+    /// while Running restarts Cloak with it (`Supervisor.followCover`).
     var cover: Bool {
         get {
             access(keyPath: \.cover)

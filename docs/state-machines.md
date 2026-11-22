@@ -789,6 +789,9 @@ Preparing, Running --failed(reason)--> Stopping (to Needs attention, reason)
 Preparing, Running --pause, sleep--> Stopping (to Paused)
 Preparing, Running --stop--> Stopping (to Ready)
 Ready, Needs attention --pause--> Paused
+Running --restart--> Stopping (to restart) --stopped--> Preparing (run)
+Stopping (to restart) --pause, sleep--> Stopping (to Paused)
+Stopping (to restart) --stop--> Stopping (to Ready)
 any --quit--> Stopping (to quit) --stopped--> the app ends
 Stopping (to Paused, Ready or Needs attention) --stopped--> that state
 ```
@@ -837,11 +840,31 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   (section 5), and the guest's daemon starts no cover worker. The value
   read is `Supervisor.cover` from then until the shutdown starts stopping
   the run's parts, nil otherwise; the technical detail says which while
-  Running. A change while
-  a guest is up waits for the next Start, and Chat says so on the Cover
-  toggle in its toolbar, a small clock on the symbol's corner and "Cover
-  changes after Pause, then Start." at the end of its help and its
-  VoiceOver hint, while the two differ.
+  Running. A change while Running (`Supervisor.coverChanged`), from
+  either switch, Chat's toolbar or Settings, restarts the run once
+  nothing a restart would cut is under way; one while Paused, Ready or
+  Needs attention only saves it, for the next Start. One place decides
+  when: `Supervisor.followCover`, which the app runs from launch, sends
+  `restart` each time the setting and the run's differ while the app's
+  one answer to what is under way (`AppDelegate.underWay`) is no. That
+  answer reads what is there: a request at the door (`Door.underWay`, from
+  its connection's start until it is answered or ends); in Chat, a
+  message being reworded, sent (V, Token Inference or NEAR) or answered
+  by Local Llama, or an agent's task; V's payer with a press under way, a
+  round of reads, or money on its way (`Payer.moving`: a deposit, a
+  withdrawal, a send settling, or the funding address's ETH being sent
+  out); Token Inference's wallet with a request or a Create under way.
+  Both are read through Swift Observation, so the restart begins as soon
+  as the last of them ends, with no polling and no timer. Nothing new is
+  held back: a send meanwhile only keeps the restart waiting. A quote
+  under review does not, since nothing is approved yet. Switched back
+  before the restart begins, nothing restarts. Both switches' help says
+  that switching while Cloak is running restarts Cloak, which takes about
+  15 seconds. While a restart waits, Chat's Cover toggle has a small clock
+  on its symbol's corner and "Cover switches once what's being sent has
+  finished." at the end of its help and its VoiceOver hint, and the
+  Settings row has the clock and those words under its switch. Before (21
+  November): a change while a guest was up waited for the next Start.
   Nothing else in the run depends on it.
 - **Watches**: from its start until the run ends, tor exiting raises
   `tor_stopped`, every worker exit the relay did not cause raises
@@ -865,10 +888,16 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
   lasts as long as a keychain question stays unanswered.
   Before (13 November): the worker's start was waited for until the model
   had loaded, so a pause or a quit during the load waited for it.
+  A restart (`restart`, from Running only, which Cover's switch sends) is
+  this shutdown with Preparing (run) as where it ends, so a new run starts
+  with no stop at Paused between and nothing on a timer; a failure in that
+  start ends in Needs attention, as any start's does. A pause, a sleep or
+  a stop while it stops keeps the shutdown and drops the start.
 - **Needs attention** keeps its reason, and the failure's technical detail,
   until the next start. Nothing is started again, and no other route or
   model is tried (REF04).
-- **Refused**: any command but quit while Stopping (`busy`); `verify`
+- **Refused**: any command but quit while Stopping (`busy`), but for
+  pause and stop while a restart stops (above); `verify`
   while starting to run or Running (`busy`); and `resume` while checking,
   Ready or Needs attention (`not_paused`). `resume` while starting to run
   or Running is accepted and changes nothing. A refused command changes
@@ -893,8 +922,9 @@ Stopping (to Paused, Ready or Needs attention) --stopped--> that state
 - **The menu's header** (`app/Sources/RegentsCloak/Menu.swift`) only reads
   the phase. Its dot is the state now: green Running, yellow Paused or
   Ready, red Needs attention, grey while Preparing or Stopping. Its line is
-  the state now, in the words Details uses too: Starting through
-  Preparing, Stopping through Stopping, with "model unloaded" while Running and resting and
+  the state now, in the words Details uses too (`Phase.title`): Starting
+  through Preparing, Restarting through a restart's Stopping and Stopping
+  through any other, with "model unloaded" while Running and resting and
   "downloading model" while the download is under way; the dot's tooltip
   and VoiceOver say the same word. Before (18 November): the line kept the
   last settled state's word through a start or stop, which takes 8 to 13
@@ -971,7 +1001,7 @@ What `cloak --json` prints for each phase (INS02):
 | Preparing | `preparing` | `checking` | `wait` |
 | Running | `running` | `running` | `pause` |
 | Ready | `ready` | `ready` | `start` |
-| Stopping | `stopping` | `paused`; `failed` or `unsupported_hardware` when it ends in Needs attention | `wait` |
+| Stopping | `stopping` | `paused`, a restart's too; `failed` or `unsupported_hardware` when it ends in Needs attention | `wait` |
 | Needs attention | `needs_attention` | `unsupported_hardware` for that reason, else `failed` | `none` for `unsupported_hardware`, else `start` |
 
 `needs_os_approval` and `needs_funding` are never printed: this build has no
@@ -982,7 +1012,11 @@ step that needs the system's approval, and no payment. The reasons are
 
 The phase, supervisor, relay rest, control socket, menu header and settings
 checks were deleted on 19 November (decision 15 in `docs/plan.md`); nothing
-checks what they checked now.
+checks what they checked now. One money check covers Cover's restart: a
+switch while a paid request is out at the door restarts only once that
+request has been answered
+(`aCoverSwitchWhileAPaidRequestIsOutRestartsOnlyOnceItHasEnded` in
+`app/Tests/CloakTests/PayTests.swift`).
 
 ## 9a. The models' downloads (`app/Sources/CloakSupervisor/ModelDownload.swift`)
 

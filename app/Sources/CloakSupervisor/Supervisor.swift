@@ -27,7 +27,8 @@ import Synchronization
 /// reference's background noise, about three page fetches a minute. When
 /// the owner's Cover setting is off as the guest's boot files are written,
 /// they lay a list with no URLs over that one, and no cover worker starts
-/// in that run.
+/// in that run. A change of the setting while Running restarts the run
+/// (`followCover`), once nothing a restart would cut is under way.
 ///
 /// A Local Llama chat's message (`answer`) goes straight to the chosen
 /// model on this Mac (decision 21 in docs/plan.md), and is no phase. When
@@ -197,6 +198,28 @@ public final class Supervisor {
             return phase
         }
         return phase
+    }
+
+    /// While Running, the guest up runs with the other Cover than the
+    /// setting: it changed after the guest's boot files were written.
+    public var coverChanged: Bool {
+        phase == .running && cover.map { $0 != wantsCover() } == true
+    }
+
+    /// Cover's switch while Running, the one place that decides when a
+    /// restart may run: calls `restart` each time `changed` holds while
+    /// nothing a restart would cut is `underWay`, so as soon as the last of
+    /// it ends, as observed, with no polling and no timer. It holds no press
+    /// back: new work only keeps it waiting. Switched back first, `changed`
+    /// no longer holds, and nothing restarts. In the app: `coverChanged`,
+    /// the one answer to what is under way, and `send(.restart)`.
+    public static func followCover(
+        changed: @escaping @MainActor () -> Bool, underWay: @escaping @MainActor () -> Bool,
+        restart: @escaping @MainActor () -> Void
+    ) async {
+        for await due in Observations({ changed() && !underWay() }) where due {
+            restart()
+        }
     }
 
     /// Answers one request from `cloak`; a command is answered once it has
@@ -448,8 +471,11 @@ public final class Supervisor {
             lines.append("Running: tor is up, the worker is up or resting, the guest opened its payment disk for V's payer, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready for Token Inference.")
             lines.append(
                 cover == false
-                    ? "Cover traffic is off in this run: the setting was off at Start, so the guest's daemon started no cover worker."
+                    ? "Cover traffic is off in this run: the guest's daemon started no cover worker."
                     : "Cover traffic runs in the guest while Cloak is running: the reference's own background noise, about three page fetches a minute through Tor.")
+            if coverChanged {
+                lines.append("The Cover setting has changed since this run started: Cloak restarts to switch it once nothing under way would be cut.")
+            }
         case .ready:
             lines.append(
                 localWorker == .none
@@ -462,6 +488,8 @@ public final class Supervisor {
                     : "Paused: only the worker is running, for Local Llama chats, and nothing else starts by itself.")
         case .preparing:
             lines.append("Starting: checking the parts, then starting tor, the worker and the guest, which opens its payment disk, runs the startup check and then starts the sender and the payer.")
+        case .stopping(.restart):
+            lines.append("Restarting: stopping the guest, the worker and tor, in that order, then starting again.")
         case .stopping:
             lines.append("Stopping: the guest, the worker and tor, in that order.")
         case .needsAttention(let reason):

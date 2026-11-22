@@ -146,6 +146,7 @@ struct StartRow: View {
         case .paused: "Cloak is paused."
         case .ready: "Cloak isn't running."
         case .preparing: "Cloak is starting."
+        case .stopping(.restart): "Cloak is restarting."
         case .stopping: "Cloak is stopping."
         case .needsAttention(let reason):
             switch fix {

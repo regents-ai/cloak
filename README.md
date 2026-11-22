@@ -300,9 +300,11 @@ small lead, Qwen 3.5 9B (`small-lead-gguf-grammar`), and has no sessions;
 the daemon's own payment is not built. While the guest is up, its daemon
 sends the reference's own cover traffic through Tor, background noise of
 about three page fetches a minute from `reference/cover.json`, unless Cover
-traffic was off in Settings at Start: the guest's boot files then lay a
-list with no URLs over that one, the daemon's own cleared setting, and no
-cover worker starts in that run. It needs a Mac with
+traffic is off in Settings as the guest starts: the guest's boot files
+then lay a list with no URLs over that one, the daemon's own cleared
+setting, and no cover worker starts in that run. Switching Cover traffic
+while Cloak is running restarts Cloak with it, in about 15 seconds, once
+nothing a restart would cut is under way (Chat, below). It needs a Mac with
 Apple silicon whose graphics limit (Metal's recommended working set) holds
 the model's 7 GiB with 1 GiB to spare, and whose memory holds all of
 Cloak's 10 GiB with 4 GiB kept for macOS: a 16 GB Mac passes, an 8 GB one
@@ -354,8 +356,8 @@ The app opens Paused in the menu bar, and never starts by itself. On the
 first launch only, Chat opens on the Modes page (Chat, below), which
 starts nothing. Start, in the menu or at its top, also opens Chat;
 AppleScript's `start` does not. The
-menu's top shows the state, as a coloured dot and in words, Starting or
-Stopping while it changes; when Cloak needs attention, it says what went
+menu's top shows the state, as a coloured dot and in words, Starting,
+Stopping or Restarting while it changes; when Cloak needs attention, it says what went
 wrong and what to do, with a button for the fix, or the way to it, when
 the app has one. Each menu item has its symbol before its words. The
 release and build are at the menu's foot. A window minimized to the Dock
@@ -396,7 +398,8 @@ text. Reduces your privacy." (off until ticked; see Chat, below) and
 Review (on until turned off; see Chat, below), side by side since they are
 never both on: turning either on turns the other off, wherever it is
 turned on. Then Saved chats (on until turned off; see Chat, below), Cover
-traffic (on until turned off; used from the next Start), Free memory,
+traffic (on until turned off; switching it while Cloak is running restarts
+Cloak, as Chat's Cover does, below), Free memory,
 Updates (below) and Help: a link to Patchbay's board for regents.sh, and
 words to copy for an agent that posts there. NEAR has the
 NEAR key (a field and Save; once saved, Saved with Replace, which has
@@ -504,9 +507,20 @@ off deletes nothing, and Delete still removes a file.
 Cover, in Chat's toolbar beside Wallet in every conversation, is a toggle
 shown as a fog cloud, filled while on. It turns cover traffic on and off,
 as in Settings, and resting the pointer on it says what cover traffic
-does. While Cloak is running with the other value, a small clock sits on
-the cloud's corner, and its help adds "Cover changes after Pause, then
-Start." Under the message box, two small pills show Tor and zkAPI, each by
+does and that switching it while Cloak is running restarts Cloak, which
+takes about 15 seconds. While Paused, Ready or Needs attention it only
+saves the setting, which the next Start uses. Switched while Running,
+Cloak restarts by itself, through the one shutdown and straight into
+Starting, with no stop at Paused: the menu says Restarting, then
+Starting. A restart would cut what is under way, so it waits while a
+message is being reworded, sent or answered in any chat, an agent's task
+runs, a request is at the door, or V's or Token Inference's wallet has a
+press, a read or money on its way, and begins as soon as the last of
+them ends. Nothing new is held back meanwhile; it only keeps the restart
+waiting. While it waits, a small clock sits on the cloud's corner, and
+its help adds "Cover switches once what's being sent has finished.", as
+the Settings row says beside its switch. Switched back before the restart
+begins, nothing restarts. Under the message box, two small pills show Tor and zkAPI, each by
 its symbol (three joined points, a ticket) with a dot, filled while on.
 Tor is always on. zkAPI is on in V, which pays each request with a new
 key, and off in Token Inference, which pays from one wallet; neither can

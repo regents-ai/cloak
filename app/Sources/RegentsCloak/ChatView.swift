@@ -229,17 +229,18 @@ private struct Detail: View {
 
 /// Cover, the setting itself (`AppSettings.cover`), as a toggle in Chat's
 /// toolbar in every mode: its symbol, filled while on, read by VoiceOver as
-/// a switch with its state. The guest takes it at Start, so while Cloak
-/// runs with the other value a clock sits on the symbol's corner, and the
-/// help and the hint end with when it changes.
+/// a switch with its state. Switched while Cloak runs, Cloak restarts with
+/// it (`Supervisor.followCover`); while that waits for what is being sent, a
+/// clock sits on the symbol's corner, and the help and the hint end with
+/// when it switches.
 private struct CoverToggle: View {
     @Bindable var settings: AppSettings
     let supervisor: Supervisor
 
     var body: some View {
-        let waits = supervisor.cover.map { $0 != settings.cover } == true
-        let later = "Cover changes after Pause, then Start."
-        let help = "Cover traffic: while Cloak is running, it visits ordinary public pages in the background through Tor, so your real requests through Tor stand out less."
+        let waits = supervisor.coverChanged
+        let later = "Cover switches once what's being sent has finished."
+        let help = "Cover traffic: while Cloak is running, it visits ordinary public pages in the background through Tor, so your real requests through Tor stand out less. Switching it while Cloak is running restarts Cloak, which takes about 15 seconds."
         Toggle(isOn: $settings.cover) {
             Label {
                 Text("Cover")
@@ -1734,6 +1735,7 @@ private struct Waiting: View {
         case .paused: "Cloak is paused. Start it to \(to)."
         case .ready: "Cloak isn't running. Start it to \(to)."
         case .preparing: "Cloak is starting."
+        case .stopping(.restart): "Cloak is restarting."
         case .stopping: "Cloak is stopping."
         case .needsAttention(let reason):
             switch fix {

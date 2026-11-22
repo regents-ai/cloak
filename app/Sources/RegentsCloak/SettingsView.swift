@@ -94,7 +94,7 @@ struct SettingsView: View {
         } detail: {
             Group {
                 switch shown {
-                case .general: GeneralPane(settings: settings, updates: updates)
+                case .general: GeneralPane(settings: settings, supervisor: supervisor, updates: updates)
                 case .near: NearPane(settings: settings, mode: near)
                 case .llama: LlamaPane(settings: settings, downloads: downloads, rewording: supervisor.manifest.rewordingModel)
                 case .shortcut: ShortcutPane(settings: settings, prompt: prompt)
@@ -113,6 +113,7 @@ struct SettingsView: View {
 
 private struct GeneralPane: View {
     @Bindable var settings: AppSettings
+    let supervisor: Supervisor
     let updates: Updates
     @State private var login = LoginItem.stage
 
@@ -152,8 +153,16 @@ private struct GeneralPane: View {
                 }
             }
             Section {
-                Row("Cover traffic", note: "Cloak visits ordinary public pages in the background, so your real requests stand out less. It uses some bandwidth. A change applies after Pause, then Start; Cloak itself stays open.") {
-                    Toggle("Cover traffic", isOn: $settings.cover)
+                Row("Cover traffic", note: "Cloak visits ordinary public pages in the background, so your real requests stand out less. It uses some bandwidth. Switching it while Cloak is running restarts Cloak, which takes about 15 seconds.") {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Toggle("Cover traffic", isOn: $settings.cover)
+                        // The restart waits for what is being sent.
+                        if supervisor.coverChanged {
+                            Label("Switches once what's being sent has finished.", systemImage: "clock")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             Section {

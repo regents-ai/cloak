@@ -53,9 +53,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// first Return.
     private lazy var nearMode = NearMode(near: near, supervisor: supervisor, settings: .standard)
     /// Made at its window's first show or the quick prompt's first Return.
-    private lazy var conversations = Chat(
-        supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
-        queue: Launch.payQueue, door: door, nearMode: nearMode, downloads: downloads)
+    private var madeChat: Chat?
+    private var conversations: Chat {
+        if let madeChat { return madeChat }
+        let chat = Chat(
+            supervisor: supervisor, settings: .standard, folder: Launch.layout.conversations, wallet: Launch.layout.wallet,
+            queue: Launch.payQueue, door: door, nearMode: nearMode, downloads: downloads)
+        madeChat = chat
+        return chat
+    }
+    /// Something a restart would cut is under way, the one answer to it: a
+    /// request at the door; in Chat, a message being reworded, sent or
+    /// answered on this Mac, or an agent's task; with V's wallet or Token
+    /// Inference's, a press, a read or money on its way. Before Chat is made
+    /// there is none of Chat's.
+    private var underWay: Bool {
+        door.underWay
+            || madeChat.map { chat in
+                chat.rewording != nil || !chat.sending.isEmpty || !chat.answering.isEmpty || !chat.agent.runs.isEmpty
+                    || chat.payer.working > 0 || chat.payer.reading || chat.payer.moving
+                    || chat.wallet.working > 0 || chat.wallet.presence == .creating
+            } == true
+    }
     private lazy var chat = AppWindow { [unowned self] in
         ChatView.window(
             conversations, showDetails: { self.showDetails() }, showAgents: { self.showAgents() },
@@ -145,6 +164,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for await _ in Observations({ supervisor.phase == .running }) {
                 turnDoor()
             }
+        }
+        // Cover's switch while Running restarts Cloak, once nothing a
+        // restart would cut is under way.
+        Task { [unowned self, supervisor] in
+            await Supervisor.followCover(
+                changed: { supervisor.coverChanged }, underWay: { self.underWay }, restart: { supervisor.send(.restart) })
         }
         // Sleep pauses a run, so a wake finds none running and starts
         // nothing. A worker up for Local Llama chats stays, and rests as
