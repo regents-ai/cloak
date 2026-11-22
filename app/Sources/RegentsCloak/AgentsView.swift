@@ -11,7 +11,7 @@ import SwiftUI
 /// and as Cloak sent them. The door keeps those in memory only.
 struct AgentsView: View {
     static func window(
-        _ door: Door, supervisor: Supervisor, download: ModelDownload, settings: AppSettings,
+        _ door: Door, supervisor: Supervisor, download: ModelDownload,
         openDoor: @escaping () -> Void, showDetails: @escaping () -> Void, showDoorSettings: @escaping () -> Void
     ) -> NSWindow {
         let window = ClosingWindow(
@@ -20,7 +20,7 @@ struct AgentsView: View {
         window.title = "Agents"
         window.contentViewController = NSHostingController(
             rootView: AgentsView(
-                door: door, supervisor: supervisor, download: download, settings: settings, openDoor: openDoor,
+                door: door, supervisor: supervisor, download: download, openDoor: openDoor,
                 showDetails: showDetails, showDoorSettings: showDoorSettings))
         return window
     }
@@ -29,16 +29,11 @@ struct AgentsView: View {
     let supervisor: Supervisor
     /// The download of the model that rewords, for the Start row's fix.
     let download: ModelDownload
-    /// Read for the port the door takes when it next opens.
-    let settings: AppSettings
     /// Opens the door again, in turn with the app's own opens and closes.
     let openDoor: () -> Void
     let showDetails: () -> Void
     /// Settings, on its Door pane, where the port is chosen.
     let showDoorSettings: () -> Void
-    /// Read so the door's line is drawn again each time the window comes to
-    /// the front: the app holding the port may have quit meanwhile.
-    @Environment(\.appearsActive) private var appearsActive
     /// Nil while no app is being added.
     @State private var adding: Adding?
     @State private var removing: AgentApp?
@@ -47,8 +42,7 @@ struct AgentsView: View {
     @State private var opened: AgentRequest.ID?
 
     var body: some View {
-        let _ = appearsActive
-        let line = DoorLine(door.state, running: supervisor.phase == .running, port: settings.doorPort)
+        let line = DoorLine(door.state, running: supervisor.phase == .running)
         Form {
             Section {
                 LabeledContent {
@@ -77,7 +71,7 @@ struct AgentsView: View {
                         }
                         .foregroundStyle(.secondary)
                         .accessibilityElement(children: .combine)
-                    case .portTaken, .refused:
+                    case .refused:
                         Label("Can't open", systemImage: "exclamationmark.triangle.fill")
                             .symbolRenderingMode(.multicolor)
                     }
@@ -87,18 +81,16 @@ struct AgentsView: View {
                     EmptyView()
                 case .stopped:
                     StartRow(supervisor: supervisor, download: download, showDetails: showDetails)
-                case .portTaken(let port):
+                case .refused(let refusal):
                     HStack(spacing: 8) {
-                        Text("Another app is using port \(String(port)). Choose another, or quit that app.")
+                        Text(refusal.words)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Button("Change Port…", action: showDoorSettings)
-                    }
-                case .refused(let words):
-                    HStack(spacing: 8) {
-                        Text(words)
-                            .foregroundStyle(.secondary)
-                        Spacer()
+                        // The port is read when the door opens, so a new
+                        // one, or the other app's quitting, needs Try Again.
+                        if case .portTaken = refusal {
+                            Button("Change Port…", action: showDoorSettings)
+                        }
                         Button("Try Again", action: openDoor)
                     }
                 }
@@ -192,27 +184,32 @@ struct AgentsView: View {
 /// The door's state as the Agents window shows it, read in one place, each
 /// with the one way on from it, by the rule the rest of the app uses for a
 /// start that stopped (`Fix`): while Cloak isn't running, the Start row,
-/// with Start or the start's own fix; while another app holds the port the
-/// door takes next, so trying again is certain to fail, the way to the
-/// port; for any other refusal, Try Again.
+/// with Start or the start's own fix; for a refusal, Try Again, and, while
+/// another app holds the port, the way to the port beside it.
 private enum DoorLine {
     case open
     /// Cloak isn't running, so the door is closed.
     case stopped
     /// Cloak is running and the door isn't open yet.
     case opening
-    /// Another app holds the port the door takes next.
-    case portTaken(UInt16)
-    /// The door couldn't open, in its words.
-    case refused(String)
+    /// The door couldn't open.
+    case refused(Door.Refusal)
 
-    /// With the port the door takes when it next opens, which another app
-    /// may hold.
-    init(_ state: Door.State, running: Bool, port: UInt16) {
+    init(_ state: Door.State, running: Bool) {
         switch state {
         case .open: self = .open
         case .closed: self = running ? .opening : .stopped
-        case .refused(let words): self = AppSettings.isFree(port) ? .refused(words) : .portTaken(port)
+        case .refused(let refusal): self = .refused(refusal)
+        }
+    }
+}
+
+private extension Door.Refusal {
+    var words: String {
+        switch self {
+        case .appsUnread: "Cloak couldn't read your apps, so they can't connect."
+        case .portTaken(let port): "Another app is using port \(String(port)). Choose another, or quit that app."
+        case .address: "The address couldn't be opened."
         }
     }
 }

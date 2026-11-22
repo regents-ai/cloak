@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private lazy var agents = AppWindow { [unowned self, door, supervisor, download] in
         AgentsView.window(
-            door, supervisor: supervisor, download: download, settings: .standard, openDoor: { self.turnDoor() },
+            door, supervisor: supervisor, download: download, openDoor: { self.turnDoor() },
             showDetails: { self.showDetails() }, showDoorSettings: { self.showSettings(on: .door) })
     }
     #if DARKBLOOM

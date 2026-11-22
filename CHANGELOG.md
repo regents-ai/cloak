@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- The door stops working for an app that has gone. While a request is
+  read, checked and reworded its connection is watched; an app that
+  leaves before the request is handed on to be paid ends it there, with
+  nothing more reworded, sent or paid, and Agents lists it as Left. One
+  already handed on runs to its answer, since cutting it then could still
+  be charged, and is listed as Left, paid for. One money check added, for
+  both ways of paying (41 pass).
+- Agents says what stopped and carries the way on. Its status line has
+  Start while Cloak isn't running, and, when the door can't open, the
+  door's own named reason with Try Again (and Change Port… while another
+  app holds the port). Adding an app always shows the pass it made, once.
+  An open request follows the door's list. A task that couldn't reach
+  Cloak has Agents… on its card. Opening the saved chats again runs one
+  try at a time, with a spinner, and says when it failed again.
 - Settings rows say what stopped and carry the way on. The NEAR key's
   row is one stage: a check that fails says "Couldn't check" with Try
   Again, a save that fails keeps what was typed and says so, a remove

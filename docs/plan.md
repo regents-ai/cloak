@@ -3684,6 +3684,24 @@ can be pictured off screen (the rows are private to the Settings window
 and its key row reads the keychain), so it is looked at in the running
 app after the next build.
 
+Seen in the running app the same evening (build 260): Settings' General,
+NEAR and Shortcut panes at rest, and the shortcut recorder pressed on and
+off by accessibility with no key typed. Its refusals, the key row's
+stops and the Copy checkmark were not seen.
+
+The door's and Agents' share was fixed by two more helpers and merged
+the same evening: branch `t3/fix-door-implementation` (commit `66546cd`)
+and branch `t3/read-fix-agents-brief` (commit `44d83b0`). 41 checks
+pass, no warnings. In the merge the chief had the door name why it could
+not open (`Door.Refusal`), in place of a sentence that the Agents window
+second-guessed by probing the port as it drew; the Agents window was
+pictured off screen paused, with its port held, and open. Left open on
+purpose: a request whose app leaves while it waits its turn in the
+payer's queue is still sent and paid for (the queue does not tell the
+door when the turn comes), and is listed truthfully as Left, paid for; a
+`problem` line in Agents is still a sentence with no button; pausing
+Cloak can still cut a zkAPI request already out.
+
 NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
 November 2026), against stand-ins only: no sign-in, enrolment or upload
 has been made. An independent reader found 14 things and the helper

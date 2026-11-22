@@ -1528,7 +1528,7 @@ its stages first.
   record forgotten in that time would leave funds in a channel the Mac
   does not know. That one is the toolkit's to forget, when it next pays.
 - **The door** (`app/Sources/CloakDoor/Door.swift`). `state` (closed,
-  open, refused) beside `listener`, `access`, `boxes` and `serving`; there
+  open, refused with its named reason) beside `listener`, `access`, `boxes` and `serving`; there
   is no "opening". How a request is paid is set by its pass: an app's
   always through V's payer (`Payment.zkapi`, rank `door` in the queue,
   section 9d), and a box's as its task's chat pays, through the payer for
@@ -1729,13 +1729,13 @@ card's start and the door's request whose app leaves have checks.
   not follow its stage. Now the door's line is one value read in one
   place (`DoorLine`): while Cloak isn't running, the Wallet's Start row,
   with Start or the start's own fix (`Fix`); while Cloak runs and the door
-  isn't open yet, Opening; while another app holds the port the door
-  takes next, so trying again is certain to fail, "Another app is using
-  port N." with Change Port…, which opens Settings on its Door pane; for
-  any other refusal, the door's words with Try Again, which opens the door
-  again in turn with the app's own opens and closes
-  (`AppDelegate.turnDoor`). The port is read again each time the window
-  comes to the front. Adding is one value (`Adding`: naming, keeping,
+  isn't open yet, Opening; for a refusal, which the door names
+  (`Door.Refusal`: the apps unread, the port taken, the address not
+  opened), its words with Try Again, which opens the door again in turn
+  with the app's own opens and closes (`AppDelegate.turnDoor`), and, while
+  another app holds the port, Change Port… beside it, which opens Settings
+  on its Door pane; the port is read when the door opens, so a new port,
+  or the other app's quitting, needs Try Again. Adding is one value (`Adding`: naming, keeping,
   kept) that the window keeps: there is no Cancel while the app is kept,
   and its pass shows once it is; an Add that could not keep the app shows
   the door's words in the sheet. An open request is read from the door's

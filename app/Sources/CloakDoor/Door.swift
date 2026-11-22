@@ -127,8 +127,18 @@ public final class Door {
     public enum State: Equatable, Sendable {
         case closed
         case open
-        /// It could not open, in plain words.
-        case refused(String)
+        /// It could not open.
+        case refused(Refusal)
+    }
+
+    /// Why the door could not open.
+    public enum Refusal: Equatable, Sendable {
+        /// The apps' file could not be read, so no pass could be checked.
+        case appsUnread
+        /// Another app holds this port.
+        case portTaken(UInt16)
+        /// The address could not be opened, for any other reason.
+        case address
     }
 
     /// What the door works with: in the app, the supervisor's and the
@@ -292,13 +302,13 @@ public final class Door {
 
     // MARK: Opening and closing
 
-    /// Listens on 127.0.0.1 and the one port, and nowhere else; refused in
-    /// plain words when the port is taken or the apps can't be read.
+    /// Listens on 127.0.0.1 and the one port, and nowhere else; refused
+    /// (`Refusal`) when the port is taken or the apps can't be read.
     public func open() async {
         guard listener == nil else { return }
         await load()
         guard case .read = access else {
-            state = .refused("Cloak couldn't read your apps, so they can't connect.")
+            state = .refused(.appsUnread)
             return
         }
         let port = chosen()
@@ -312,7 +322,7 @@ public final class Door {
             listener = try NWListener(using: parameters)
         } catch {
             logger.error("door cannot listen: \(String(describing: error), privacy: .public)")
-            state = .refused("Apps can't connect: the address can't be opened.")
+            state = .refused(.address)
             return
         }
         listener.stateUpdateHandler = { [weak self, weak listener] change in
@@ -341,10 +351,7 @@ public final class Door {
             logger.error("door refused: \(String(describing: error), privacy: .public)")
             listener?.cancel()
             listener = nil
-            state = .refused(
-                error == .posix(.EADDRINUSE)
-                    ? "Another app is using 127.0.0.1:\(port), so apps can't connect. Quit it, then pause and start Cloak."
-                    : "Apps can't connect: the address can't be opened.")
+            state = .refused(error == .posix(.EADDRINUSE) ? .portTaken(port) : .address)
         default:
             break
         }
