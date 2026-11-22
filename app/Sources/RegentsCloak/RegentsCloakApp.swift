@@ -58,13 +58,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         queue: Launch.payQueue, door: door, nearMode: nearMode, downloads: downloads)
     private lazy var chat = AppWindow { [unowned self] in
         ChatView.window(
-            conversations, showDetails: { self.showDetails() }, showNearSettings: { self.showSettings(on: .near) },
-            showLlamaSettings: { self.showSettings(on: .llama) })
+            conversations, showDetails: { self.showDetails() }, showAgents: { self.showAgents() },
+            showNearSettings: { self.showSettings(on: .near) }, showLlamaSettings: { self.showSettings(on: .llama) })
     }
     private lazy var details = AppWindow { [unowned self, supervisor, download] in
         DetailsView.window(supervisor, download, showModes: { self.showModes() })
     }
-    private lazy var agents = AppWindow { [door] in AgentsView.window(door) }
+    private lazy var agents = AppWindow { [unowned self, door, supervisor, download] in
+        AgentsView.window(
+            door, supervisor: supervisor, download: download, settings: .standard, openDoor: { self.turnDoor() },
+            showDetails: { self.showDetails() }, showDoorSettings: { self.showSettings(on: .door) })
+    }
     #if DARKBLOOM
     /// Made at its window's first show; it follows Darkbloom only while the
     /// window is open.
@@ -102,6 +106,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 sealing: { try await ConversationStore.key(for: conversations, find: Keychain.find, make: Keychain.make) }),
             port: { AppSettings.standard.doorPort })
     }()
+    /// The door's latest open or close, which the next one waits for, so
+    /// the two never cross: the app's own as Cloak starts and stops, and
+    /// Agents' Try Again.
+    private var doorTurn: Task<Void, Never>?
     private var server: ControlServer?
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "app")
 
@@ -133,9 +141,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Launch.stop("Cloak can't open.", "Quit Cloak, then open it again.")
         }
         // The door is open only while Cloak is Running.
-        Task { [supervisor, door] in
-            for await running in Observations({ supervisor.phase == .running }) {
-                if running { await door.open() } else { await door.close() }
+        Task { [unowned self, supervisor] in
+            for await _ in Observations({ supervisor.phase == .running }) {
+                turnDoor()
             }
         }
         // Sleep pauses a run, so a wake finds none running and starts
@@ -181,6 +189,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showAgents() {
         agents.show()
+    }
+
+    /// Opens the door while Cloak is Running and closes it otherwise, once
+    /// its last open or close has ended.
+    private func turnDoor() {
+        let running = supervisor.phase == .running
+        doorTurn = Task { [door, last = doorTurn] in
+            await last?.value
+            if running { await door.open() } else { await door.close() }
+        }
     }
 
     func showDetails() {

@@ -16,12 +16,13 @@ import SwiftUI
 struct ChatView: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
+    let showAgents: () -> Void
     let showNearSettings: () -> Void
     let showLlamaSettings: () -> Void
 
     static func window(
-        _ chat: Chat, showDetails: @escaping () -> Void, showNearSettings: @escaping () -> Void,
-        showLlamaSettings: @escaping () -> Void
+        _ chat: Chat, showDetails: @escaping () -> Void, showAgents: @escaping () -> Void,
+        showNearSettings: @escaping () -> Void, showLlamaSettings: @escaping () -> Void
     ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -31,7 +32,8 @@ struct ChatView: View {
         window.closesOnEscape = false
         let content = NSHostingController(
             rootView: ChatView(
-                chat: chat, showDetails: showDetails, showNearSettings: showNearSettings, showLlamaSettings: showLlamaSettings))
+                chat: chat, showDetails: showDetails, showAgents: showAgents, showNearSettings: showNearSettings,
+                showLlamaSettings: showLlamaSettings))
         content.sceneBridgingOptions = [.toolbars]
         content.sizingOptions = [.minSize]
         window.contentViewController = content
@@ -44,7 +46,9 @@ struct ChatView: View {
             Sidebar(chat: chat)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
-            Detail(chat: chat, showDetails: showDetails, showNearSettings: showNearSettings, showLlamaSettings: showLlamaSettings)
+            Detail(
+                chat: chat, showDetails: showDetails, showAgents: showAgents, showNearSettings: showNearSettings,
+                showLlamaSettings: showLlamaSettings)
         }
         .frame(minWidth: 760, minHeight: 460)
         .task { await chat.open() }
@@ -133,6 +137,7 @@ private struct Sidebar: View {
 private struct Detail: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
+    let showAgents: () -> Void
     let showNearSettings: () -> Void
     let showLlamaSettings: () -> Void
 
@@ -175,25 +180,38 @@ private struct Detail: View {
 
     @ViewBuilder private var content: some View {
         switch chat.access {
-        case .opening:
+        case .unopened, .opening(again: false):
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .missingKey:
             ContentUnavailableView(
                 "Locked", systemImage: "lock",
                 description: Text("The key to your saved chats is missing from this Mac's keychain, so they can't be opened. They're kept as they are."))
-        case .failed:
+        case .opening(again: true):
             ContentUnavailableView {
                 Label("Can't open", systemImage: "lock")
             } description: {
-                Text("Your saved chats couldn't be opened. The keychain may have said no.")
+                Text("Trying again…")
             } actions: {
-                Button("Retry") { Task { await chat.open() } }
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Trying again")
+            }
+        case .failed(let again):
+            ContentUnavailableView {
+                Label("Can't open", systemImage: "lock")
+            } description: {
+                Text(
+                    again
+                        ? "Tried again, and your saved chats still couldn't be opened. The keychain may have said no."
+                        : "Your saved chats couldn't be opened. The keychain may have said no.")
+            } actions: {
+                Button("Try Again") { Task { await chat.open() } }
             }
         case .open:
             if let conversation = chat.selected {
                 VStack(spacing: 0) {
-                    Turns(chat: chat, conversation: conversation, showNearSettings: showNearSettings)
+                    Turns(chat: chat, conversation: conversation, showAgents: showAgents, showNearSettings: showNearSettings)
                     Divider()
                     Compose(
                         chat: chat, showDetails: showDetails, showNearSettings: showNearSettings,
@@ -296,6 +314,7 @@ private struct WalletButton: View {
 private struct Turns: View {
     let chat: Chat
     let conversation: Conversation
+    let showAgents: () -> Void
     let showNearSettings: () -> Void
 
     var body: some View {
@@ -317,7 +336,7 @@ private struct Turns: View {
                             let running = run?.turn.id == turn.id ? run : nil
                             TaskCard(
                                 chat: chat, conversation: conversation.id, mode: mode, turn: running?.turn ?? turn, run: running,
-                                newest: turn.id == conversation.turns.last?.id)
+                                newest: turn.id == conversation.turns.last?.id, showAgents: showAgents)
                         } else if mode == .llama {
                             LlamaCard(
                                 chat: chat, conversation: conversation.id, turn: turn,
@@ -573,7 +592,8 @@ private struct SendOptions: View {
 /// its answer. While it runs, its newest steps, how long it has run, and
 /// Stop. One that ended without an answer says why and, as the newest, can
 /// run again; in V, one stopped for want of a deposit says so, with
-/// Wallet. The newest without an answer has the lights.
+/// Wallet; one that couldn't reach Cloak has the way to Agents, which says
+/// why and carries the fix. The newest without an answer has the lights.
 private struct TaskCard: View {
     let chat: Chat
     let conversation: UUID
@@ -581,6 +601,7 @@ private struct TaskCard: View {
     let turn: Turn
     let run: Agent.Run?
     let newest: Bool
+    let showAgents: () -> Void
     @State private var showingSteps = false
 
     var body: some View {
@@ -654,6 +675,14 @@ private struct TaskCard: View {
             if run == nil, turn.answer == nil {
                 if let end = chat.agent.ends[turn.id] {
                     EndRow(title: end.title, words: end.words)
+                    if end == .unreachable {
+                        HStack(spacing: 12) {
+                            Text("Agents says why.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            Button("Agents…", action: showAgents)
+                        }
+                    }
                     if mode == .v, case .failed = end, chat.payer.state == .none {
                         HStack(spacing: 12) {
                             Text("Deposit to run.")
@@ -1910,7 +1939,7 @@ extension Agent.End {
         switch self {
         case .stopped: nil
         case .cloakStopped: "Cloak was paused or stopped, so the task ended."
-        case .unreachable: "The agent couldn't reach Cloak. Agents says why."
+        case .unreachable: "The agent couldn't reach Cloak."
         case .failed(let sentence): sentence ?? "The agent stopped before it finished."
         }
     }
