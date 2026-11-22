@@ -40,7 +40,7 @@ struct InfoButton<Mark: View, Note: View>: View {
         .foregroundStyle(.secondary)
         // A circle round the one symbol, a capsule round a wider mark.
         .hover(Capsule())
-        .help(title)
+        .tip(title)
         .accessibilityLabel(title)
         .accessibilityHint(hint ?? "")
         .onHover { inside in

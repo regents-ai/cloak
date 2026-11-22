@@ -1425,6 +1425,40 @@ whose reader goes away first is stopped with all it started (its process
 group), as Darkbloom's own app stops its installer. Nothing here is under
 test.
 
+## 9g. The tip (`app/Sources/RegentsCloak/Tip.swift`)
+
+Every tooltip in the app is Cloak's own (`tip` on a SwiftUI view,
+`TipArea` on an AppKit one, as the menu's header has two), since macOS
+gives no way to put room round the words of its own. One panel shows
+them all, and one value says whose tip it is (`TipPanel.Stage`):
+
+```
+away                  no tip, none on its way
+resting(view, wait)   the pointer is on a view; its tip shows when the
+                      wait ends (0.7 s, or 0.1 s where another tip went
+                      within the last half second)
+showing(view)         the panel is up, under the pointer, with that
+                      view's words
+```
+
+| From | When | To |
+| --- | --- | --- |
+| any | the pointer comes onto a view with words | `resting` for that view (a tip that was showing goes first) |
+| any | the pointer comes onto a view with no words | `away` |
+| `resting` | the wait ends | `showing` |
+| `showing` | its view's words change | `showing` with the new words, or `away` if there are none now |
+| `resting`, `showing` | the pointer leaves that view, or the view goes | `away` |
+| `resting`, `showing` | any click, key or scroll in Cloak; a menu closes; Cloak stops being the app in front | `away` |
+
+A view that isn't the one resting or showing changes nothing by leaving,
+so going from one view straight to the next never hides the second's
+tip. After a click the pointer is still on the view and nothing shows
+again until it leaves and comes back, as with macOS's own. The panel
+takes no click and no key. The words are the view's hint for VoiceOver,
+as they were. Nothing here is under test; the panel was shown once from
+a throwaway test (its size, its place under the pointer, its leaving),
+and a real pointer resting on a view has not been watched.
+
 ## 10. Stages still implied (found 15 November 2026)
 
 A second read, of everything built since section 9: the chat window, the

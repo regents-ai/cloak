@@ -116,7 +116,7 @@ private struct SendOutButton: View {
 
     var body: some View {
         Button("Send Out…") { open = true }
-            .help("Sends all the ETH on hand to an address you type.")
+            .tip("Sends all the ETH on hand to an address you type.")
             .popover(isPresented: $open, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("To", text: $destination, prompt: Text("0x…"))
@@ -242,7 +242,7 @@ private struct Moving: View {
             }
         } label: {
             Label(title, systemImage: symbol)
-                .help(help)
+                .tip(help)
                 .accessibilityHint(help)
         }
     }
@@ -272,7 +272,7 @@ private struct Held: View {
                     ("checkmark.circle", "Ready")
                 }
             Label("Balance", systemImage: symbol)
-                .help(words)
+                .tip(words)
                 .accessibilityValue(words)
         }
         if let expiry = payer.expiry {
@@ -316,7 +316,7 @@ private struct WithdrawRow: View {
                         .foregroundStyle(.secondary)
                 }
                 let withdraw = Button("Withdraw") { Task { await payer.quoteWithdrawal() } }
-                    .help("Brings the whole deposit back to the address above.")
+                    .tip("Brings the whole deposit back to the address above.")
                     .disabled(payer.withdrawBlock != nil)
                 if prominent {
                     withdraw.buttonStyle(.borderedProminent)
@@ -367,7 +367,7 @@ private struct Amount: View {
                     .foregroundStyle(.secondary)
             }
             Button("Deposit", action: deposit)
-                .help("Shows what the deposit costs in ETH before anything is sent.")
+                .tip("Shows what the deposit costs in ETH before anything is sent.")
                 .disabled(payer.depositBlock != nil)
         }
     }
@@ -436,7 +436,7 @@ private struct ReviewRows: View {
                         Text(quote.expires, style: .timer)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
-                            .help("The quote holds until this runs out.")
+                            .tip("The quote holds until this runs out.")
                     }
                     Spacer()
                     if let block {
@@ -480,7 +480,7 @@ private struct Failed: View {
         HStack(spacing: 8) {
             Label("Stopped", systemImage: "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
-                .help(fault)
+                .tip(fault)
                 .accessibilityValue(fault)
             Spacer()
             Button("Try Again") { Task { await payer.retry() } }
@@ -667,7 +667,7 @@ private struct DismissButton: View {
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
             .hover(Circle(), outset: 4)
-            .help("Dismiss")
+            .tip("Dismiss")
     }
 }
 

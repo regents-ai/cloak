@@ -217,7 +217,7 @@ private struct Unread: View {
         Text("—")
             .frame(maxWidth: .infinity, alignment: .trailing)
             .contentShape(.rect)
-            .help(why)
+            .tip(why)
             .accessibilityLabel(why)
     }
 }
@@ -346,7 +346,7 @@ struct CodeButton: View {
         }
         .buttonStyle(.borderless)
         .hover(Circle())
-        .help("Show QR Code")
+        .tip("Show QR Code")
         .popover(isPresented: $open, arrowEdge: .bottom) {
             if let code = QRCode.image(for: address) {
                 let side = CGFloat(code.width) * QRCode.point
@@ -446,11 +446,11 @@ private struct Holding: View {
                 Spacer()
                 Button("Close") { Task { await wallet.close() } }
                     .disabled(none)
-                    .help("Refunds what's unspent.")
+                    .tip("Refunds what's unspent.")
                     .accessibilityHint("Refunds what's unspent.")
                 Button("Withdraw") { Task { await wallet.withdraw() } }
                     .disabled(none || waiting)
-                    .help(withdraw)
+                    .tip(withdraw)
                     .accessibilityHint(withdraw)
             }
         }
@@ -476,7 +476,7 @@ private struct Models: View {
                         .tag(model.id)
                 }
             }
-            .help("Prices per million tokens: in | out.")
+            .tip("Prices per million tokens: in | out.")
             .accessibilityHint("Prices per million tokens, in and out.")
         }
     }
@@ -495,7 +495,7 @@ struct ModePill: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
             .background(tint.opacity(0.2), in: Capsule())
-            .help(help)
+            .tip(help)
             .accessibilityHint(help)
     }
 }
@@ -553,7 +553,7 @@ struct StopRow: View {
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .hover(Circle(), outset: 4)
-                .help("Dismiss")
+                .tip("Dismiss")
         }
     }
 }

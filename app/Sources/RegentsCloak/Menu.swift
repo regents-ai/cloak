@@ -224,6 +224,8 @@ final class MenuHeaderView: NSView {
     private let dot = StateDot()
     private let line = NSTextField(labelWithString: "")
     private let problem = NSTextField(labelWithString: "")
+    /// The whole of a failure cut short, as a tip (`Tip.swift`).
+    private lazy var problemTip = TipArea(on: problem)
     private let fixButton = NSButton(title: "", target: nil, action: nil)
     private let remedy = NSTextField(wrappingLabelWithString: "")
     private let failure: NSStackView
@@ -295,7 +297,7 @@ final class MenuHeaderView: NSView {
             remedy.isHidden = true
         case .failure(let reason, let fix):
             problem.stringValue = reason.title(with: fix)
-            problem.toolTip = reason.title(with: fix)
+            problemTip.words = reason.title(with: fix)
             remedy.stringValue = reason.remedy(with: fix)
             self.fix = fix
             fixButton.title = fix?.title ?? ""
@@ -313,13 +315,14 @@ final class MenuHeaderView: NSView {
 }
 
 /// The 6-point dot after the app's name: its colour is the state, and the
-/// state's word is its tooltip and what VoiceOver reads for it. Its baseline
+/// state's word is its tip (`Tip.swift`) and what VoiceOver reads for it. Its baseline
 /// is half a point under it, so on the title's baseline its middle is near
 /// half the title's x-height (an idea from the Llama app's menu, decision 14
 /// in docs/plan.md).
 private final class StateDot: NSView {
     private static let size: CGFloat = 6
     private var colour = NSColor.systemGray
+    private lazy var tip = TipArea(on: self)
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: Self.size, height: Self.size))
@@ -346,7 +349,7 @@ private final class StateDot: NSView {
         case .attention: .systemRed
         case .changing: .systemGray
         }
-        toolTip = word
+        tip.words = word
         setAccessibilityLabel(word)
         needsDisplay = true
     }

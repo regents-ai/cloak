@@ -3702,6 +3702,19 @@ door when the turn comes), and is listed truthfully as Left, paid for; a
 `problem` line in Agents is still a sentence with no button; pausing
 Cloak can still cut a zkAPI request already out.
 
+Sean, the same evening, of the Cover switch's tooltip: "the
+buffer/padding between text and border of this needs to be increased
+slightly, and anywhere else." macOS gives no way to change its own
+tooltip's room, so the chief replaced every tooltip in the app with
+Cloak's own (`app/Sources/RegentsCloak/Tip.swift`, state machines 9g):
+one panel, the same words and size, 10 points of room each side and 7
+above and below. 41 checks pass, no warnings. Its box was pictured off
+screen in light and dark, and the real panel was shown once from a
+throwaway test, where it came up at its words' size 22 points under the
+pointer and left when told. A real pointer resting on a button in the
+running app has not been watched: the chief sends no pointer moves on
+Sean's Mac.
+
 NEAR trace sharing is built on branch `t3/near-trace-sharing` (21
 November 2026), against stand-ins only: no sign-in, enrolment or upload
 has been made. An independent reader found 14 things and the helper

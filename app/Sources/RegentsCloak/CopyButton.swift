@@ -39,7 +39,7 @@ struct CopyButton: View {
         }
         .buttonStyle(.borderless)
         .hover(Circle())
-        .help(name)
+        .tip(name)
         // A press while the checkmark shows starts its second and a half again.
         .task(id: copied) {
             guard copied != nil, (try? await Task.sleep(for: .seconds(1.5))) != nil else { return }

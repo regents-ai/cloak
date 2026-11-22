@@ -93,7 +93,7 @@ struct DarkbloomView: View {
                         .frame(width: 140)
                         .accessibilityLabel("Installing")
                         .accessibilityValue("Step \(step) of 5")
-                        .help("Installing, step \(step) of 5")
+                        .tip("Installing, step \(step) of 5")
                 case .notConnected:
                     HStack(spacing: 2) {
                         Text("Not connected")
@@ -202,7 +202,7 @@ struct DarkbloomView: View {
         } else if model.downloaded {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .help("Downloaded")
+                .tip("Downloaded")
                 .accessibilityLabel("Downloaded")
         } else {
             SymbolButton("Download", symbol: "arrow.down.circle") { mode.downloadModel() }
@@ -444,7 +444,7 @@ struct DarkbloomView: View {
         } else if snapshot.providerStatus == "untrusted" {
             Label("Verification needed", systemImage: "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
-                .help("Darkbloom hasn't verified this Mac yet.")
+                .tip("Darkbloom hasn't verified this Mac yet.")
         } else if snapshot.providerStatus == "offline" {
             Working(words: "Connecting")
         } else if snapshot.models.contains(where: { $0.registration == "routable" }) {

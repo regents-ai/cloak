@@ -76,14 +76,14 @@ private struct Sidebar: View {
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("Not saved")
-                            .help("Not saved. What's new here is gone when Cloak quits.")
+                            .tip("Not saved. What's new here is gone when Cloak quits.")
                     }
                     if agent {
                         Image(systemName: Chat.Kind.agentSymbol)
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
                             .accessibilityLabel(Chat.Kind.agentName)
-                            .help("\(Chat.Kind.agentName) chat")
+                            .tip("\(Chat.Kind.agentName) chat")
                     }
                     // V's chats have no mark.
                     if mode != .v {
@@ -91,7 +91,7 @@ private struct Sidebar: View {
                             .imageScale(.small)
                             .foregroundStyle(.secondary)
                             .accessibilityLabel(mode.name)
-                            .help("\(mode.name) chat")
+                            .tip("\(mode.name) chat")
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -114,12 +114,12 @@ private struct Sidebar: View {
             ToolbarItem {
                 Button("New", systemImage: "square.and.pencil") { chat.newConversation() }
                     .keyboardShortcut("n")
-                    .help("New")
+                    .tip("New")
                     .disabled(!chat.isOpen)
             }
             ToolbarItem {
                 Button("Delete", systemImage: "trash") { deleting = chat.selected }
-                    .help("Delete")
+                    .tip("Delete")
                     .disabled(chat.selected?.turns.isEmpty ?? true)
             }
         }
@@ -264,7 +264,7 @@ private struct CoverToggle: View {
                 .toggleStyle(.switch)
                 .accessibilityHint(waits ? later : "")
         }
-        .help(waits ? "\(help) \(later)" : help)
+        .tip(waits ? "\(help) \(later)" : help)
     }
 }
 
@@ -302,7 +302,7 @@ private struct WalletButton: View {
                     }
             }
         }
-        .help(warning.map { "Wallet. \($0.1)" } ?? "Wallet")
+        .tip(warning.map { "Wallet. \($0.1)" } ?? "Wallet")
         .accessibilityValue(warning?.1 ?? "")
         .disabled(!chat.isOpen)
     }
@@ -496,7 +496,7 @@ private struct TurnCard: View {
                     HStack(spacing: 0) {
                         Button("Send", systemImage: "arrow.up") { chat.send(turn.id, in: conversation) }
                             .buttonStyle(RoundButtonStyle(diameter: 20))
-                            .help("Send")
+                            .tip("Send")
                             .disabled(block != nil)
                         if turn.reworded != nil {
                             SendOptions(settings: chat.settings, blocked: originalBlock != nil) {
@@ -525,7 +525,7 @@ private struct TurnCard: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open")
-                .help("Open")
+                .tip("Open")
                 .disabled(!opens)
             }
             if notSent {
@@ -549,7 +549,7 @@ private struct NotSent: View {
         Image(systemName: mayHaveGone ? "questionmark.circle.dashed" : "circle.dashed")
             .font(.callout)
             .foregroundStyle(.secondary)
-            .help(words)
+            .tip(words)
             .accessibilityLabel(words)
     }
 }
@@ -583,7 +583,7 @@ private struct SendOptions: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .hover(Circle())
-        .help("Send Options")
+        .tip("Send Options")
     }
 }
 
@@ -862,7 +862,7 @@ private struct Light: View {
             .foregroundStyle(good ? .green : .orange)
             .frame(width: 24, height: 24)
             .contentShape(.rect)
-            .help(words)
+            .tip(words)
             .accessibilityLabel(words)
     }
 }
@@ -883,7 +883,7 @@ private struct Busy: View {
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
-        .help(title)
+        .tip(title)
     }
 }
 
@@ -995,7 +995,7 @@ private struct TokenMark: View {
         Image(systemName: "number.circle")
             .imageScale(.small)
             .foregroundStyle(.secondary)
-            .help(words)
+            .tip(words)
             .accessibilityLabel("Tokens")
             .accessibilityValue(words)
     }
@@ -1104,15 +1104,15 @@ private struct Compose: View {
                         if llama { chat.stopAnswer(in: conversation.id) } else { chat.agent.stop(conversation.id) }
                     }
                         .buttonStyle(RoundButtonStyle())
-                        .help("Stop")
+                        .tip("Stop")
                         .keyboardShortcut(".", modifiers: .command)
                         .padding(.bottom, 4)
                 } else {
-                    let title: LocalizedStringKey = agent ? "Run" : llama ? "Ask" : sends ? "Send" : "Reword"
+                    let title = agent ? "Run" : llama ? "Ask" : sends ? "Send" : "Reword"
                     // Reword's symbol where the press only rewords.
                     Button(title, systemImage: !agent && !llama && !sends ? "pencil.line" : "arrow.up") { chat.submit() }
                         .buttonStyle(RoundButtonStyle())
-                        .help(title)
+                        .tip(title)
                         .disabled(!chat.canSubmit)
                         // Level with a box of one line.
                         .padding(.bottom, 4)
@@ -1139,7 +1139,7 @@ private struct Compose: View {
                     // Constant while ticked, since no reworded text is shown.
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                        .help("Rewording is off. Messages go as you wrote them.")
+                        .tip("Rewording is off. Messages go as you wrote them.")
                         .accessibilityLabel("Rewording is off. Messages go as you wrote them.")
                 } else if agent, let conversation, chat.supervisor.phase == .running, chat.startsFresh(conversation) {
                     Label("The agent won't remember the earlier tasks here.", systemImage: "info.circle")
@@ -1255,7 +1255,7 @@ private struct NearStatus: View {
                         .foregroundStyle(fresh ? .green : .secondary)
                 }
                 .foregroundStyle(.secondary)
-                .help(words)
+                .tip(words)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(words)
             }
@@ -1562,7 +1562,7 @@ private struct ModeColumn: View {
                     Label(mode.paidWith, systemImage: "creditcard")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .help("Paid with")
+                        .tip("Paid with")
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(mode.lines, id: \.self) { line in
@@ -1583,7 +1583,7 @@ private struct ModeColumn: View {
         }
         .buttonStyle(.plain)
         .hover(RoundedRectangle(cornerRadius: 12))
-        .help(mode.about)
+        .tip(mode.about)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(chosen ? .isSelected : [])
     }
@@ -1617,7 +1617,7 @@ private struct NearStopRow: View {
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .hover(Circle(), outset: 4)
-                .help("Dismiss")
+                .tip("Dismiss")
         }
     }
 }
@@ -1668,7 +1668,7 @@ private struct SwitchPill: View {
                 .disabled(fixed != nil)
                 .accessibilityHint(fixed ?? "")
         }
-        .help(help)
+        .tip(help)
     }
 }
 
@@ -1697,7 +1697,7 @@ private struct Waiting: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 28, height: 28)
                 .contentShape(.rect)
-                .help(words)
+                .tip(words)
                 .accessibilityHidden(true)
             if failed {
                 Text(words)
@@ -1718,7 +1718,7 @@ private struct Waiting: View {
                 ProgressView()
                     .controlSize(.small)
                     .frame(width: 28, height: 28)
-                    .help(words)
+                    .tip(words)
             }
         }
         .padding(.horizontal, 6)
@@ -1761,7 +1761,7 @@ private struct RewordingElsewhere: View {
             Text("Another chat is rewording.")
             Spacer()
             Button("Cancel", action: cancel)
-                .help("Cancel the other chat's rewording")
+                .tip("Cancel the other chat's rewording")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -1832,7 +1832,7 @@ private struct Notice: View {
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .hover(Circle(), outset: 4)
-                .help("Dismiss")
+                .tip("Dismiss")
         }
         .padding(12)
         .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))

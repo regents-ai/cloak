@@ -59,7 +59,7 @@ private struct Pill: View {
                 .contentShape(.capsule)
             }
             .buttonStyle(.plain)
-            .help(detail.question)
+            .tip(detail.question)
             .accessibilityLabel(detail.label)
             .accessibilityValue(value ?? "")
             .accessibilityHint(detail.question)
@@ -76,7 +76,7 @@ private struct Pill: View {
                     .contentShape(.rect)
                     // Kept inside the pill's edge.
                     .hover(Circle(), outset: -3)
-                    .help("Clear")
+                    .tip("Clear")
             }
         }
         .foregroundStyle(value == nil ? .secondary : .primary)
@@ -192,7 +192,7 @@ private struct Colors: View {
                 }
                 .buttonStyle(.plain)
                 .hover(Circle())
-                .help(swatches[index].name)
+                .tip(swatches[index].name)
                 .accessibilityLabel(swatches[index].name)
                 .accessibilityAddTraits(on ? .isSelected : [])
                 .overlay(alignment: .top) {

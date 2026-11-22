@@ -516,7 +516,7 @@ private struct ModelRow: View {
                     if let waiting {
                         Image(systemName: waiting)
                             .foregroundStyle(.secondary)
-                            .help(status)
+                            .tip(status)
                             .accessibilityHidden(true)
                     }
                     ProgressView(value: Double(download.done), total: Double(max(download.total, 1)))
@@ -524,7 +524,7 @@ private struct ModelRow: View {
                         .controlSize(.small)
                         .frame(width: 28, height: 28)
                         .overhanging()
-                        .help(progress)
+                        .tip(progress)
                         .accessibilityLabel("Download")
                         .accessibilityValue(progress)
                     SymbolButton("Pause", symbol: "pause.circle") { download.pause() }
@@ -567,7 +567,7 @@ private struct ModelRow: View {
             .accessibilityAddTraits(chosen ? .isSelected : [])
             .accessibilityHint(download.fits ? "" : unfit)
         }
-        .help(download.fits ? "" : unfit)
+        .tip(download.fits ? "" : unfit)
         .alert("Remove \(label)?", isPresented: $removing) {
             Button("Remove", role: .destructive) { download.remove() }
             Button("Cancel", role: .cancel) {}
@@ -647,7 +647,7 @@ private struct ShortcutRecorder: View {
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
                         .hover(Circle(), outset: 4)
-                        .help("Clear Shortcut")
+                        .tip("Clear Shortcut")
                 }
             }
             if let words = stage == .recording(refused: true) ? "Hold ⌘, ⌥ or ⌃ with the key." : refusal {

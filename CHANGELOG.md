@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Tooltips have room round their words. macOS draws its own with the
+  words hard against the border and gives no way to change that, so
+  every tooltip in the app (57 in its windows, two in the menu) is now
+  Cloak's own: the same words at the same size, with 10 points of room
+  each side and 7 above and below. It comes up under the pointer after
+  0.7 seconds, at once after another one, and goes on any click, key or
+  scroll.
 - The door stops working for an app that has gone. While a request is
   read, checked and reworded its connection is watched; an app that
   leaves before the request is handed on to be paid ends it there, with

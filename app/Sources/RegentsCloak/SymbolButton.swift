@@ -23,7 +23,7 @@ struct SymbolButton: View {
         }
         .buttonStyle(.borderless)
         .hover(Circle())
-        .help(title)
+        .tip(title)
     }
 }
 

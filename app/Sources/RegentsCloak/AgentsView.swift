@@ -301,7 +301,7 @@ private struct RequestRow: View {
                 Image(systemName: "exclamationmark.circle.fill")
                     .foregroundStyle(.orange)
             }
-            .help(words)
+            .tip(words)
         case .left(let paid):
             Label {
                 Text("Left")
@@ -309,7 +309,7 @@ private struct RequestRow: View {
                 Image(systemName: "minus.circle.fill")
                     .foregroundStyle(paid ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             }
-            .help(Self.left(paid: paid))
+            .tip(Self.left(paid: paid))
         }
     }
 
@@ -471,7 +471,7 @@ private struct AppRow: View {
             }
             .buttonStyle(.borderless)
             .hover(Circle())
-            .help("Remove")
+            .tip("Remove")
         }
     }
 
