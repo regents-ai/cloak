@@ -305,7 +305,6 @@ private struct DepositSection: View {
                 Moving(symbol: "arrow.down.circle", title: "Depositing", help: Self.stage(stage), hash: payer.funding?.transactionHash)
             case .ready, .settling:
                 Held(payer: payer, settings: settings)
-                amount
             case .withdrawing(let phase):
                 Moving(
                     symbol: "arrow.up.circle", title: "Withdrawing", help: Self.phase(phase),
@@ -433,6 +432,10 @@ private struct Held: View {
                     EmptyView()
                 }
             }
+            Text("Turns spend from this deposit automatically using fresh one-time keys. To add more ETH, withdraw first and make a new deposit.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             WithdrawRow(payer: payer, prominent: band == .near || band == .due)
         }
     }
@@ -511,7 +514,7 @@ private struct Amount: View {
                     .onChange(of: text) { wrong = false }
             }
         }
-        Text("Start with $5–$10 ($5 unlocks up to Tier 25 models; $10+ gives room for multiple flagship turns). Beta · 30-day protocol limit: untouched zkAPI deposits expire after 30 days at the protocol layer and can be claimed by the operator — withdraw unused ETH before day 30. [Wallet security & 30-day limit](https://regents.sh/docs/cloak/wallets).")
+        Text("Start with $5–$10 ($5 unlocks up to Tier 25 models; $10+ gives room for multiple flagship turns). Keep a small ETH buffer in your wallet for withdrawal gas. Beta · 30-day protocol limit: untouched zkAPI deposits expire after 30 days at the protocol layer and can be claimed by the operator — withdraw unused ETH before day 30. [Wallet security & 30-day limit](https://regents.sh/docs/cloak/wallets).")
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -615,6 +618,12 @@ private struct ReviewRows: View {
                         .font(.caption)
                         .foregroundStyle(expired ? .orange : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !busy, lowWithdrawGasBuffer {
+                        Label("Leaves less than one transaction's gas in your wallet — keep a small ETH buffer so you can withdraw unused funds before day 30.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if !busy {
                         Text(
@@ -725,6 +734,20 @@ private struct ReviewRows: View {
         case (.deposit, .approvingDeposit), (.withdrawal, .approvingWithdrawal), (.transfer, .approvingTransfer): true
         default: false
         }
+    }
+
+    /// True when confirming this deposit would leave less ETH in the local wallet
+    /// than one transaction's gas fee, which would prevent withdrawing later without
+    /// first topping up wallet ETH for Ethereum Mainnet gas.
+    private var lowWithdrawGasBuffer: Bool {
+        guard case .deposit(let quote, _) = review,
+            let balanceText = payer.view?.chain?.balanceWei,
+            let balance = Decimal(string: balanceText, locale: Locale(identifier: "en_US_POSIX")),
+            let total = Decimal(string: quote.requiredTotalWei, locale: Locale(identifier: "en_US_POSIX")),
+            let fee = Decimal(string: quote.requiredFeeWei, locale: Locale(identifier: "en_US_POSIX")),
+            balance >= total
+        else { return false }
+        return (balance - total) < fee
     }
 }
 

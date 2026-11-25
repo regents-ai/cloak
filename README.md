@@ -43,7 +43,7 @@ Each conversation locks its mode on turn 1. The **Active Guarantees** rail in th
 | **1. Local** (`⌘1`) | On your Mac (`vmlx-swift` MLX or Metal `llama.cpp`) | Nothing during chat once weights are downloaded | Free · no account | Nothing leaves your Mac |
 | **2. NEAR AI Gateway** (`⌘2`) | [NEAR AI Cloud](https://cloud.near.ai) (`Qwen3.8-27B`, Intel TDX + NVIDIA enclaves) | Prompt as written, E2EE v2 encrypted to the verified enclave (optional Tor) | Your NEAR AI Cloud API key | Your NEAR API key identifies your NEAR account |
 | **3. Token Inference** (`⌘3`) | [Venice AI](https://venice.ai) or [Boundless](https://boundless.network) + Tempo | Locally rephrased user text over per-conversation Tor circuits | Local Base `USDC` (`x402`) / Venice key, or Tempo `USDC.e` (`MPP`) | A reused wallet address, channel, or API key can link chats |
-| **4. zkAPI Anon Inference** (`⌘4`) | [Open Anonymity](https://zkapi.openanonymity.ai) (`zkAPI`) over Tor | Locally rephrased user text over per-conversation Tor circuits | Fresh one-time ZK spend credential per turn (from an ETH deposit) | Prompt content, thread history, and timing can still correlate requests |
+| **4. zkAPI Anon Inference** (`⌘4`) | [Open Anonymity](https://zkapi.openanonymity.ai) (`zkAPI`) over Tor | Locally rephrased user text over per-conversation Tor circuits | Fresh one-time ZK key per turn drawn from a reusable ETH deposit — no provider account or linked API key | Prompt content, thread history, and timing can still correlate requests |
 | **5. Darkbloom Serving** | On your Mac via [Darkbloom](https://darkbloom.dev) ([EigenLayer](https://eigenlayer.xyz)) | Local Only stays on your Mac; Network + Local serves idle compute to Darkbloom | Earn payouts on idle Apple Silicon (`0%` platform cut, macOS 27+) | Linked `console.darkbloom.dev` provider account (Network + Local only) |
 
 ![Cloak Ecosystem Stack](docs/media/cloak-ecosystem-banner.png)
@@ -115,6 +115,7 @@ Requires Apple Silicon, macOS 26+, Xcode / Swift 6.2+, Rust, `uv`, and Docker (f
 ```sh
 uv run scripts/fetch_sources.py
 llama-worker/install.sh
+vmlx-worker/install.sh
 guest/build.sh
 host/build.sh
 app/build.sh
