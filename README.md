@@ -32,6 +32,10 @@ Cloak lives in your menu bar and starts paused. **Local** (`⌘1`) and **NEAR AI
 
 When you press **Start**, Cloak launches bundled Tor (`0.4.9.16`), a sandboxed local prompt rewriter (`Qwen 3.5 9B`), and an ephemeral, NIC-less Linux arm64 microVM (`Virtualization.framework`). Outbound traffic from the VM can only exit through Tor over `vsock:9050`. Models load on demand and unload automatically when idle so they do not hold unified memory when not in use.
 
+<p>
+  <img src="docs/media/cloak-startup.png" width="460" alt="Cloak 5-step verified startup checklist" />
+</p>
+
 You can chat directly in Cloak, toggle the built-in sandboxed **Pi** coding agent (`hammer` icon), or connect external coding tools and scripts to Cloak's local OpenAI-compatible gateway at `http://127.0.0.1:8742/v1`.
 
 ## Modes
