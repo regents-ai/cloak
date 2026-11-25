@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import CloakChat
+import CloakControl
 import CloakDoor
 import CloakSupervisor
 import OSLog
@@ -217,7 +218,7 @@ struct SettingsView: View {
                 case .advanced:
                     AdvancedPane(settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates)
                 case .feedback:
-                    FeedbackPane()
+                    FeedbackPane(supervisor: supervisor)
                 }
             }
             .formStyle(.grouped)
@@ -853,6 +854,10 @@ private struct LocalAccessPane: View {
 /// Dedicated Feedback pane listing every official channel for bug reports,
 /// feature requests, and questions.
 private struct FeedbackPane: View {
+    let supervisor: Supervisor
+    @State private var showingDiagnostics = false
+    @State private var recentCrash: DiagnosticReport.CrashInfo?
+
     /// The release, which `build.sh` writes into the app.
     private static let release = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.2.1"
     private static let email = "build@regents.sh"
@@ -874,6 +879,29 @@ private struct FeedbackPane: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Crash & Bug Diagnostics") {
+                LabeledContent {
+                    Button("Create Report…") { showingDiagnostics = true }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("Redacted Diagnostic Report")
+                            if recentCrash != nil {
+                                Text("Crash found")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.orange)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .background(Color.orange.opacity(0.14), in: Capsule())
+                            }
+                        }
+                        Text("Zero telemetry — inspect and copy redacted local logs & macOS crash trace before sharing.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Section("Support & Feedback") {
@@ -935,6 +963,14 @@ private struct FeedbackPane: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .sheet(isPresented: $showingDiagnostics) {
+            DiagnosticReportSheet(supervisor: supervisor)
+        }
+        .task {
+            recentCrash = await Task.detached(priority: .utility) {
+                DiagnosticReport.latestCrash()
+            }.value
         }
     }
 }

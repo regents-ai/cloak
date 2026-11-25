@@ -947,4 +947,44 @@ struct StateMachineTests {
         }
         #expect(Set(baseServices.map { KeychainStore.service($0, isDev: true) }).isDisjoint(with: Set(baseServices)))
     }
+
+    @Test func diagnosticReportRedactsSecretsAndParsesIpsCrash() throws {
+        let sample = """
+            path=/Users/alice/Library/Application Support/Regents Cloak/wallet
+            wallet=0x1234567890abcdef1234567890abcdef12345678
+            key=0xabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+            auth=Bearer sk-secret-token-1234567890
+            email=alice@example.com
+            remote=203.0.113.42 local=127.0.0.1
+            """
+        let redacted = DiagnosticReport.redact(sample)
+        #expect(!redacted.contains("alice"))
+        #expect(redacted.contains("/Users/<redacted>/Library"))
+        #expect(!redacted.contains("1234567890abcdef1234567890abcdef12345678"))
+        #expect(redacted.contains("0x<redacted-address>"))
+        #expect(!redacted.contains("abcdef0123456789"))
+        #expect(redacted.contains("<redacted-hex>"))
+        #expect(!redacted.contains("sk-secret-token"))
+        #expect(!redacted.contains("alice@example.com"))
+        #expect(!redacted.contains("203.0.113.42"))
+        #expect(redacted.contains("<redacted-ip>"))
+        #expect(redacted.contains("127.0.0.1"))
+
+        let ips = """
+            {"app_name":"RegentsCloak","timestamp":"2026-11-25 18:00:00.00 -0500"}
+            {
+              "procName": "RegentsCloak",
+              "exception": {"type": "EXC_BAD_ACCESS", "signal": "SIGSEGV", "subtype": "KERN_INVALID_ADDRESS"},
+              "termination": {"indicator": "Segmentation fault: 11", "reasons": ["Namespace SIGNAL, Code 11"]},
+              "faultingThread": 0,
+              "usedImages": [{"name": "RegentsCloak"}],
+              "threads": [{"name": "main", "frames": [{"imageIndex": 0, "symbol": "Chat.send", "symbolLocation": 42}]}]
+            }
+            """
+        let parsed = DiagnosticReport.extractCrashSummary(from: ips, filename: "RegentsCloak-2026-11-25.ips")
+        #expect(parsed.processName == "RegentsCloak")
+        #expect(parsed.summary.contains("EXC_BAD_ACCESS (SIGSEGV)"))
+        #expect(parsed.summary.contains("Segmentation fault: 11"))
+        #expect(parsed.summary.contains("Chat.send + 42"))
+    }
 }

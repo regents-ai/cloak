@@ -11,6 +11,8 @@ struct DetailsView: View {
     let showTour: () -> Void
     @State private var memory: Memory?
     @State private var verification: ReleaseVerification?
+    @State private var recentCrash: DiagnosticReport.CrashInfo?
+    @State private var showingDiagnostics = false
     @State private var showVerifySteps = false
     @State private var technical = false
 
@@ -69,11 +71,36 @@ struct DetailsView: View {
             if download.state != .installed {
                 DownloadSection(download: download)
             }
+            if let crash = recentCrash {
+                Section {
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Recent crash report found (\(crash.processName))")
+                                .font(.callout.weight(.medium))
+                            Text("Recorded locally on \(crash.date.formatted(date: .abbreviated, time: .shortened)). Cloak collects zero telemetry — you can inspect and copy a redacted report to share.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Button("Inspect Report…") { showingDiagnostics = true }
+                            .controlSize(.small)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
             Section {
                 LabeledContent("Release", value: status.release)
                 LabeledContent("Rewriter", value: supervisor.resting ? "\(status.model.label), unloaded" : status.model.label)
                 LabeledContent("Memory", value: memory.map { $0.total.map(Memory.text) ?? "Can't be measured" } ?? "Measuring…")
                 LabeledContent("Last check", value: lastCheck(status.check))
+                LabeledContent("Diagnostics") {
+                    Button("Create Redacted Report…") { showingDiagnostics = true }
+                        .controlSize(.small)
+                }
                 LabeledContent("Welcome Tour") {
                     Button("Open Tour…", action: showTour)
                         .controlSize(.small)
@@ -114,8 +141,14 @@ struct DetailsView: View {
             }
         }
         .onReturn { download.refresh() }
+        .sheet(isPresented: $showingDiagnostics) {
+            DiagnosticReportSheet(supervisor: supervisor)
+        }
         .task {
             verification = await ReleaseVerification.inspectCurrentBundle()
+            recentCrash = await Task.detached(priority: .utility) {
+                DiagnosticReport.latestCrash()
+            }.value
         }
         .task {
             repeat {
