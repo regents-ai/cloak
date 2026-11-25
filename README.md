@@ -1,3 +1,7 @@
+<p>
+  <img src="docs/media/cloak-crown.gif" width="120" height="120" alt="Regents Cloak" />
+</p>
+
 # Cloak
 
 Cloak is a macOS menu bar app for private AI — local on Apple Silicon, or routed to remote models with explicit, inspectable privacy boundaries.
