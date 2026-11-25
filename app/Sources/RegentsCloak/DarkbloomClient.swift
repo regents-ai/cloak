@@ -46,35 +46,84 @@ enum Darkbloom {
         var snapshot: DarkbloomSnapshot?
     }
 
+    /// The result of checking `~/.darkbloom/bin/darkbloom`.
+    enum Lookup: Sendable {
+        /// Not installed on this Mac.
+        case missing
+        /// Installed and validly signed, but older than `oldest`.
+        case outdated(version: String)
+        /// Installed, signed, and recent enough for Cloak to drive.
+        case ready(Found)
+    }
+
+    /// Cached verified binary metadata keyed by resolved path + mtime + inode
+    /// so opening Settings → Inference Serving doesn't re-hash Darkbloom.app
+    /// and re-spawn `--version`/`start --help` on every tab switch.
+    private struct VerifiedBinary: Sendable {
+        let path: String
+        let inode: UInt64
+        let mtimeSec: Int
+        let version: String
+        let flags: Set<String>
+    }
+    private static let cacheLock = NSLock()
+    private nonisolated(unsafe) static var cachedBinary: VerifiedBinary?
+
+    private static func fileIdentity(_ binary: URL) -> (inode: UInt64, mtimeSec: Int)? {
+        var st = stat()
+        guard stat(binary.path, &st) == 0 else { return nil }
+        return (st.st_ino, st.st_mtimespec.tv_sec)
+    }
+
     /// Looks for the command line and checks it: its signature, then its
     /// release, then its flags, then whether its control service answers.
-    /// Nil when it isn't installed.
-    @concurrent static func find() async throws(DarkbloomFailure) -> Found? {
-        guard FileManager.default.fileExists(atPath: cli.path) else { return nil }
+    @concurrent static func find() async throws(DarkbloomFailure) -> Lookup {
+        guard FileManager.default.fileExists(atPath: cli.path) else { return .missing }
         let binary = cli.resolvingSymlinksInPath()
-        try verify(binary)
-        guard let version = await installedVersion(binary), let numbers = release(version) else {
-            throw DarkbloomFailure("Unknown version", detail: "Darkbloom's command line didn't give a release Cloak can read.")
+        let identity = fileIdentity(binary)
+
+        let version: String
+        let flags: Set<String>
+        let cached: VerifiedBinary? = cacheLock.withLock {
+            guard let c = cachedBinary, let id = identity,
+                c.path == binary.path, c.inode == id.inode, c.mtimeSec == id.mtimeSec
+            else { return nil }
+            return c
         }
-        guard !numbers.lexicographicallyPrecedes(oldest) else {
-            throw DarkbloomFailure(
-                "Needs an update",
-                detail: "Cloak works with Darkbloom 0.10.16 or later; this Mac has \(version). Run darkbloom update in Terminal.")
+        if let cached {
+            version = cached.version
+            flags = cached.flags
+        } else {
+            try verify(binary)
+            guard let v = await installedVersion(binary), let numbers = release(v) else {
+                throw DarkbloomFailure("Unknown version", detail: "Darkbloom's command line didn't give a release Cloak can read.")
+            }
+            guard !numbers.lexicographicallyPrecedes(oldest) else {
+                return .outdated(version: v)
+            }
+            let f = await startFlags(binary)
+            version = v
+            flags = f
+            if let id = identity {
+                cacheLock.withLock {
+                    cachedBinary = VerifiedBinary(path: binary.path, inode: id.inode, mtimeSec: id.mtimeSec, version: v, flags: f)
+                }
+            }
         }
-        var found = Found(binary: binary, version: version, flags: await startFlags(binary))
-        guard let control = try DarkbloomControl.discover() else { return found }
+        var found = Found(binary: binary, version: version, flags: flags)
+        guard let control = try DarkbloomControl.discover() else { return .ready(found) }
         do {
             let snapshot = try await control.state()
             // A service left from another release answers for that one; Connect restarts it (`desktop ensure`).
-            guard snapshot.version == version else { return found }
+            guard snapshot.version == version else { return .ready(found) }
             found.control = control
             found.snapshot = snapshot
         } catch .unreachable {
-            return found
+            return .ready(found)
         } catch {
             throw DarkbloomFailure("Unknown Darkbloom", detail: error.reason)
         }
-        return found
+        return .ready(found)
     }
 
     /// Checks `binary`'s signature against `requirement` with the system's own
@@ -131,6 +180,65 @@ enum Darkbloom {
         return flags
     }
 
+    /// Reads `darkbloom models --json` to discover `required_provider_capabilities`
+    /// per model ID (e.g. `["apple_m5", "mlx_nax"]`), which Darkbloom's `/control/v1/state`
+    /// `eligible` boolean omits in v0.10.17.
+    @concurrent static func modelRequiredCapabilities(_ binary: URL) async -> [String: [String]] {
+        struct Entry: Decodable {
+            let id: String
+            let requiredProviderCapabilities: [String]?
+        }
+        var output = ""
+        do {
+            for try await line in lines(binary, ["models", "--json"]) {
+                output += line + "\n"
+            }
+        } catch {
+            return [:]
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let data = output.data(using: .utf8),
+            let entries = try? decoder.decode([Entry].self, from: data)
+        else { return [:] }
+        var map: [String: [String]] = [:]
+        for entry in entries {
+            if let caps = entry.requiredProviderCapabilities, !caps.isEmpty {
+                map[entry.id] = caps
+            }
+        }
+        return map
+    }
+
+    /// Returns whether this Mac satisfies `requiredCapabilities` reported by
+    /// `darkbloom models --json` (currently filtering Apple M5 / `mlx_nax` models
+    /// on M1–M4 Macs so incompatible models are never recommended or downloaded).
+    static func hostSupports(requiredCapabilities: [String]) -> Bool {
+        guard !requiredCapabilities.isEmpty else { return true }
+        let brand = cpuBrandString().lowercased()
+        let isM5OrNewer: Bool = {
+            guard let range = brand.range(of: #"apple m(\d+)"#, options: .regularExpression) else { return false }
+            let digits = brand[range].filter(\.isNumber)
+            return (Int(digits) ?? 0) >= 5
+        }()
+        for cap in requiredCapabilities {
+            let lower = cap.lowercased()
+            if (lower == "apple_m5" || lower == "mlx_nax" || lower.hasPrefix("apple_m5")), !isM5OrNewer {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func cpuBrandString() -> String {
+        var size = 0
+        guard sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 1 else { return "" }
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nil, 0) == 0 else { return "" }
+        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
     /// The flags Cloak's Start passes (`startArguments`), each of which
     /// `start --help` must list.
     static func startNeeds(alsoServe: Bool) -> Set<String> {
@@ -145,6 +253,50 @@ enum Darkbloom {
     /// provider-swift/Sources/darkbloom/Start/StartCommand.swift at v0.10.16.
     static func startArguments(model: String, alsoServe: Bool) -> [String] {
         ["start", alsoServe ? "--me-first" : "--local", "--route", "this-mac", "--bind", "127.0.0.1", "--model", model]
+    }
+
+    /// Checks whether a Darkbloom provider daemon is currently alive on this
+    /// Mac by reading `~/.darkbloom/daemon-state.json` (written every few
+    /// seconds by `darkbloom start`, even when `darkbloom desktop` isn't running).
+    static func isDaemonAlive() -> Bool {
+        let file = URL.homeDirectory.appending(path: ".darkbloom/daemon-state.json")
+        struct DaemonState: Decodable {
+            let pid: Int32
+            let writtenAt: Double?
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let data = try? Data(contentsOf: file),
+            let state = try? decoder.decode(DaemonState.self, from: data),
+            state.pid > 0
+        else { return false }
+        guard kill(state.pid, 0) == 0 || errno == EPERM else { return false }
+        if let writtenAt = state.writtenAt {
+            let age = Date.now.timeIntervalSince1970 - writtenAt
+            if age > 120 { return false }
+        }
+        return true
+    }
+
+    /// Runs `executable` with `arguments` and returns combined stdout/stderr
+    /// text (capped at 64 KiB) without failing on non-zero exit codes so
+    /// diagnostic commands like `darkbloom doctor` can report blocking checks.
+    @concurrent static func capture(_ executable: URL, _ arguments: [String]) async -> String {
+        var collected: [String] = []
+        var totalBytes = 0
+        do {
+            for try await line in lines(executable, arguments) {
+                if totalBytes < 65_536 {
+                    collected.append(line)
+                    totalBytes += line.utf8.count + 1
+                }
+            }
+        } catch {
+            if collected.isEmpty {
+                return "Command failed: \(error.localizedDescription)"
+            }
+        }
+        return collected.joined(separator: "\n")
     }
 
     /// Runs `executable` with `arguments` and nothing on its input, handing
@@ -194,7 +346,9 @@ enum Darkbloom {
             }
             continuation.onTermination = { _ in
                 task.cancel()
-                if process.isRunning { kill(-process.processIdentifier, SIGTERM) }
+                // Foundation's Process does not call setpgid(), so kill(-pid)
+                // returns ESRCH. Terminate the child process directly instead.
+                if process.isRunning { process.terminate() }
             }
         }
     }
@@ -342,6 +496,11 @@ struct DarkbloomControl: Sendable {
             record.version == 1, (1...65535).contains(record.port), record.token.count >= 32, record.pid > 0
         else {
             throw DarkbloomFailure("Unsafe connection", detail: "Darkbloom's connection file isn't as Darkbloom writes it.")
+        }
+        // If the control service PID is no longer alive, treat the stale
+        // connection.json as offline instead of looping in `.connecting`.
+        if kill(pid_t(record.pid), 0) != 0 && errno == ESRCH {
+            return nil
         }
         return DarkbloomControl(port: record.port, token: record.token)
     }
@@ -506,7 +665,93 @@ struct DarkbloomSnapshot: Decodable, Equatable, Sendable {
     var memory: Memory
     var endpoint: Endpoint?
     var link: Link?
+    var account: Account?
+    var machine: Machine?
+    var settings: Settings?
     var catalogError: String?
+    /// Live provider activity reported by Darkbloom v0.10.17+ (`/control/v1/state`).
+    var activity: Activity?
+    /// Optional live provider metrics reported by newer Darkbloom builds
+    /// (Decision N5.2 — darkbloom-monitor metrics).
+    var metrics: Metrics?
+    var stats: Metrics?
+
+    var liveMetrics: Metrics? { metrics ?? stats }
+    var providerName: String? {
+        [machine?.name, settings?.name]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+
+    struct Activity: Decodable, Equatable, Sendable {
+        var startedAt: Double?
+        var requests: Int?
+        var countedRequests: Int?
+        var tokens: Int?
+        var processedTokens: Int?
+        var processedOutputTokens: Int?
+
+        var resolvedRequests: Int? { requests ?? countedRequests }
+        var resolvedTokens: Int? { processedOutputTokens ?? processedTokens ?? tokens }
+
+        private enum CodingKeys: String, CodingKey {
+            case startedAt, requests, countedRequests, tokens, processedTokens, processedOutputTokens
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            startedAt = try? c.decode(Double.self, forKey: .startedAt)
+            requests = Self.decodeInt(c, forKey: .requests)
+            countedRequests = Self.decodeInt(c, forKey: .countedRequests)
+            tokens = Self.decodeInt(c, forKey: .tokens)
+            processedTokens = Self.decodeInt(c, forKey: .processedTokens)
+            processedOutputTokens = Self.decodeInt(c, forKey: .processedOutputTokens)
+        }
+
+        private static func decodeInt(_ c: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Int? {
+            if let v = try? c.decode(Int.self, forKey: key) { return v }
+            if let s = try? c.decode(String.self, forKey: key), let v = Int(s) { return v }
+            return nil
+        }
+    }
+
+    struct Account: Decodable, Equatable, Sendable {
+        var signedIn: Bool?
+        var email: String?
+        var username: String?
+        var displayName: String?
+        var name: String?
+        var handle: String?
+        var legacyData: Bool?
+
+        var identity: String? {
+            [email, username, handle, displayName, name]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty }
+        }
+    }
+
+    struct Machine: Decodable, Equatable, Sendable {
+        var name: String?
+    }
+
+    struct Settings: Decodable, Equatable, Sendable {
+        var name: String?
+    }
+
+    struct Metrics: Decodable, Equatable, Sendable {
+        var tokensPerSecond: Double?
+        var tps: Double?
+        var requestsServed: Int?
+        var totalRequests: Int?
+        var activeRequests: Int?
+        var inFlight: Int?
+        var uptimeSeconds: Double?
+
+        var resolvedTPS: Double? { tokensPerSecond ?? tps }
+        var resolvedRequests: Int? { requestsServed ?? totalRequests }
+        var resolvedActive: Int? { activeRequests ?? inFlight }
+    }
 
     struct Model: Decodable, Equatable, Sendable, Identifiable {
         var id: String
@@ -515,6 +760,9 @@ struct DarkbloomSnapshot: Decodable, Equatable, Sendable {
         var sizeGb: Double?
         /// What it takes in memory once loaded, known once downloaded.
         var memoryGb: Double?
+        var quantization: String?
+        var description: String?
+        var contextLength: Int?
         var downloaded: Bool
         /// Whether Darkbloom is set to serve it.
         var serving: Bool
@@ -577,6 +825,10 @@ struct DarkbloomSetup: Equatable, Sendable {
         var mode: Mode
         /// Its `--bind`, when it has a local address.
         var bind: String?
+        /// Model IDs passed via `--model` in the launchd job (used to identify
+        /// the configured model in `--local` on-demand mode where `/control/v1/state`
+        /// reports `serving: false, loaded: false` while idle).
+        var models: [String] = []
         /// Whether launchd has it now: Darkbloom's Stop takes it out.
         var loaded: Bool
         /// Whether its process runs now.
@@ -602,10 +854,21 @@ struct DarkbloomSetup: Equatable, Sendable {
             let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
             let arguments = plist["ProgramArguments"] as? [String]
         {
-            let mode: Mode = arguments.contains("--local") ? .onlyMe : arguments.contains("--local-endpoint") ? .both : .network
+            let mode: Mode = arguments.contains("--local")
+                ? .onlyMe
+                : (arguments.contains("--local-endpoint") || arguments.contains("--me-first")) ? .both : .network
             let bind = arguments.firstIndex(of: "--bind").flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
+            var models: [String] = []
+            for idx in arguments.indices where arguments[idx] == "--model" {
+                let next = idx + 1
+                if arguments.indices.contains(next) {
+                    models.append(arguments[next])
+                }
+            }
             let (loaded, running) = await launchd()
-            setup.job = Job(mode: mode, bind: bind, loaded: loaded, running: running, runsAtLoad: plist["RunAtLoad"] as? Bool == true)
+            setup.job = Job(
+                mode: mode, bind: bind, models: models, loaded: loaded, running: running,
+                runsAtLoad: plist["RunAtLoad"] as? Bool == true)
             config = arguments.contains("--config")
         }
         if listening, let data = try? Data(contentsOf: home.appending(path: ".darkbloom/local.json")) {
@@ -644,7 +907,7 @@ struct DarkbloomSetup: Equatable, Sendable {
             let parts = text.split(separator: "=", maxSplits: 1)
             guard local, parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == "route" else { continue }
             let value = parts[1].split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
-            return value.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            return value.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
         }
         return nil
     }
@@ -652,6 +915,80 @@ struct DarkbloomSetup: Equatable, Sendable {
     /// Whether `address` is this Mac's loopback, which only this Mac reaches.
     static func loopback(_ address: String) -> Bool {
         address == "127.0.0.1" || address == "::1"
+    }
+}
+
+/// Live per-million-token pricing from Darkbloom's public catalog endpoint
+/// (`https://api.darkbloom.dev/v1/pricing`). Darkbloom takes a 0% platform cut
+/// from providers, so token rates directly reflect relative per-token earning
+/// potential when ranking fitting models on this Mac.
+struct DarkbloomPricing: Decodable, Equatable, Sendable {
+    static let endpoint = URL(string: "https://api.darkbloom.dev/v1/pricing")!
+
+    struct Price: Decodable, Equatable, Sendable {
+        var model: String
+        /// Micro-USD per 1M input tokens (e.g. 35000 = $0.035 / 1M).
+        var inputPrice: Int
+        /// Micro-USD per 1M output tokens (e.g. 1500000 = $1.50 / 1M).
+        var outputPrice: Int
+        var cacheReadPrice: Int?
+        var inputUsd: String?
+        var outputUsd: String?
+        var cacheReadUsd: String?
+
+        var inputPerMillion: Double { Double(inputPrice) / 1_000_000.0 }
+        var outputPerMillion: Double { Double(outputPrice) / 1_000_000.0 }
+
+        /// Weighted earning score per 1M tokens (75% output, 25% input) since
+        /// generation tokens dominate GPU time and provider revenue.
+        var earningScore: Double {
+            inputPerMillion * 0.25 + outputPerMillion * 0.75
+        }
+
+        /// Compact "$0.035 | $1.50 / 1M" display matching Cloak's pricing format.
+        var compactRate: String {
+            let input = Self.format(inputPerMillion)
+            let output = Self.format(outputPerMillion)
+            return "\(input) | \(output) / 1M"
+        }
+
+        private static func format(_ dollars: Double) -> String {
+            let maxDigits = dollars < 0.10 ? 3 : 2
+            return dollars.formatted(.currency(code: "USD").precision(.fractionLength(2...maxDigits)))
+        }
+    }
+
+    var prices: [Price]
+    var fallbackInputPrice: Int?
+    var fallbackOutputPrice: Int?
+
+    func price(for modelID: String) -> Price? {
+        if let exact = prices.first(where: { $0.model == modelID }) { return exact }
+        return prices.first { $0.model.caseInsensitiveCompare(modelID) == .orderedSame }
+    }
+
+    var fallbackEarningScore: Double {
+        let input = Double(fallbackInputPrice ?? 50_000) / 1_000_000.0
+        let output = Double(fallbackOutputPrice ?? 200_000) / 1_000_000.0
+        return input * 0.25 + output * 0.75
+    }
+
+    @concurrent static func fetch() async -> DarkbloomPricing? {
+        var request = URLRequest(url: endpoint)
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        let session = URLSession(configuration: configuration)
+        defer { session.finishTasksAndInvalidate() }
+        guard let (data, response) = try? await session.data(for: request),
+            (response as? HTTPURLResponse)?.statusCode == 200
+        else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(DarkbloomPricing.self, from: data)
     }
 }
 #endif

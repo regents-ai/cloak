@@ -54,9 +54,10 @@ func main() {
 	}
 }
 
-// carry copies both ways until either end closes, then closes both. tor ends
-// a stream whose client stops sending, so nothing is lost there; on the door
-// port, a client that stops sending before its answer has come loses it.
+// carry copies both ways, propagating half-close (CloseWrite) from the guest
+// to the host so an HTTP client on the door port that half-closes after
+// sending its request still receives its answer. Once the host finishes
+// writing (or fails), both sides close.
 func carry(guest net.Conn, port uint32) {
 	defer guest.Close()
 	host, err := vsock.Dial(hostCID, port, nil)
@@ -64,8 +65,9 @@ func carry(guest net.Conn, port uint32) {
 		return
 	}
 	defer host.Close()
-	ended := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(host, guest); ended <- struct{}{} }()
-	go func() { _, _ = io.Copy(guest, host); ended <- struct{}{} }()
-	<-ended
+	go func() {
+		_, _ = io.Copy(host, guest)
+		_ = host.CloseWrite()
+	}()
+	_, _ = io.Copy(guest, host)
 }

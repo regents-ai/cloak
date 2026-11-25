@@ -18,6 +18,9 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     /// paid from the Tempo wallet; absent otherwise, as in every V
     /// conversation. Every later one goes that way too.
     public var token: Bool?
+    /// Set once its first message went to Venice inside Pay-Per-Prompt: its
+    /// model, tier and way to pay, never changed after. Absent otherwise.
+    public var venice: VeniceChat?
     /// True once its first message went to NEAR (NEAR Private AI); absent
     /// otherwise. Every later message goes to NEAR too.
     public var near: Bool?
@@ -46,6 +49,11 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     /// way.
     public var isToken: Bool {
         token == true
+    }
+
+    /// A Token Inference conversation whose first message went to Venice.
+    public var isVenice: Bool {
+        venice != nil
     }
 
     /// A NEAR Private AI conversation: its first message went to NEAR.
@@ -81,19 +89,32 @@ public struct Turn: Codable, Identifiable, Sendable, Equatable {
     /// through the door, which rewords it.
     public var reworded: String?
     public var answer: String?
+    /// Internal reasoning/thinking returned by reasoning models (e.g. Inkling 2
+    /// Mini) for this turn, kept encrypted with the chat so subsequent turns
+    /// send `reasoning_content` back through the model's chat template. Never
+    /// shown in the visible message bubble.
+    public var thinking: String?
     /// A task's steps, in the order the agent took them; nil for a message.
     public var steps: [Step]?
     /// The tokens NEAR counted for the answer, as its reply gave them; nil
     /// for every other mode's turn, and for a NEAR answer whose reply had
     /// none that read.
     public var tokens: Tokens?
+    /// Local files explicitly attached to this Local Mode turn (metadata only,
+    /// kept so the message card shows what was attached).
+    public var attachments: [AttachedFile]?
 
-    public init(id: UUID = UUID(), original: String, reworded: String?, answer: String? = nil, steps: [Step]? = nil) {
+    public init(
+        id: UUID = UUID(), original: String, reworded: String?, answer: String? = nil, thinking: String? = nil,
+        steps: [Step]? = nil, attachments: [AttachedFile]? = nil
+    ) {
         self.id = id
         self.original = original
         self.reworded = reworded
         self.answer = answer
+        self.thinking = thinking
         self.steps = steps
+        self.attachments = attachments
     }
 
     /// The text that is sent: the reworded one, or the original when the
@@ -110,6 +131,21 @@ public struct Tokens: Codable, Sendable, Equatable {
     public init(input: Int, output: Int) {
         self.input = input
         self.output = output
+    }
+}
+
+/// Display metadata for a local file attached to a Local Mode turn.
+public struct AttachedFile: Codable, Identifiable, Sendable, Equatable {
+    public let id: UUID
+    public let name: String
+    public let kind: String
+    public let truncated: Bool
+
+    public init(id: UUID = UUID(), name: String, kind: String, truncated: Bool = false) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.truncated = truncated
     }
 }
 

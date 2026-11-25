@@ -12,10 +12,15 @@ reference/src/
 llama-worker/.llama/
 llama-worker/.xcode/
 llama-worker/.build/
+vmlx-worker/.build/
 rewriter-kit/.build/
+
+# Local Apple Developer provisioning profile (dropped in before profiled builds/releases)
+app/RegentsCloak.provisionprofile
 
 # Guest and host build output
 guest/build/
 guest/sender/target/
 host/.build/
 __pycache__/
+.DS_Store

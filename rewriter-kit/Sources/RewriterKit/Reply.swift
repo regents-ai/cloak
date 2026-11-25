@@ -7,6 +7,7 @@ public enum Reply {
             struct Message: Encodable {
                 let role = "assistant"
                 let content: String
+                let reasoning_content: String?
             }
             let index = 0
             let message: Message
@@ -31,14 +32,15 @@ public enum Reply {
     }
 
     public static func completion(
-        model: String, text: String, promptTokens: Int, completionTokens: Int, finishReason: String
+        model: String, text: String, reasoning: String? = nil, promptTokens: Int, completionTokens: Int, finishReason: String
     ) -> Data {
-        encode(
+        let nonEmptyReasoning = reasoning.flatMap { $0.isEmpty ? nil : $0 }
+        return encode(
             Body(
                 id: "chatcmpl-\(UUID().uuidString.lowercased())",
                 created: Int(Date().timeIntervalSince1970),
                 model: model,
-                choices: [.init(message: .init(content: text), finish_reason: finishReason)],
+                choices: [.init(message: .init(content: text, reasoning_content: nonEmptyReasoning), finish_reason: finishReason)],
                 usage: .init(
                     prompt_tokens: promptTokens,
                     completion_tokens: completionTokens,

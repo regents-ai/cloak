@@ -172,14 +172,20 @@ public final class Relay: Sendable {
     /// the answer it then gives is returned. A request before it that gives
     /// way is cancelled the same way; with `yielding`, this one gives way to
     /// the next.
-    public func answer(to request: Data, as kind: WorkerChannel.Kind = .request, yielding: Bool = false) async -> Data? {
+    public func answer(
+        to request: Data, as kind: WorkerChannel.Kind = .request, yielding: Bool = false,
+        onWaking: (@Sendable () -> Void)? = nil,
+        onReady: (@Sendable () -> Void)? = nil,
+        onPartial: (@Sendable (Data) -> Void)? = nil
+    ) async -> Data? {
         let call = Call()
         arrived()
         giveWay(to: yielding ? call : nil)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 queue.async { [self] in
-                    let (answer, lost) = serve(request, kind, call)
+                    let (answer, lost) = serve(
+                        request, kind, call, onWaking: onWaking, onReady: onReady, onPartial: onPartial)
                     continuation.resume(returning: answer)
                     if let lost { replaceAfter(lost) }
                     answered()
@@ -229,6 +235,12 @@ public final class Relay: Sendable {
                 case .cancelled, .finished:
                     break
                 }
+            }
+        }
+
+        var isCancelled: Bool {
+            state.withLock {
+                if case .cancelled = $0 { true } else { false }
             }
         }
 
@@ -293,11 +305,33 @@ public final class Relay: Sendable {
         }
     }
 
+    /// Rests the serving worker immediately if this relay supports resting and
+    /// is idle, waiting until the worker exits and releases its VRAM. Used on
+    /// 24 GB Macs so a large Local answer model never contends for Metal memory
+    /// with the rewriter worker.
+    public func restNow() async {
+        guard let resting else { return }
+        let task: Task<Void, Never>? = state.withLock { state in
+            if case .resting(let existing) = state.slot { return existing }
+            guard state.requests == 0, case .serving(let worker) = state.slot, state.watched === worker else { return nil }
+            state.idle?.cancel()
+            state.idle = nil
+            state.watched = nil
+            let t = Task {
+                await worker.finish()
+                resting.changed(.rested)
+            }
+            state.slot = .resting(t)
+            return t
+        }
+        await task?.value
+    }
+
     /// The worker for the request whose turn it is, woken first when it
     /// rests; nil when there is none. The wake is made under the lock, so its
     /// own use of the slot comes after this one, and the queue waits for it,
     /// so the requests behind this one keep their order. Runs on the queue.
-    private func worker() -> WorkerChannel? {
+    private func worker(onWaking: (@Sendable () -> Void)? = nil) -> WorkerChannel? {
         let woken = DispatchSemaphore(value: 0)
         let waking = state.withLock { state in
             guard case .resting(let rest) = state.slot, let resting = self.resting else { return false }
@@ -307,7 +341,10 @@ public final class Relay: Sendable {
             })
             return true
         }
-        if waking { woken.wait() }
+        if waking {
+            onWaking?()
+            woken.wait()
+        }
         guard case .serving(let worker) = state.withLock({ $0.slot }) else { return nil }
         return worker
     }
@@ -352,10 +389,16 @@ public final class Relay: Sendable {
 
     /// Nothing more is served until the replacement has settled. The task is
     /// made under the lock, so its own use of the slot comes after this one.
-    /// Runs on the queue.
+    /// Runs on the queue. Ignored if `finish()` has already ended this relay,
+    /// so shutdown never spawns an orphaned replacement worker.
     private func replaceAfter(_ lost: WorkerChannel) {
-        queue.suspend()
-        state.withLock { $0.slot = .replacing(Task { await replace(lost) }) }
+        let shouldReplace = state.withLock { state in
+            if case .finished = state.slot { return false }
+            queue.suspend()
+            state.slot = .replacing(Task { await replace(lost) })
+            return true
+        }
+        _ = shouldReplace
     }
 
     /// Ends the worker: after any replacement in progress has settled, once
@@ -419,14 +462,23 @@ public final class Relay: Sendable {
 
     /// Serves one request from the app: its answer, and the worker when it
     /// was lost on it.
-    private func serve(_ request: Data, _ kind: WorkerChannel.Kind, _ call: Call) -> (Data?, WorkerChannel?) {
+    private func serve(
+        _ request: Data, _ kind: WorkerChannel.Kind, _ call: Call,
+        onWaking: (@Sendable () -> Void)? = nil,
+        onReady: (@Sendable () -> Void)? = nil,
+        onPartial: (@Sendable (Data) -> Void)?
+    ) -> (Data?, WorkerChannel?) {
         defer { call.finish() }
-        guard let worker = worker() else {
+        // Don't wake a resting worker (full SHA-256 + Metal load) for a request
+        // that was already cancelled while waiting in the queue.
+        guard !call.isCancelled else { return (nil, nil) }
+        guard let worker = worker(onWaking: onWaking) else {
             log("no worker; the app's request has no answer")
             return (nil, nil)
         }
+        onReady?()
         guard let sent = call.send(request, as: kind, to: worker) else { return (nil, nil) }
-        guard sent, let answer = worker.answer() else {
+        guard sent, let answer = worker.answer(onPartial: onPartial) else {
             log("worker lost; the app's request has no answer")
             return (nil, worker)
         }

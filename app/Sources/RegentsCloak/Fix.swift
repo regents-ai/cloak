@@ -13,6 +13,8 @@ enum Fix: Equatable {
     case start
     /// The way to the model's download, in Details.
     case download(underWay: Bool)
+    /// Delete the modified/corrupted model files and re-download cleanly.
+    case repair
     /// Reveal the model's folder in Finder; nothing in it is changed.
     case showModel
 
@@ -24,7 +26,7 @@ enum Fix: Equatable {
         // A download that finished since the start that stopped leaves
         // nothing missing.
         case .modelMissing: self = download.state == .installed ? .start : .download(underWay: download.isUnderWay)
-        case .modelChanged: self = .showModel
+        case .modelChanged: self = download.isUnderWay ? .download(underWay: true) : .repair
         case .torUnavailable, .torStopped, .workerUnavailable, .workerStopped, .guestFailed, .checkFailed: self = .start
         case .unsupportedHardware, .partMissing, .partChanged: return nil
         }
@@ -37,7 +39,7 @@ enum Fix: Equatable {
     @MainActor
     static func startStops(for reason: Reason, download: ModelDownload) -> Bool {
         switch Fix(for: reason, download: download) {
-        case .start?, .showModel?: false
+        case .start?, .repair?, .showModel?: false
         case .download?, nil: true
         }
     }
@@ -45,7 +47,8 @@ enum Fix: Equatable {
     var title: String {
         switch self {
         case .start: "Start Again"
-        case .download(let underWay): underWay ? "Downloading Model…" : "Download Model…"
+        case .download(let underWay): underWay ? "Downloading Model…" : "Download Model"
+        case .repair: "Repair Model"
         case .showModel: "Show in Finder"
         }
     }

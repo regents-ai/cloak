@@ -51,7 +51,7 @@ use mpp::client::tempo::TempoClientError;
 use mpp::client::{Fetch, HttpError, TempoSessionProvider};
 use mpp::protocol::core::{format_authorization, parse_www_authenticate_all_bytes};
 use mpp::protocol::methods::tempo::session::{ChannelDescriptor, SettlementRoute};
-use mpp::protocol::methods::tempo::{CHAIN_ID, DEFAULT_RPC_URL, USDC};
+use mpp::protocol::methods::tempo::{CHAIN_ID, USDC};
 use mpp::MppError;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -99,6 +99,21 @@ const VENICE_SIGN_IN: &str = "api.venice.ai wants you to sign in with your Ether
 /// reads.
 const BASE_USDC: Address = address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
 const BASE_CHAIN: u64 = 8453;
+/// Tor-accessible Tempo Mainnet JSON-RPC endpoint (chain 4217).
+/// Tempo's default `rpc.tempo.xyz` sits behind Cloudflare and returns HTTP 403
+/// on Tor exit nodes, preventing balance reads and channel opens over Tor.
+const TEMPO_RPC_URL: &str = "https://tempo.drpc.org";
+const TEMPO_RPC_FALLBACK: &str = "https://tempo-mainnet.drpc.org";
+/// Tor-accessible Base Mainnet JSON-RPC endpoints (chain 8453).
+/// `mainnet.base.org` intermittently returns HTTP 403 on Tor exit nodes, so
+/// `funds()` tries Tor-friendly public Base RPCs in order before falling back.
+const BASE_RPC_URL: &str = "https://base.drpc.org";
+const BASE_RPC_FALLBACKS: [&str; 4] = [
+    BASE_RPC_URL,
+    "https://base.public.blockpi.network/v1/rpc/public",
+    "https://1rpc.io/base",
+    "https://mainnet.base.org",
+];
 
 /// Where the sender's requests go: the provider's MPP root, the Tempo
 /// network's RPC, Venice's API origin, Base's RPC and the guest's Tor port.
@@ -116,9 +131,9 @@ impl Network {
     pub fn live() -> Self {
         Self {
             provider: "https://api.inference.boundless.network/mpp".into(),
-            rpc: DEFAULT_RPC_URL.into(),
+            rpc: TEMPO_RPC_URL.into(),
             venice: "https://api.venice.ai".into(),
-            base: "https://mainnet.base.org".into(),
+            base: BASE_RPC_URL.into(),
             tor: SocketAddr::from(([127, 0, 0, 1], 9050)),
         }
     }
@@ -715,18 +730,27 @@ impl Typed {
 }
 
 /// The address's USDC on Base, read through Tor on an identity of its own.
+/// When using the default live Base RPC, falls back across Tor-accessible Base
+/// endpoints if an exit node or provider rejects the request.
 async fn funds(network: &Network, address: Address) -> Result<Value, Stop> {
-    let url = network
-        .base
-        .parse()
-        .map_err(|e| Stop::failed(format!("Base RPC address: {e}")))?;
-    let base: RootProvider = ProviderBuilder::default()
-        .connect_client(ClientBuilder::default().http_with_client(network.client(&fresh())?, url));
-    let balance = IERC20::new(BASE_USDC, &base)
-        .balanceOf(address)
-        .call()
-        .await?;
-    Ok(json!({ "balance": Amount(balance.to::<u128>()) }))
+    let urls: Vec<&str> = if network.base == BASE_RPC_URL {
+        BASE_RPC_FALLBACKS.to_vec()
+    } else {
+        vec![network.base.as_str()]
+    };
+    let mut last_err = None;
+    for raw_url in urls {
+        let url = raw_url
+            .parse()
+            .map_err(|e| Stop::failed(format!("Base RPC address: {e}")))?;
+        let base: RootProvider = ProviderBuilder::default()
+            .connect_client(ClientBuilder::default().http_with_client(network.client(&fresh())?, url));
+        match IERC20::new(BASE_USDC, &base).balanceOf(address).call().await {
+            Ok(balance) => return Ok(json!({ "balance": Amount(balance.to::<u128>()) })),
+            Err(error) => last_err = Some(Stop::from(error)),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| Stop::failed("Base RPC unavailable")))
 }
 
 impl Venice {
@@ -820,6 +844,21 @@ async fn balance(rpc: &RootProvider<TempoNetwork>, owner: Address) -> Result<u12
     Ok(balance.to::<u128>())
 }
 
+/// Reads the Tempo USDC.e balance, retrying once on a fresh Tor circuit and
+/// fallback hostname when using the default live Tempo RPC.
+async fn balance_live(network: &Network, rpc: &RootProvider<TempoNetwork>, owner: Address) -> Result<u128, Stop> {
+    match balance(rpc, owner).await {
+        Ok(amount) => Ok(amount),
+        Err(first_err) if network.rpc == TEMPO_RPC_URL => {
+            let mut fallback = network.clone();
+            fallback.rpc = TEMPO_RPC_FALLBACK.into();
+            let retry_rpc = fallback.rpc(&fallback.client(&fresh())?)?;
+            balance(&retry_rpc, owner).await.or(Err(first_err))
+        }
+        Err(err) => Err(err),
+    }
+}
+
 #[derive(Deserialize)]
 struct Models {
     data: Vec<Listed>,
@@ -880,7 +919,7 @@ async fn wallet(
                 .collect::<Vec<_>>(),
         )
     };
-    let (balance, setup, models) = tokio::try_join!(balance(&rpc, address), setup, models)?;
+    let (balance, setup, models) = tokio::try_join!(balance_live(network, &rpc, address), setup, models)?;
     // As the network shows its channel, whether or not its opening was known
     // to have landed when it was kept.
     let deposit = match deposit {

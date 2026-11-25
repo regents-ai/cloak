@@ -1,3 +1,5 @@
+import Foundation
+
 /// An answer's Markdown as the blocks Cloak draws: paragraphs, headings,
 /// fenced code, lists with one level of nesting, quotes, rules and pipe
 /// tables. Not CommonMark: a small line-by-line splitter, and any line it does
@@ -10,6 +12,8 @@ public enum Markdown {
         case heading(level: Int, Inline)
         /// A fenced block's lines as written, its language dropped.
         case code(String)
+        /// A display LaTeX math block (`\[...\]`, `$$...$$`, or `\begin{equation|align|...}`).
+        case math(String)
         case list([Item<Inline>])
         case quote([Block<Inline>])
         case rule
@@ -64,6 +68,9 @@ public enum Markdown {
                 }
                 blocks.append(.code(code.joined(separator: "\n")))
                 index += 1
+            } else if let math = parseMathBlock(lines, from: &index) {
+                endParagraph()
+                blocks.append(.math(math))
             } else if let heading = heading(line) {
                 endParagraph()
                 blocks.append(heading)
@@ -271,7 +278,100 @@ public enum Markdown {
         return delimits ? cells.count : nil
     }
 
-    /// A fenced block's opening line: three or more backticks or tildes.
+    /// Parses a display LaTeX block starting at `lines[index]`:
+    /// - `\[ ... \]` (single-line or multi-line)
+    /// - `$$ ... $$` (single-line or multi-line)
+    /// - `\begin{equation|equation*|align|align*|aligned|gather|gather*|multline|multline*} ... \end{...}`
+    private static func parseMathBlock(_ lines: ArraySlice<Substring>, from index: inout Int) -> String? {
+        let line = trimmed(lines[index])
+
+        // 1. `\[ ... \]`
+        if line.hasPrefix("\\[") {
+            let afterOpen = trimmed(line.dropFirst(2))
+            if afterOpen.hasSuffix("\\]") {
+                let inner = String(trimmed(afterOpen.dropLast(2)))
+                index += 1
+                return inner
+            }
+            var body: [String] = []
+            if !afterOpen.isEmpty { body.append(String(afterOpen)) }
+            index += 1
+            while index < lines.endIndex {
+                let current = trimmed(lines[index])
+                if current == "\\]" {
+                    index += 1
+                    break
+                }
+                if current.hasSuffix("\\]") {
+                    let prefix = trimmed(current.dropLast(2))
+                    if !prefix.isEmpty { body.append(String(prefix)) }
+                    index += 1
+                    break
+                }
+                body.append(String(lines[index]))
+                index += 1
+            }
+            return body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // 2. `$$ ... $$`
+        if line.hasPrefix("$$") {
+            let afterOpen = trimmed(line.dropFirst(2))
+            if !afterOpen.isEmpty, afterOpen.hasSuffix("$$") {
+                let inner = String(trimmed(afterOpen.dropLast(2)))
+                index += 1
+                return inner
+            }
+            var body: [String] = []
+            if !afterOpen.isEmpty { body.append(String(afterOpen)) }
+            index += 1
+            while index < lines.endIndex {
+                let current = trimmed(lines[index])
+                if current == "$$" {
+                    index += 1
+                    break
+                }
+                if current.hasSuffix("$$") {
+                    let prefix = trimmed(current.dropLast(2))
+                    if !prefix.isEmpty { body.append(String(prefix)) }
+                    index += 1
+                    break
+                }
+                body.append(String(lines[index]))
+                index += 1
+            }
+            return body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // 3. Top-level `\begin{env} ... \end{env}` display math environment.
+        let displayEnvs = [
+            "equation", "equation*", "align", "align*", "aligned",
+            "gather", "gather*", "multline", "multline*", "eqnarray", "eqnarray*",
+        ]
+        for env in displayEnvs {
+            let openTag = "\\begin{\(env)}"
+            let closeTag = "\\end{\(env)}"
+            if line.hasPrefix(openTag) {
+                if line.contains(closeTag) {
+                    index += 1
+                    return String(line)
+                }
+                var body: [String] = [String(lines[index])]
+                index += 1
+                while index < lines.endIndex {
+                    body.append(String(lines[index]))
+                    let done = lines[index].contains(closeTag)
+                    index += 1
+                    if done { break }
+                }
+                return body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        return nil
+    }
+
+        /// A fenced block's opening line: three or more backticks or tildes.
     private struct Fence {
         let mark: Character
         let length: Int
@@ -335,6 +435,7 @@ extension Markdown.Block {
         case .paragraph(let text): .paragraph(try transform(text))
         case .heading(let level, let text): .heading(level: level, try transform(text))
         case .code(let code): .code(code)
+        case .math(let latex): .math(latex)
         case .list(let items): .list(try items.map { .init(depth: $0.depth, number: $0.number, text: try transform($0.text)) })
         case .quote(let blocks): .quote(try blocks.map { try $0.map(transform) })
         case .rule: .rule

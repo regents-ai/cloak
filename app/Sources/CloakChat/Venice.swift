@@ -119,15 +119,31 @@ public struct VeniceModel: Sendable, Equatable, Identifiable {
     public let output: Decimal
 }
 
-/// What a Venice chat keeps: its model and the tier it had when the chat
-/// began. A chat never moves to another model or tier.
+/// What a Venice chat keeps: its model, tier, and payment route when the chat
+/// began. A chat never moves to another model, tier, or payment route.
 public struct VeniceChat: Codable, Sendable, Equatable {
+    public enum Pays: String, Codable, Sendable, CaseIterable {
+        case wallet
+        case key
+    }
+
     public let model: String
     public let tier: VeniceTier
+    public let pays: Pays
 
-    public init(model: String, tier: VeniceTier) {
+    public init(model: String, tier: VeniceTier, pays: Pays = .wallet) {
         self.model = model
         self.tier = tier
+        self.pays = pays
+    }
+
+    enum CodingKeys: String, CodingKey { case model, tier, pays }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        model = try container.decode(String.self, forKey: .model)
+        tier = try container.decode(VeniceTier.self, forKey: .tier)
+        pays = try container.decodeIfPresent(Pays.self, forKey: .pays) ?? .wallet
     }
 
     /// Stops, before anything is sent, unless `models` still has the chat's
@@ -169,6 +185,8 @@ public struct VeniceStop: Error, Sendable, Equatable {
     public enum Kind: String, Sendable, CaseIterable {
         /// Venice turned the key down (401).
         case key
+        /// The keychain did not return the key or wallet address.
+        case keychain
         /// Venice turned the wallet's sign-in down (401).
         case signIn
         /// The signer did not sign.
@@ -178,6 +196,10 @@ public struct VeniceStop: Error, Sendable, Equatable {
         /// The key reached the spending limit set on it (402 with a limit
         /// code).
         case spendLimit
+        /// Venice's top-up terms do not name USDC on Base.
+        case notUSDC
+        /// The amount requested is below Venice's minimum top-up.
+        case belowLeast
         /// Venice did not take a top-up's payment (400, 401 or 402 to it).
         case paymentRefused
         /// Too many requests (429).
@@ -210,10 +232,13 @@ public struct VeniceStop: Error, Sendable, Equatable {
         public var title: String {
             switch self {
             case .key: "Key refused"
+            case .keychain: "Keychain unavailable"
             case .signIn: "Sign-in refused"
             case .signing: "Not signed"
             case .noBalance: "No funds"
             case .spendLimit: "Spend limit"
+            case .notUSDC: "Wrong asset"
+            case .belowLeast: "Amount too small"
             case .paymentRefused: "Not paid"
             case .rateLimit: "Try later"
             case .gone: "Model gone"
@@ -231,11 +256,14 @@ public struct VeniceStop: Error, Sendable, Equatable {
         /// A sentence for the chat: what happened, and what to do.
         public var words: String {
             switch self {
-            case .key: "Venice turned down your key. Check it in Settings."
+            case .key: "Venice turned down your key. Check it in Funds."
+            case .keychain: "Cloak couldn't read your Venice credentials from this Mac's keychain."
             case .signIn: "Venice turned down the wallet's sign-in. Send again."
             case .signing: "Cloak could not sign for the wallet. Send again."
             case .noBalance: "Your Venice balance is too low. Add funds, then send again."
             case .spendLimit: "Your key reached the spending limit set on it at Venice."
+            case .notUSDC: "Venice no longer accepts USDC on Base for top-ups. Don't send funds."
+            case .belowLeast: "Enter at least Venice's minimum top-up amount."
             case .paymentRefused: "Venice did not take the payment. Check the wallet's USDC on Base, then try again."
             case .rateLimit: "Venice is limiting requests. Wait a minute, then send again."
             case .gone: "Venice no longer offers this chat's model. Start a new chat."
@@ -259,7 +287,7 @@ public struct VeniceStop: Error, Sendable, Equatable {
     /// signature, a message, or words of Venice's.
     public let text: String
 
-    init(_ kind: Kind, sent: Bool, _ text: String) {
+    public init(_ kind: Kind, sent: Bool, _ text: String) {
         self.kind = kind
         self.sent = sent
         self.text = text
@@ -434,11 +462,14 @@ public struct Venice: Sendable {
     /// Sends `turn` of `conversation`, as its messages have it, to `chat`'s
     /// model, once Venice's list still has that model at the chat's tier,
     /// answering as itself; else sends nothing. Gives `partial` the answer
-    /// so far as it arrives.
+    /// so far as it arrives. Pass `cachedModels` to reuse a recently fetched
+    /// model list without an extra Tor round-trip on every turn.
     public func ask(
-        _ chat: VeniceChat, turn: UUID, in conversation: Conversation, partial: @Sendable (String) -> Void
+        _ chat: VeniceChat, turn: UUID, in conversation: Conversation, cachedModels: [VeniceModel]? = nil,
+        partial: @Sendable (String) -> Void
     ) async throws(VeniceStop) -> VeniceAnswer {
-        try chat.check(in: try await Self.models(transport: transport))
+        let models = if let cachedModels { cachedModels } else { try await Self.models(transport: transport) }
+        try chat.check(in: models)
         guard let messages = Remote.messages(for: turn, in: conversation) else {
             throw VeniceStop(.failed, sent: false, "the turn is not in the conversation")
         }
@@ -492,6 +523,9 @@ public struct Venice: Sendable {
         do {
             return try await transport(request)
         } catch {
+            if Task.isCancelled {
+                throw VeniceStop(.cancelled, sent: error.sent, "cancelled while waiting")
+            }
             throw VeniceStop(.unreachable, sent: error.sent, "the transport did not carry \(request)")
         }
     }
@@ -613,9 +647,18 @@ struct Events {
     }
 }
 
-/// Venice's `GET /models` answer, as far as Cloak reads it.
+/// Venice's `GET /models` answer, decoded tolerantly per element so one new or
+/// malformed model entry never breaks the entire list.
 private struct Listed: Decodable {
-    let data: [Entry]
+    let data: [LossyEntry]
+
+    struct LossyEntry: Decodable {
+        let entry: Entry?
+
+        init(from decoder: any Decoder) throws {
+            entry = try? Entry(from: decoder)
+        }
+    }
 
     struct Entry: Decodable {
         let id: String
@@ -655,7 +698,7 @@ private struct Listed: Decodable {
     }
 
     var models: [VeniceModel] {
-        data.filter { $0.type == "text" }.map { entry in
+        data.compactMap(\.entry).filter { $0.type == "text" }.map { entry in
             let spec = entry.model_spec
             return VeniceModel(
                 id: entry.id, name: spec.name,

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// V's wallet: the payer in the guest, seen from the Mac (decision 24 in
 /// docs/plan.md, docs/zkapi-mac-side.md sections 1 to 3). The payer owns
@@ -125,12 +126,35 @@ public final class Payer {
     public private(set) var review: Review?
     /// Why the last read stopped; nil once one works.
     public private(set) var readStop: PayStop?
+    /// Which wallet section triggered `stop`, so the UI displays the error right
+    /// next to the button the user clicked instead of off-screen at the top.
+    public enum StopTarget: Equatable, Sendable {
+        case deposit
+        case withdrawal
+        case transfer
+    }
+
     /// Why the last press stopped; nil once one works.
     public private(set) var stop: Stop?
+    /// Which section's press produced `stop`, so the error renders inline there.
+    public private(set) var stopTarget: StopTarget?
     /// The expiry kept on the Mac, for while Cloak is paused.
     public private(set) var savedExpiry: Date?
+    /// Active wallet press in flight so UI rows can show inline progress right
+    /// beside the button that was clicked instead of only a footer spinner.
+    public enum Activity: Equatable, Sendable {
+        case quotingDeposit
+        case quotingWithdrawal
+        case quotingTransfer
+        case approvingDeposit
+        case approvingWithdrawal
+        case approvingTransfer
+    }
+
     /// Presses under way: quotes and approves.
     public private(set) var working = 0
+    /// The specific quote or approval currently in flight, if any.
+    public private(set) var activity: Activity?
     @ObservationIgnored private let running: @MainActor () -> Bool
     @ObservationIgnored private let keep: @MainActor (Date?) -> Void
     @ObservationIgnored private let chosen: @MainActor () -> String?
@@ -139,6 +163,11 @@ public final class Payer {
     /// while it was out: what it read may be older than what the approve
     /// set.
     @ObservationIgnored private var approved = 0
+    /// Quotes currently being approved, preventing accidental double-approves
+    /// of the exact same quote id.
+    @ObservationIgnored private var approving: Set<String> = []
+    @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "payer")
+    private static let posix = Locale(identifier: "en_US_POSIX")
 
     /// `running` says whether Cloak is running; `expiry` is the expiry kept,
     /// and `keep` keeps a new one (nil, none); `chosen` is the model its
@@ -163,10 +192,14 @@ public final class Payer {
     /// read lands only if no approve was answered while it was out.
     public func refresh() async {
         // A press that stopped for want of a read is answered by this one.
-        if stop == .unread { stop = nil }
+        if stop == .unread {
+            stop = nil
+            stopTarget = nil
+        }
         guard running() else {
             state = .unread
             (funding, withdrawal, returning, view, readStop) = (nil, nil, nil, nil, nil)
+            (models, prices) = (nil, nil)
             // A quote can't be approved while Cloak is not running.
             review = nil
             return
@@ -187,6 +220,7 @@ public final class Payer {
                 keep(expiry)
             }
         } catch {
+            logger.error("anon-v refresh stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
             readStop = error
             // The chain is not known now, so it blocks no button.
             view = nil
@@ -260,6 +294,7 @@ public final class Payer {
             }
             settle()
         } catch {
+            logger.error("anon-v follow stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
             readStop = error
         }
     }
@@ -286,7 +321,7 @@ public final class Payer {
             await refresh()
             if reads == .reading(again: true) {
                 reads = .reading(again: false)
-            } else if moving || review.map({ !$0.quote.expired(at: .now) }) == true {
+            } else if readStop == nil, moving || review.map({ !$0.quote.expired(at: .now) }) == true {
                 // A quote under review counts while it holds: what its
                 // button waits for, ETH arriving at the address, shows as
                 // the chain does.
@@ -311,6 +346,7 @@ public final class Payer {
     public var moving: Bool {
         switch state {
         case .depositing, .withdrawing, .settling: true
+        case .failed: false
         default: returning?.phase == "return_pending"
         }
     }
@@ -319,6 +355,7 @@ public final class Payer {
     /// allows a resume: Try Again.
     public func retry() async {
         stop = nil
+        stopTarget = nil
         await carryOn()
         follow()
     }
@@ -328,7 +365,7 @@ public final class Payer {
     /// Quotes a deposit of `microUSD` millionths of a dollar, priced by the
     /// payer, and shows it for review.
     public func quoteDeposit(microUSD: UInt64) async {
-        await quote { () throws(PayStop) in
+        await quote(.quotingDeposit, target: .deposit) { () throws(PayStop) in
             .deposit(try decode(await queue.call("POST", "/admin/funding/quote", body: json(["micro_usd": microUSD]))), microUSD: microUSD)
         }
     }
@@ -339,9 +376,10 @@ public final class Payer {
     public func quoteWithdrawal() async {
         guard let address = funding?.address, let note = view?.wallet.note?.noteId else {
             stop = .unread
+            stopTarget = .withdrawal
             return
         }
-        await quote { () throws(PayStop) in
+        await quote(.quotingWithdrawal, target: .withdrawal) { () throws(PayStop) in
             .withdrawal(try decode(await queue.call(
                 "POST", "/admin/withdrawal/quote", body: json(["destination": address, "note_id": note]))))
         }
@@ -351,7 +389,7 @@ public final class Payer {
     /// or all of it less the fee when `wei` is empty, and shows it for
     /// review.
     public func quoteTransfer(to destination: String, wei: String) async {
-        await quote { () throws(PayStop) in
+        await quote(.quotingTransfer, target: .transfer) { () throws(PayStop) in
             .transfer(
                 try decode(await queue.call(
                     "POST", "/admin/return/quote", body: json(["destination": destination, "amount_wei": wei]))),
@@ -359,15 +397,22 @@ public final class Payer {
         }
     }
 
-    private func quote(_ make: () async throws(PayStop) -> Review) async {
+    private func quote(_ kind: Activity, target: StopTarget, _ make: () async throws(PayStop) -> Review) async {
         stop = nil
+        stopTarget = nil
         working += 1
-        defer { working -= 1 }
+        activity = kind
+        defer {
+            working -= 1
+            if activity == kind { activity = nil }
+        }
         do {
             review = try await make()
             follow()
         } catch {
+            logger.error("zkapi quote stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
             stop = .quote(error)
+            stopTarget = target
         }
     }
 
@@ -385,9 +430,27 @@ public final class Payer {
             }
             return
         }
+        guard !approving.contains(quote.id) else { return }
+        approving.insert(quote.id)
+        defer { approving.remove(quote.id) }
         stop = nil
+        stopTarget = nil
         working += 1
-        defer { working -= 1 }
+        let approveActivity: Activity = switch review {
+        case .deposit: .approvingDeposit
+        case .withdrawal: .approvingWithdrawal
+        case .transfer: .approvingTransfer
+        }
+        let target: StopTarget = switch review {
+        case .deposit: .deposit
+        case .withdrawal: .withdrawal
+        case .transfer: .transfer
+        }
+        activity = approveActivity
+        defer {
+            working -= 1
+            if activity == approveActivity { activity = nil }
+        }
         do throws(PayStop) {
             let answer = try await queue.call(
                 "POST", "/admin/\(review.route)/approve", body: json(["quote_id": quote.id]), limit: PayLimit.approve)
@@ -400,7 +463,9 @@ public final class Payer {
             if self.review == review { self.review = nil }
             settle()
         } catch {
+            logger.error("zkapi approve stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
             stop = .approve(error)
+            stopTarget = target
         }
         follow()
     }
@@ -408,12 +473,17 @@ public final class Payer {
     /// Closes the review; nothing is approved.
     public func cancelReview() {
         review = nil
+        if stopTarget != nil {
+            stop = nil
+            stopTarget = nil
+        }
     }
 
     /// Clears why the last press stopped. Why the last read stopped stays
     /// until a read works.
     public func dismiss() {
         stop = nil
+        stopTarget = nil
     }
 
     // MARK: Buttons
@@ -436,25 +506,25 @@ public final class Payer {
 
     /// Why Transfer is certain to fail now.
     public var transferBlock: Block? {
-        guard let balance = view?.chain.flatMap({ Decimal(string: $0.balanceWei) }) else { return nil }
+        guard let balance = view?.chain.flatMap({ Decimal(string: $0.balanceWei, locale: Self.posix) }) else { return nil }
         return balance == 0 ? .nothingToTransfer : nil
     }
 
     /// Why the review's button is certain to fail now: the address holds
     /// less than the quote needs.
     public func confirmBlock(_ review: Review) -> Block? {
-        guard let chain = view?.chain, let balance = Decimal(string: chain.balanceWei) else { return nil }
+        guard let chain = view?.chain, let balance = Decimal(string: chain.balanceWei, locale: Self.posix) else { return nil }
         switch review {
         case .deposit(let quote, _):
             if chain.paused { return .paused }
-            guard let total = Decimal(string: quote.requiredTotalWei), balance < total else { return nil }
+            guard let total = Decimal(string: quote.requiredTotalWei, locale: Self.posix), balance < total else { return nil }
             return .needs(total - balance)
         case .withdrawal(let quote):
             if chain.paused { return .paused }
-            guard let fee = Decimal(string: quote.requiredFeeWei), balance < fee else { return nil }
+            guard let fee = Decimal(string: quote.requiredFeeWei, locale: Self.posix), balance < fee else { return nil }
             return .needsFee
         case .transfer(let quote, _, _):
-            guard let total = Decimal(string: quote.requiredTotalWei), balance < total else { return nil }
+            guard let total = Decimal(string: quote.requiredTotalWei, locale: Self.posix), balance < total else { return nil }
             return .needs(total - balance)
         }
     }
@@ -491,13 +561,49 @@ public final class Payer {
         prices = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
+    /// Preferred default models for Anon V when the user has not chosen one
+    /// yet: starts with a strong, balanced frontier model (`claude-sonnet-5.5`,
+    /// $2 hold — works out of the box with a $5 deposit) and falls through to
+    /// widely recognized workhorse models.
+    public static let preferredDefaults = [
+        "anthropic/claude-sonnet-5.5",
+        "anthropic/claude-haiku-5.5",
+        "openai/gpt-5.6-terra",
+        "openai/gpt-5.6-luna",
+        "x-ai/grok-4.7",
+        "google/gemini-3.8-flash",
+        "deepseek/deepseek-v4.1-flash",
+        "qwen/qwen3.8-flash",
+    ]
+
+    /// Curated top models surfaced in the "Recommended" section at the top of
+    /// the Anon V model picker, spanning Tier 25 (best reasoning), Tier 5
+    /// (flagship), Tier 3 (balanced frontier), and Tier 1 (fast & low-cost).
+    public static let recommendedModels = [
+        "anthropic/claude-fable-5.2",
+        "anthropic/claude-opus-5.5",
+        "anthropic/claude-sonnet-5.5",
+        "openai/gpt-5.6-terra-pro",
+        "openai/gpt-5.6-sol",
+        "openai/gpt-5.6-terra",
+        "x-ai/grok-4.7",
+        "qwen/qwen3.8-max-prime",
+        "anthropic/claude-haiku-5.5",
+        "openai/gpt-5.6-luna",
+        "google/gemini-3.8-flash",
+        "deepseek/deepseek-v4.1-flash",
+    ]
+
     /// The model V chats are answered with: the one its owner chose, while
-    /// the service lists it; otherwise the one whose requests cost least at
-    /// most, the first such in the list. Nil before the list is read, or
-    /// when it is empty.
+    /// the service lists it; otherwise the first listed preferred default;
+    /// otherwise the one whose requests cost least at most, the first such in
+    /// the list. Nil before the list is read, or when it is empty.
     public var model: String? {
         guard let models else { return nil }
         if let chosen = chosen(), models.contains(where: { $0.id == chosen }) { return chosen }
+        for candidate in Self.preferredDefaults where models.contains(where: { $0.id == candidate }) {
+            return candidate
+        }
         return models.min { $0.cap < $1.cap }?.id
     }
 

@@ -43,10 +43,53 @@ import Synchronization
 @MainActor
 @Observable
 public final class Supervisor {
+    /// The real stages `prepare()` walks through while `phase == .preparing`,
+    /// in execution order.
+    public enum StartStep: Int, CaseIterable, Sendable, Equatable, Identifiable {
+        case checking = 0
+        case tor = 1
+        case rewriter = 2
+        case guest = 3
+        case verifying = 4
+
+        public var id: Int { rawValue }
+
+        /// Compact 1–3 word label for the menu bar header.
+        public var menuTitle: String {
+            switch self {
+            case .checking: "Checking files…"
+            case .tor: "Connecting Tor…"
+            case .rewriter: "Loading rewriter…"
+            case .guest: "Starting VM…"
+            case .verifying: "Verifying checks…"
+            }
+        }
+
+        /// Descriptive sentence for app windows (Funds, Chat, Settings).
+        public func detail(cover: Bool) -> String {
+            switch self {
+            case .checking: "Checking Mac hardware and verified binaries."
+            case .tor: "Connecting to the Tor network."
+            case .rewriter: "Loading local prompt rewriter model into memory."
+            case .guest:
+                cover
+                    ? "Booting isolated Linux VM and starting cover traffic."
+                    : "Booting isolated Linux VM."
+            case .verifying: "Verifying Tor routing, prompt rewriting, and isolation."
+            }
+        }
+    }
+
     public private(set) var phase: Phase = .paused
-    /// Whether the guest up now sends cover traffic, as the setting was when
-    /// its boot files were written; nil while no guest is up.
+    /// The startup stage currently running while `phase == .preparing`; nil otherwise.
+    public private(set) var startStep: StartStep?
+    /// Whether Cover Traffic is actively sending background Tor requests right now;
+    /// nil while Cloak is not running.
     public private(set) var cover: Bool?
+    /// Append-only log of Cover Traffic requests sent over Tor.
+    public let coverLog = CoverLog()
+    /// Whether the user's Cover Traffic setting is currently enabled.
+    public var coverPreferred: Bool { wantsCover() }
     /// The last startup check since the app opened.
     public private(set) var check: StatusDocument.Check?
     /// The technical detail of the last failure, until the next start.
@@ -82,6 +125,7 @@ public final class Supervisor {
     /// Ends the last local relay's worker. A Start, the shutdown and the next
     /// local worker wait for it.
     @ObservationIgnored private var localEnding: Task<Void, Never>?
+    @ObservationIgnored private lazy var coverTraffic = CoverTraffic(log: coverLog)
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "supervisor")
 
     /// Everything started for one run, each part as soon as it is up, so
@@ -98,12 +142,14 @@ public final class Supervisor {
         var tasks = AgentTasks()
     }
 
-    /// The relay for Local Llama chats with one model, outside a run's, made
-    /// with the first message after the last one ended, and what follows its
-    /// changes.
+    /// The relay for Local Llama chats with one model (and optional LoRA),
+    /// outside a run's, made with the first message after the last one ended,
+    /// and what follows its changes.
     private struct Local {
         /// The name of the model its worker loads.
         let model: String
+        /// Optional LoRA adapter name loaded alongside `model`.
+        let lora: String?
         let relay: Relay
         let ending: Ending
         let follower: Task<Void, Never>
@@ -177,9 +223,14 @@ public final class Supervisor {
         case (_, .preparing):
             problem = nil
             commands = []
+            startStep = .checking
             preparation = Task { await prepare() }
         case (_, .stopping):
+            startStep = nil
             shutDown()
+        case (_, .running):
+            startStep = nil
+            syncCover()
         default:
             break
         }
@@ -200,10 +251,26 @@ public final class Supervisor {
         return phase
     }
 
-    /// While Running, the guest up runs with the other Cover than the
-    /// setting: it changed after the guest's boot files were written.
+    /// While Running, the active Cover state differs from the setting.
     public var coverChanged: Bool {
         phase == .running && cover.map { $0 != wantsCover() } == true
+    }
+
+    /// Starts or stops live host-side Cover Traffic over Tor immediately
+    /// without restarting Tor, the local prompt rewriter, or the Linux VM.
+    public func syncCover() {
+        guard phase == .running, let socket = torSocket else {
+            coverTraffic.stop()
+            cover = nil
+            return
+        }
+        let on = wantsCover()
+        if on {
+            coverTraffic.start(torSocket: socket)
+        } else {
+            coverTraffic.stop()
+        }
+        cover = on
     }
 
     /// Cover's switch while Running, the one place that decides when a
@@ -287,70 +354,116 @@ public final class Supervisor {
     /// for `model`, whose worker it starts when none is up. It waits while
     /// Cloak prepares or stops. Cancelling the task stops it. The log has how
     /// it ended and how long it took, never the text.
-    public func answer(_ messages: [String], with model: Manifest.Model) async throws(AnswerStop) -> String {
+    /// Whether the local worker for `model` (and optional `lora`) is already
+    /// loaded in memory and ready to answer without cold-starting.
+    public func isLocalModelWarm(_ model: Manifest.Model, lora: Manifest.Model.Adapter? = nil) -> Bool {
+        if phase == .running && model.name == manifest.model && lora == nil {
+            return !resting && stack.worker != nil
+        }
+        guard let local, local.model == model.name, local.lora == lora?.name else { return false }
+        if case .up = localWorker { return true }
+        return false
+    }
+
+    public func answer(
+        _ messages: [LocalMessage], with model: Manifest.Model, lora: Manifest.Model.Adapter? = nil,
+        onStage: (@Sendable (LocalAnswerStage) -> Void)? = nil,
+        onPartial: (@Sendable (String) -> Void)? = nil
+    ) async throws(AnswerStop) -> LocalAnswer {
         guard let request = LocalLlama.request(messages) else { throw .tooLong }
         _ = await settled()
         guard !Task.isCancelled else { throw .stopped }
         // A run has its relay from before it is Running until it stops.
         let (relay, ending): (Relay, Ending?) =
-            phase == .running && model.name == manifest.model ? (stack.relay!, nil) : openLocal(model)
+            phase == .running && model.name == manifest.model && lora == nil
+                ? (stack.relay!, nil)
+                : openLocal(model, lora: lora)
         let started = ContinuousClock.now
-        let answer = await relay.answer(to: request, as: .conversation)
-        do {
-            let text = try Self.text(of: answer, cancelled: Task.isCancelled, ending: ending)
+        let forward: (@Sendable (Data) -> Void)? = onPartial.map { handler in
+            { @Sendable payload in
+                let text = String(decoding: payload, as: UTF8.self)
+                if !text.isEmpty { handler(text) }
+            }
+        }
+        let answer = await relay.answer(
+            to: request, as: .conversation,
+            onWaking: onStage.map { handler in { @Sendable in handler(.startingModel) } },
+            onReady: onStage.map { handler in { @Sendable in handler(.answering) } },
+            onPartial: forward)
+        do throws(AnswerStop) {
+            let reply = try Self.reply(of: answer, cancelled: Task.isCancelled, ending: ending)
             logger.info("Local Llama answered in \(started.duration(to: .now), privacy: .public)")
-            return text
+            return reply
         } catch {
             logger.info("Local Llama \(String(describing: error), privacy: .public) after \(started.duration(to: .now), privacy: .public)")
             throw error
         }
     }
 
-    /// The text of a Local Llama answer, or why there is none. `ending` is
+    /// The reply of a Local Llama answer, or why there is none. `ending` is
     /// the local relay's, nil for the run's.
-    private static func text(of answer: Data?, cancelled: Bool, ending: Ending?) throws(AnswerStop) -> String {
-        if let answer, answer.prefix(2) == Data([0, 200]), let text = LocalLlama.answer(answer.dropFirst(2)) {
-            return text
+    private static func reply(of answer: Data?, cancelled: Bool, ending: Ending?) throws(AnswerStop) -> LocalAnswer {
+        if let answer, answer.prefix(2) == Data([0, 200]), let reply = LocalLlama.answer(answer.dropFirst(2)) {
+            return reply
         }
         if cancelled { throw .stopped }
         if let stop = ending?.recorded { throw stop }
         guard let answer else { throw ending == nil ? .interrupted : .failed(.workerStopped) }
         switch UInt16(answer[answer.startIndex]) << 8 | UInt16(answer[answer.startIndex + 1]) {
         case LocalLlama.tooLongStatus: throw .tooLong
+        case LocalLlama.thinkingLimitStatus: throw .thinkingLimit
         case Rewrite.cancelledStatus: throw .interrupted
         default: throw .failed(.workerStopped)
         }
     }
 
-    /// The local relay for `model`, made when there is none for it; one open
-    /// for another model is ended first. Its worker starts with the first
-    /// message, once the last local worker has exited, as a run's does, with
-    /// the Mac (`Manifest.answerCheck`) and the model's files checked and the
-    /// pinned worker put where it runs; a start that fails gives that message
-    /// its reason.
-    private func openLocal(_ model: Manifest.Model) -> (Relay, Ending?) {
+    /// The local relay for `model` (and optional `lora`), made when there is
+    /// none for it; one open for another model or adapter state is ended first.
+    /// When `model` cannot fit in Metal memory concurrently with the rewording
+    /// worker (e.g. Unsloth UD-Q3_K_XL on a 24 GB Mac), rests the rewording
+    /// relay first before spawning the Local worker.
+    private func openLocal(_ model: Manifest.Model, lora: Manifest.Model.Adapter?) -> (Relay, Ending?) {
         if let local {
-            if local.model == model.name { return (local.relay, local.ending) }
+            if local.model == model.name, local.lora == lora?.name { return (local.relay, local.ending) }
             endLocal(.interrupted)
         }
         let ending = Ending()
         let (changes, change) = AsyncStream.makeStream(of: LocalChange.self)
+        let rewriterRelay = manifest.canRunConcurrently(model, hardware: hardware) ? nil : stack.relay
         let start: @Sendable () async throws -> WorkerChannel = {
-            [before = localEnding, manifest, layout, hardware, logger] in
+            [before = localEnding, manifest, layout, hardware, logger, rewriterRelay] in
             change.yield(.loading)
             await before?.value
+            await rewriterRelay?.restNow()
             do {
-                for case (_, let failure?) in [
+                var checks = [
                     manifest.answerCheck(model, hardware: hardware),
                     Checks.modelCheck(model, in: layout.model(model)),
-                ] {
+                ]
+                if let lora {
+                    let ok = Checks.isInPlace(lora.file, in: layout.adapter(lora))
+                    let detail = "\(layout.adapterFile(lora).path): \(ok ? "in place" : "missing or incomplete")"
+                    checks.append((Finding(name: "adapter", passed: ok, detail: detail), ok ? nil : Failure(.modelMissing, detail)))
+                }
+                for case (_, let failure?) in checks {
                     throw failure
                 }
-                try await Self.placeWorker(manifest, layout)
+                let executable: URL
+                var arguments = ["--name", model.name, "--dir", layout.model(model).path]
+                switch model.engine {
+                case .llama:
+                    try await Self.placeWorker(manifest, layout)
+                    executable = layout.worker
+                    if let lora {
+                        arguments += ["--lora", layout.adapterFile(lora).path]
+                    }
+                case .vmlx:
+                    try await Self.placeVmlxWorker(manifest, layout)
+                    executable = layout.vmlxWorker
+                }
                 try Task.checkCancellation()
                 do {
-                    return try await WorkerChannel.start(
-                        executable: layout.worker, arguments: ["--name", model.name, "--dir", layout.model(model).path])
+                    return try await WorkerChannel.start(executable: executable, arguments: arguments)
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
@@ -369,7 +482,7 @@ public final class Supervisor {
                 followLocal(change)
             }
         }
-        local = Local(model: model.name, relay: relay, ending: ending, follower: follower)
+        local = Local(model: model.name, lora: lora?.name, relay: relay, ending: ending, follower: follower)
         return (relay, ending)
     }
 
@@ -423,6 +536,15 @@ public final class Supervisor {
         return try await Sender.exchange(socket, request: request, keep: keep)
     }
 
+    /// One Venice request through the guest's sender while Running
+    /// (`Sender.stream`): Venice's answer as it comes. Ending the stream
+    /// first closes its connection. One under way when Cloak pauses, stops
+    /// or quits fails, as an exchange does.
+    public func venice(_ request: Data) async throws -> AsyncThrowingStream<Sender.Piece, any Error> {
+        guard case .running = phase, let guest = stack.guest else { throw Sender.Failure(description: "Cloak is not running") }
+        return Sender.stream(try await guest.connect(to: Sender.port), request: request)
+    }
+
     /// One exchange with the guest's payer while Running (`Pay.exchange`):
     /// the payer's frames as they come, the answer last. Ending the stream
     /// first closes the exchange's connection, which the payer takes as its
@@ -456,10 +578,23 @@ public final class Supervisor {
         phase == .running ? stack.tor?.socket : nil
     }
 
+    /// The most recent memory snapshot read asynchronously by `readMemory()`.
+    @ObservationIgnored private var lastMemory: Memory?
+
     /// What Cloak holds in memory now (`Memory`); a guest started for this
     /// run must have its virtual machine among it.
     public func memory() -> Memory {
-        Memory.read(guest: stack.guest != nil)
+        let reading = Memory.read(guest: stack.guest != nil)
+        lastMemory = reading
+        return reading
+    }
+
+    /// Reads Cloak's memory footprint off `@MainActor` and caches it for
+    /// `detail`.
+    public func readMemory() async -> Memory {
+        let reading = await Memory.readAsync(guest: stack.guest != nil)
+        lastMemory = reading
+        return reading
     }
 
     /// What the state means, the last failure, the processes running, what
@@ -487,7 +622,11 @@ public final class Supervisor {
                     ? "Paused: nothing is running, and nothing starts by itself."
                     : "Paused: only the worker is running, for Local Llama chats, and nothing else starts by itself.")
         case .preparing:
-            lines.append("Starting: checking the parts, then starting tor, the worker and the guest, which opens its payment disk, runs the startup check and then starts the sender and the payer.")
+            if let step = startStep {
+                lines.append("Starting: \(step.detail(cover: wantsCover()))")
+            } else {
+                lines.append("Starting: checking the parts, then starting tor, the worker and the guest, which opens its payment disk, runs the startup check and then starts the sender and the payer.")
+            }
         case .stopping(.restart):
             lines.append("Restarting: stopping the guest, the worker and tor, in that order, then starting again.")
         case .stopping:
@@ -511,7 +650,9 @@ public final class Supervisor {
         case .loading: lines.append("worker: loading the model for a Local Llama chat")
         case .up(let process): lines.append("worker: process \(process), for Local Llama chats; it rests as a run's does")
         }
-        lines.append(memory().detail)
+        if let lastMemory {
+            lines.append(lastMemory.detail)
+        }
         lines.append("release \(manifest.release), build \(manifest.build)")
         let model = manifest.rewordingModel
         lines.append("model: \(model.name), \(model.label), in \(layout.model(model).path)")
@@ -523,6 +664,7 @@ public final class Supervisor {
     /// each only once the one before it is up. Ends in `prepared`, or in the
     /// first failure; a cancelled preparation starts nothing more.
     private func prepare() async {
+        startStep = .checking
         endLocal(.interrupted)
         await localEnding?.value
         do {
@@ -532,6 +674,7 @@ public final class Supervisor {
             try await Self.placeWorker(manifest, layout)
             try Task.checkCancellation()
 
+            startStep = .tor
             let tor: Tor
             do {
                 tor = try await Tor.start(executable: layout.url(.tor, in: manifest), data: layout.torData)
@@ -546,6 +689,7 @@ public final class Supervisor {
             }
             try Task.checkCancellation()
 
+            startStep = .rewriter
             // Every worker of the run, the first and each after a rest,
             // starts the same way.
             let start: @Sendable () async throws -> WorkerChannel = {
@@ -575,6 +719,7 @@ public final class Supervisor {
             })
             try Task.checkCancellation()
 
+            startStep = .guest
             let disk = try await PaymentDisk.attach(layout.paymentDisk)
             try Task.checkCancellation()
 
@@ -584,15 +729,17 @@ public final class Supervisor {
             do {
                 guest = try Guest(kernel: layout.url(.kernel, in: manifest), console: verification.console.fileHandleForWriting,
                                   bootFolder: layout.bootFiles, disk: disk)
-                let cover = wantsCover()
-                try guest.prepare(base: layout.url(.initrd, in: manifest), cases: Verification.cases,
-                                  model: manifest.model, relay: relay, tor: tor, cover: cover, serve: true, door: door)
-                self.cover = cover
+                // Cover Traffic runs live on the host over Tor (`CoverTraffic`) so
+                // toggling it takes effect instantly without rebooting the guest VM.
+                try await guest.prepare(base: layout.url(.initrd, in: manifest), cases: Verification.cases,
+                                  model: manifest.model, relay: relay, tor: tor, cover: false, serve: true, door: door)
                 stack.guest = guest
                 try await guest.start { verification.ended($0) }
             } catch {
                 throw Failure(.guestFailed, "cannot start the guest: \(error)")
             }
+
+            startStep = .verifying
             let detail: String
             do {
                 detail = try await verification.passed()
@@ -611,6 +758,7 @@ public final class Supervisor {
             fail(failure)
         } catch {
             // Cancelled: the shutdown under way stops what has started.
+            startStep = nil
         }
     }
 
@@ -624,19 +772,39 @@ public final class Supervisor {
     /// then refuse to run. Then the file there is checked against the pin.
     @concurrent
     private static func placeWorker(_ manifest: Manifest, _ layout: Layout) async throws(Failure) {
-        let pin = manifest.pins.first { $0.part == .worker }!
-        let (bundled, target) = (layout.url(pin), layout.worker)
+        guard let pin = manifest.pins.first(where: { $0.part == .worker }) else {
+            throw Failure(.partMissing, "worker: not pinned in manifest")
+        }
+        try await placeFile(pin: pin, bundled: layout.url(pin), target: layout.worker, permissions: 0o755)
+    }
+
+    /// Places the pure-Swift vMLX worker and its sibling `default.metallib`
+    /// shader bundle into `Application Support/Regents Cloak/worker/`, verifying
+    /// both against their SHA-256 pins.
+    @concurrent
+    private static func placeVmlxWorker(_ manifest: Manifest, _ layout: Layout) async throws(Failure) {
+        guard let workerPin = manifest.pins.first(where: { $0.part == .vmlxWorker }),
+            let metalPin = manifest.pins.first(where: { $0.part == .vmlxMetallib })
+        else {
+            throw Failure(.partMissing, "vmlx_worker: not bundled in this build")
+        }
+        try await placeFile(pin: metalPin, bundled: layout.url(metalPin), target: layout.vmlxMetallib, permissions: 0o644)
+        try await placeFile(pin: workerPin, bundled: layout.url(workerPin), target: layout.vmlxWorker, permissions: 0o755)
+    }
+
+    @concurrent
+    private static func placeFile(pin: Manifest.Pin, bundled: URL, target: URL, permissions: Int) async throws(Failure) {
         if (try? await Checks.sha256(target)) == pin.sha256 { return }
         let folder = target.deletingLastPathComponent()
         let partial = folder.appending(path: ".\(UUID().uuidString).partial")
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try Data(contentsOf: bundled).write(to: partial, options: .withoutOverwriting)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: partial.path)
+            try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: partial.path)
             guard rename(partial.path, target.path) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
         } catch {
             try? FileManager.default.removeItem(at: partial)
-            throw Failure(.partMissing, "worker: cannot copy \(bundled.path) to \(target.path): \(error)")
+            throw Failure(.partMissing, "\(pin.part.rawValue): cannot copy \(bundled.path) to \(target.path): \(error)")
         }
         if case (_, let failure?) = await Checks.pinCheck(pin, at: target) { throw failure }
     }
@@ -697,6 +865,7 @@ public final class Supervisor {
     /// and the worker for Local Llama chats, then stops the guest, the
     /// worker and tor, in that order, each within its limit.
     private func shutDown() {
+        coverTraffic.stop()
         let preparation = self.preparation
         preparation?.cancel()
         for watch in stack.watches { watch.cancel() }

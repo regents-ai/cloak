@@ -27,15 +27,16 @@ signal(SIGPIPE, SIG_IGN)
 var arguments = [String: String]()
 var rest = CommandLine.arguments.dropFirst()
 while let flag = rest.popFirst() {
-    guard ["--name", "--dir"].contains(flag), arguments[flag] == nil, let value = rest.popFirst() else {
-        stop("usage: cloak-rewriter-llama --name <model> --dir <model directory>")
+    guard ["--name", "--dir", "--lora"].contains(flag), arguments[flag] == nil, let value = rest.popFirst() else {
+        stop("usage: cloak-rewriter-llama --name <model> --dir <model directory> [--lora <adapter path>]")
     }
     arguments[flag] = value
 }
 guard let name = arguments["--name"], let dir = arguments["--dir"] else {
-    stop("usage: cloak-rewriter-llama --name <model> --dir <model directory>")
+    stop("usage: cloak-rewriter-llama --name <model> --dir <model directory> [--lora <adapter path>]")
 }
 let directory = URL(filePath: dir, directoryHint: .isDirectory)
+let lora = arguments["--lora"].map { URL(filePath: $0, directoryHint: .notDirectory) }
 
 let pin: ModelPin
 do {
@@ -45,19 +46,25 @@ do {
 }
 do {
     try pin.verify(directory: directory)
+    if let lora {
+        try pin.verifyLora(file: lora)
+    }
 } catch {
     stop("cannot load \(name): \(error)", status: 3)
 }
 let worker: Worker
 do {
-    worker = Worker(pin: pin, engine: try Engine(pin: pin, directory: directory))
+    worker = Worker(pin: pin, engine: try Engine(pin: pin, directory: directory, lora: lora))
 } catch {
     stop("cannot load \(name): \(error)")
 }
 log.info(
     "loaded \(name, privacy: .public); weights \(worker.engine.weightsBytes) bytes, Metal allocated \(Engine.metalAllocatedBytes) bytes"
 )
-Frames.ready()
+guard Frames.ready() else {
+    worker.engine.close()
+    stop("supervisor channel closed")
+}
 
 do {
     for try await frame in Frames.incoming() {

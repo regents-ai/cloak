@@ -13,12 +13,27 @@ import Observation
 /// but Show in Finder is reachable from the keyboard, since the header's
 /// other fixes are also Start or Details. It is AppKit's menu, since a
 /// SwiftUI menu holds only plain items and the header is a view of its own.
+/// Live visual indicators for the top menu bar icon:
+/// - `hasUnreadAnswer`: draws a vivid blue ring around the status badge when a
+///   prompt finishes while Chat is not in front.
+/// - `isDarkbloomServing`: replaces the static play/pause badge with a gentle
+///   animated blooming mark while Darkbloom inference serving is active.
+@MainActor
+@Observable
+final class MenuBarIndicator {
+    var hasUnreadAnswer = false
+    var isDarkbloomServing = false
+}
+
 @MainActor
 final class StatusMenu: NSObject, NSMenuDelegate {
     private let supervisor: Supervisor
     private let download: ModelDownload
+    private let settings: AppSettings
+    private let indicator: MenuBarIndicator
     private let showChat: () -> Void
-    private let showAgents: () -> Void
+    private let showFunds: () -> Void
+    private let showTour: () -> Void
     private let showDetails: () -> Void
     private let showSettings: () -> Void
     private let checkForUpdates: () -> Void
@@ -27,17 +42,29 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
     private let header = NSMenuItem()
     private let headerView = MenuHeaderView()
+    private var panelController: MenuPanelController?
+    private var rightClickMonitor: Any?
+    private var bloomAnimationTask: Task<Void, Never>?
+    private var bloomFrame = 0
     private var open = false
 
     init(
-        supervisor: Supervisor, download: ModelDownload, showChat: @escaping () -> Void,
-        showAgents: @escaping () -> Void, showDetails: @escaping () -> Void,
-        showSettings: @escaping () -> Void, checkForUpdates: @escaping () -> Void
+        supervisor: Supervisor, download: ModelDownload, settings: AppSettings,
+        indicator: MenuBarIndicator,
+        showChat: @escaping () -> Void, showFunds: @escaping () -> Void,
+        showTour: @escaping () -> Void, showDetails: @escaping () -> Void,
+        showSettings: @escaping () -> Void, checkForUpdates: @escaping () -> Void,
+        submitPrompt: @escaping (String) -> Void,
+        selectMode: @escaping (Chat.Kind) -> Void,
+        activeMode: @escaping () -> Chat.Kind
     ) {
         self.supervisor = supervisor
         self.download = download
+        self.settings = settings
+        self.indicator = indicator
         self.showChat = showChat
-        self.showAgents = showAgents
+        self.showFunds = showFunds
+        self.showTour = showTour
         self.showDetails = showDetails
         self.showSettings = showSettings
         self.checkForUpdates = checkForUpdates
@@ -50,29 +77,123 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 supervisor.send(.start)
                 showChat()
             case .download: showDetails()
+            case .repair:
+                download.repair()
+                showDetails()
             case .showModel: Fix.showModel()
             }
         }
         menu.autoenablesItems = false
         menu.delegate = self
-        item.menu = menu
+        item.autosaveName = "sh.regents.cloak.statusItem"
         item.button?.image = MenuBarIcon.image(supervisor.phase)
+        if #available(macOS 27.0, *) {
+            #if DARKBLOOM
+            let actions = MenuPanelController.Actions(
+                showChat: showChat, showFunds: showFunds, showTour: showTour,
+                showDetails: showDetails, showSettings: showSettings, checkForUpdates: checkForUpdates,
+                submitPrompt: submitPrompt, selectMode: selectMode, activeMode: activeMode,
+                showDarkbloom: { AppDelegate.current.showDarkbloom() }
+            )
+            #else
+            let actions = MenuPanelController.Actions(
+                showChat: showChat, showFunds: showFunds, showTour: showTour,
+                showDetails: showDetails, showSettings: showSettings, checkForUpdates: checkForUpdates,
+                submitPrompt: submitPrompt, selectMode: selectMode, activeMode: activeMode
+            )
+            #endif
+            panelController = MenuPanelController(
+                supervisor: supervisor, download: download, settings: settings, actions: actions)
+            item.expandedInterfaceDelegate = self
+            rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
+                guard let self, let button = self.item.button, event.window === button.window else { return event }
+                // Dispatch out of the NSEvent monitor before running `NSMenu.popUp`,
+                // which starts a nested modal tracking runloop that freezes/blocks
+                // event delivery if invoked synchronously inside a local monitor.
+                Task { @MainActor [weak self, weak button] in
+                    guard let self, let button else { return }
+                    self.showContextMenu(below: button)
+                }
+                return nil
+            }
+        } else {
+            item.menu = menu
+        }
         // The menu lasts as long as the app, and so does this.
         Task {
             for await watched in Observations({
-                Watched(phase: supervisor.phase, resting: supervisor.resting, download: download.state)
+                Watched(
+                    phase: supervisor.phase, startStep: supervisor.startStep,
+                    resting: supervisor.resting, download: download.state,
+                    nearTor: settings.nearTor,
+                    unread: indicator.hasUnreadAnswer, darkbloomServing: indicator.isDarkbloomServing)
             }) {
-                item.button?.image = MenuBarIcon.image(watched.phase)
+                self.syncBloomAnimation(serving: watched.darkbloomServing)
+                self.renderIcon()
                 if open { rebuild() }
+            }
+        }
+        #if DARKBLOOM
+        // Lightweight background poll so the animated bloom icon stays accurate
+        // even when Settings → Inference Serving is closed.
+        Task { [weak self] in
+            while !Task.isCancelled {
+                let serving = await Self.probeDarkbloomServing()
+                guard let self else { break }
+                if self.indicator.isDarkbloomServing != serving {
+                    self.indicator.isDarkbloomServing = serving
+                }
+                try? await Task.sleep(for: .seconds(8))
+            }
+        }
+        #endif
+    }
+
+    private func renderIcon() {
+        item.button?.image = MenuBarIcon.image(
+            supervisor.phase,
+            unread: indicator.hasUnreadAnswer,
+            darkbloomServing: indicator.isDarkbloomServing,
+            bloomFrame: bloomFrame,
+            appearance: item.button?.effectiveAppearance)
+    }
+
+    private func syncBloomAnimation(serving: Bool) {
+        guard serving, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            bloomAnimationTask?.cancel()
+            bloomAnimationTask = nil
+            bloomFrame = 0
+            return
+        }
+        guard bloomAnimationTask == nil else { return }
+        bloomAnimationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(140))
+                guard let self, !Task.isCancelled, self.indicator.isDarkbloomServing else { break }
+                self.bloomFrame = (self.bloomFrame + 1) % MenuBarIcon.bloomFrameCount
+                self.renderIcon()
             }
         }
     }
 
+    #if DARKBLOOM
+    @concurrent private static func probeDarkbloomServing() async -> Bool {
+        // Read ~/.darkbloom/daemon-state.json directly (< 0.1 ms) instead of
+        // polling GET /control/v1/state (~2.5s serialized RPC on darkbloom
+        // desktop serve), which otherwise stalls Settings → Inference Serving.
+        return Darkbloom.isDaemonAlive()
+    }
+    #endif
+
     /// What the menu shows that can change while it is open.
     private struct Watched: Equatable {
         var phase: Phase
+        var startStep: Supervisor.StartStep?
         var resting: Bool
         var download: ModelDownload.State
+        var nearTor: Bool
+        var unread: Bool
+        var darkbloomServing: Bool
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -89,9 +210,19 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         open = false
     }
 
+    func showContextMenu(below button: NSStatusBarButton) {
+        if #available(macOS 27.0, *) {
+            item.expandedInterfaceSession?.cancel()
+        }
+        download.refresh()
+        rebuild()
+        let y = button.isFlipped ? button.bounds.height + 4 : -4
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: y), in: button)
+    }
+
     private func rebuild() {
         let phase = supervisor.phase
-        let shown = MenuHeader(phase: phase, resting: supervisor.resting, download: download)
+        let shown = MenuHeader(phase: phase, startStep: supervisor.startStep, resting: supervisor.resting, download: download)
         headerView.show(shown)
         menu.removeAllItems()
         menu.addItem(header)
@@ -118,14 +249,22 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             if case .needsAttention(let reason) = phase { start.isEnabled = !Fix.startStops(for: reason, download: download) }
             menu.addItem(start)
         }
+        let nearTorItem = Action("Route NEAR through Tor", symbol: torSymbol) { [settings, supervisor, download] in
+            let next = !settings.nearTor
+            settings.nearTor = next
+            if next, supervisor.phase != .running, supervisor.phase.state != .preparing, download.state == .installed {
+                supervisor.send(.start)
+            }
+        }
+        nearTorItem.state = settings.nearTor ? NSControl.StateValue.on : NSControl.StateValue.off
+        menu.addItem(nearTorItem)
         menu.addItem(Action("Chat", symbol: "bubble.left", run: showChat))
-        menu.addItem(Action("Agents", symbol: "hammer", run: showAgents))
         #if DARKBLOOM
-        menu.addItem(Action("Darkbloom", symbol: "server.rack") { AppDelegate.current.showDarkbloom() })
+        menu.addItem(Action("Inference Serving", symbol: "server.rack") { AppDelegate.current.showDarkbloom() })
         #endif
-        menu.addItem(Action("Details", symbol: "info.circle", key: "d", run: showDetails))
         menu.addItem(Action("Settings…", symbol: "gearshape", key: ",", run: showSettings))
         menu.addItem(.separator())
+        menu.addItem(Action("Take a Tour…", symbol: "sparkles", run: showTour))
         menu.addItem(Action("Check for Updates…", symbol: "arrow.down.circle", run: checkForUpdates))
         menu.addItem(Action("Quit", symbol: "power", key: "q") { NSApp.terminate(nil) })
         menu.addItem(footer)
@@ -143,9 +282,38 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }()
 }
 
+@available(macOS 27.0, *)
+extension StatusMenu: NSStatusItemExpandedInterfaceDelegate {
+    nonisolated func statusItem(_ statusItem: NSStatusItem, didBegin expandedInterfaceSession: NSStatusItemExpandedInterfaceSession) {
+        MainActor.assumeIsolated {
+            if let event = NSApp.currentEvent,
+                event.type == .rightMouseDown || event.type == .rightMouseUp || event.modifierFlags.contains(.control),
+                let button = item.button
+            {
+                item.expandedInterfaceSession?.cancel()
+                Task { @MainActor [weak self, weak button] in
+                    guard let self, let button else { return }
+                    self.showContextMenu(below: button)
+                }
+                return
+            }
+            panelController?.show(below: item) { [weak self] in
+                self?.item.expandedInterfaceSession?.cancel()
+            }
+        }
+    }
+
+    nonisolated func statusItemDidEndExpandedInterfaceSession(_ statusItem: NSStatusItem, animated: Bool) {
+        MainActor.assumeIsolated {
+            panelController?.hide(animated: animated)
+        }
+    }
+}
+
 /// A menu item that runs its closure when chosen. Its symbol shows where the
 /// Mac shows symbols in menus: macOS 26 does, and macOS 27 hides them, which
 /// is left to the Mac (`preferredImageVisibility` stays automatic).
+@MainActor
 private final class Action: NSMenuItem {
     private let run: () -> Void
 
@@ -162,7 +330,11 @@ private final class Action: NSMenuItem {
     }
 
     @objc private func choose() {
-        run()
+        // Run after NSMenu exits its modal tracking runloop so activation
+        // policy changes and window presentation never get swallowed.
+        Task { @MainActor in
+            self.run()
+        }
     }
 }
 
@@ -189,8 +361,9 @@ struct MenuHeader: Equatable {
 
     /// `download` is the model that rewords'.
     @MainActor
-    init(phase: Phase, resting: Bool, download: ModelDownload) {
-        word = phase.title
+    init(phase: Phase, startStep: Supervisor.StartStep? = nil, resting: Bool, download: ModelDownload) {
+        let stateLabel = phase.state == .preparing ? (startStep?.menuTitle ?? phase.title) : phase.title
+        word = stateLabel
         dot = switch phase {
         case .running: .running
         case .paused, .ready: .stopped
@@ -200,7 +373,7 @@ struct MenuHeader: Equatable {
         if case .needsAttention(let reason) = phase {
             line = .failure(reason, fix: Fix(for: reason, download: download))
         } else {
-            line = .state(phase.title, unloaded: phase == .running && resting, downloading: download.isUnderWay)
+            line = .state(stateLabel, unloaded: phase == .running && resting, downloading: download.isUnderWay)
         }
     }
 
@@ -371,8 +544,18 @@ private final class StateDot: NSView {
 /// exclamation mark when Cloak needs attention, so the state never rests on
 /// colour alone. A template image, so the menu bar colours it as it does its
 /// own icons; named for VoiceOver.
+@MainActor
 enum MenuBarIcon {
-    static func image(_ phase: Phase) -> NSImage {
+    /// Number of smooth rotation/pulse steps in the animated Darkbloom bloom.
+    static let bloomFrameCount = 12
+
+    static func image(
+        _ phase: Phase,
+        unread: Bool = false,
+        darkbloomServing: Bool = false,
+        bloomFrame: Int = 0,
+        appearance: NSAppearance? = nil
+    ) -> NSImage {
         // The master's blocks, 34 units square on a 36-unit pitch, at their
         // origins in its 252 by 186 view. At a ninth of a point per unit the
         // crown is 19.8 by 11.8 points and every origin lands on a whole
@@ -383,7 +566,7 @@ enum MenuBarIcon {
             (31, 118), (67, 118), (103, 118), (139, 118), (175, 118),
         ]
         // Large, over about a third of the crown at its lower trailing
-        // corner (Sean, 18 November). Its edges are on whole points, so on
+        // corner (18 November). Its edges are on whole points, so on
         // whole pixels at 1x and 2x.
         let badge = NSRect(x: 12, y: 6, width: 12, height: 12)
         // The glyph is knocked out of a filled disc; Starting's dotted ring
@@ -396,33 +579,109 @@ enum MenuBarIcon {
             case .stopping: ("stop.fill", 6, true)
             case .needsAttention: ("exclamationmark", 8, true)
             }
-        let image = NSImage(size: NSSize(width: 25, height: 19), flipped: true) { _ in
-            guard let context = NSGraphicsContext.current else { return false }
-            let crown = NSBezierPath()
-            for block in blocks {
-                crown.appendRect(NSRect(x: (block.x - 31) / 9, y: (block.y - 46) / 9, width: 34 / 9, height: 34 / 9))
+        let useColor = unread
+        let drawAppearance = appearance ?? NSApp.effectiveAppearance
+        let image = NSImage(size: NSSize(width: 26, height: 20), flipped: true) { _ in
+            let render: () -> Bool = {
+                guard let context = NSGraphicsContext.current else { return false }
+                let foreground: NSColor = useColor ? .labelColor : .black
+                foreground.setFill()
+                foreground.setStroke()
+
+                let crown = NSBezierPath()
+                for block in blocks {
+                    crown.appendRect(NSRect(x: (block.x - 31) / 9, y: (block.y - 46) / 9 + 0.5, width: 34 / 9, height: 34 / 9))
+                }
+                crown.fill()
+
+                // Cut clear of the crown around the lower-trailing badge.
+                context.compositingOperation = .destinationOut
+                let cutoutInset: CGFloat = unread ? -1.8 : -1.0
+                NSBezierPath(ovalIn: badge.insetBy(dx: cutoutInset, dy: cutoutInset)).fill()
+                context.compositingOperation = .sourceOver
+
+                if darkbloomServing {
+                    // Animated 6-petal radiant Darkbloom bloom replacing the static play/pause icon.
+                    Self.drawBloom(in: badge, frame: bloomFrame, color: foreground)
+                } else {
+                    if glyph.knockedOut {
+                        foreground.setFill()
+                        NSBezierPath(ovalIn: badge).fill()
+                    }
+                    // Every name is a system symbol.
+                    let baseSymbol = NSImage(systemSymbolName: glyph.name, accessibilityDescription: nil)!
+                        .withSymbolConfiguration(.init(pointSize: glyph.size, weight: .heavy))!
+                    let symbol: NSImage
+                    if !glyph.knockedOut && useColor {
+                        symbol = baseSymbol.withSymbolConfiguration(.init(hierarchicalColor: foreground)) ?? baseSymbol
+                    } else {
+                        symbol = baseSymbol
+                    }
+                    let size = symbol.size
+                    // On a whole point, so a pause's bars stay apart at 1x.
+                    symbol.draw(
+                        in: NSRect(
+                            x: (badge.midX - size.width / 2).rounded(), y: (badge.midY - size.height / 2).rounded(),
+                            width: size.width, height: size.height),
+                        from: .zero, operation: glyph.knockedOut ? .destinationOut : .sourceOver, fraction: 1,
+                        respectFlipped: true, hints: nil)
+                }
+
+                if unread {
+                    // Vivid macOS blue ring around the badge when a chat reply has returned unread.
+                    NSColor.systemBlue.setStroke()
+                    let ring = NSBezierPath(ovalIn: badge.insetBy(dx: -0.75, dy: -0.75))
+                    ring.lineWidth = 1.6
+                    ring.stroke()
+                }
+                return true
             }
-            crown.fill()
-            context.compositingOperation = .destinationOut
-            NSBezierPath(ovalIn: badge.insetBy(dx: -1, dy: -1)).fill()
-            context.compositingOperation = .sourceOver
-            if glyph.knockedOut { NSBezierPath(ovalIn: badge).fill() }
-            // Every name is a system symbol.
-            let symbol = NSImage(systemSymbolName: glyph.name, accessibilityDescription: nil)!
-                .withSymbolConfiguration(.init(pointSize: glyph.size, weight: .heavy))!
-            let size = symbol.size
-            // On a whole point, so a pause's bars stay apart at 1x.
-            symbol.draw(
-                in: NSRect(
-                    x: (badge.midX - size.width / 2).rounded(), y: (badge.midY - size.height / 2).rounded(), width: size.width,
-                    height: size.height),
-                from: .zero, operation: glyph.knockedOut ? .destinationOut : .sourceOver, fraction: 1, respectFlipped: true,
-                hints: nil)
-            return true
+            if useColor {
+                var ok = false
+                drawAppearance.performAsCurrentDrawingAppearance { ok = render() }
+                return ok
+            }
+            return render()
         }
-        image.isTemplate = true
-        image.accessibilityDescription = "Cloak, \(phase.title)"
+        image.isTemplate = !useColor
+        var parts = ["Cloak", phase.title]
+        if darkbloomServing { parts.append("Serving Darkbloom") }
+        if unread { parts.append("Unread reply") }
+        image.accessibilityDescription = parts.joined(separator: ", ")
         return image
+    }
+
+    /// Draws a crisp 6-petal blooming rosette inside `badge` that gently
+    /// rotates and breathes across `bloomFrameCount` frames while Darkbloom
+    /// inference serving is active.
+    private static func drawBloom(in badge: NSRect, frame: Int, color: NSColor) {
+        let angleStep = (Double(frame % bloomFrameCount) / Double(bloomFrameCount)) * (.pi / 3.0)
+        let pulse = 0.80 + 0.20 * sin((Double(frame % bloomFrameCount) / Double(bloomFrameCount)) * 2.0 * .pi)
+        let center = CGPoint(x: badge.midX, y: badge.midY)
+        let outerRadius = (badge.width * 0.48) * CGFloat(pulse)
+        let innerRadius = badge.width * 0.17
+
+        color.setStroke()
+        color.setFill()
+        for i in 0..<6 {
+            let theta = angleStep + Double(i) * (.pi / 3.0)
+            let p0 = CGPoint(
+                x: center.x + CGFloat(cos(theta)) * innerRadius,
+                y: center.y + CGFloat(sin(theta)) * innerRadius)
+            let p1 = CGPoint(
+                x: center.x + CGFloat(cos(theta)) * outerRadius,
+                y: center.y + CGFloat(sin(theta)) * outerRadius)
+            let petal = NSBezierPath()
+            petal.move(to: p0)
+            petal.line(to: p1)
+            petal.lineWidth = 1.75
+            petal.lineCapStyle = .round
+            petal.stroke()
+        }
+        let coreRadius: CGFloat = 1.5
+        NSBezierPath(ovalIn: NSRect(
+            x: center.x - coreRadius, y: center.y - coreRadius,
+            width: coreRadius * 2, height: coreRadius * 2)).fill()
     }
 }
 

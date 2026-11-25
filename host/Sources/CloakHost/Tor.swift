@@ -68,6 +68,10 @@ public final class Tor: Sendable {
         // Never written: tor reads no configuration file.
         let absent = data.appending(path: "torrc").path
         try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // If a previous Cloak crashed or was force-quit, its orphaned tor
+        // exits within ~15s via --__OwningControllerProcess. Wait cleanly for
+        // `data/lock` to release instead of immediately failing with tor_unavailable.
+        try await waitForLockRelease(in: data)
         let folder = try socketFolder()
         let listener = folder.appending(path: "socks").path
         let process = Process()
@@ -142,6 +146,33 @@ public final class Tor: Sendable {
             log("tor did not bootstrap within \(Self.bootstrapLimit) seconds; stopped it, so every Tor connection fails")
         }
         return Tor(listener: listener, bootstrapped: bootstrapped, child: child, relayed: relayed)
+    }
+
+    /// Waits up to 18 seconds for `data/lock` to become unlocked if an exiting
+    /// orphaned `tor` from a prior run still holds it; returns immediately when
+    /// no lock is held.
+    private static func waitForLockRelease(in data: URL) async throws {
+        let lockPath = data.appending(path: "lock").path
+        let deadline = ContinuousClock.now + .seconds(18)
+        var logged = false
+        while true {
+            let fd = Darwin.open(lockPath, O_RDWR | O_CLOEXEC)
+            if fd < 0 { return }
+            let acquired = flock(fd, LOCK_EX | LOCK_NB) == 0
+            let code = errno
+            if acquired {
+                _ = flock(fd, LOCK_UN)
+                Darwin.close(fd)
+                return
+            }
+            Darwin.close(fd)
+            guard code == EWOULDBLOCK, ContinuousClock.now < deadline else { return }
+            if !logged {
+                log("tor data directory is locked by an exiting tor; waiting for it to release")
+                logged = true
+            }
+            try await Task.sleep(for: .milliseconds(250))
+        }
     }
 
     /// A new folder for tor's socket, in this user's temporary folder, that

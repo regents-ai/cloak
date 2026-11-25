@@ -45,14 +45,16 @@ struct InfoButton<Mark: View, Note: View>: View {
         .accessibilityHint(hint ?? "")
         .onHover { inside in
             opening?.cancel()
-            guard inside else { return }
+            guard inside, NSApp.isActive else { return }
             // Sleeping throws once cancelled, so a pointer that leaves first
             // never opens it.
             opening = Task {
                 try await Task.sleep(for: .milliseconds(400))
+                guard NSApp.isActive else { return }
                 showing = true
             }
         }
+        .onDisappear { opening?.cancel() }
         .popover(isPresented: $showing, arrowEdge: arrowEdge) {
             note
         }
@@ -87,5 +89,38 @@ struct NoteText: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(14)
             .frame(width: 300, alignment: .leading)
+    }
+}
+
+/// A scannable bulleted popover note for `InfoButton`.
+struct BulletNote: View {
+    var lead: String?
+    let bullets: [String]
+
+    init(_ lead: String? = nil, bullets: [String]) {
+        self.lead = lead
+        self.bullets = bullets
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let lead {
+                Text(lead)
+                    .fontWeight(.medium)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(bullets, id: \.self) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("•")
+                        .foregroundStyle(.secondary)
+                    Text(item)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .font(.callout)
+        .textSelection(.enabled)
+        .padding(14)
+        .frame(width: 310, alignment: .leading)
     }
 }

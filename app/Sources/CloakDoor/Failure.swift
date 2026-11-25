@@ -59,16 +59,16 @@ struct Failure: Error, Sendable, Equatable {
 
     init(_ stop: PayStop) {
         switch stop.code {
-        case .noDeposit: self.init(402, "no_deposit", "V has no deposit to pay for this request. Make one in Chat, under Wallet.")
-        case .withdrawing: self.init(409, "withdrawal_pending", "V's deposit is being withdrawn, so it can't pay for requests now.")
-        case .busy: self.init(429, "busy", "V's wallet is busy with another request. Try again.")
+        case .noDeposit: self.init(402, "no_deposit", "zkAPI Anon Inference has no deposit to pay for this request. Make one in Cloak under Funds → zkAPI Anon Inference.")
+        case .withdrawing: self.init(409, "withdrawal_pending", "Your zkAPI deposit is being withdrawn, so it can't pay for requests now.")
+        case .busy: self.init(429, "busy", "zkAPI Anon Inference is busy with another request. Try again in a moment.")
         case .modelUnavailable: self.init(404, "model_not_found", "The provider can't use this model now. Pick another.")
         case .torDown: self.init(503, "tor_down", "Cloak couldn't reach the provider through Tor. Try again.")
         case .refused: self.init(400, "invalid_request_error", "The provider turned the request away as it was.")
         case .providerFailed, .answerRefused, .failed: self.init(502, "failed", "The request did not go through. Try again.")
         case .heldTooLong: self.init(504, "settling", "The last request is still settling, so nothing was sent. Try again in a minute.")
         case .timedOut, .ended: self.init(504, "timed_out", "No answer came in time. The request may have been paid for.")
-        case .unreachable: self.init(503, "wallet_unreachable", "Cloak couldn't reach V's wallet. Pause and start Cloak, then try again.")
+        case .unreachable: self.init(503, "wallet_unreachable", "Couldn't reach the zkAPI payment service. Pause and start Cloak, then try again.")
         case .cancelled: self = .stopped
         }
     }

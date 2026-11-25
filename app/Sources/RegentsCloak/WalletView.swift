@@ -2,6 +2,7 @@ import AppKit
 import CloakChat
 import CloakSupervisor
 import CoreImage.CIFilterBuiltins
+import LocalAuthentication
 import SwiftUI
 
 /// How the conversation in front is paid for. In a V chat, Agent on or off,
@@ -19,13 +20,38 @@ import SwiftUI
 /// and the tokens NEAR counted for the chat; in a Local Llama chat, nothing
 /// to pay. The wallet is read each time this opens on a chat it pays for.
 struct WalletView: View {
+    enum FundsTab: String, CaseIterable, Identifiable {
+        case payPerPrompt
+        case paranoid
+        case privateCloud
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .payPerPrompt: "Token Inference"
+            case .paranoid: "zkAPI Anon Inference"
+            case .privateCloud: "NEAR AI Gateway"
+            }
+        }
+
+        init(kind: Chat.Kind) {
+            switch kind {
+            case .token, .llama: self = .payPerPrompt
+            case .v: self = .paranoid
+            case .near: self = .privateCloud
+            }
+        }
+    }
+
     @Bindable var wallet: Wallet
+    let veniceMode: VeniceMode
     let payer: Payer
-    let settings: AppSettings
+    @Bindable var settings: AppSettings
     let nearMode: NearMode
     /// The download of the model that rewords, for the Start row's fix.
     let download: ModelDownload
-    /// The conversation in front's.
+    /// The conversation in front's mode, used to pick the initial tab.
     let kind: Chat.Kind
     /// The tokens NEAR counted for the conversation in front's answers,
     /// added up; nil while none has counts, as in every other mode.
@@ -33,56 +59,152 @@ struct WalletView: View {
     let showDetails: () -> Void
     let showNearSettings: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var tab: FundsTab
+
+    init(
+        wallet: Wallet, veniceMode: VeniceMode, payer: Payer, settings: AppSettings, nearMode: NearMode,
+        download: ModelDownload, kind: Chat.Kind, tokens: Tokens?,
+        showDetails: @escaping () -> Void, showNearSettings: @escaping () -> Void
+    ) {
+        self.wallet = wallet
+        self.veniceMode = veniceMode
+        self.payer = payer
+        self.settings = settings
+        self.nearMode = nearMode
+        self.download = download
+        self.kind = kind
+        self.tokens = tokens
+        self.showDetails = showDetails
+        self.showNearSettings = showNearSettings
+        _tab = State(initialValue: FundsTab(kind: kind))
+    }
 
     var body: some View {
         let running = wallet.supervisor.phase == .running
         VStack(spacing: 0) {
-            switch kind {
-            case .v: VBar()
-            case .token: TokenBar()
-            case .near, .llama: EmptyView()
+            HStack(spacing: 12) {
+                Text("Funds")
+                    .font(.headline)
+                    .fixedSize()
+                Spacer()
+                Picker("Mode", selection: $tab) {
+                    ForEach(FundsTab.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                WhyCryptoButton(tab: tab)
             }
-            Form {
-                if kind == .v || kind == .token, !running {
-                    Section {
-                        StartRow(supervisor: wallet.supervisor, download: download) {
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            Divider()
+            ScrollViewReader { proxy in
+                Form {
+                    if tab == .paranoid || tab == .payPerPrompt, !running {
+                        Section {
+                            StartRow(supervisor: wallet.supervisor, download: download) {
+                                dismiss()
+                                showDetails()
+                            }
+                        }
+                    }
+                    switch tab {
+                    case .paranoid:
+                        VWallet(payer: payer, settings: settings, running: running)
+                    case .payPerPrompt:
+                        Section {
+                            LabeledContent("Provider") {
+                                Picker("Provider", selection: $settings.payProvider) {
+                                    Text("Venice (Base)").tag(PayProvider.venice)
+                                    Text("Boundless + Tempo").tag(PayProvider.boundless)
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .fixedSize()
+                            }
+                        }
+                        switch settings.payProvider {
+                        case .venice:
+                            VeniceFundsSections(venice: veniceMode, settings: settings, running: running)
+                        case .boundless:
+                            WalletSections(wallet: wallet, running: running)
+                        }
+                    case .privateCloud:
+                        NearPayment(mode: nearMode, tokens: tokens) {
                             dismiss()
-                            showDetails()
+                            showNearSettings()
                         }
                     }
                 }
-                switch kind {
-                case .v:
-                    VWallet(payer: payer, settings: settings, running: running)
-                case .token:
-                    WalletSections(wallet: wallet, running: running)
-                case .near:
-                    NearPayment(mode: nearMode, tokens: tokens) {
-                        dismiss()
-                        showNearSettings()
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
+                .onChange(of: payer.review) { _, review in
+                    guard review != nil else { return }
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("v-review-actions", anchor: .bottom)
+                        }
                     }
-                case .llama:
-                    LlamaPayment()
+                }
+                .onChange(of: payer.stop) { _, stop in
+                    guard stop != nil else { return }
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("v-stop-banner", anchor: .center)
+                        }
+                    }
+                }
+                .onChange(of: settings.payProvider) { _, provider in
+                    guard running else { return }
+                    Task {
+                        switch provider {
+                        case .venice:
+                            await veniceMode.refresh()
+                        case .boundless:
+                            await wallet.refresh()
+                        }
+                    }
                 }
             }
-            .formStyle(.grouped)
-            HStack(spacing: 10) {
-                if kind == .token, wallet.working > 0 || wallet.presence == .creating {
-                    ProgressView()
-                        .controlSize(.small)
+            .refreshable {
+                guard running else { return }
+                switch tab {
+                case .paranoid:
+                    payer.follow()
+                case .payPerPrompt:
+                    if settings.payProvider == .venice {
+                        await veniceMode.refresh()
+                    } else {
+                        await wallet.refresh()
+                    }
+                case .privateCloud:
+                    break
                 }
-                if kind == .v, payer.working > 0 {
+            }
+            Divider()
+            HStack(spacing: 10) {
+                if tab == .payPerPrompt {
+                    if (settings.payProvider == .venice && veniceMode.working > 0)
+                        || (settings.payProvider == .boundless && (wallet.working > 0 || wallet.presence == .creating))
+                    {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                if tab == .paranoid, payer.working > 0, payer.activity == nil {
                     ProgressView()
                         .controlSize(.small)
                 }
                 Spacer()
                 // Only while there is something to read again.
-                switch kind {
-                case .v where running:
+                switch tab {
+                case .paranoid where running:
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { payer.follow() }
-                case .token where running && wallet.presence.address != nil:
+                case .payPerPrompt where running && settings.payProvider == .venice:
+                    SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await veniceMode.refresh() } }
+                case .payPerPrompt where running && settings.payProvider == .boundless && wallet.presence.address != nil:
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await wallet.refresh() } }
-                case .v, .token, .near, .llama:
+                case .paranoid, .payPerPrompt, .privateCloud:
                     EmptyView()
                 }
                 Button("Done") { dismiss() }
@@ -92,25 +214,91 @@ struct WalletView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
-        // As tall as what it shows, up to 640 points; past that, or past
-        // the room the Chat window leaves a sheet, the form scrolls.
-        .frame(width: 540)
-        .frame(maxHeight: 640)
-        // As it opens, and again when Cloak starts or stops under it.
-        .task(id: running) {
-            switch kind {
-            case .v: payer.follow()
-            case .token: await wallet.refresh()
-            case .near, .llama: break
+        // As tall as what it shows, up to 660 points; past that, the form scrolls.
+        .frame(width: 600)
+        .onChange(of: kind) { _, newKind in
+            tab = FundsTab(kind: newKind)
+        }
+        .frame(maxHeight: 660)
+        // As it opens, when tabs or provider switch, and when Cloak starts or stops under it.
+        .task(id: "\(tab.rawValue)-\(settings.payProvider.rawValue)-\(running)") {
+            switch tab {
+            case .paranoid: payer.follow()
+            case .payPerPrompt:
+                if settings.payProvider == .venice {
+                    await veniceMode.refresh()
+                } else {
+                    await wallet.refresh()
+                }
+            case .privateCloud: break
             }
         }
     }
 }
 
+/// Plain-English "Why crypto?" explanation for each funding mode (Decision N4).
+private struct WhyCryptoButton: View {
+    let tab: WalletView.FundsTab
+
+    var body: some View {
+        let note: String = switch tab {
+        case .payPerPrompt:
+            "Credit cards tie prompts to your name. A local USDC wallet pays per prompt over Tor with no account."
+        case .paranoid:
+            "zkAPI Anon Inference uses zero-knowledge proofs (zkAPI) so every prompt is paid with a fresh one-time key — unlinkable even to your own earlier prompts."
+        case .privateCloud:
+            "Runs in hardware-verified remote enclaves using a standard NEAR API key — no crypto required."
+        }
+        InfoButton("Why crypto?", note: note)
+    }
+}
+
+/// Live checklist of `Supervisor.StartStep` shown across app windows while
+/// Cloak is starting (`phase == .preparing`).
+struct StartupProgressView: View {
+    let supervisor: Supervisor
+
+    var body: some View {
+        let current = supervisor.startStep ?? .checking
+        let cover = supervisor.cover ?? supervisor.coverPreferred
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(Supervisor.StartStep.allCases) { step in
+                let isDone = step.rawValue < current.rawValue
+                let isActive = step.rawValue == current.rawValue
+                HStack(alignment: .center, spacing: 8) {
+                    ZStack {
+                        if isDone {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.green)
+                        } else if isActive {
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: "circle")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
+
+                    Text(step.detail(cover: cover))
+                        .font(.callout)
+                        .fontWeight(isActive ? .medium : .regular)
+                        .foregroundStyle(isActive ? .primary : (isDone ? .secondary : .tertiary))
+                        .lineLimit(2)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// In a wallet while Cloak is not running: Cloak's state in words and the
 /// way on beside it. Start while paused or ready; a failure's fix (`Fix`),
-/// or, with none, its remedy in words; a spinner while Cloak starts or
-/// stops.
+/// or, with none, its remedy in words; a live step-by-step startup checklist
+/// while Cloak starts, or a spinner while it stops.
 struct StartRow: View {
     let supervisor: Supervisor
     /// The download of the model that rewords.
@@ -120,23 +308,48 @@ struct StartRow: View {
     var body: some View {
         let phase = supervisor.phase
         let fix = phase.reason.flatMap { Fix(for: $0, download: download) }
-        HStack(spacing: 8) {
-            Text(words(phase, fix: fix))
-                .foregroundStyle(.secondary)
-            Spacer()
-            switch phase {
-            case .needsAttention:
-                switch fix {
-                case .start?: Button(Fix.start.title) { supervisor.send(.start) }
-                case .download(let underWay)?: Button(Fix.download(underWay: underWay).title, action: showDetails)
-                case .showModel?: Button(Fix.showModel.title, action: Fix.showModel)
-                case nil: EmptyView()
+        if phase.state == .preparing {
+            let stepIndex = (supervisor.startStep?.rawValue ?? 0) + 1
+            let stepTotal = Supervisor.StartStep.allCases.count
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text("Starting Cloak")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text("Step \(stepIndex) of \(stepTotal)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
                 }
-            case .paused, .ready:
-                Button("Start") { supervisor.send(.start) }
-            case .preparing, .stopping, .running:
-                ProgressView()
-                    .controlSize(.small)
+                StartupProgressView(supervisor: supervisor)
+            }
+            .padding(.vertical, 2)
+        } else {
+            let needsRewriter = (phase == .paused || phase == .ready) && download.state != .installed
+            HStack(spacing: 8) {
+                Text(needsRewriter ? (download.isUnderWay ? "Downloading the local rewriter…" : "Download the local rewriter to start.") : words(phase, fix: fix))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if needsRewriter {
+                    Button(download.isUnderWay ? "Downloading…" : "Download Model…", action: showDetails)
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    switch phase {
+                    case .needsAttention:
+                        switch fix {
+                        case .start?: Button(Fix.start.title) { supervisor.send(.start) }
+                        case .download(let underWay)?: Button(Fix.download(underWay: underWay).title, action: showDetails)
+                        case .repair?: Button(Fix.repair.title) { download.repair() }
+                        case .showModel?: Button(Fix.showModel.title, action: Fix.showModel)
+                        case nil: EmptyView()
+                        }
+                    case .paused, .ready:
+                        Button("Start") { supervisor.send(.start) }
+                    case .preparing, .stopping, .running:
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
             }
         }
     }
@@ -150,7 +363,7 @@ struct StartRow: View {
         case .stopping: "Cloak is stopping."
         case .needsAttention(let reason):
             switch fix {
-            case .start?, .download?: reason.title(with: fix)
+            case .start?, .download?, .repair?: reason.title(with: fix)
             // No button does it all, so the words say what to do.
             case .showModel?, nil: "\(reason.title) \(reason.remedy)"
             }
@@ -159,21 +372,345 @@ struct StartRow: View {
     }
 }
 
+/// Pay-Per-Prompt's Venice provider sections (Decisions N5.1b, R5b, N1a):
+/// dedicated Base USDC wallet (separate Keychain key from Tempo), Card / Apple
+/// Pay funding straight to that local address, x402 credit top-up, optional
+/// Venice API key, and Private/TEE model picker.
+struct VeniceFundsSections: View {
+    let venice: VeniceMode
+    @Bindable var settings: AppSettings
+    let running: Bool
+    @State private var onRampTarget: CardOnRamp.Target?
+    @State private var topUpText = "5"
+    @State private var topUpInvalid = false
+    @State private var apiKeyInput = ""
+    @State private var keyBusy = false
+    @State private var keyError: String?
+
+    private static let onlyBaseUSDC =
+        "Send USDC on Base only — other assets can't be recovered."
+
+    var body: some View {
+        Section {
+            Picker("Pay with", selection: $settings.venicePays) {
+                Text("Base USDC Wallet").tag(VeniceChat.Pays.wallet)
+                Text("Venice API Key").tag(VeniceChat.Pays.key)
+            }
+            .pickerStyle(.segmented)
+        }
+
+        if settings.venicePays == .wallet {
+            walletSections
+        } else {
+            keySection
+        }
+
+        modelsSection
+            .sheet(item: $onRampTarget) { target in
+                CardOnRampSheet(target: target) {
+                    Task { await venice.refreshBalances() }
+                }
+            }
+    }
+
+    @ViewBuilder private var walletSections: some View {
+        if let stop = venice.walletStop {
+            Section {
+                StopRow(
+                    stop: stop,
+                    retry: running && venice.presence == .absent ? { Task { await venice.createWallet() } } : nil,
+                    dismiss: { venice.dismissWalletStop() }
+                )
+            }
+        }
+        switch venice.presence {
+        case .looking:
+            Section {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Reading Venice Base wallet…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
+            }
+        case .unreadable:
+            Section {
+                Text("Cloak couldn't read the Venice wallet from Keychain.")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Try Again") { Task { await venice.findWallet() } }
+                }
+            }
+        case .absent, .creating:
+            Section("Venice Base Wallet") {
+                Text("Creates a local Base USDC wallet on this Mac — pay per prompt with no Venice account.")
+                    .foregroundStyle(.secondary)
+                if running {
+                    HStack {
+                        Spacer()
+                        Button("Create Venice Wallet") { Task { await venice.createWallet() } }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(venice.presence == .creating)
+                    }
+                }
+            }
+        case .held(let address):
+            Section {
+                LabeledContent("Address") {
+                    HStack(spacing: 4) {
+                        Text(address)
+                            .font(.body.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        CopyButton(text: address)
+                        CodeButton(address: address, only: Self.onlyBaseUSDC)
+                    }
+                }
+                LabeledContent("Network", value: "Base (USDC)")
+                Only(words: Self.onlyBaseUSDC)
+                LabeledContent("Wallet USDC") {
+                    if let funds = venice.funds {
+                        Text("\(funds.dollars.formatted(.currency(code: "USD"))) USDC")
+                            .monospacedDigit()
+                    } else if venice.fundsFailed {
+                        HStack(spacing: 6) {
+                            Text("Couldn't read")
+                                .foregroundStyle(.secondary)
+                            if running {
+                                Button("Try Again") { Task { await venice.refreshBalances() } }
+                                    .controlSize(.small)
+                            }
+                        }
+                    } else {
+                        Unread(running: running, what: "Base USDC balance")
+                    }
+                }
+                HStack(spacing: 8) {
+                    ExportPrivateKeyButton(
+                        title: "Venice Base Wallet",
+                        address: address,
+                        loadKey: { try VeniceWalletKeychain.key() })
+                    Spacer(minLength: 0)
+                    if CardOnRamp.isConfigured {
+                        Button {
+                            onRampTarget = .baseUSDC(address: address)
+                        } label: {
+                            Label("Add Funds with Card / Apple Pay", systemImage: "creditcard")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+            } header: {
+                Text("Venice Base Wallet")
+            } footer: {
+                Text("Stored in this Mac's Keychain (not synced to iCloud). Reinstalling Cloak keeps this wallet, but back up your private key or keep working balances small before wiping or switching Macs.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Venice AI Credit") {
+                LabeledContent("Credit Balance") {
+                    if let usd = venice.credit?.usd {
+                        Text(usd.formatted(.currency(code: "USD")))
+                            .font(.title3.weight(.semibold))
+                            .monospacedDigit()
+                    } else if let stop = venice.accountStop {
+                        Text(stop.kind.title)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Unread(running: running, what: "Venice credit")
+                    }
+                }
+                if running {
+                    LabeledContent("Move USDC to Credit") {
+                        HStack(spacing: 6) {
+                            ForEach(["5", "10", "20"], id: \.self) { preset in
+                                Button("$\(preset)") {
+                                    topUpText = preset
+                                    topUpInvalid = false
+                                }
+                                .controlSize(.small)
+                                .buttonStyle(.bordered)
+                                .tint(topUpText == preset ? .accentColor : nil)
+                            }
+                            Text("$").foregroundStyle(.secondary)
+                            TextField("Amount", text: $topUpText, prompt: Text("5"))
+                                .labelsHidden()
+                                .accessibilityLabel("Top-up amount in US dollars")
+                                .frame(width: 52)
+                                .onChange(of: topUpText) { topUpInvalid = false }
+                            Button("Top Up") { runTopUp() }
+                                .disabled(venice.adding)
+                        }
+                    }
+                    if let least = venice.terms?.least {
+                        Text("Minimum top-up: \(least.dollars.formatted(.currency(code: "USD"))) USDC on Base.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if topUpInvalid {
+                        Text("Enter a valid dollar amount (e.g. 5).")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    if let added = venice.added {
+                        Label("Added \(added.credited.formatted(.currency(code: "USD"))) credit.", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                    if let stop = venice.topUpStop {
+                        Label("\(stop.kind.title): \(stop.kind.words)", systemImage: "exclamationmark.triangle.fill")
+                            .symbolRenderingMode(.multicolor)
+                            .font(.callout)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var keySection: some View {
+        Section {
+            if venice.hasKey == true {
+                LabeledContent("Key") {
+                    HStack(spacing: 8) {
+                        Text("Saved in Keychain")
+                            .foregroundStyle(.secondary)
+                        Button("Remove", role: .destructive) {
+                            keyBusy = true
+                            keyError = nil
+                            Task {
+                                do { try await venice.removeKey() } catch { keyError = "Couldn't remove key." }
+                                keyBusy = false
+                            }
+                        }
+                        .disabled(keyBusy)
+                    }
+                }
+                if let usd = venice.keyAccount?.usd {
+                    LabeledContent("USD Balance", value: usd.formatted(.currency(code: "USD")))
+                }
+            } else {
+                HStack(spacing: 8) {
+                    SecureField("Venice API key", text: $apiKeyInput, prompt: Text("Paste Venice Inference key"))
+                        .labelsHidden()
+                        .accessibilityLabel("Venice API key")
+                    Button("Save") {
+                        let trimmed = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        keyBusy = true
+                        keyError = nil
+                        Task {
+                            do {
+                                try await venice.saveKey(trimmed)
+                                apiKeyInput = ""
+                            } catch {
+                                keyError = "Couldn't save key to Keychain."
+                            }
+                            keyBusy = false
+                        }
+                    }
+                    .disabled(keyBusy || apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            if let keyError {
+                Text(keyError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text("Venice API Key")
+        } footer: {
+            if venice.hasKey != true {
+                Text("Create an Inference API key at [venice.ai/settings/api](https://venice.ai/settings/api).")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder private var modelsSection: some View {
+        Section {
+            let offered = venice.offered
+            if !offered.isEmpty {
+                let selectedID = Binding<String>(
+                    get: { venice.effectiveChoice?.id ?? offered[0].id },
+                    set: { id in
+                        if let model = offered.first(where: { $0.id == id }) {
+                            settings.veniceModel = VeniceChoice(id: model.id, name: model.name, tier: model.tier)
+                        }
+                    })
+                Picker("Model", selection: selectedID) {
+                    ForEach(offered) { model in
+                        let inPrice = model.input.formatted(.currency(code: "USD").precision(.fractionLength(2...4)))
+                        let outPrice = model.output.formatted(.currency(code: "USD").precision(.fractionLength(2...4)))
+                        Text("\(model.name) [\(model.tier.name)] · \(inPrice) | \(outPrice)")
+                            .tag(model.id)
+                    }
+                }
+                .tip("Prices per million tokens (in | out). Only Private and TEE models are listed by default.")
+            } else if let stop = venice.listStop {
+                HStack {
+                    Text("Couldn't load Venice models (\(stop.kind.title)).")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Try Again") { Task { await venice.refreshModels() } }
+                }
+            } else if running {
+                LabeledContent("Model") {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            } else {
+                Text("Start Cloak to load Venice models.")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Model")
+        } footer: {
+            Text("Powered by [Venice AI](https://venice.ai) ([Docs](https://docs.venice.ai) · [GitHub](https://github.com/veniceai)).")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func runTopUp() {
+        guard let amount = Amount(dollars: topUpText) else {
+            topUpInvalid = true
+            return
+        }
+        topUpInvalid = false
+        Task { await venice.topUp(amount) }
+    }
+}
+
 /// The wallet that pays for Token Inference chats, Agent on or off.
-private struct WalletSections: View {
+struct WalletSections: View {
     let wallet: Wallet
     let running: Bool
 
     var body: some View {
         if let stop = wallet.stop ?? wallet.readStop {
+            let canRetryRead = wallet.stop == nil && running && wallet.presence.address != nil
             Section {
-                StopRow(stop: stop) { wallet.dismiss() }
+                StopRow(
+                    stop: stop,
+                    retry: canRetryRead ? { Task { await wallet.refresh() } } : nil,
+                    dismiss: { wallet.dismiss() }
+                )
             }
         }
         switch wallet.presence {
         case .looking:
-            ProgressView()
-                .frame(maxWidth: .infinity)
+            Section {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Reading Token Inference wallet…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
+            }
         case .unreadable:
             Section {
                 Text("Cloak couldn't read the wallet.")
@@ -228,7 +765,7 @@ private struct Unread: View {
 /// it (never the key itself), with the way to that pane beside it; and,
 /// once NEAR has counted any of its answers, the chat's tokens in and out,
 /// added up. Counts only, never a price.
-private struct NearPayment: View {
+struct NearPayment: View {
     let mode: NearMode
     /// The chat's, added up; nil while no answer has counts.
     let tokens: Tokens?
@@ -239,21 +776,28 @@ private struct NearPayment: View {
     var body: some View {
         Section {
             LabeledContent("Key") {
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Text(key)
+                        .foregroundStyle(mode.hasKey == true ? .primary : .secondary)
                     if unread {
                         SymbolButton("Try Again", symbol: "arrow.clockwise") { Task { await read() } }
                             .overhanging()
                     }
-                    SymbolButton("Open Settings", symbol: "gearshape", action: openSettings)
-                        .overhanging()
+                    if mode.hasKey == false {
+                        Button("Set Up Key…", action: openSettings)
+                            .controlSize(.small)
+                    } else {
+                        SymbolButton("Open Settings", symbol: "gearshape", action: openSettings)
+                            .overhanging()
+                    }
                 }
             }
+            LabeledContent("Model", value: Near.displayModel)
             if let tokens {
                 LabeledContent("Tokens", value: String(localized: "\(tokens.input) in, \(tokens.output) out"))
             }
         } footer: {
-            Text("Paid with your NEAR key from [cloud.near.ai](https://cloud.near.ai).")
+            Text("Paid with your key from [NEAR AI Cloud](https://cloud.near.ai) ([NEAR AI Gateway](https://gateway.near.ai) · [Trace Commons](https://github.com/TraceCommons/trace-commons) · [Dstack TEE](https://github.com/Dstack-TEE/dstack)).")
                 .foregroundStyle(.secondary)
         }
         .task { await read() }
@@ -294,10 +838,10 @@ private struct Account: View {
     let address: String
     let running: Bool
     /// The wallet pays in USDC.e on Tempo and sends nothing else.
-    private static let only = "Send only USDC.e on Tempo. Cloak can't return anything else sent to this address."
+    private static let only = "Send USDC.e on Tempo only — other assets can't be recovered."
 
     var body: some View {
-        Section("Wallet") {
+        Section {
             LabeledContent("Address") {
                 HStack(spacing: 4) {
                     Text(address)
@@ -309,13 +853,12 @@ private struct Account: View {
                     CodeButton(address: address, only: Self.only)
                 }
             }
-            LabeledContent("Network") {
+            LabeledContent("Asset") {
                 HStack(spacing: 4) {
-                    Text("Tempo")
+                    Text("USDC.e · Tempo")
                     BoundlessTempoButton()
                 }
             }
-            LabeledContent("Asset", value: "USDC.e")
             Only(words: Self.only)
             if let look = wallet.look {
                 if !look.setup {
@@ -330,6 +873,143 @@ private struct Account: View {
             } else {
                 LabeledContent("Balance") { Unread(running: running, what: "wallet balance") }
             }
+            HStack {
+                ExportPrivateKeyButton(
+                    title: "Boundless Tempo Wallet",
+                    address: address,
+                    loadKey: { try WalletKeychain.key() })
+                Spacer(minLength: 0)
+            }
+        } header: {
+            Text("Wallet")
+        } footer: {
+            Text("Stored in this Mac's Keychain (not synced to iCloud). Reinstalling Cloak keeps this wallet, but back up your private key or keep working balances small before wiping or switching Macs.")
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Touch ID / Mac-password-gated private key export for Cloak's local EVM
+/// wallets (Venice Base & Boundless Tempo). Key bytes are read only after
+/// `LAContext` authentication succeeds and cleared from memory on dismiss.
+private struct ExportPrivateKeyButton: View {
+    let title: String
+    let address: String
+    let loadKey: @Sendable () throws -> Data
+
+    @State private var revealedHex: String?
+    @State private var errorMessage: String?
+    @State private var authenticating = false
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                authenticateAndReveal()
+            } label: {
+                Label("Export Private Key…", systemImage: "key")
+            }
+            .controlSize(.small)
+            .disabled(authenticating)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .popover(
+            isPresented: Binding(
+                get: { revealedHex != nil },
+                set: { shown in
+                    if !shown {
+                        revealedHex = nil
+                        copied = false
+                    }
+                }),
+            arrowEdge: .bottom
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .foregroundStyle(.orange)
+                    Text("\(title) Private Key")
+                        .font(.headline)
+                }
+                Text("Anyone with this key can spend funds at \(address). Store it in a password manager or offline backup — never share it or paste it into any chat.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let hex = revealedHex {
+                    Text(hex)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
+                }
+
+                HStack {
+                    Button {
+                        if let hex = revealedHex {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(hex, forType: .string)
+                            copied = true
+                        }
+                    } label: {
+                        Label(copied ? "Copied" : "Copy Private Key", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Spacer()
+                    Button("Hide") {
+                        revealedHex = nil
+                        copied = false
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .padding(14)
+            .frame(width: 390)
+        }
+        .onDisappear {
+            revealedHex = nil
+            copied = false
+        }
+    }
+
+    private func authenticateAndReveal() {
+        authenticating = true
+        errorMessage = nil
+        let reason = "Authenticate to export your \(title) private key."
+        let readKey = loadKey
+        Task {
+            let context = LAContext()
+            var authError: NSError?
+            let canAuth = context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &authError)
+            guard canAuth else {
+                authenticating = false
+                errorMessage = "Device authentication unavailable."
+                return
+            }
+            do {
+                let passed = try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+                guard passed else {
+                    authenticating = false
+                    return
+                }
+                let keyData = try await Task.detached(priority: .userInitiated) {
+                    try readKey()
+                }.value
+                let hex = "0x" + keyData.map { String(format: "%02x", $0) }.joined()
+                revealedHex = hex
+            } catch let laError as LAError where laError.code == .userCancel || laError.code == .appCancel || laError.code == .systemCancel {
+                // Silent cancel.
+            } catch {
+                errorMessage = "Couldn't read wallet key."
+            }
+            authenticating = false
         }
     }
 }
@@ -444,13 +1124,13 @@ private struct Holding: View {
                 }
             }
             if running {
-                ending(deposit, none: none)
+                ending(deposit, unread: look == nil, none: none)
             }
         }
     }
 
     /// Close and Withdraw, and why either is off.
-    private func ending(_ deposit: Look.Deposit?, none: Bool) -> some View {
+    private func ending(_ deposit: Look.Deposit?, unread: Bool, none: Bool) -> some View {
         TimelineView(.everyMinute) { context in
             let wait = deposit?.withdrawAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
             let waiting = wait.map { context.date < $0 } ?? false
@@ -467,11 +1147,11 @@ private struct Holding: View {
                 }
                 Spacer()
                 Button("Close") { Task { await wallet.close() } }
-                    .disabled(none)
+                    .disabled(unread || none)
                     .tip("Refunds what's unspent.")
                     .accessibilityHint("Refunds what's unspent.")
                 Button("Withdraw") { Task { await wallet.withdraw() } }
-                    .disabled(none || waiting)
+                    .disabled(unread || none || waiting)
                     .tip(withdraw)
                     .accessibilityHint(withdraw)
             }
@@ -500,53 +1180,10 @@ private struct Models: View {
             }
             .tip("Prices per million tokens: in | out.")
             .accessibilityHint("Prices per million tokens, in and out.")
+        } footer: {
+            Text("Powered by [Boundless](https://boundless.network) on [Tempo](https://tempo.xyz) via [MPP](https://mpp.dev) ([GitHub](https://github.com/tempoxyz/mpp-rs)).")
+                .foregroundStyle(.secondary)
         }
-    }
-}
-
-/// A mode's name in a capsule of its colour, with what it means for the
-/// person as its help and as what VoiceOver reads after the name.
-struct ModePill: View {
-    let title: String
-    let help: String
-    let tint: Color
-
-    var body: some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(tint.opacity(0.2), in: Capsule())
-            .tip(help)
-            .accessibilityHint(help)
-    }
-}
-
-/// V's mark, with what it means for the person as its help.
-struct VBar: View {
-    var body: some View {
-        HStack {
-            ModePill(
-                title: "V", help: "Reworded on this Mac and sent through Tor. Each request is paid with a new key.",
-                tint: .accentColor)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.06))
-    }
-}
-
-/// Token Inference's mark, with what it means for the person as its help.
-struct TokenBar: View {
-    var body: some View {
-        HStack {
-            ModePill(title: "Token Inference", help: "The provider can link your chats, because one wallet pays for all of them.", tint: .orange)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(.orange.opacity(0.06))
     }
 }
 
@@ -555,6 +1192,7 @@ struct TokenBar: View {
 struct StopRow: View {
     let stop: RemoteStop
     var showWallet: (() -> Void)?
+    var retry: (() -> Void)?
     let dismiss: () -> Void
 
     var body: some View {
@@ -569,7 +1207,10 @@ struct StopRow: View {
             }
             Spacer()
             if stop.code == .noFunds || stop.code == .modelUnavailable, let showWallet {
-                Button("Wallet…", action: showWallet)
+                Button("Funds…", action: showWallet)
+            }
+            if let retry {
+                Button("Try Again", action: retry)
             }
             Button("Dismiss", systemImage: "xmark", action: dismiss)
                 .labelStyle(.iconOnly)
@@ -597,7 +1238,7 @@ extension RemoteStop {
         switch code {
         case .noFunds: "Add USDC.e on Tempo to the wallet, then try again."
         case .walletRefused: "The provider declined this wallet."
-        case .modelUnavailable: "This model can't be used now. Pick another in Wallet."
+        case .modelUnavailable: "This model can't be used now. Pick another in Funds."
         case .torDown: "Cloak couldn't reach the network through Tor. Try again."
         case .answerRefused: "The model declined to answer."
         case .failed: "The request did not go through. Try again."

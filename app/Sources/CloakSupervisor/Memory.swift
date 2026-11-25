@@ -37,6 +37,13 @@ public struct Memory: Sendable, Equatable {
     /// The name of the process macOS runs each virtual machine in.
     static let virtualMachine = "com.apple.Virtualization.VirtualMachine"
 
+    /// Reads every part off the caller's actor so UI polling does not block
+    /// `@MainActor` while scanning processes.
+    @concurrent
+    public static func readAsync(guest: Bool) async -> Memory {
+        read(guest: guest)
+    }
+
     /// Reads every part now. With `guest`, a guest has been started, so its
     /// virtual machine must be among them: when none is found, that part
     /// cannot be read. A process that ends before it is read holds nothing,

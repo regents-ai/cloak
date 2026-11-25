@@ -51,13 +51,22 @@ public struct ModelPin: Sendable {
         }
     }
 
+    /// Which local inference worker runs this model.
+    public enum EngineKind: String, Decodable, Sendable, Equatable {
+        case llama
+        case vmlx
+    }
+
     public let name: String
+    public let engine: EngineKind
     public let files: [File]
     public let chatTemplateContext: [String: Setting]
     /// Nil for a model that never rewords.
     public let grammar: Grammar?
     /// Nil for a model that never answers Local Llama chats.
     public let answers: Answers?
+    /// Optional pinned uncensored LoRA adapter file for this model; nil when none is defined.
+    public let unfilteredLora: File?
 
     /// Only models the worker runs carry frozen chat template settings
     /// (`chat_template_context`), and a reply grammar, what it needs to
@@ -66,10 +75,12 @@ public struct ModelPin: Sendable {
     public static func load(name: String) throws -> ModelPin {
         struct Entry: Decodable {
             let name: String
+            let engine: EngineKind?
             let files: [File]
             let chat_template_context: [String: Setting]?
             let grammar: Grammar?
             let answers: Answers?
+            let unfiltered_lora: String?
         }
         struct Manifest: Decodable { let models: [Entry] }
         let models = try JSONDecoder().decode(Manifest.self, from: Data(PackageResources.models_json)).models
@@ -79,9 +90,30 @@ public struct ModelPin: Sendable {
         guard let context = entry.chat_template_context, entry.grammar != nil || entry.answers != nil else {
             throw WorkerError("\(name) is not a model the worker runs")
         }
+        let loraFile: File?
+        if let loraName = entry.unfiltered_lora {
+            guard let loraEntry = models.first(where: { $0.name == loraName }), let file = loraEntry.files.first else {
+                throw WorkerError("\(name) names an unknown unfiltered LoRA \(loraName)")
+            }
+            loraFile = file
+        } else {
+            loraFile = nil
+        }
         return ModelPin(
-            name: entry.name, files: entry.files, chatTemplateContext: context, grammar: entry.grammar,
-            answers: entry.answers)
+            name: entry.name, engine: entry.engine ?? .llama, files: entry.files, chatTemplateContext: context,
+            grammar: entry.grammar, answers: entry.answers, unfilteredLora: loraFile)
+    }
+
+    /// Verifies an optional LoRA adapter file against this model's pinned
+    /// `unfilteredLora` size and sha256.
+    public func verifyLora(file url: URL) throws {
+        guard let pinned = unfilteredLora else {
+            throw WorkerError("\(name) does not pin a LoRA adapter")
+        }
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true, values.fileSize == pinned.size, try digest(url) == pinned.sha256 else {
+            throw WorkerError("\(url.lastPathComponent) does not match the pinned LoRA")
+        }
     }
 
     /// The directory must hold exactly the pinned files, as regular files with
@@ -102,6 +134,9 @@ public struct ModelPin: Sendable {
         for case let url as URL in entries {
             let values = try url.resourceValues(forKeys: Set(keys))
             if values.isDirectory == true { continue }
+            // Opening a model folder in Finder creates .DS_Store; ignore it so
+            // inspecting the folder never bricks the pinned worker check.
+            if url.lastPathComponent == ".DS_Store" { continue }
             let path = String(url.standardizedFileURL.path.dropFirst(root.count))
             guard values.isRegularFile == true else { throw WorkerError("\(path) is not a regular file") }
             found.insert(path)

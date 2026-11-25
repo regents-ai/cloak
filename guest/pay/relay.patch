@@ -1,6 +1,6 @@
 --- a/internal/relay/relay.go
 +++ b/internal/relay/relay.go
-@@ -1,30 +1,28 @@
+@@ -1,30 +1,30 @@
 -// Package relay provides direct HTTPS or destination TLS through a Wisp v1
 -// relay or a loopback SOCKS5 proxy. A configured route forwards encrypted bytes
 -// without terminating TLS and never falls back to direct access.
@@ -15,13 +15,14 @@
  package relay
  
  import (
++	"bytes"
  	"context"
 +	"crypto/rand"
  	"crypto/tls"
 -	"encoding/binary"
 +	"encoding/hex"
  	"errors"
--	"io"
+ 	"io"
  	"net"
  	"net/http"
  	"net/url"
@@ -43,7 +44,7 @@
  func NewClient(relayURL string) (*http.Client, error) {
  	dialContext, err := destinationDialer(relayURL)
  	if err != nil {
-@@ -48,30 +46,29 @@
+@@ -48,182 +48,134 @@
  	}, nil
  }
  
@@ -92,17 +93,36 @@
  	}, nil
  }
  
-@@ -84,146 +81,21 @@
- 	return t.base.RoundTrip(r)
+ type httpsOnly struct{ base http.RoundTripper }
+ 
+-func (t httpsOnly) RoundTrip(r *http.Request) (*http.Response, error) {
+-	if r.URL.Scheme != "https" || r.URL.User != nil {
+-		return nil, errors.New("upstream transport requires destination HTTPS")
+-	}
+-	return t.base.RoundTrip(r)
++// mainnetRPCFallbacks are Tor-accessible Ethereum Mainnet JSON-RPC endpoints
++// tried in order when the configured mainnet RPC is challenged (e.g. Cloudflare
++// HTTP 403 on Tor exits) or temporarily unreachable.
++var mainnetRPCFallbacks = []string{
++	"https://eth.drpc.org",
++	"https://ethereum.public.blockpi.network/v1/rpc/public",
++	"https://rpc.mevblocker.io",
++	"https://ethereum-rpc.publicnode.com",
  }
  
 -func loopback(host string) bool {
 -	return host == "localhost" || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())
--}
-+// Tor mode uses SOCKS authentication isolation, not global SIGNAL NEWNYM.
-+// The SOCKS port must be configured with IsolateSOCKSAuth. Tor can replace a
-+// circuit and can choose the same exit for different isolation identities.
-+type torIdentityKey struct{}
++func isMainnetRPCURL(u *url.URL) bool {
++	if u == nil || u.Scheme != "https" || u.RawQuery != "" {
++		return false
++	}
++	switch u.Host {
++	case "ethereum-rpc.publicnode.com", "eth.drpc.org":
++		return u.Path == "" || u.Path == "/"
++	default:
++		return false
++	}
+ }
  
 -func packet(kind byte, id uint32, payload []byte) []byte {
 -	b := make([]byte, 5+len(payload))
@@ -116,15 +136,16 @@
 -	host, port, err := net.SplitHostPort(address)
 -	if err != nil {
 -		return nil, errors.New("invalid relay destination")
-+func NewTorIdentity() (string, error) {
-+	var entropy [32]byte
-+	if _, err := rand.Read(entropy[:]); err != nil {
-+		return "", err
++func (t httpsOnly) RoundTrip(r *http.Request) (*http.Response, error) {
++	if r.URL.Scheme != "https" || r.URL.User != nil {
++		return nil, errors.New("upstream transport requires destination HTTPS")
  	}
 -	p, err := strconv.ParseUint(port, 10, 16)
 -	if err != nil || p == 0 || len(host) > 253 {
 -		return nil, errors.New("invalid relay destination")
--	}
++	if r.Method == http.MethodPost && isMainnetRPCURL(r.URL) {
++		return t.roundTripMainnetRPC(r)
+ 	}
 -	dialCtx, cancelDial := context.WithTimeout(ctx, 20*time.Second)
 -	defer cancelDial()
 -	// Do not inherit HTTP_PROXY, credentials, or a cookie jar from the user.
@@ -156,7 +177,7 @@
 -	go c.receive()
 -	go c.send()
 -	return c, nil
-+	return hex.EncodeToString(entropy[:]), nil
++	return t.base.RoundTrip(r)
  }
  
 -type conn struct {
@@ -169,11 +190,7 @@
 -	mu     sync.Mutex
 -	credit uint32
 -	notify chan struct{}
-+// WithTorIdentity scopes only this request's network dials. No identity is
-+// sent in HTTP headers, and payment/companion traffic never inherits it.
-+func WithTorIdentity(ctx context.Context, identity string) context.Context {
-+	return context.WithValue(ctx, torIdentityKey{}, identity)
- }
+-}
 -
 -func (c *conn) Close() error {
 -	c.shutdown()
@@ -190,20 +207,53 @@
 -		kind, b, err := c.ws.Read(c.ctx)
 -		if err != nil || kind != websocket.MessageBinary || len(b) < 5 {
 -			return
--		}
++func (t httpsOnly) roundTripMainnetRPC(r *http.Request) (*http.Response, error) {
++	var body []byte
++	if r.Body != nil {
++		var err error
++		body, err = io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
++		_ = r.Body.Close()
++		if err != nil {
++			return nil, err
+ 		}
 -		id := binary.LittleEndian.Uint32(b[1:5])
 -		if id != 1 {
 -			return
--		}
++		if len(body) > 1<<20 {
++			return nil, errors.New("RPC request body too large")
+ 		}
 -		switch b[0] {
 -		case 2:
 -			if _, err := c.peer.Write(b[5:]); err != nil {
 -				return
--			}
++	}
++	var lastResp *http.Response
++	var lastErr error
++	for i, rawURL := range mainnetRPCFallbacks {
++		u, err := url.Parse(rawURL)
++		if err != nil {
++			continue
++		}
++		req := r.Clone(r.Context())
++		req.URL = u
++		req.Host = u.Host
++		req.RequestURI = ""
++		req.Body = io.NopCloser(bytes.NewReader(body))
++		req.ContentLength = int64(len(body))
++		resp, err := t.base.RoundTrip(req)
++		if err == nil {
++			if resp.StatusCode == http.StatusOK {
++				return resp, nil
+ 			}
 -		case 3:
 -			if len(b) != 9 {
 -				return
--			}
++			retryable := resp.StatusCode == http.StatusForbidden ||
++				resp.StatusCode == http.StatusTooManyRequests ||
++				resp.StatusCode >= 500
++			if !retryable || i == len(mainnetRPCFallbacks)-1 {
++				return resp, nil
+ 			}
 -			c.mu.Lock()
 -			c.credit = binary.LittleEndian.Uint32(b[5:])
 -			c.mu.Unlock()
@@ -215,10 +265,22 @@
 -			return
 -		default:
 -			return
--		}
--	}
--}
--
++			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
++			_ = resp.Body.Close()
++			lastResp = resp
++			continue
+ 		}
++		lastErr = err
++		if r.Context().Err() != nil {
++			return nil, err
++		}
+ 	}
++	if lastResp != nil {
++		return lastResp, nil
++	}
++	return nil, lastErr
+ }
+ 
 -func (c *conn) send() {
 -	defer c.shutdown()
 -	b := make([]byte, 16*1024)
@@ -248,7 +310,22 @@
 -		if err != nil {
 -			return
 -		}
--	}
--}
--
++// Tor mode uses SOCKS authentication isolation, not global SIGNAL NEWNYM.
++// The SOCKS port must be configured with IsolateSOCKSAuth. Tor can replace a
++// circuit and can choose the same exit for different isolation identities.
++type torIdentityKey struct{}
++
++func NewTorIdentity() (string, error) {
++	var entropy [32]byte
++	if _, err := rand.Read(entropy[:]); err != nil {
++		return "", err
+ 	}
++	return hex.EncodeToString(entropy[:]), nil
+ }
+ 
 -var _ io.ReadWriteCloser = (*conn)(nil)
++// WithTorIdentity scopes only this request's network dials. No identity is
++// sent in HTTP headers, and payment/companion traffic never inherits it.
++func WithTorIdentity(ctx context.Context, identity string) context.Context {
++	return context.WithValue(ctx, torIdentityKey{}, identity)
++}

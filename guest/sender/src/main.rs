@@ -6,6 +6,7 @@
 #[cfg(target_os = "linux")]
 fn main() -> std::process::ExitCode {
     use std::io::Write;
+    use std::sync::Arc;
     use std::time::Instant;
     use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY, VMADDR_CID_HOST};
 
@@ -16,12 +17,14 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .expect("runtime");
-    let network = cloak_sender::Network::live();
+    let runtime = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("runtime"),
+    );
+    let network = Arc::new(cloak_sender::Network::live());
     println!("ready");
     let _ = std::io::stdout().flush();
     loop {
@@ -37,14 +40,20 @@ fn main() -> std::process::ExitCode {
         if peer.cid() != VMADDR_CID_HOST {
             continue;
         }
-        let started = Instant::now();
-        match cloak_sender::serve(&runtime, &network, stream) {
-            Ok((name, outcome)) => eprintln!(
-                "cloak-sender: {name} {outcome} in {:.2} s",
-                started.elapsed().as_secs_f64()
-            ),
-            Err(error) => eprintln!("cloak-sender: connection failed: {error}"),
-        }
+        // Serve each connection concurrently so long-running streaming Venice
+        // requests never block Tempo wallet refreshes or other chats.
+        let runtime = Arc::clone(&runtime);
+        let network = Arc::clone(&network);
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            match cloak_sender::serve(&runtime, &network, stream) {
+                Ok((name, outcome)) => eprintln!(
+                    "cloak-sender: {name} {outcome} in {:.2} s",
+                    started.elapsed().as_secs_f64()
+                ),
+                Err(error) => eprintln!("cloak-sender: connection failed: {error}"),
+            }
+        });
     }
 }
 

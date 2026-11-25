@@ -66,6 +66,7 @@ public final class PayQueue {
         let id = UUID()
         try await turn(id, rank)
         defer { finish(id) }
+        guard !Task.isCancelled else { throw PayStop(.cancelled, "cancelled before sending") }
         let answer = try await exchange(.request, payload, limit: PayLimit.answer)
         guard answer.status == 200 else { throw PayStop(status: answer.status, body: answer.body) }
         return Data(answer.body.utf8)
@@ -121,7 +122,8 @@ public final class PayQueue {
         }
         let answer = try await exchange(.call, payload, limit: limit)
         guard (200..<300).contains(answer.status) else {
-            throw PayStop(.failed, "\(method) \(path) answered \(answer.status)")
+            let reason = Self.answerDetail(answer.body).map { ": \($0)" } ?? ""
+            throw PayStop(.failed, "\(method) \(path) answered \(answer.status)\(reason)")
         }
         return Data(answer.body.utf8)
     }
@@ -135,12 +137,35 @@ public final class PayQueue {
             throw PayStop(.failed, "cannot build the read: \(error)")
         }
         let answer = try await exchange(.view, payload, limit: PayLimit.read)
-        guard answer.status == 200 else { throw PayStop(.failed, "the read answered \(answer.status)") }
+        guard answer.status == 200 else {
+            let reason = Self.answerDetail(answer.body).map { ": \($0)" } ?? ""
+            throw PayStop(.failed, "the read answered \(answer.status)\(reason)")
+        }
         do {
             return try JSONDecoder.pay.decode(DepositView.self, from: Data(answer.body.utf8))
         } catch {
             throw PayStop(.failed, "the read did not read: \(error)")
         }
+    }
+
+    /// Extracts a short, safe error string from a payer admin/view error body
+    /// (`{"error": "..."}` or `{"error": {"message": "..."}}`) for logging.
+    private static func answerDetail(_ body: String) -> String? {
+        struct Flat: Decodable { let error: String }
+        struct Nested: Decodable {
+            struct Inner: Decodable { let message: String? }
+            let error: Inner
+        }
+        let data = Data(body.utf8)
+        let raw = (try? JSONDecoder().decode(Flat.self, from: data))?.error
+            ?? (try? JSONDecoder().decode(Nested.self, from: data))?.error.message
+        guard let raw else { return nil }
+        let cleaned = raw
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        return cleaned.count > 160 ? String(cleaned.prefix(160)) + "…" : cleaned
     }
 
     // MARK: One exchange
@@ -157,6 +182,7 @@ public final class PayQueue {
     /// from the `H` that ends the hold, for `limit` again. When a limit runs out, or the caller is cancelled, the
     /// connection closes.
     private func exchange(_ ask: Pay.Ask, _ payload: Data, limit: Duration) async throws(PayStop) -> PayFrame.Answer {
+        guard !Task.isCancelled else { throw PayStop(.cancelled, "cancelled") }
         let events: AsyncThrowingStream<Pay.Event, any Error>
         do {
             events = try await line(ask, payload)
@@ -172,7 +198,7 @@ public final class PayQueue {
                     guard let frame = try? JSONDecoder().decode(PayFrame.Held.self, from: data) else {
                         throw PayStop(.failed, "an H frame did not read")
                     }
-                    held = frame.held
+                    if ask == .request { held = frame.held }
                     watch.arm(frame.held ? .held : .over, for: frame.held ? hold : limit)
                 case .answer(let data):
                     return data
@@ -200,9 +226,14 @@ public final class PayQueue {
                     ? PayStop(.heldTooLong, "held past \(hold)") : PayStop(.timedOut, "no answer within the limit")
             }
             if Task.isCancelled { throw PayStop(.cancelled, "cancelled") }
-            // Nothing was sent while the hold lasted.
+            if let stop = error as? PayStop {
+                // Nothing was sent while the hold lasted.
+                if watch.hold == .held, stop.code == .ended {
+                    throw PayStop(.unreachable, "the payer went away during the hold")
+                }
+                throw stop
+            }
             if watch.hold == .held { throw PayStop(.unreachable, "the payer went away during the hold") }
-            if let stop = error as? PayStop { throw stop }
             throw PayStop(.ended, "\(error)")
         }
     }

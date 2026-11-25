@@ -135,7 +135,7 @@ public final class ModelDownload {
     public init(model: Manifest.Model, manifest: Manifest, layout: Layout) {
         self.model = model
         rewords = model.name == manifest.model
-        fits = manifest.answerCheck(model, hardware: .current).1 == nil
+        fits = model.memory == 0 ? true : manifest.answerCheck(model, hardware: .current).1 == nil
         files = model.files
         folder = layout.model(model)
         total = model.size
@@ -144,6 +144,11 @@ public final class ModelDownload {
         state = .stopped(nil)
         read()
         if inPlace.count == files.count { state = .installed }
+    }
+
+    /// Creates a resumable, SHA-256-verified download for an optional LoRA adapter.
+    public convenience init(adapter: Manifest.Model.Adapter, manifest: Manifest, layout: Layout) {
+        self.init(model: adapter.asDownloadModel(), manifest: manifest, layout: layout)
     }
 
     /// The bytes on this Mac toward the model: the files in place and what
@@ -196,7 +201,12 @@ public final class ModelDownload {
         guard isUnderWay else { return }
         work?.cancel()
         state = .stopped(.paused)
-        after { $0.read() }
+        after { download in
+            download.read()
+            if download.inPlace.count == download.files.count {
+                download.state = .installed
+            }
+        }
     }
 
     /// Stops what is under way and removes the partial files.
@@ -224,16 +234,34 @@ public final class ModelDownload {
         }
     }
 
+    /// Clears a corrupted or modified model folder (including the rewording
+    /// model) and starts a clean re-download, so `.modelChanged` always has an
+    /// in-app recovery path.
+    public func repair() {
+        work?.cancel()
+        state = .stopped(nil)
+        after { download in
+            try? FileManager.default.removeItem(at: download.folder)
+            download.read()
+            if download.blocked == nil {
+                download.state = .downloading
+                await download.download()
+            }
+        }
+    }
+
     private func begin() {
         state = .downloading
         after { await $0.download() }
     }
 
-    /// Runs `step` once the work before it has ended.
+    /// Runs `step` once the work before it has ended, unless this step was
+    /// itself superseded before its turn came.
     private func after(_ step: @escaping @MainActor (ModelDownload) async -> Void) {
         let previous = work
         work = Task {
             await previous?.value
+            guard !Task.isCancelled else { return }
             await step(self)
         }
     }
@@ -270,8 +298,15 @@ public final class ModelDownload {
                         state = .waitingForNetwork
                         return
                     }
+                    // Disk-full / write errors and client HTTP errors (e.g. 404, 416)
+                    // won't succeed on immediate blind retry and would re-hash GBs.
+                    let retryable: Bool = switch problem {
+                    case .write: false
+                    case .status(let code): code == 429 || code >= 500
+                    case .network, .other: true
+                    }
                     if Self.size(of: Self.partial(for: file, in: folder)) > before { failures = 0 }
-                    guard failures < Self.waits.count else {
+                    guard retryable, failures < Self.waits.count else {
                         state = .stopped(.failed(problem))
                         return
                     }
@@ -316,6 +351,7 @@ public final class ModelDownload {
         guard isUnderWay else {
             watch?.cancel()
             watch = nil
+            online = true
             return
         }
         guard watch == nil else { return }

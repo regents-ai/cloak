@@ -1249,7 +1249,7 @@
     },
     {
       "name": "inkling-mini-gguf",
-      "role": "Local Llama answer model (decision 21): ggml-org's GGUF IQ4_NL quantization of thinkingmachines/Inkling-2-Mini, on llama.cpp, with the chat template from inkling-mini-base. It answers Local Llama chats only and never rewords, so it has no grammar.",
+      "role": "Legacy Local Llama answer model (decision 21): ggml-org's GGUF IQ4_NL quantization of thinkingmachines/Inkling-2-Mini. Superseded in manifest answer_models by inkling-mini-ud-q3-gguf (24 GB Macs) and inkling-mini-nvfp4-gguf (>=32 GB Macs, native NVFP4 without double quantization); retained for provenance.",
       "repo": "ggml-org/Inkling-2-Mini-GGUF",
       "revision": "db61c5b492a6a034d986328d28274af0a439aa6c",
       "only": [
@@ -1262,14 +1262,9 @@
         ]
       },
       "chat_template_context": {},
-      "answers": {
-        "label": "Inkling 2 Mini",
-        "memory_gib": 17,
-        "context_tokens": 19456
-      },
       "last_modified": "2026-11-20T14:43:06.000Z",
       "gated": false,
-      "license": null,
+      "license": "apache-2.0",
       "license_name": null,
       "base_model": [
         "thinkingmachines/Inkling-2-Mini"
@@ -1289,6 +1284,213 @@
           "size": 6868,
           "sha256": "53a9035f3255945704b5857657cfb00c1165090c0641c4f782a0cbf268cc16dc",
           "from": "inkling-mini-base"
+        }
+      ]
+    },
+    {
+      "name": "inkling-mini-uncensored-lora",
+      "role": "Optional opt-in 44 MB uncensored GGUF LoRA adapter from AtomicChat for mainline PR #32694 (`inkling2_loop`) Inkling 2 Mini GGUFs. Never loaded unless the user enables the Unfiltered (Uncensored) toggle in Settings.",
+      "repo": "AtomicChat/Inkling-2-Mini-Uncensored-GGUF",
+      "revision": "40886ab636cabb4decf4998224f790b462ab048e",
+      "label": "Unfiltered (AtomicChat LoRA)",
+      "gated": false,
+      "license": "apache-2.0",
+      "license_name": null,
+      "base_model": [
+        "thinkingmachines/Inkling-2-Mini"
+      ],
+      "total_bytes": 43805184,
+      "files": [
+        {
+          "path": "Inkling-2-Mini-Uncensored-LoRA.gguf",
+          "size": 43805184,
+          "sha256": "42914b85c874e7fe249e93f0ac6e8abf08dc0bdf32aa1ec46c72714e64808f12"
+        }
+      ]
+    },
+    {
+      "name": "inkling-mini-ud-q3-gguf",
+      "role": "Mid-tier Local Llama answer model for 24 GB Apple silicon Macs: Unsloth's dynamic UD-Q3_K_XL mainline (`inkling2_loop`) quantization of thinkingmachines/Inkling-2-Mini, requiring llama.cpp b12611+ (PR #32704 loop-pass scale fix).",
+      "repo": "unsloth/Inkling-2-Mini-GGUF",
+      "revision": "45fd08764f2b0bf16b03a5483a80e5c7aaec8772",
+      "only": [
+        "Mainline_Support/Inkling-2-Mini-UD-Q3_K_XL.gguf_file"
+      ],
+      "vendor_files": {
+        "from": "inkling-mini-base",
+        "paths": [
+          "chat_template.jinja"
+        ]
+      },
+      "chat_template_context": {},
+      "unfiltered_lora": "inkling-mini-uncensored-lora",
+      "answers": {
+        "label": "Inkling 2 Mini (24 GB GGUF)",
+        "memory_gib": 14,
+        "context_tokens": 19456
+      },
+      "last_modified": "2026-11-22T00:00:00.000Z",
+      "gated": false,
+      "license": "apache-2.0",
+      "license_name": null,
+      "base_model": [
+        "thinkingmachines/Inkling-2-Mini"
+      ],
+      "library": null,
+      "architectures": null,
+      "quantization": "UD-Q3_K_XL",
+      "total_bytes": 13631786164,
+      "files": [
+        {
+          "path": "Inkling-2-Mini-UD-Q3_K_XL.gguf",
+          "remote_path": "Mainline_Support/Inkling-2-Mini-UD-Q3_K_XL.gguf_file",
+          "size": 13631779296,
+          "sha256": "e2d03e8c92ac21cff0e3309b95f40dfd27d1825184f0d2bc09db249797273639"
+        },
+        {
+          "path": "chat_template.jinja",
+          "size": 6868,
+          "sha256": "53a9035f3255945704b5857657cfb00c1165090c0641c4f782a0cbf268cc16dc",
+          "from": "inkling-mini-base"
+        }
+      ]
+    },
+    {
+      "name": "inkling-mini-nvfp4-gguf",
+      "role": "Flagship Local Llama answer model for >=32 GB Apple silicon Macs: Xylolabs's native NVFP4-Q8_0 GGUF preserving thinkingmachines/Inkling-2-Mini's native NVFP4 experts without double-quantization loss, requiring llama.cpp b12611+ (PR #32704 loop-pass scale fix).",
+      "repo": "Xylolabs/Inkling-2-Mini-GGUF",
+      "revision": "5535fb27f7d218d871095d344f144671ef9aa7db",
+      "only": [
+        "Inkling-2-Mini-NVFP4-Q8_0.gguf"
+      ],
+      "vendor_files": {
+        "from": "inkling-mini-base",
+        "paths": [
+          "chat_template.jinja"
+        ]
+      },
+      "chat_template_context": {},
+      "unfiltered_lora": "inkling-mini-uncensored-lora",
+      "answers": {
+        "label": "Inkling 2 Mini (Full Quality)",
+        "memory_gib": 18,
+        "context_tokens": 19456
+      },
+      "last_modified": "2026-11-22T00:00:00.000Z",
+      "gated": false,
+      "license": "apache-2.0",
+      "license_name": null,
+      "base_model": [
+        "thinkingmachines/Inkling-2-Mini"
+      ],
+      "library": null,
+      "architectures": null,
+      "quantization": "NVFP4-Q8_0",
+      "total_bytes": 17627970356,
+      "files": [
+        {
+          "path": "Inkling-2-Mini-NVFP4-Q8_0.gguf",
+          "size": 17627963488,
+          "sha256": "d4fcaf47c7f3efbbe057bcf2e516076b7a517017308284b2032c92851edfbd37"
+        },
+        {
+          "path": "chat_template.jinja",
+          "size": 6868,
+          "sha256": "53a9035f3255945704b5857657cfb00c1165090c0641c4f782a0cbf268cc16dc",
+          "from": "inkling-mini-base"
+        }
+      ]
+    },
+    {
+      "name": "inkling-mini-jangh2",
+      "role": "Recommended fast Local Llama answer model for all Apple silicon Macs (16 GB+): OsaurusAI's JANGH2 Hadamard-32 quantization of thinkingmachines/Inkling-2-Mini (10.2 GB, 91.3% top-1 overall / 93.7-96.3% code & reasoning), run natively in pure Swift via cloak-worker-vmlx (osaurus-ai/vmlx-swift, MIT) at 57-64 tok/s and 10.33 GiB peak RAM.",
+      "repo": "OsaurusAI/Inkling-2-Mini-JANGH2",
+      "revision": "4bed4746061177a898320525f4da9aa1a53cde8c",
+      "engine": "vmlx",
+      "chat_template_context": {},
+      "answers": {
+        "label": "Inkling 2 Mini (Fast)",
+        "memory_gib": 9.5,
+        "context_tokens": 19456
+      },
+      "last_modified": "2026-11-22T00:00:00.000Z",
+      "gated": false,
+      "license": "apache-2.0",
+      "license_name": null,
+      "base_model": [
+        "thinkingmachines/Inkling-2-Mini"
+      ],
+      "library": "mlx",
+      "architectures": [
+        "Inkling2LoopForConditionalGeneration"
+      ],
+      "quantization": "JANGH2",
+      "total_bytes": 10208308991,
+      "files": [
+        {
+          "path": "chat_template.jinja",
+          "size": 6868,
+          "sha256": "53a9035f3255945704b5857657cfb00c1165090c0641c4f782a0cbf268cc16dc"
+        },
+        {
+          "path": "config.json",
+          "size": 23464,
+          "sha256": "d233b8109613fabbf5d24d1758cba307960b3f2fa4d44735a8619bfac333645c"
+        },
+        {
+          "path": "generation_config.json",
+          "size": 98,
+          "sha256": "a08737c07a65a8fdf69f7cf086576210e5aad4b241437090b26d7b0c4f7905f7"
+        },
+        {
+          "path": "jang_config.json",
+          "size": 1030,
+          "sha256": "b335f520d21e9919dcf9beca7635f1beb1a9c77db60d2a4b0be26da46ee0aa0c"
+        },
+        {
+          "path": "model-00001-of-00003.safetensors",
+          "size": 4288057592,
+          "sha256": "d4d15395f59b44507f83ab3bd695c1606e324ecb5c648f35c4952a0309bbc352"
+        },
+        {
+          "path": "model-00002-of-00003.safetensors",
+          "size": 4205423544,
+          "sha256": "c7ff596247bee992447112360aaeb3a9f5e7d0f6f382136017519b2e834e5eac"
+        },
+        {
+          "path": "model-00003-of-00003.safetensors",
+          "size": 1688472096,
+          "sha256": "933002e86f7ef44161e45b13d100eeeb9b3eb4643b14848fa058b0b9acac4631"
+        },
+        {
+          "path": "model.safetensors.index.json",
+          "size": 131329,
+          "sha256": "5850e9b1dd0826a78c9bd32587eba161c54f890e8160c2c78d7f51080f9375fc"
+        },
+        {
+          "path": "osaurus.json",
+          "size": 67,
+          "sha256": "0de0837488d9fecfd6e00d3cb3b121b992835c16a19cfcaa07589001bd790d59"
+        },
+        {
+          "path": "processor_config.json",
+          "size": 461,
+          "sha256": "d7350adce18c8be4b607f261c8f0f7eabbf720bb7aaf648a43d4f8372bbacc2d"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "size": 529,
+          "sha256": "c16f44b3594563d82743ddb0417a2be1bfe3e2000dfad2da4b8f32554593e1a0"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 26178678,
+          "sha256": "7f332727f9a3f093dd452a39cc978e6757627e5dad1b0673aa4e75174f236dd6"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "size": 13235,
+          "sha256": "bf09342d285139fd37ce10c70878af1d52cb390e9901e10248654293a80ee636"
         }
       ]
     }

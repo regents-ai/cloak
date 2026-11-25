@@ -50,7 +50,8 @@ def fetch(repo: str, revision: str, entry: dict, target: Path) -> None:
     partial = target.with_name(target.name + ".part")
     have = partial.stat().st_size if partial.exists() else 0
     if have < entry["size"]:
-        request = urllib.request.Request(url(repo, revision, entry["path"]),
+        remote = entry.get("remote_path", entry["path"])
+        request = urllib.request.Request(url(repo, revision, remote),
                                          headers={"Range": f"bytes={have}-"} if have else {})
         # 206 is the rest of the file; 200 is all of it, from the start.
         with urllib.request.urlopen(request, timeout=60) as r, partial.open("ab" if r.status == 206 else "wb") as f:

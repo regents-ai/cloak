@@ -26,9 +26,14 @@ private struct Tip: ViewModifier {
     @State private var id = UUID()
 
     func body(content: Content) -> some View {
-        content
-            .accessibilityHint(words)
-            .onHover { inside in
+        Group {
+            if words.isEmpty {
+                content
+            } else {
+                content.accessibilityHint(words)
+            }
+        }
+        .onHover { inside in
                 // None in a window behind another app's.
                 if inside, NSApp.isActive {
                     TipPanel.shared.rest(id, words)

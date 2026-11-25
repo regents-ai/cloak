@@ -64,8 +64,11 @@ struct VeniceTransfer: Sendable, Equatable {
 enum VeniceWallet {
     static let domain = "api.venice.ai"
     static let statement = "Sign in to Venice AI"
-    /// Base's USDC: the one asset a top-up is paid in.
+    /// Base's USDC: the one asset a top-up is paid in, with its EIP-712
+    /// domain's name and version.
     static let usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    static let usdcName = "USD Coin"
+    static let usdcVersion = "2"
 
     /// The EIP-4361 message a sign-in signs, as Venice rebuilds it from the
     /// header's fields.
@@ -187,21 +190,40 @@ extension Venice {
                 let version: String
             }
         }
-        guard let challenge = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let accepts = challenge["accepts"] as? [[String: Any]],
+        guard let challenge = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let accepts = challenge["accepts"] as? [[String: Any]]
+        else { throw VeniceStop(.failed, sent: true, "Venice's terms did not read") }
+        guard
             let base = accepts.first(where: {
                 $0["scheme"] as? String == "exact" && $0["network"] as? String == "eip155:8453"
                     && ($0["asset"] as? String)?.lowercased() == VeniceWallet.usdc.lowercased()
             }),
-            let entry = try? JSONDecoder().decode(Entry.self, from: JSONSerialization.data(withJSONObject: base))
-        else { throw VeniceStop(.failed, sent: true, "Venice's terms name no Base USDC top-up that reads") }
+            let entry = try? JSONDecoder().decode(Entry.self, from: JSONSerialization.data(withJSONObject: base)),
+            entry.extra.name == VeniceWallet.usdcName, entry.extra.version == VeniceWallet.usdcVersion
+        else { throw VeniceStop(.notUSDC, sent: true, "Venice's terms name no Base USDC top-up") }
         return VeniceTopUpTerms(
             payTo: entry.payTo, least: entry.amount, timeout: entry.maxTimeoutSeconds, name: entry.extra.name, version: entry.extra.version)
     }
 
+    /// One press of Add: reads Venice's terms afresh, then buys exactly
+    /// `amount` on them (`topUp`). One bare request, at most one signature,
+    /// one payment. A stop is `sent` only when the payment may have gone.
+    public func add(_ amount: Amount, by signer: VeniceSigner) async throws(VeniceStop) -> VeniceTopUp {
+        let terms: VeniceTopUpTerms
+        do {
+            terms = try await topUpTerms()
+        } catch {
+            // Only the bare request went; no payment did.
+            throw VeniceStop(error.kind, sent: false, "the terms stopped: \(error.text)")
+        }
+        return try await topUp(amount, on: terms, by: signer)
+    }
+
     /// Buys `amount` of Venice credit for `signer`'s wallet on `terms`: signs
     /// a USDC transfer of exactly `amount` to Venice, which Venice settles
-    /// on Base when it takes it.
+    /// on Base when it takes it. An amount below the terms' least stops with
+    /// `belowLeast`, unsigned.
     public func topUp(_ amount: Amount, on terms: VeniceTopUpTerms, by signer: VeniceSigner) async throws(VeniceStop) -> VeniceTopUp {
+        guard amount >= terms.least else { throw VeniceStop(.belowLeast, sent: false, "below Venice's least") }
         let now = Int(self.now().timeIntervalSince1970)
         let transfer = VeniceTransfer(
             from: signer.address, to: terms.payTo, value: amount, validAfter: now - 600, validBefore: now + terms.timeout,
@@ -218,7 +240,11 @@ extension Venice {
         let response = try await Self.carry(request, transport)
         let body = try await Self.whole(response)
         guard response.status == 200 else {
-            guard [400, 401, 402].contains(response.status) else { throw VeniceStop.answered(response.status, body, auth: nil) }
+            // Venice said it did not take the payment; for anything else, it
+            // may have, so never invite blind retry without checking balance.
+            guard [400, 401, 402].contains(response.status) else {
+                throw VeniceStop(.failed, sent: true, "status \(response.status) to the top-up")
+            }
             throw VeniceStop(.paymentRefused, sent: true, "status \(response.status) to the top-up")
         }
         struct Taken: Decodable {

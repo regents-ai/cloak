@@ -1,13 +1,14 @@
-Cloak now has four kinds of chat: V, Token Inference, NEAR Private AI and Local Llama. The Modes button beside the message box says what each one does and how it is paid for.
+Cloak v0.2 brings fast local Apple Silicon AI, hardware-verified NEAR AI Gateway enclaves, anonymous token inference & zero-knowledge crypto payments, offline Local Access & data packs, and Apple Silicon inference serving together in one native macOS app with zero telemetry.
 
-V is new. Each message is reworded on this Mac and sent through Tor, and each request is paid with a new key, from a deposit of ETH. You make the deposit in the Wallet window: send a little ETH to the address it shows, type an amount in dollars, and Review shows the fee and the total in ETH and in dollars before anything is sent. The Wallet shows the day the deposit expires; withdraw before then. V's wallet is new, so deposit only a little.
+Note for earlier preview testers: Cloak's public versioning now starts at v0.2.0 (this build supersedes all earlier 0.5.x internal preview builds and preserves your chats and local wallets).
 
-Token Inference is the new name for Anon. One wallet on this Mac pays for every request in USDC.e on Tempo. The Boundless and Tempo marks in the Wallet window say how the two are used.
+What's new in v0.2:
+- Local (Free, Offline): Pure-Swift MLX worker (vmlx-swift) running Inkling 2 Mini (10.21 GB) at ~56–64 tok/s on 16 GB+ Macs with multi-turn reasoning support, plus upgraded llama.cpp (b12633) with RAM-tiered GGUF models, live streaming, an 8,192-token thinking budget, an opt-in 44 MB Unfiltered LoRA toggle, live model startup & answering indicators, and offline Local Access (Mac snapshot, Hermes-compatible memory, read-only approved folders, drag-and-drop PDF/document/image-OCR/code attachments, and opt-in Calendar/Reminders/Contacts).
+- NEAR AI Gateway: Cryptographic Intel TDX + NVIDIA TEE hardware attestation with a standard NEAR AI Cloud API key, plus top-level Chat, Traces (Letta Trajectory v1 export for Trace Commons), and local Insights tabs.
+- Token Inference: Venice AI (Base USDC via x402) is the default provider with a dedicated Keychain wallet isolated from Boundless (Tempo USDC.e via MPP), live streaming, Private/TEE tier filtering, and a mid-chat Venice/Boundless toggle.
+- zkAPI Anon Inference: Fresh unlinkable one-time keys per prompt via zkAPI over Tor, with local prompt rewriting, live 30-day deposit expiry badges, macOS notifications, and optional auto-withdraw 3 days before expiry.
+- Inference Serving (Darkbloom, macOS 27+): Unified 3-way Serving Mode (Off / Local Only / Network + Local) with multi-model selection ranked by live payout rates, live CLI/daemon-state sync, and real-time monitor telemetry.
+- Connected Apps, Offline Data & Release Verification: Connected Apps (http://127.0.0.1:8742/v1), progressive Offline Data packs (Kiwix, DevDocs, CourtListener, PubMed Central, Tinfoil Kit), and live Release Verification (SHA-256 + CDHash + macOS shasum/codesign/spctl commands in Settings -> Status) alongside SHA256SUMS.txt and checksums.json on GitHub Releases.
+- Onboarding & Reliability: 3-step hardware-aware Welcome Tour (replayable from the menu bar), 1-click Move to Applications prompt, Spotlight/Applications reopen fix, auto-start on Send, instant live Cover Traffic with inspectable local log, pure-Swift LaTeX math rendering, and hardened state machines across Tor, wallets, and local workers.
 
-Local Llama chats work while Cloak is paused, and Settings lets you choose which model answers them.
-
-The model is its own download now, 5.69 GB. Download Model shows its size and where it comes from, and nothing is fetched until you press Download.
-
-NEAR Private AI answers show how many tokens NEAR counted for them.
-
-This is an early test build for invited testers. Things may break or change from one build to the next.
+Share feedback at regents.sh/patchbay/cloak, github.com/regents-ai/cloak/issues, or @regents_sh on X.

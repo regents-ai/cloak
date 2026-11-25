@@ -138,7 +138,7 @@ public enum Reason: String, Codable, Sendable, CaseIterable {
         case .torStopped: "It may have quit unexpectedly, or been closed by another app. Start again."
         case .workerUnavailable: "Other apps may be using the memory it needs. Quit some, then start again."
         case .workerStopped: "It may have run out of memory. Quit some apps, then start again."
-        case .guestFailed: "This Mac may be short of memory. Quit some apps, then start again."
+        case .guestFailed: "This Mac may be short of memory, or Keychain couldn't unlock Cloak's zkAPI wallet. Quit some apps or unlock Keychain, then start again."
         case .checkFailed: "The Mac may have been too busy to finish it in time. Start again."
         }
     }

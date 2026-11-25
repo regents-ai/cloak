@@ -11,9 +11,12 @@ public final class Engine: @unchecked Sendable {
     public struct Rewrite: Sendable {
         /// `tooLong` only for an answer: the conversation leaves no room for
         /// a whole answer inside the cap, and nothing was computed.
-        public enum Finish: Sendable { case stop, length, cancelled, tooLong, failed(step: String, code: Int32) }
+        /// `thinkingExhausted` when a thinking model used its thinking budget
+        /// without producing a visible answer.
+        public enum Finish: Sendable { case stop, length, cancelled, tooLong, thinkingExhausted, failed(step: String, code: Int32) }
         public let finish: Finish
         public let text: String
+        public let reasoning: String?
         public let promptTokens: Int
         public let generatedTokens: Int
         public let contextTokens: UInt32
@@ -44,9 +47,10 @@ public final class Engine: @unchecked Sendable {
     private let queue = DispatchQueue(label: "sh.regents.cloak.rewriter-llama")
 
     /// Loads the pin's one GGUF file with the pin's chat template file,
-    /// `chat_template.jinja`, and its frozen template settings. A pinned
-    /// grammar must be the one built into this worker, byte for byte.
-    public init(pin: ModelPin, directory: URL) throws {
+    /// `chat_template.jinja`, optional verified LoRA adapter, and its frozen
+    /// template settings. A pinned grammar must be the one built into this
+    /// worker, byte for byte.
+    public init(pin: ModelPin, directory: URL, lora: URL? = nil) throws {
         if let pinned = pin.grammar {
             let built = Data(PackageResources.rewrite_reply_gbnf)
             let digest = SHA256.hash(data: built).map { String(format: "%02x", $0) }.joined()
@@ -66,7 +70,7 @@ public final class Engine: @unchecked Sendable {
         defer { (names + values).forEach { free($0) } }
         var error = [CChar](repeating: 0, count: 1024)
         guard let loaded = cloak_engine_load(
-            directory.appending(path: weights[0]).path, template, names.map { UnsafePointer($0) },
+            directory.appending(path: weights[0]).path, template, lora?.path, names.map { UnsafePointer($0) },
             values.map { UnsafePointer($0) }, settings.count, &error, error.count)
         else {
             throw WorkerError(String(decoding: error.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self))
@@ -115,18 +119,40 @@ public final class Engine: @unchecked Sendable {
         await run { cloak_engine_rewrite(self.engine, request.system, request.user, Int32(request.maxTokens), grammar) }
     }
 
-    /// A Local Llama answer to `conversation`: at most `maxTokens` tokens,
-    /// and `tooLong` when the conversation plus `maxTokens` exceeds
-    /// `maxContext` tokens. The text is the answer alone; any thinking the
-    /// model wrote before it is dropped.
-    public func answer(_ conversation: Conversation, maxTokens: Int32, maxContext: UInt32) async -> Rewrite {
+    private final class PartialBox: @unchecked Sendable {
+        let handler: @Sendable (String) -> Void
+        init(_ handler: @escaping @Sendable (String) -> Void) { self.handler = handler }
+    }
+
+    /// A Local Llama answer to `conversation`: up to `maxAnswerTokens` visible
+    /// answer tokens plus a separate `maxThinkingTokens` budget for reasoning
+    /// models (Decision R7), bounded by `maxContext`. When `onPartial` is given,
+    /// streams visible answer snapshots as they generate.
+    public func answer(
+        _ conversation: Conversation, maxAnswerTokens: Int32, maxThinkingTokens: Int32, maxContext: UInt32,
+        onPartial: (@Sendable (String) -> Void)? = nil
+    ) async -> Rewrite {
         await run {
             let roles = conversation.messages.map { strdup($0.role) }
             let contents = conversation.messages.map { strdup($0.content) }
-            defer { (roles + contents).forEach { free($0) } }
-            return cloak_engine_answer(
-                self.engine, roles.map { UnsafePointer($0) }, contents.map { UnsafePointer($0) }, roles.count, maxTokens,
-                maxContext)
+            let reasonings: [UnsafeMutablePointer<CChar>?] = conversation.messages.map { $0.reasoningContent.flatMap { strdup($0) } }
+            defer {
+                (roles + contents + reasonings).forEach { free($0) }
+            }
+            let box = onPartial.map(PartialBox.init)
+            let userData = box.map { Unmanaged.passUnretained($0).toOpaque() }
+            let callback: cloak_partial_callback? = box == nil ? nil : { text, length, context in
+                guard let text, let context else { return }
+                let box = Unmanaged<PartialBox>.fromOpaque(context).takeUnretainedValue()
+                let string = String(decoding: UnsafeRawBufferPointer(start: text, count: length), as: UTF8.self)
+                box.handler(string)
+            }
+            return withExtendedLifetime(box) {
+                cloak_engine_answer(
+                    self.engine, roles.map { UnsafePointer($0) }, contents.map { UnsafePointer($0) },
+                    reasonings.map { ptr in ptr.map { UnsafePointer<CChar>($0) } }, roles.count,
+                    maxAnswerTokens, maxThinkingTokens, maxContext, callback, userData)
+            }
         }
     }
 
@@ -141,14 +167,19 @@ public final class Engine: @unchecked Sendable {
                 case CLOAK_FINISH_LENGTH: finish = .length
                 case CLOAK_FINISH_CANCELLED: finish = .cancelled
                 case CLOAK_FINISH_TOO_LONG: finish = .tooLong
+                case CLOAK_FINISH_THINKING_EXHAUSTED: finish = .thinkingExhausted
                 default: finish = .failed(step: String(cString: result.failed_step), code: result.failed_code)
                 }
                 let text = result.text.map {
                     String(decoding: UnsafeRawBufferPointer(start: $0, count: result.text_length), as: UTF8.self)
                 }
+                let reasoning: String? = result.reasoning.flatMap { ptr in
+                    guard result.reasoning_length > 0 else { return nil }
+                    return String(decoding: UnsafeRawBufferPointer(start: ptr, count: result.reasoning_length), as: UTF8.self)
+                }
                 continuation.resume(
                     returning: Rewrite(
-                        finish: finish, text: text ?? "", promptTokens: Int(result.prompt_tokens),
+                        finish: finish, text: text ?? "", reasoning: reasoning, promptTokens: Int(result.prompt_tokens),
                         generatedTokens: Int(result.generated_tokens), contextTokens: result.context_tokens,
                         promptSeconds: result.prompt_seconds, generateSeconds: result.generate_seconds,
                         metalAllocatedBytes: result.metal_allocated_bytes))

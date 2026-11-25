@@ -20,6 +20,8 @@ final class DarkbloomMode {
         case unsupported
         case looking
         case notSetUp
+        /// Installed, but older than the minimum version Cloak requires.
+        case needsUpdate(version: String)
         /// Darkbloom's installer runs, at its step from 1 to 5.
         case installing(step: Int)
         /// Darkbloom is installed and checked, and its control service doesn't
@@ -41,6 +43,7 @@ final class DarkbloomMode {
     private enum Runtime {
         case looking
         case missing
+        case outdated(String)
         case installing(Int)
         case refused(DarkbloomFailure)
         case offline
@@ -48,11 +51,26 @@ final class DarkbloomMode {
         case connected
     }
 
+    private static let modelKey = "darkbloomModel"
+
     private let manifest: Manifest
     private let settings: AppSettings
     private var runtime = Runtime.looking
     private var found: Darkbloom.Found?
     private(set) var snapshot: DarkbloomSnapshot?
+    /// Live per-token payout rates from `https://api.darkbloom.dev/v1/pricing`.
+    private(set) var pricing: DarkbloomPricing?
+    /// Required runtime capabilities per model ID from `darkbloom models --json`
+    /// (used to exclude Apple M5-only / `mlx_nax` models on M1–M4 Macs).
+    private(set) var requiredCapabilities: [String: [String]] = [:]
+    /// Model IDs dynamically rejected by Darkbloom as permanently ineligible on
+    /// this hardware during the session.
+    private(set) var rejectedModelIDs: Set<String> = []
+    /// Prompt shown in the Serve Network hero card when the user toggles it ON
+    /// before downloading a model.
+    private(set) var needsModelNotice = false
+    /// The user's explicitly chosen Darkbloom model ID (persisted in UserDefaults).
+    private(set) var chosenModelID: String?
     private(set) var setup = DarkbloomSetup()
     /// Why the person's last press didn't do what it asked; gone at the next.
     private var failure: DarkbloomFailure?
@@ -64,11 +82,34 @@ final class DarkbloomMode {
     /// Whether Start serves Darkbloom's network too, as Darkbloom's job does
     /// when the window opens; off for a Mac that has none.
     private(set) var alsoServe = false
+    /// Whether the current `install()` run is upgrading an older install.
+    private(set) var installingUpdate = false
+    /// True when the most recent serving status/mode/model change came from
+    /// outside Cloak (e.g. `darkbloom start`, `stop`, or `switch` in Terminal).
+    private(set) var lastChangeFromCLI = false
+    /// Live monitor telemetry timestamps (Decision N5.2).
+    private(set) var connectedSince: Date?
+    private(set) var lastHeartbeat: Date?
+    /// Inline diagnostic output from `darkbloom doctor` / `darkbloom status`.
+    private(set) var diagnosticTitle: String?
+    private(set) var diagnosticOutput: String?
+    private(set) var runningDiagnostic = false
+    /// Tracks whether the Darkbloom window is currently open so async key reads
+    /// completing after close never leak into `shownKey`.
+    @ObservationIgnored private var isWindowOpen = false
+    @ObservationIgnored private var lastSetupState: String?
+    @ObservationIgnored private var lastSetupReadAt: Date?
+    @ObservationIgnored private var lastCloakActionAt: Date?
+    @ObservationIgnored private var observedServingSignature: String?
+    @ObservationIgnored private var isFollowing = false
     @ObservationIgnored private var following: Task<Void, Never>?
+    @ObservationIgnored private var pricingTask: Task<Void, Never>?
+    @ObservationIgnored private var capabilitiesTask: Task<Void, Never>?
 
     init(manifest: Manifest, settings: AppSettings) {
         self.manifest = manifest
         self.settings = settings
+        self.chosenModelID = UserDefaults.standard.string(forKey: Self.modelKey)
     }
 
     var state: State {
@@ -76,6 +117,7 @@ final class DarkbloomMode {
         switch runtime {
         case .looking: return .looking
         case .missing: return failure.map(State.failed) ?? .notSetUp
+        case .outdated(let version): return failure.map(State.failed) ?? .needsUpdate(version: version)
         case .installing(let step): return .installing(step: step)
         case .refused(let failure): return .failed(failure)
         case .offline: return failure.map(State.failed) ?? .notConnected
@@ -112,7 +154,16 @@ final class DarkbloomMode {
     /// Whether Darkbloom serves, or is set to, so Stop applies rather than Start.
     var isOn: Bool {
         guard let snapshot else { return false }
-        return starting || ["starting", "running", "draining", "stale"].contains(snapshot.state) || setup.job?.loaded == true
+        return starting || ["starting", "running", "draining", "stale"].contains(snapshot.state) || setup.job?.running == true
+    }
+
+    /// True when `model` is currently being served (either reported as
+    /// `serving` by `/control/v1/state` or configured via `--model` on a
+    /// running `--local` on-demand daemon).
+    func isModelServing(_ model: DarkbloomSnapshot.Model) -> Bool {
+        if model.serving { return true }
+        guard isOn, let configured = setup.job?.models, !configured.isEmpty else { return false }
+        return configured.contains(model.id)
     }
 
     /// The release found, once it is checked.
@@ -120,18 +171,122 @@ final class DarkbloomMode {
 
     // MARK: The model
 
-    /// The one model Cloak offers: of those in Darkbloom's list that
-    /// Darkbloom can serve here and that fit `room`, one already on this Mac
-    /// first, then the largest.
-    var recommended: DarkbloomSnapshot.Model? {
-        guard let snapshot, let room else { return nil }
+    /// All network models Darkbloom can serve on this Mac that fit beside Cloak
+    /// and match this Mac's hardware capabilities, ranked highest payout first
+    /// using Darkbloom's live `/v1/pricing` rates (falling back to largest model
+    /// size when offline).
+    var eligibleModels: [DarkbloomSnapshot.Model] {
+        guard let snapshot, let room else { return [] }
         return snapshot.models
-            .filter { model in model.network && model.eligible && Self.need(model).map { $0 <= room } == true }
-            .max { (Self.rank($0), Self.need($0) ?? 0) < (Self.rank($1), Self.need($1) ?? 0) }
+            .filter { model in
+                guard model.network && model.eligible && !rejectedModelIDs.contains(model.id) else { return false }
+                if let caps = requiredCapabilities[model.id], !Darkbloom.hostSupports(requiredCapabilities: caps) {
+                    return false
+                }
+                return Self.need(model).map { $0 <= room } == true
+            }
+            .sorted { lhs, rhs in
+                if pricing != nil {
+                    let lScore = earningScore(for: lhs)
+                    let rScore = earningScore(for: rhs)
+                    if abs(lScore - rScore) > 0.0001 { return lScore > rScore }
+                }
+                let lNeed = Self.need(lhs) ?? 0
+                let rNeed = Self.need(rhs) ?? 0
+                if abs(lNeed - rNeed) > 0.01 { return lNeed > rNeed }
+                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            }
+    }
+
+    /// True when at least one eligible Darkbloom model is downloaded on this Mac.
+    var hasDownloadedModel: Bool {
+        eligibleModels.contains(where: \.downloaded)
+    }
+
+    /// The three user-facing Darkbloom serving modes controlled by the top
+    /// segmented picker in Settings → Inference Serving.
+    enum ServingMode: String, CaseIterable, Identifiable, Sendable {
+        case off
+        case localOnly
+        case network
+
+        var id: Self { self }
+
+        var label: String {
+            switch self {
+            case .off: "Off"
+            case .localOnly: "Local Only"
+            case .network: "Network + Local"
+            }
+        }
+    }
+
+    /// True when Darkbloom is actively serving (or starting to serve) the network.
+    var isServingNetwork: Bool {
+        alsoServe && (isOn || linking != nil)
+    }
+
+    /// Current effective serving mode reflected in the 3-way picker.
+    var servingMode: ServingMode {
+        if linking != nil { return .network }
+        guard isOn else { return .off }
+        return alsoServe ? .network : .localOnly
+    }
+
+    /// The #1 highest-earning model this Mac can serve right now.
+    var topEarnerID: String? {
+        eligibleModels.first?.id
+    }
+
+    /// Live Darkbloom token rate for `model`, when pricing has loaded.
+    func price(for model: DarkbloomSnapshot.Model) -> DarkbloomPricing.Price? {
+        pricing?.price(for: model.id)
+    }
+
+    private func earningScore(for model: DarkbloomSnapshot.Model) -> Double {
+        guard let pricing else { return 0 }
+        return pricing.price(for: model.id)?.earningScore ?? pricing.fallbackEarningScore
+    }
+
+    /// The active model selected for serving: the user's explicit choice if it
+    /// still fits, otherwise whichever fitting model is currently serving,
+    /// otherwise the highest-earning downloaded model, otherwise the #1 highest
+    /// earner that fits this Mac.
+    var recommended: DarkbloomSnapshot.Model? {
+        let fitting = eligibleModels
+        guard !fitting.isEmpty else { return nil }
+        if let chosenModelID, let match = fitting.first(where: { $0.id == chosenModelID }) {
+            return match
+        }
+        if let active = fitting.first(where: { isModelServing($0) || $0.loaded }) {
+            return active
+        }
+        if let downloaded = fitting.first(where: \.downloaded) {
+            return downloaded
+        }
+        return fitting.first
+    }
+
+    /// True when Darkbloom is currently running a different model than the one
+    /// the user has selected (and the newly selected model is downloaded).
+    var needsSwitch: Bool {
+        guard isOn, let selected = recommended, selected.downloaded else { return false }
+        return !isModelServing(selected)
+    }
+
+    /// Selects a fitting model to download or serve.
+    func selectModel(_ id: String) {
+        chosenModelID = id
+        needsModelNotice = false
+        UserDefaults.standard.set(id, forKey: Self.modelKey)
+    }
+
+    /// Running download operation for `modelID`, if any.
+    func activeDownload(for modelID: String) -> DarkbloomSnapshot.Operation? {
+        snapshot?.operations.first { $0.state == "running" && $0.action == "download" && $0.model == modelID }
     }
 
     private static func need(_ model: DarkbloomSnapshot.Model) -> Double? { model.memoryGb ?? model.sizeGb }
-    private static func rank(_ model: DarkbloomSnapshot.Model) -> Int { model.downloaded ? 1 : 0 }
 
     /// What Darkbloom lets models take on this Mac less what Cloak takes, in
     /// Darkbloom's GB (2³⁰ bytes, as it counts a model on disk); nil when
@@ -153,7 +308,7 @@ final class DarkbloomMode {
         guard let found, let snapshot else { return "Not connected" }
         guard found.flags.isSuperset(of: Darkbloom.startNeeds(alsoServe: alsoServe)) else { return "Needs a newer Darkbloom" }
         guard let recommended else { return snapshot.catalogError == nil ? "No model fits" : "Model list unavailable" }
-        guard recommended.downloaded else { return "Download first" }
+        guard recommended.downloaded else { return "Download above" }
         return nil
     }
 
@@ -238,38 +393,77 @@ final class DarkbloomMode {
     var connected: Bool {
         switch runtime {
         case .connected, .connecting, .looking: snapshot != nil
-        case .missing, .installing, .refused, .offline: false
+        case .missing, .outdated, .installing, .refused, .offline: false
         }
     }
 
     // MARK: Presses
 
     /// Looks for Darkbloom again and follows it while the window is open;
-    /// on a system Darkbloom doesn't run on, nothing.
+    /// on a system Darkbloom doesn't run on, nothing. Never cancels an active
+    /// install or live stream when the user clicks Darkbloom in the menu bar
+    /// again to bring the window forward.
     func open() {
         guard Darkbloom.systemFits else { return }
+        isWindowOpen = true
+        refreshPricing()
+        if case .installing = runtime { return }
+        if isFollowing {
+            switch runtime {
+            case .connected, .connecting, .looking: return
+            case .missing, .outdated, .refused, .offline, .installing: break
+            }
+        }
         failure = nil
         follow { await self.look(ensuring: false) }
     }
 
+    /// Fetches live per-token pricing from Darkbloom's public catalog so
+    /// eligible models are ranked highest-earning first.
+    private func refreshPricing() {
+        pricingTask?.cancel()
+        pricingTask = Task {
+            let fetched = await DarkbloomPricing.fetch()
+            guard !Task.isCancelled, let fetched else { return }
+            self.pricing = fetched
+        }
+    }
+
+    /// Fetches `required_provider_capabilities` via `darkbloom models --json`
+    /// in the background so hardware filtering never stalls initial opening.
+    private func refreshCapabilities(binary: URL) {
+        capabilitiesTask?.cancel()
+        capabilitiesTask = Task {
+            let caps = await Darkbloom.modelRequiredCapabilities(binary)
+            guard !Task.isCancelled else { return }
+            self.requiredCapabilities = caps
+        }
+    }
+
     /// Stops following Darkbloom, and hides the key; nothing Darkbloom runs stops.
     func close() {
+        isWindowOpen = false
         following?.cancel()
         following = nil
+        isFollowing = false
+        pricingTask?.cancel()
+        pricingTask = nil
+        capabilitiesTask?.cancel()
+        capabilitiesTask = nil
         shownKey = nil
     }
 
-    /// Installs Darkbloom's runtime, then starts its control service and
-    /// follows it.
-    func install() {
+    /// Installs or updates Darkbloom's runtime, then starts its control
+    /// service and follows it.
+    func install(updating: Bool = false) {
         failure = nil
+        installingUpdate = updating
         runtime = .installing(0)
         follow {
             do throws(DarkbloomFailure) {
                 try await Darkbloom.install { step in self.runtime = .installing(step) }
             } catch {
-                self.runtime = .missing
-                self.failure = error
+                self.runtime = .refused(error)
                 return
             }
             await self.look(ensuring: true)
@@ -287,11 +481,18 @@ final class DarkbloomMode {
     func start() {
         guard startBlock == nil, let found, let model = recommended else { return }
         failure = nil
+        lastCloakActionAt = .now
+        lastChangeFromCLI = false
         starting = true
         let arguments = Darkbloom.startArguments(model: model.id, alsoServe: alsoServe)
         Task {
             do throws(DarkbloomFailure) {
                 try await Darkbloom.run(found.binary, arguments, failing: "Couldn't start")
+                // Refresh plist/launchd setup immediately before clearing `starting`
+                // so the next SSE snapshot never reverts `alsoServe` using stale setup.
+                let refreshed = await DarkbloomSetup.read(listening: snapshot?.endpoint != nil)
+                self.setup = refreshed
+                self.lastSetupReadAt = .now
             } catch {
                 failure = error
             }
@@ -300,39 +501,78 @@ final class DarkbloomMode {
     }
 
     func stop() {
+        lastCloakActionAt = .now
+        lastChangeFromCLI = false
+        lastSetupReadAt = nil
         ask(.stop, failing: "Couldn't stop")
     }
 
-    func downloadModel() {
-        guard let recommended else { return }
-        ask(.download(model: recommended.id), failing: "Download failed")
+    func downloadModel(_ id: String? = nil) {
+        let target = id ?? recommended?.id
+        guard let target else { return }
+        selectModel(target)
+        ask(.download(model: target), failing: "Download failed")
     }
 
-    func cancelDownload() {
-        guard let download else { return }
-        ask(.cancel(operation: download.id), failing: "Couldn't cancel")
+    func cancelDownload(_ operationID: String? = nil) {
+        let targetID = operationID ?? download?.id
+        guard let targetID else { return }
+        ask(.cancel(operation: targetID), failing: "Couldn't cancel")
     }
 
-    func removeModel() {
-        guard let recommended else { return }
-        ask(.remove(model: recommended.id), failing: "Couldn't remove")
+    func removeModel(_ id: String? = nil) {
+        let target = id ?? recommended?.id
+        guard let target else { return }
+        ask(.remove(model: target), failing: "Couldn't remove")
     }
 
-    /// Turns serving Darkbloom's network too on or off: on links this Mac to
-    /// the person's Darkbloom account first, when it isn't; either way, a Mac
-    /// that serves now serves again as chosen.
-    func setAlsoServe(_ on: Bool) {
+    /// Unified 3-way serving mode controller (`Off` | `Local Only` | `Network + Local`):
+    /// - `.off`: stops Darkbloom cleanly (and cancels any pending link).
+    /// - `.localOnly`: starts Darkbloom with `--local` (local OpenAI endpoint on this Mac only).
+    /// - `.network`: starts Darkbloom with `--me-first` (earns on Darkbloom's network while idle
+    ///   and prioritizes local apps), initiating browser linking first if needed.
+    func setServingMode(_ target: ServingMode) {
         failure = nil
-        alsoServe = on
-        if !on, let link = snapshot?.operations.first(where: { $0.state == "running" && $0.action == "link" }) {
-            ask(.cancel(operation: link.id), failing: "Couldn't cancel")
-            return
+        needsModelNotice = false
+        lastCloakActionAt = .now
+        lastChangeFromCLI = false
+        switch target {
+        case .off:
+            alsoServe = false
+            if let link = snapshot?.operations.first(where: { $0.state == "running" && $0.action == "link" }) {
+                ask(.cancel(operation: link.id), failing: "Couldn't cancel")
+                return
+            }
+            if isOn { stop() }
+        case .localOnly:
+            guard let model = recommended, model.downloaded else {
+                alsoServe = false
+                needsModelNotice = true
+                return
+            }
+            if let link = snapshot?.operations.first(where: { $0.state == "running" && $0.action == "link" }) {
+                ask(.cancel(operation: link.id), failing: "Couldn't cancel")
+            }
+            alsoServe = false
+            start()
+        case .network:
+            guard canAlsoServe else { return }
+            guard let model = recommended, model.downloaded else {
+                alsoServe = false
+                needsModelNotice = true
+                return
+            }
+            alsoServe = true
+            if snapshot?.linked == false {
+                ask(.link, failing: "Couldn't link")
+                return
+            }
+            start()
         }
-        if on, snapshot?.linked == false {
-            ask(.link, failing: "Couldn't link")
-            return
-        }
-        if isOn { start() }
+    }
+
+    func setAlsoServe(_ on: Bool) {
+        setServingMode(on ? .network : .off)
     }
 
     /// Opens Darkbloom's link page, where the person signs in and enters the code.
@@ -351,57 +591,138 @@ final class DarkbloomMode {
     private(set) var shownKey: String?
 
     func showKey() async {
-        shownKey = await key()
+        let fetched = await key()
+        guard isWindowOpen else { return }
+        shownKey = fetched
     }
 
     func hideKey() {
         shownKey = nil
     }
 
+    /// Runs a quick read-only Darkbloom CLI diagnostic (`doctor` or `status`)
+    /// and stores its output for inline troubleshooting inside Settings.
+    func runDiagnostic(_ subcommand: String) {
+        guard !runningDiagnostic, let binary = found?.binary else { return }
+        runningDiagnostic = true
+        diagnosticTitle = "darkbloom \(subcommand)"
+        diagnosticOutput = nil
+        Task {
+            let output = await Darkbloom.capture(binary, [subcommand])
+            diagnosticOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            runningDiagnostic = false
+        }
+    }
+
+    func clearDiagnostic() {
+        diagnosticTitle = nil
+        diagnosticOutput = nil
+    }
+
     // MARK: Following
 
     private func follow(_ body: @escaping @MainActor () async -> Void) {
         following?.cancel()
-        following = Task { await body() }
+        isFollowing = true
+        following = Task {
+            defer { self.isFollowing = false }
+            await body()
+        }
     }
 
     /// Finds and checks the runtime, starts its control service when
     /// `ensuring` and it doesn't answer, then follows its reports until the
     /// window closes.
     private func look(ensuring: Bool) async {
-        runtime = ensuring ? .connecting : .looking
+        // Keep showing the last live snapshot while reconnecting so switching
+        // tabs doesn't flash back to Setup → Checking.
+        if snapshot == nil {
+            runtime = ensuring ? .connecting : .looking
+        }
         do throws(DarkbloomFailure) {
-            guard var found = try await Darkbloom.find() else {
+            var found: Darkbloom.Found
+            switch try await Darkbloom.find() {
+            case .missing:
+                snapshot = nil
                 runtime = .missing
                 return
+            case .outdated(let version):
+                snapshot = nil
+                runtime = .outdated(version)
+                return
+            case .ready(let ready):
+                found = ready
             }
-            if found.control == nil, ensuring {
+            if found.control == nil, ensuring || Darkbloom.isDaemonAlive() {
                 try await Darkbloom.run(found.binary, ["desktop", "ensure"], failing: "Couldn't connect")
-                guard let again = try await Darkbloom.find() else {
+                switch try await Darkbloom.find() {
+                case .missing:
+                    snapshot = nil
                     runtime = .missing
                     return
+                case .outdated(let version):
+                    snapshot = nil
+                    runtime = .outdated(version)
+                    return
+                case .ready(let again):
+                    found = again
                 }
-                found = again
             }
             guard !Task.isCancelled else { return }
             self.found = found
+            // Fetch model hardware capabilities in the background so it never
+            // delays displaying the connected Inference Serving view.
+            refreshCapabilities(binary: found.binary)
             guard let control = found.control, let first = found.snapshot else {
+                snapshot = nil
                 runtime = .offline
+                await waitForCLIControl(binary: found.binary)
                 return
             }
             await accept(first)
-            alsoServe = setup.job?.mode == .both
             await reports(control)
         } catch {
             guard !Task.isCancelled else { return }
+            snapshot = nil
             runtime = .refused(error)
+        }
+    }
+
+    /// While Darkbloom's desktop control API isn't running, polls every 5s so
+    /// if the user starts Darkbloom from Terminal (`darkbloom start`), Cloak
+    /// automatically attaches and displays live CLI state.
+    private func waitForCLIControl(binary: URL) async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            if let existing = try? DarkbloomControl.discover(), let snap = try? await existing.state(),
+                snap.protocol == 1, snap.version == found?.version
+            {
+                found?.control = existing
+                await accept(snap)
+                await reports(existing)
+                return
+            }
+            if Darkbloom.isDaemonAlive() {
+                try? await Darkbloom.run(binary, ["desktop", "ensure"], failing: "Couldn't connect")
+                if let control = try? DarkbloomControl.discover(), let snap = try? await control.state(),
+                    snap.protocol == 1, snap.version == found?.version
+                {
+                    found?.control = control
+                    lastChangeFromCLI = true
+                    await accept(snap)
+                    await reports(control)
+                    return
+                }
+            }
         }
     }
 
     /// Follows the control service's reports. Each stream ends after a
     /// minute and is opened again at once; one that breaks is tried again
     /// every 5 seconds, from the service's file each time, since a service
-    /// that restarted has a new port and token.
+    /// that restarted (e.g. via CLI `darkbloom restart` or `update`) has a
+    /// new port and token.
     private func reports(_ control: DarkbloomControl) async {
         var control = control
         while !Task.isCancelled {
@@ -418,34 +739,100 @@ final class DarkbloomMode {
                 return
             } catch {
                 guard !Task.isCancelled else { return }
-                runtime = .connecting
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: .seconds(3))
                 guard !Task.isCancelled else { return }
-                guard let next = try? DarkbloomControl.discover() else {
+                if let next = try? DarkbloomControl.discover() {
+                    control = next
+                    found?.control = next
+                } else if let binary = found?.binary, Darkbloom.isDaemonAlive() {
+                    try? await Darkbloom.run(binary, ["desktop", "ensure"], failing: "Couldn't connect")
+                    if let next = try? DarkbloomControl.discover() {
+                        control = next
+                        found?.control = next
+                    } else {
+                        snapshot = nil
+                        runtime = .offline
+                        await waitForCLIControl(binary: binary)
+                        return
+                    }
+                } else {
+                    snapshot = nil
                     runtime = .offline
+                    if let binary = found?.binary {
+                        await waitForCLIControl(binary: binary)
+                    }
                     return
                 }
-                control = next
-                found?.control = next
             }
         }
     }
 
     private func accept(_ snapshot: DarkbloomSnapshot) async {
-        let setup = await DarkbloomSetup.read(listening: snapshot.endpoint != nil)
-        guard !Task.isCancelled else { return }
-        self.setup = setup
+        // Re-read launchd / provider.toml on state changes or every 5 seconds so
+        // CLI `darkbloom start` / `stop` / `--local` / `--me-first` changes
+        // reflect live in Cloak's Serving status and Serve Network switch.
+        let shouldReadSetup = lastSetupState != snapshot.state
+            || lastSetupReadAt.map { Date.now.timeIntervalSince($0) >= 5 } ?? true
+        if shouldReadSetup {
+            let setup = await DarkbloomSetup.read(listening: snapshot.endpoint != nil)
+            guard !Task.isCancelled else { return }
+            self.setup = setup
+            lastSetupState = snapshot.state
+            lastSetupReadAt = .now
+        }
         self.snapshot = snapshot
+        if connectedSince == nil { connectedSince = .now }
+        lastHeartbeat = .now
         runtime = .connected
+        // Sync Serve Network toggle with live CLI/launchd state whenever Cloak
+        // isn't mid-start or mid-link, so starting/stopping via CLI updates UI.
+        let linkInFlight = snapshot.operations.contains { $0.state == "running" && $0.action == "link" }
+        let servingModels = Set(
+            snapshot.models.filter(\.serving).map(\.id)
+                + (setup.job?.running == true ? (setup.job?.models ?? []) : [])
+        ).sorted().joined(separator: ",")
+        let modeTag = setup.job.map { "\($0.mode)" } ?? "none"
+        let signature = "\(snapshot.state)|\(modeTag)|\(servingModels)"
+        if let previous = observedServingSignature, previous != signature {
+            let triggeredByCloak = starting || asked != nil
+                || lastCloakActionAt.map { Date.now.timeIntervalSince($0) < 12 } == true
+            if !triggeredByCloak {
+                lastChangeFromCLI = true
+            }
+        }
+        observedServingSignature = signature
+        if !starting, !linkInFlight {
+            let daemonActive = ["starting", "running", "draining"].contains(snapshot.state) || setup.job?.running == true
+            let networkMode = setup.job?.mode == .both || setup.job?.mode == .network
+            let liveAlsoServe = daemonActive && networkMode
+            if alsoServe != liveAlsoServe {
+                alsoServe = liveAlsoServe
+            }
+            if daemonActive, failure != nil {
+                failure = nil
+            }
+        }
         guard let asked, let operation = snapshot.operations.first(where: { $0.id == asked.id }), operation.state != "running"
         else { return }
         self.asked = nil
         if ["failed", "interrupted"].contains(operation.state) {
+            if operation.action == "download", let modelID = operation.model,
+                operation.message.localizedCaseInsensitiveContains("permanently ineligible")
+                    || operation.message.localizedCaseInsensitiveContains("missing runtime capabilities")
+            {
+                rejectedModelIDs.insert(modelID)
+                if chosenModelID == modelID {
+                    chosenModelID = nil
+                    UserDefaults.standard.removeObject(forKey: Self.modelKey)
+                }
+            }
             failure = DarkbloomFailure(asked.failing, detail: operation.message)
+        } else if operation.action == "download", operation.state == "succeeded" {
+            needsModelNotice = false
         }
         guard operation.action == "link" else { return }
         if operation.state == "succeeded" {
-            if isOn { start() }
+            if alsoServe && startBlock == nil { start() }
         } else {
             alsoServe = false
         }

@@ -101,7 +101,7 @@ public final class Guest: NSObject {
     public func prepare(
         base: URL, cases: Data, model: String, relay: Relay, tor: Tor, cover: Bool, serve: Bool,
         door: ((Int32) -> Void)?
-    ) throws {
+    ) async throws {
         var entries: [BootFiles.Entry] = [
             .init(path: "run/cloak/adapter-token", mode: 0o400, uid: 1001, gid: 1001, data: hex(relay.token)),
             .init(path: "run/cloak/rewriter-key", mode: 0o440, uid: 0, gid: 1003, data: hex(randomBytes(32))),
@@ -120,13 +120,23 @@ public final class Guest: NSObject {
                 entries.append(.init(path: "etc/cloak/pay-disk-new", mode: 0o444, uid: 0, gid: 0, data: Data()))
             }
         }
+        let bootDirectory = self.bootDirectory
+        do {
+            try await Self.writeBootFiles(base: base, entries: entries, to: bootDirectory)
+        } catch {
+            removeBootFiles()
+            throw error
+        }
+        relays = (relay, TorRelay(tor: tor), door)
+    }
+
+    @concurrent
+    private static func writeBootFiles(base: URL, entries: [BootFiles.Entry], to bootDirectory: URL) async throws {
         let initrd = BootFiles.initrd(base: try Data(contentsOf: base), entries: entries)
         try FileManager.default.createDirectory(at: bootDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         guard FileManager.default.createFile(atPath: bootDirectory.appending(path: "initrd").path, contents: initrd, attributes: [.posixPermissions: 0o600]) else {
-            removeBootFiles()
             throw GuestError(description: "cannot write the boot files")
         }
-        relays = (relay, TorRelay(tor: tor), door)
     }
 
     /// Starts the prepared guest, and removes its boot files once the start

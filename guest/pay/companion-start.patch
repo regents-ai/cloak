@@ -1,6 +1,8 @@
+diff --git a/crates/zkapi-cli/src/main.rs b/crates/zkapi-cli/src/main.rs
+index eefe04e..e4bcbdd 100644
 --- a/crates/zkapi-cli/src/main.rs
 +++ b/crates/zkapi-cli/src/main.rs
-@@ -807,8 +807,6 @@
+@@ -807,8 +807,6 @@ async fn run_one_command_client(options: OneCommandClientOptions<'_>) -> anyhow:
              require_oa_org_key_source,
          },
      )?;
@@ -9,3 +11,18 @@
      let status = service.status().await?;
      if !status.has_note {
          if no_fund {
+@@ -990,7 +988,13 @@ fn auth_service_from_manifest(
+         state_dir,
+         models,
+         suggested_deposit_amount,
+-        demo_rpc_url: Some(manifest.rpc_url.clone()),
++        demo_rpc_url: Some(
++            if manifest.chain_id == 1 && manifest.rpc_url == "https://ethereum-rpc.publicnode.com" {
++                "https://eth.drpc.org".to_string()
++            } else {
++                manifest.rpc_url.clone()
++            },
++        ),
+         demo_billing_token_address: manifest.billing_token_address.clone(),
+         demo_mint_enabled: manifest.chain_id == 11_155_111 && manifest.demo_mint_enabled && allow_demo_mint,
+         demo_note_ttl_seconds: None,

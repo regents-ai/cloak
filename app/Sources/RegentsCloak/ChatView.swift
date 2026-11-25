@@ -3,6 +3,7 @@ import CloakChat
 import CloakControl
 import CloakSupervisor
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The Chat window: conversations on the left, newest first; the one shown
 /// on the right, each message as written and as reworded, side by side (or
@@ -19,25 +20,64 @@ struct ChatView: View {
     let showAgents: () -> Void
     let showNearSettings: () -> Void
     let showLlamaSettings: () -> Void
+    let showLocalAccessSettings: () -> Void
+    let showAdvancedSettings: () -> Void
 
     static func window(
         _ chat: Chat, showDetails: @escaping () -> Void, showAgents: @escaping () -> Void,
-        showNearSettings: @escaping () -> Void, showLlamaSettings: @escaping () -> Void
+        showNearSettings: @escaping () -> Void, showLlamaSettings: @escaping () -> Void,
+        showLocalAccessSettings: @escaping () -> Void = {},
+        showAdvancedSettings: @escaping () -> Void = {}
     ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "Chat"
+        window.titleVisibility = .hidden
         // Escape cancels a rewording here.
         window.closesOnEscape = false
+        window.onKeyEquivalent = { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            // Command-Shift-Delete (Backspace 51 or Forward Delete 117):
+            // deletes the selected thread immediately and selects the prior one.
+            if flags == [.command, .shift], event.keyCode == 51 || event.keyCode == 117 {
+                chat.deleteSelected()
+                return true
+            }
+            guard flags == .command, let key = event.charactersIgnoringModifiers else { return false }
+            switch key {
+            case "n" where chat.isOpen:
+                chat.newConversation()
+                return true
+            case "1":
+                chat.selectMode(.llama)
+                return true
+            case "2":
+                chat.selectMode(.near)
+                return true
+            case "3":
+                chat.selectMode(.token)
+                return true
+            case "4":
+                chat.selectMode(.v)
+                return true
+            case "/":
+                chat.showingTour = true
+                return true
+            default:
+                return false
+            }
+        }
         let content = NSHostingController(
             rootView: ChatView(
                 chat: chat, showDetails: showDetails, showAgents: showAgents, showNearSettings: showNearSettings,
-                showLlamaSettings: showLlamaSettings))
+                showLlamaSettings: showLlamaSettings, showLocalAccessSettings: showLocalAccessSettings,
+                showAdvancedSettings: showAdvancedSettings))
         content.sceneBridgingOptions = [.toolbars]
-        content.sizingOptions = [.minSize]
         window.contentViewController = content
+        window.contentMinSize = NSSize(width: 640, height: 460)
         window.setContentSize(NSSize(width: 980, height: 660))
+        window.setFrameAutosaveName("sh.regents.cloak.window.chat")
         return window
     }
 
@@ -48,9 +88,10 @@ struct ChatView: View {
         } detail: {
             Detail(
                 chat: chat, showDetails: showDetails, showAgents: showAgents, showNearSettings: showNearSettings,
-                showLlamaSettings: showLlamaSettings)
+                showLlamaSettings: showLlamaSettings, showLocalAccessSettings: showLocalAccessSettings,
+                showAdvancedSettings: showAdvancedSettings)
         }
-        .frame(minWidth: 760, minHeight: 460)
+        .frame(minWidth: 640, minHeight: 460)
         .task { await chat.open() }
     }
 }
@@ -58,70 +99,129 @@ struct ChatView: View {
 private struct Sidebar: View {
     @Bindable var chat: Chat
     @State private var deleting: Conversation?
+    @State private var hoveringNewChat = false
 
     var body: some View {
-        List(selection: $chat.selection) {
-            ForEach(chat.conversations) { conversation in
-                let agent = chat.isAgent(conversation)
-                let mode = chat.kind(of: conversation)
-                let unsaved = chat.unsaved.contains(conversation.id)
-                HStack(spacing: 6) {
-                    Text(agent && conversation.turns.isEmpty ? "New task" : conversation.title)
-                        .lineLimit(1)
-                    if agent || mode != .v || unsaved {
-                        Spacer(minLength: 0)
+        VStack(spacing: 0) {
+            Button {
+                chat.newConversation()
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
+                    Text("New Chat")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 0)
+                    Text("⌘N")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.primary.opacity(hoveringNewChat ? 0.09 : 0.05)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75))
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!chat.isOpen)
+            .onHover { hoveringNewChat = $0 }
+            .tip("Start a new chat (⌘N)")
+            .accessibilityLabel("New Chat")
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
+
+            List(selection: $chat.selection) {
+                ForEach(chat.conversations) { conversation in
+                    let isEmpty = conversation.turns.isEmpty
+                    let agent = chat.isAgent(conversation)
+                    let mode = chat.kind(of: conversation)
+                    let unsaved = chat.unsaved.contains(conversation.id)
+                    HStack(spacing: 6) {
+                        if isEmpty {
+                            Image(systemName: "plus")
+                                .imageScale(.small)
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                            Text(agent ? "New task" : "New chat")
+                                .fontWeight(.medium)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        } else {
+                            Text(conversation.title)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                            if unsaved {
+                                Image(systemName: "externaldrive.badge.xmark")
+                                    .imageScale(.small)
+                                    .foregroundStyle(.tertiary)
+                                    .accessibilityLabel("Not saved")
+                                    .tip("Not saved. What's new here is gone when Cloak quits.")
+                            } else if agent {
+                                Image(systemName: Chat.Kind.agentSymbol)
+                                    .imageScale(.small)
+                                    .foregroundStyle(.tertiary)
+                                    .accessibilityLabel("\(Chat.Kind.agentName) · \(mode.name)")
+                                    .tip("\(Chat.Kind.agentName) · \(mode.name)")
+                            } else {
+                                if conversation.isNear, chat.nearMode.traces.isExported(conversation.id) {
+                                    Image(systemName: "arrow.up.doc")
+                                        .imageScale(.small)
+                                        .foregroundStyle(.green)
+                                        .accessibilityLabel("Trace exported")
+                                        .tip("Exported to Cloak's Traces folder")
+                                }
+                                Image(systemName: mode.symbol)
+                                    .imageScale(.small)
+                                    .foregroundStyle(.tertiary)
+                                    .accessibilityLabel(mode.name)
+                                    .tip("\(mode.name) chat")
+                            }
+                        }
                     }
-                    if unsaved {
-                        Image(systemName: "externaldrive.badge.xmark")
-                            .imageScale(.small)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Not saved")
-                            .tip("Not saved. What's new here is gone when Cloak quits.")
-                    }
-                    if agent {
-                        Image(systemName: Chat.Kind.agentSymbol)
-                            .imageScale(.small)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel(Chat.Kind.agentName)
-                            .tip("\(Chat.Kind.agentName) chat")
-                    }
-                    // V's chats have no mark.
-                    if mode != .v {
-                        Image(systemName: mode.symbol)
-                            .imageScale(.small)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel(mode.name)
-                            .tip("\(mode.name) chat")
+                    .accessibilityElement(children: .combine)
+                    .sidebarHover(selected: chat.selection == conversation.id)
+                    .tag(conversation.id)
+                    .contextMenu {
+                        if conversation.isNear, conversation.turns.contains(where: { $0.answer != nil }) {
+                            if chat.nearMode.traces.isExported(conversation.id) {
+                                Button("Remove Exported Trace") { chat.nearMode.traces.remove(conversation.id) }
+                            } else {
+                                Button("Export Trace") { chat.nearMode.traces.export(conversation) }
+                            }
+                            Divider()
+                        }
+                        Button("Delete", role: .destructive) { chat.delete(conversation.id) }
+                            .keyboardShortcut(.delete, modifiers: [.command, .shift])
+                            .disabled(isEmpty)
                     }
                 }
-                .accessibilityElement(children: .combine)
-                .sidebarHover(selected: chat.selection == conversation.id)
-                .tag(conversation.id)
-                .contextMenu {
-                    Button("Delete", role: .destructive) { deleting = conversation }
+                // Choosing one shows why it can't open; context menu lets users remove broken files.
+                ForEach(chat.unreadable, id: \.self) { id in
+                    Label("Can't open", systemImage: "lock")
+                        .foregroundStyle(.secondary)
+                        .sidebarHover(selected: chat.selection == id)
+                        .tag(id)
+                        .contextMenu {
+                            Button("Delete", role: .destructive) { chat.deleteUnreadable(id) }
+                                .keyboardShortcut(.delete, modifiers: [.command, .shift])
+                        }
                 }
             }
-            // Choosing one shows why it can't open.
-            ForEach(chat.unreadable, id: \.self) { id in
-                Label("Can't open", systemImage: "lock")
-                    .foregroundStyle(.secondary)
-                    .sidebarHover(selected: chat.selection == id)
-                    .tag(id)
+            .onDeleteCommand {
+                if let selected = chat.selected, !selected.turns.isEmpty {
+                    deleting = selected
+                }
             }
-        }
-        .onDeleteCommand { deleting = chat.selected }
-        .toolbar {
-            ToolbarItem {
-                Button("New", systemImage: "square.and.pencil") { chat.newConversation() }
-                    .keyboardShortcut("n")
-                    .tip("New")
-                    .disabled(!chat.isOpen)
-            }
-            ToolbarItem {
-                Button("Delete", systemImage: "trash") { deleting = chat.selected }
-                    .tip("Delete")
-                    .disabled(chat.selected?.turns.isEmpty ?? true)
-            }
+            Divider()
+            ActiveGuaranteesView(chat: chat)
         }
         .confirmationDialog(
             "Delete chat?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
@@ -134,48 +234,321 @@ private struct Sidebar: View {
     }
 }
 
+/// Live list of active privacy, network, cover, and isolation guarantees
+/// pinned to the bottom-left of Chat. Every row appears IF AND ONLY IF that
+/// guarantee is currently active for the selected mode, toggles, and app state.
+private struct ActiveGuaranteesView: View {
+    let chat: Chat
+    @State private var inspectedID: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private struct Item: Identifiable, Equatable {
+        let id: String
+        let symbol: String
+        let title: String
+        let detail: String
+    }
+
+    var body: some View {
+        TimelineView(.everyMinute) { context in
+            let items = activeItems(at: context.date)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.green)
+                        .accessibilityHidden(true)
+                    Text("ACTIVE GUARANTEES")
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(items) { item in
+                        GuaranteeRow(
+                            symbol: item.symbol,
+                            title: item.title,
+                            detail: item.detail,
+                            highContrast: contrast == .increased,
+                            isPresented: Binding(
+                                get: { inspectedID == item.id },
+                                set: { inspectedID = $0 ? item.id : nil }
+                            )
+                        )
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: items.map(\.id))
+        }
+    }
+
+    private func activeItems(at now: Date) -> [Item] {
+        let conversation = chat.selected
+        let mode = conversation.map(chat.kind(of:)) ?? chat.kind
+        let agent = conversation.map(chat.isAgent) ?? false
+        let settings = chat.settings
+        let running = chat.supervisor.phase == .running
+        let usesTorMode = mode == .token || mode == .v || (mode == .near && settings.nearTor)
+
+        var items: [Item] = []
+
+        if mode == .llama {
+            items.append(Item(
+                id: "local-offline",
+                symbol: "laptopcomputer",
+                title: "100% on this Mac",
+                detail: "Runs locally with zero network calls, zero account, and zero cost."
+            ))
+            let sources = settings.activeLocalContextSummary
+            if !sources.isEmpty {
+                items.append(Item(
+                    id: "local-context",
+                    symbol: "person.crop.rectangle.stack",
+                    title: "Local context active",
+                    detail: "Offline-only context enabled for Local Mode: \(sources.joined(separator: ", ")). Zero bytes leave this Mac."
+                ))
+            }
+        }
+
+        if (mode == .token || mode == .v), (agent || !settings.neverReword) {
+            items.append(Item(
+                id: "local-rewrite",
+                symbol: "pencil.line",
+                title: settings.review && !agent ? "Local rewrite (review)" : "Local prompt rewrite",
+                detail: "Your prompt is rewritten on this Mac before leaving to strip writing style and identifying details."
+            ))
+        }
+
+        if running && usesTorMode {
+            items.append(Item(
+                id: "tor-active",
+                symbol: torSymbol,
+                title: "Tor routing active",
+                detail: "Network traffic leaves through an isolated 3-hop Tor circuit, hiding this Mac's IP address."
+            ))
+        }
+
+        if running && settings.cover && usesTorMode {
+            items.append(Item(
+                id: "cover-active",
+                symbol: "waveform.path.ecg",
+                title: "Cover traffic active",
+                detail: "Background cover requests are running over Tor to mask when real prompts are sent."
+            ))
+        }
+
+        if mode == .v {
+            items.append(Item(
+                id: "zkapi",
+                symbol: "ticket",
+                title: "Unlinkable keys (zkAPI)",
+                detail: "Every prompt is paid with a fresh one-time zero-knowledge key — impossible to link across prompts."
+            ))
+        }
+
+        if mode == .token, (!chat.usesVenice(for: conversation) || settings.venicePays == .wallet) {
+            items.append(Item(
+                id: "no-account-wallet",
+                symbol: "creditcard",
+                title: "No account (local wallet)",
+                detail: "Paid per prompt from a dedicated local crypto wallet with no provider account or credit card."
+            ))
+        }
+
+        if mode == .near, let proof = chat.nearMode.proof,
+            now.timeIntervalSince(proof.passedAt) < Double(settings.proofFreshness.rawValue)
+        {
+            items.append(Item(
+                id: "near-tee",
+                symbol: "checkmark.shield",
+                title: "Hardware TEE verified",
+                detail: "Intel TDX and NVIDIA GPU enclave attestation passed and is fresh."
+            ))
+        }
+
+        if agent {
+            items.append(Item(
+                id: "local-agent-box",
+                symbol: "hammer",
+                title: "Sealed local agent box",
+                detail: "Runs multi-step tasks inside an isolated Linux micro-VM on this Mac with network routed through Tor."
+            ))
+        }
+
+        if settings.savedChats {
+            items.append(Item(
+                id: "encrypted-disk",
+                symbol: "lock.doc",
+                title: "Encrypted on disk",
+                detail: "Saved conversations are encrypted with a 256-bit key kept in this Mac's Keychain."
+            ))
+        } else {
+            items.append(Item(
+                id: "no-disk-save",
+                symbol: "eye.slash",
+                title: "Memory only (not saved)",
+                detail: "Save chat history is off — new chats never touch disk and vanish when Cloak quits."
+            ))
+        }
+
+        items.append(Item(
+            id: "zero-telemetry",
+            symbol: "hand.raised.slash",
+            title: "Zero telemetry",
+            detail: "Cloak sends zero analytics, zero crash reports, and requires no Regents account."
+        ))
+
+        return items
+    }
+}
+
+/// Interactive, touch- and mouse-friendly row inside `ActiveGuaranteesView`.
+/// Clicking or tapping opens a calm 1-sentence popover so touchscreen MacBook Pro,
+/// iPad Sidecar, and mouse users can inspect any guarantee instantly.
+private struct GuaranteeRow: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    let highContrast: Bool
+    @Binding var isPresented: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.green)
+                    .frame(width: 14, alignment: .center)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(highContrast ? Color.primary : Color.primary.opacity(0.88))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 3)
+            .background(
+                hovering || isPresented ? Color.primary.opacity(0.06) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .tip(detail)
+        .popover(isPresented: $isPresented, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label(title, systemImage: symbol)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(width: 260, alignment: .leading)
+        }
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
+    }
+}
+
 private struct Detail: View {
     @Bindable var chat: Chat
     let showDetails: () -> Void
     let showAgents: () -> Void
     let showNearSettings: () -> Void
     let showLlamaSettings: () -> Void
+    let showLocalAccessSettings: () -> Void
+    let showAdvancedSettings: () -> Void
+    @State private var deletingUnreadable: UUID?
+    @State private var nearTab: NearGatewayTab = .chat
 
-    /// The conversation in front's mode; V's while none is, as the mark at
-    /// the top shows.
+    /// The conversation in front's mode; Local while none is.
     private var kind: Chat.Kind {
-        chat.selected.map(chat.kind(of:)) ?? .v
+        chat.selected.map(chat.kind(of:)) ?? .llama
+    }
+
+    /// The Settings pane matching the active chat mode.
+    private var modeSettingsPane: SettingsView.Pane {
+        switch kind {
+        case .llama: .llama
+        case .near: .near
+        case .token, .v: .wallets
+        }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            switch kind {
-            case .v: VBar()
-            case .token: TokenBar()
-            case .near: NearBar(settings: chat.settings)
-            case .llama: LlamaBar()
+        content
+            .toolbar {
+                if #available(macOS 26.1, *) {
+                    ToolbarItem(placement: .navigation) {
+                        TitlebarModePill(
+                            chat: chat, kind: kind, showLlamaSettings: showLlamaSettings,
+                            showNearSettings: showNearSettings)
+                    }
+                    .visibilityPriority(.high)
+                    if kind != .llama {
+                        ToolbarItem {
+                            WalletButton(chat: chat, v: kind == .v)
+                        }
+                        .visibilityPriority(.high)
+                    }
+                    ToolbarItem {
+                        Button {
+                            AppDelegate.current.showSettings(on: modeSettingsPane)
+                        } label: {
+                            Label("Settings", systemImage: "gearshape")
+                        }
+                        .tip("\(modeSettingsPane.title) Settings (⌘,)")
+                    }
+                    .visibilityPriority(.low)
+                } else {
+                    ToolbarItem(placement: .navigation) {
+                        TitlebarModePill(
+                            chat: chat, kind: kind, showLlamaSettings: showLlamaSettings,
+                            showNearSettings: showNearSettings)
+                    }
+                    if kind != .llama {
+                        ToolbarItem {
+                            WalletButton(chat: chat, v: kind == .v)
+                        }
+                    }
+                    ToolbarItem {
+                        Button {
+                            AppDelegate.current.showSettings(on: modeSettingsPane)
+                        } label: {
+                            Label("Settings", systemImage: "gearshape")
+                        }
+                        .tip("\(modeSettingsPane.title) Settings (⌘,)")
+                    }
+                }
             }
-            Divider()
-            content
-        }
-        .toolbar {
-            ToolbarItem {
-                CoverToggle(settings: chat.settings, supervisor: chat.supervisor)
+            .sheet(isPresented: $chat.showingWallet) {
+                WalletView(
+                    wallet: chat.wallet, veniceMode: chat.veniceMode, payer: chat.payer, settings: chat.settings,
+                    nearMode: chat.nearMode, download: chat.rewordingDownload, kind: kind, tokens: chat.selected?.tokens,
+                    showDetails: showDetails, showNearSettings: showNearSettings)
             }
-            ToolbarItem {
-                WalletButton(chat: chat, v: kind == .v)
+            .sheet(isPresented: $chat.showingTour, onDismiss: { chat.tourStep = 0 }) {
+                TourView(
+                    chat: chat, initialStep: chat.tourStep, showNearSettings: showNearSettings, showLlamaSettings: showLlamaSettings,
+                    showAdvancedSettings: showAdvancedSettings, showConnectedApps: showAgents)
             }
-        }
-        .sheet(isPresented: $chat.showingWallet) {
-            WalletView(
-                wallet: chat.wallet, payer: chat.payer, settings: chat.settings, nearMode: chat.nearMode,
-                download: chat.rewordingDownload, kind: kind, tokens: chat.selected?.tokens,
-                showDetails: showDetails, showNearSettings: showNearSettings)
-        }
-        .sheet(isPresented: $chat.showingModes) {
-            ModesPage(chat: chat)
-        }
-        .task(id: chat.supervisor.phase == .running) { await chat.wallet.refresh() }
+            .task(id: chat.supervisor.phase == .running) {
+                if chat.settings.payProvider == .boundless {
+                    await chat.wallet.refresh()
+                }
+            }
     }
 
     @ViewBuilder private var content: some View {
@@ -184,9 +557,13 @@ private struct Detail: View {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .missingKey:
-            ContentUnavailableView(
-                "Locked", systemImage: "lock",
-                description: Text("The key to your saved chats is missing from this Mac's keychain, so they can't be opened. They're kept as they are."))
+            ContentUnavailableView {
+                Label("Locked", systemImage: "lock")
+            } description: {
+                Text("The key to your saved chats is missing from this Mac's keychain, so they can't be opened. They're kept as they are. If you restored the key, try again.")
+            } actions: {
+                Button("Try Again") { Task { await chat.open() } }
+            }
         case .opening(again: true):
             ContentUnavailableView {
                 Label("Can't open", systemImage: "lock")
@@ -211,108 +588,164 @@ private struct Detail: View {
         case .open:
             if let conversation = chat.selected {
                 VStack(spacing: 0) {
-                    Turns(chat: chat, conversation: conversation, showAgents: showAgents, showNearSettings: showNearSettings)
-                    Divider()
-                    Compose(
-                        chat: chat, showDetails: showDetails, showNearSettings: showNearSettings,
-                        showLlamaSettings: showLlamaSettings)
+                    if kind == .near {
+                        NearGatewayTabBar(selection: $nearTab, chat: chat, showNearSettings: showNearSettings)
+                        Divider()
+                    }
+                    if kind == .near && nearTab == .traces {
+                        NearGatewayTracesView(chat: chat, showNearSettings: showNearSettings) { targetID in
+                            if let targetID {
+                                chat.selection = targetID
+                            }
+                            nearTab = .chat
+                        }
+                    } else if kind == .near && nearTab == .insights {
+                        NearGatewayInsightsView(
+                            chat: chat,
+                            showNearSettings: showNearSettings,
+                            openChat: { targetID in
+                                if let targetID {
+                                    chat.selection = targetID
+                                }
+                                nearTab = .chat
+                            },
+                            openTraces: { nearTab = .traces }
+                        )
+                    } else {
+                        Turns(chat: chat, conversation: conversation, showAgents: showAgents, showNearSettings: showNearSettings)
+                        Divider()
+                        Compose(
+                            chat: chat, showDetails: showDetails, showNearSettings: showNearSettings,
+                            showLlamaSettings: showLlamaSettings, showLocalAccessSettings: showLocalAccessSettings)
+                    }
                 }
                 .background(Color(nsColor: .windowBackgroundColor))
-            } else {
-                ContentUnavailableView(
-                    "Can't open", systemImage: "lock",
-                    description: Text("This chat's file didn't open. It's kept as it is."))
-            }
-        }
-    }
-}
-
-/// Cover, the setting itself (`AppSettings.cover`), as a toggle in Chat's
-/// toolbar in every mode: its symbol, filled while on, read by VoiceOver as
-/// a switch with its state. Switched while Cloak runs, Cloak restarts with
-/// it (`Supervisor.followCover`); while that waits for what is being sent, a
-/// clock sits on the symbol's corner, and the help and the hint end with
-/// when it switches.
-private struct CoverToggle: View {
-    @Bindable var settings: AppSettings
-    let supervisor: Supervisor
-
-    var body: some View {
-        let waits = supervisor.coverChanged
-        let later = "Cover switches once what's being sent has finished."
-        let help = "Cover traffic: while Cloak is running, it visits ordinary public pages in the background through Tor, so your real requests through Tor stand out less. Switching it while Cloak is running restarts Cloak, which takes about 10 seconds."
-        Toggle(isOn: $settings.cover) {
-            Label {
-                Text("Cover")
-            } icon: {
-                Image(systemName: settings.cover ? "cloud.fog.fill" : "cloud.fog")
-                    .contentTransition(.symbolEffect(.replace))
-                    .overlay(alignment: .bottomTrailing) {
-                        if waits {
-                            Image(systemName: "clock")
-                                .font(.system(size: 8, weight: .bold))
-                                .padding(1)
-                                .background(.background, in: .circle)
-                                .offset(x: 3, y: 3)
-                        }
+                .onChange(of: kind) { _, newKind in
+                    if newKind != .near {
+                        nearTab = .chat
                     }
+                }
+                .onChange(of: chat.selection) { _, _ in
+                    if nearTab != .chat {
+                        nearTab = .chat
+                    }
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("Can't open", systemImage: "lock")
+                } description: {
+                    Text("This chat's file didn't open. It's kept as it is.")
+                } actions: {
+                    if let id = chat.selection, chat.unreadable.contains(id) {
+                        Button("Delete…", role: .destructive) { deletingUnreadable = id }
+                    }
+                }
+                .confirmationDialog(
+                    "Delete unreadable chat?",
+                    isPresented: Binding(get: { deletingUnreadable != nil }, set: { if !$0 { deletingUnreadable = nil } }),
+                    presenting: deletingUnreadable
+                ) { id in
+                    Button("Delete", role: .destructive) { chat.deleteUnreadable(id) }
+                } message: { _ in
+                    Text("The unreadable file is removed from this Mac and can't be brought back.")
+                }
             }
         }
-        .toggleStyle(.button)
-        .labelStyle(.iconOnly)
-        .accessibilityRepresentation {
-            Toggle("Cover", isOn: $settings.cover)
-                .toggleStyle(.switch)
-                .accessibilityHint(waits ? later : "")
-        }
-        .tip(waits ? "\(help) \(later)" : help)
     }
 }
 
-/// Wallet, in Chat's toolbar: the sheet for the conversation in front. In a
-/// V chat, while V's deposit expires within the warning or has expired, a
-/// warning sits on the symbol's corner, orange then red, and the help says
-/// when.
+/// Funds button in Chat's toolbar (hidden in Local mode, Decision N2b).
+/// In Paranoid (V) mode, uses a live `TimelineView` so the expiry warning badge
+/// updates even if Cloak stays open overnight (Decision R6b).
 private struct WalletButton: View {
     let chat: Chat
     let v: Bool
 
     var body: some View {
-        let band = v ? chat.payer.band(at: .now) : nil
-        let warning: (Color, String)? =
-            switch band {
-            case .near?: (.orange, "Expires \(chat.payer.expiry?.formatted(.dateTime.day().month()) ?? ""). Withdraw before then.")
-            case .due?: (.red, "Can be taken now.")
-            case .far?, nil: nil
-            }
-        Button {
-            chat.showingWallet = true
-        } label: {
-            Label {
-                Text("Wallet")
-            } icon: {
-                Image(systemName: "creditcard")
-                    .overlay(alignment: .bottomTrailing) {
-                        if let (tint, _) = warning {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(tint)
-                                .background(.background, in: .circle)
-                                .offset(x: 3, y: 3)
+        TimelineView(.everyMinute) { context in
+            let band = v ? chat.payer.band(at: context.date) : nil
+            let warning: (Color, String)? =
+                switch band {
+                case .near?: (.orange, "Expires \(chat.payer.expiry?.formatted(.dateTime.day().month()) ?? ""). Withdraw before then.")
+                case .due?: (.red, "Expired. Withdraw now.")
+                case .far?, nil: nil
+                }
+            Button {
+                chat.showingWallet = true
+            } label: {
+                Label {
+                    Text("Funds")
+                } icon: {
+                    Image(systemName: "creditcard")
+                        .overlay(alignment: .bottomTrailing) {
+                            if let (tint, _) = warning {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(tint)
+                                    .background(.background, in: .circle)
+                                    .offset(x: 3, y: 3)
+                            }
                         }
-                    }
+                }
+                .labelStyle(.titleAndIcon)
             }
+            .tip(warning.map { "Funds. \($0.1)" } ?? "Manage Funds")
+            .accessibilityValue(warning?.1 ?? "")
+            .disabled(!chat.isOpen)
         }
-        .tip(warning.map { "Wallet. \($0.1)" } ?? "Wallet")
-        .accessibilityValue(warning?.1 ?? "")
-        .disabled(!chat.isOpen)
     }
 }
 
 /// The conversation's messages, in the order they were sent, each not yet
 /// sent where it was added. One unsent message is open at a time, to be
 /// edited, reworded again and sent; pressing another opens it instead.
+/// Calm, understated empty-chat header replacing a duplicate "New chat" title
+/// beside the sidebar's `+ New chat` action row.
+private struct EmptyChatHeader: View {
+    let mode: Chat.Kind
+    let agent: Bool
+    let provider: String?
+    let model: String
+
+    private var tagline: String {
+        if agent {
+            let target = provider.map { "\($0) · \(model)" } ?? model
+            return "\(target) · sealed Linux VM over Tor"
+        }
+        return switch mode {
+        case .llama: "\(model) · offline on this Mac · free"
+        case .near: "NEAR · \(model) · hardware-verified enclave"
+        case .token: "\(provider ?? "Token Inference") · \(model) · Tor + local rewrite"
+        case .v: "\(model) · Tor + local rewrite · unlinkable zkAPI"
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: agent ? Chat.Kind.agentSymbol : mode.symbol)
+                .font(.title2)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(agent ? "Local Agent Box" : mode.name)
+                .font(.title3.weight(.semibold))
+            Text(tagline)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 56)
+        .padding(.bottom, 12)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct Turns: View {
+    private struct ScrollBounds: Equatable {
+        var contentHeight: CGFloat
+        var containerHeight: CGFloat
+        var atBottom: Bool
+    }
+
     let chat: Chat
     let conversation: Conversation
     let showAgents: () -> Void
@@ -326,11 +759,25 @@ private struct Turns: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // What each mode does is on the Modes page.
+                    // First-run Local onboarding card (Decision N6b) when the
+                    // local model isn't installed yet; otherwise a calm, quiet empty state.
                     if conversation.turns.isEmpty, rewording == nil {
-                        Text(agent ? "New task" : "New chat")
-                            .font(.title3.weight(.semibold))
-                            .padding(.top, 8)
+                        if mode == .llama, let block = chat.llamaBlock {
+                            LocalOnboardingCard(chat: chat, block: block)
+                        } else {
+                            EmptyChatHeader(
+                                mode: mode, agent: agent,
+                                provider: chat.activeProviderName(for: mode, conversation: conversation),
+                                model: chat.activeModelName(for: mode, conversation: conversation))
+                            if let requirement = ModeSetupRequirement.evaluate(
+                                chat: chat, mode: mode, agent: agent, conversation: conversation)
+                            {
+                                ModeSetupCard(
+                                    requirement: requirement,
+                                    openFunds: { chat.showingWallet = true },
+                                    openNearSettings: showNearSettings)
+                            }
+                        }
                     }
                     ForEach(conversation.turns) { turn in
                         if agent {
@@ -354,21 +801,31 @@ private struct Turns: View {
                     if let rewording, rewording.turn == nil {
                         PendingCard(chat: chat, rewording: rewording)
                     }
+                    Color.clear
+                        .frame(height: 0)
+                        .id("chat-bottom")
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .id(conversation.id)
             }
             // Reads from the top; a long chat opens at its newest message.
             // While the end is in view it stays in view as messages are added
-            // or the window changes size. The anchor does that, except when a
-            // chat that fit stops fitting, so the end is brought back here.
+            // or the window changes size. Defer scrolling out of the geometry
+            // callback so SwiftUI never flags multiple updates per frame.
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
-            .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { old, new in
-                let resized = new.contentSize != old.contentSize || new.containerSize != old.containerSize
-                if resized, old.visibleRect.maxY >= old.contentSize.height - 1 {
-                    proxy.scrollTo(conversation.id, anchor: .bottom)
+            .onScrollGeometryChange(for: ScrollBounds.self) { geo in
+                ScrollBounds(
+                    contentHeight: geo.contentSize.height.rounded(),
+                    containerHeight: geo.containerSize.height.rounded(),
+                    atBottom: geo.visibleRect.maxY >= geo.contentSize.height - 4
+                )
+            } action: { old, new in
+                let resized = new.contentHeight != old.contentHeight || new.containerHeight != old.containerHeight
+                if resized, old.atBottom, new.contentHeight > new.containerHeight {
+                    DispatchQueue.main.async {
+                        proxy.scrollTo("chat-bottom", anchor: .bottom)
+                    }
                 }
             }
         }
@@ -418,12 +875,12 @@ private struct TurnCard: View {
                     Pane(title: "Original", count: diff.removed.count, mark: .removed) {
                         TextBox(text: .constant(turn.original), label: "Original", editable: false, marks: diff.removed, mark: .removed)
                     }
-                    Pane(title: "Reworded", count: diff.added.count, mark: .added) {
+                    Pane(title: "Rewritten", count: diff.added.count, mark: .added) {
                         TextBox(
                             text: open
                                 ? Binding(get: { reworded }, set: { chat.edit(turn.id, in: conversation, to: $0) })
                                 : .constant(reworded),
-                            label: "Reworded", editable: open && sending == nil && rewording == nil, marks: diff.added,
+                            label: "Rewritten", editable: open && sending == nil && rewording == nil, marks: diff.added,
                             mark: .added)
                     }
                 }
@@ -441,6 +898,10 @@ private struct TurnCard: View {
                         TokenMark(tokens: tokens)
                     }
                 }
+            } else if let streaming = chat.veniceMode.partial[turn.id], !streaming.text.isEmpty {
+                Pane(title: "Answer", count: nil, mark: .added) {
+                    AnswerText(text: streaming.text)
+                }
             }
             if let sendStop, !sendStop.dismissed {
                 let dismiss: () -> Void = { chat.sendStops[turn.id]?.dismissed = true }
@@ -448,6 +909,8 @@ private struct TurnCard: View {
                     switch sendStop.reason {
                     case .tempo(let stop):
                         StopRow(stop: stop, showWallet: { chat.showingWallet = true }, dismiss: dismiss)
+                    case .venice(let stop):
+                        VeniceStopRow(stop: stop, showFunds: { chat.showingWallet = true }, dismiss: dismiss)
                     case .zkapi(let stop):
                         PayStopRow(stop: stop, showWallet: { chat.showingWallet = true }, dismiss: dismiss)
                     case .near(let stop):
@@ -472,25 +935,32 @@ private struct TurnCard: View {
                 }
                 HStack(spacing: 12) {
                     if !near {
-                        SymbolButton("Reword", symbol: "pencil.line") { chat.reword(turn, in: conversation) }
+                        SymbolButton("Rewrite", symbol: "pencil.line") { chat.reword(turn, in: conversation) }
                             .disabled(!chat.canReword || sending != nil)
                     }
                     if let sending {
                         Busy(title: "Sending", started: sending.started)
+                        if chat.veniceMode.partial[turn.id] != nil {
+                            Button("Stop") { chat.veniceMode.stop(turn.id) }
+                                .controlSize(.small)
+                        }
+                    } else if let autoStart = chat.autoStarting, autoStart.conversation == conversation {
+                        Busy(title: "Starting Cloak", started: autoStart.started)
                     }
                     Spacer()
-                    let block = near ? chat.nearMode.sendBlock : chat.sendBlock(turn, in: mode)
-                    let originalBlock = turn.reworded == nil ? nil : chat.originalBlock(in: mode)
+                    let isAutoStartingHere = chat.autoStarting?.conversation == conversation
+                    let block = isAutoStartingHere ? nil : (near ? chat.nearMode.sendBlock : chat.sendBlock(turn, in: mode))
+                    let originalBlock = (isAutoStartingHere || turn.reworded == nil) ? nil : chat.originalBlock(in: mode)
                     if let words = originalBlock ?? block {
                         Text(words)
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
-                    // The way on from a reason the wallet or the key fixes.
+                    // The way on from a reason Funds or the key fixes.
                     if near, chat.nearMode.hasKey == false {
                         Button("Settings…", action: showNearSettings)
-                    } else if !near, chat.walletBlocks(in: mode) {
-                        Button("Wallet…") { chat.showingWallet = true }
+                    } else if !near, !isAutoStartingHere, chat.walletBlocks(in: mode) {
+                        Button("Funds…") { chat.showingWallet = true }
                     }
                     // Each press of Send or Send Original Text sends, one
                     // under way or not.
@@ -498,9 +968,9 @@ private struct TurnCard: View {
                         Button("Send", systemImage: "arrow.up") { chat.send(turn.id, in: conversation) }
                             .buttonStyle(RoundButtonStyle(diameter: 20))
                             .tip("Send")
-                            .disabled(block != nil)
+                            .disabled(block != nil || isAutoStartingHere)
                         if turn.reworded != nil {
-                            SendOptions(settings: chat.settings, blocked: originalBlock != nil) {
+                            SendOptions(settings: chat.settings, blocked: originalBlock != nil || isAutoStartingHere) {
                                 chat.sendOriginal(turn.id, in: conversation)
                             }
                         }
@@ -614,19 +1084,19 @@ private struct TaskCard: View {
                     Pane(title: "Original", count: diff.removed.count, mark: .removed) {
                         TextBox(text: .constant(turn.original), label: "Original", editable: false, marks: diff.removed, mark: .removed)
                     }
-                    Pane(title: "Reworded", count: diff.added.count, mark: .added) {
-                        TextBox(text: .constant(reworded), label: "Reworded", editable: false, marks: diff.added, mark: .added)
+                    Pane(title: "Rewritten", count: diff.added.count, mark: .added) {
+                        TextBox(text: .constant(reworded), label: "Rewritten", editable: false, marks: diff.added, mark: .added)
                     }
                 } else {
                     Pane(title: "Original", count: nil, mark: .removed) {
                         TextBox(text: .constant(turn.original), label: "Original", editable: false)
                     }
                     if run != nil {
-                        Pane(title: "Reworded", count: nil, mark: .added) {
+                        Pane(title: "Rewritten", count: nil, mark: .added) {
                             HStack(spacing: 8) {
                                 ProgressView()
                                     .controlSize(.small)
-                                Text("Rewording")
+                                Text("Rewriting")
                                     .foregroundStyle(.secondary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -645,17 +1115,20 @@ private struct TaskCard: View {
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         Button {
-                            showingSteps.toggle()
+                            withAnimation(.easeInOut(duration: 0.18)) { showingSteps.toggle() }
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "chevron.right")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
                                     .rotationEffect(.degrees(showingSteps ? 90 : 0))
+                                    .frame(width: 12)
                                     .accessibilityHidden(true)
                                 Text("^[\(steps.count) step](inflect: true)")
                                     .font(.subheadline.weight(.semibold))
+                                Spacer(minLength: 0)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
@@ -678,10 +1151,10 @@ private struct TaskCard: View {
                     EndRow(title: end.title, words: end.words)
                     if end == .unreachable {
                         HStack(spacing: 12) {
-                            Text("Agents says why.")
+                            Text("Connected Apps says why.")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
-                            Button("Agents…", action: showAgents)
+                            Button("Connected Apps…", action: showAgents)
                         }
                     }
                     if mode == .v, case .failed = end, chat.payer.state == .none {
@@ -689,7 +1162,7 @@ private struct TaskCard: View {
                             Text("Deposit to run.")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
-                            Button("Wallet…") { chat.showingWallet = true }
+                            Button("Funds…") { chat.showingWallet = true }
                         }
                     }
                 } else {
@@ -719,7 +1192,7 @@ private struct TaskCard: View {
                             .foregroundStyle(.secondary)
                     }
                     if chat.walletBlocks(in: mode) {
-                        Button("Wallet…") { chat.showingWallet = true }
+                        Button("Funds…") { chat.showingWallet = true }
                     }
                     SymbolButton("Run Again", symbol: "arrow.clockwise") { chat.runAgain(turn, in: conversation) }
                         .disabled(block != nil)
@@ -743,15 +1216,51 @@ private struct LlamaCard: View {
     var body: some View {
         Card {
             Pane(title: "Message", count: nil, mark: .removed) {
-                TextBox(text: .constant(turn.original), label: "Message", editable: false)
+                VStack(alignment: .leading, spacing: 8) {
+                    if let attachments = turn.attachments, !attachments.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(attachments) { item in
+                                    HStack(spacing: 5) {
+                                        Image(systemName: Self.attachmentSymbol(for: item.kind))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text(item.name)
+                                            .font(.caption.weight(.medium))
+                                            .lineLimit(1)
+                                        if item.kind == LocalAttachment.Kind.image.rawValue {
+                                            Text("· OCR")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        if item.truncated {
+                                            Text("· excerpt")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 4)
+                                    .background(.quaternary.opacity(0.65), in: Capsule())
+                                }
+                            }
+                        }
+                    }
+                    TextBox(text: .constant(turn.original), label: "Message", editable: false)
+                }
             }
             if let answer = turn.answer {
                 Pane(title: "Answer", count: nil, mark: .added) {
                     AnswerText(text: answer)
                 }
             } else if let answering {
+                if !answering.partial.isEmpty {
+                    Pane(title: "Answer", count: nil, mark: .added) {
+                        AnswerText(text: answering.partial)
+                    }
+                }
                 HStack(spacing: 8) {
-                    Busy(title: "Working", started: answering.started)
+                    LocalBusy(answering: answering)
                     Spacer()
                     Button("Stop") { chat.stopAnswer(in: conversation) }
                 }
@@ -772,6 +1281,14 @@ private struct LlamaCard: View {
                     }
                 }
             }
+        }
+    }
+
+    private static func attachmentSymbol(for kind: String) -> String {
+        switch kind {
+        case LocalAttachment.Kind.image.rawValue: "photo"
+        case LocalAttachment.Kind.pdf.rawValue, LocalAttachment.Kind.document.rawValue: "doc.richtext"
+        default: "doc.text"
         }
     }
 }
@@ -844,7 +1361,7 @@ private struct Lights: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Light(symbol: "textformat", good: reworded, words: reworded ? "Reworded" : "Not reworded")
+            Light(symbol: "textformat", good: reworded, words: reworded ? "Rewritten" : "Not rewritten")
             Light(symbol: torSymbol, good: routed, words: routed ? "Routed through Tor" : "Not routed: Cloak isn't running")
             if linkable {
                 Light(symbol: "link", good: false, words: "The provider can link your chats, because one wallet pays for all of them.")
@@ -888,6 +1405,86 @@ private struct Busy: View {
     }
 }
 
+/// Live local-model progress row: clearly shows cold model startup
+/// ("Starting local model…") while loading weights into Apple Silicon memory,
+/// then cycles through varied answering phrases (like Claude Code) while the
+/// model reasons, and switches to "Writing reply…" once tokens begin streaming.
+private struct LocalBusy: View {
+    let answering: Chat.Answering
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phrases: [String] = Self.answeringPhrases
+    @State private var phraseIndex = 0
+
+    private static let answeringPhrases: [String] = [
+        "Answering query…",
+        "Thinking it through…",
+        "Pondering…",
+        "Connecting the dots…",
+        "Reasoning locally…",
+        "Working through the details…",
+        "Mulling it over…",
+        "Synthesizing on-device…",
+        "Weighing the angles…",
+        "Distilling the answer…",
+        "Piecing it together…",
+        "Composing a reply…",
+        "Untangling the thread…",
+        "Crunching on Apple Silicon…",
+        "Drafting privately…",
+        "Shaping the response…",
+        "Refining the thought…",
+    ]
+
+    private var statusText: String {
+        if !answering.partial.isEmpty {
+            return "Writing reply…"
+        }
+        switch answering.stage {
+        case .startingModel:
+            return "Starting local model…"
+        case .answering:
+            return phrases.isEmpty ? "Answering query…" : phrases[phraseIndex % phrases.count]
+        }
+    }
+
+    private var taskKey: String {
+        "\(answering.turn.uuidString)-\(answering.stage)-\(answering.partial.isEmpty)"
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityHidden(true)
+            Text(statusText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .id(statusText)
+                .transition(reduceMotion ? .identity : .opacity)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: statusText)
+            Text(timerInterval: answering.started...Date.distantFuture, countsDown: false)
+                .font(.callout)
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+        }
+        .accessibilityElement(children: .combine)
+        .task(id: taskKey) {
+            guard answering.stage == .answering, answering.partial.isEmpty else { return }
+            var pool = Self.answeringPhrases.shuffled()
+            if answering.didColdStart, let idx = pool.firstIndex(of: "Answering query…") {
+                pool.swapAt(0, idx)
+            }
+            phrases = pool
+            phraseIndex = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2.8))
+                guard !Task.isCancelled else { return }
+                phraseIndex = (phraseIndex + 1) % max(phrases.count, 1)
+            }
+        }
+    }
+}
+
 /// A new message while it is being reworded.
 private struct PendingCard: View {
     let chat: Chat
@@ -911,7 +1508,7 @@ private struct Progress: View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-            Text("Rewording")
+            Text("Rewriting")
             Text(timerInterval: started...Date.distantFuture, countsDown: false)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
@@ -1032,11 +1629,21 @@ extension View {
 /// the model answers, no details and no switches, and Cloak need not be
 /// running; when asking is certain to stop, why, and the way on.
 private struct Compose: View {
+    private struct FocusKey: Hashable {
+        var selection: UUID?
+        var tick: Int
+    }
+
     @Bindable var chat: Chat
     let showDetails: () -> Void
     let showNearSettings: () -> Void
     let showLlamaSettings: () -> Void
+    let showLocalAccessSettings: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var agentToast: Bool?
+    @State private var agentToastTask: Task<Void, Never>?
+    @State private var focusTick = 0
+    @State private var isDroppingLocalFiles = false
 
     var body: some View {
         let conversation = chat.selected
@@ -1061,22 +1668,44 @@ private struct Compose: View {
                     chat.problem = nil
                 }
             }
-            // Local Llama needs only the model; NEAR needs Cloak running
-            // only to send through Tor.
-            if llama {
-                if let block = chat.llamaBlock {
+            // Inline auto-start banner when Send/Run triggered Cloak startup (Decision R3b).
+            if let autoStart = chat.autoStarting {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Starting Cloak…")
+                            .fontWeight(.medium)
+                        Text(timerInterval: autoStart.started...Date.distantFuture, countsDown: false)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Stop") { chat.stopAutoStart() }
+                            .controlSize(.small)
+                    }
+                    StartupProgressView(supervisor: chat.supervisor)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            } else if llama {
+                // Local needs only the model; hide duplicate banner when the
+                // inline onboarding card is already showing on an empty chat.
+                if let block = chat.llamaBlock, conversation?.turns.isEmpty != true {
                     LlamaStop(block: block, showDetails: showDetails, showLlamaSettings: showLlamaSettings)
                 }
             } else if near {
-                if chat.nearMode.route == nil {
+                if chat.nearMode.route == nil, !chat.canAutoStart {
                     Waiting(
                         supervisor: chat.supervisor, download: chat.rewordingDownload, to: "send through Tor",
-                        showDetails: showDetails)
+                        autoStarts: false, showDetails: showDetails)
                 }
-            } else if chat.supervisor.phase != .running {
+            } else if chat.supervisor.phase != .running,
+                !(chat.canAutoStart && (chat.supervisor.phase == .paused || chat.supervisor.phase == .ready))
+            {
                 Waiting(
                     supervisor: chat.supervisor, download: chat.rewordingDownload,
-                    to: agent ? "run" : sends ? "send" : "reword", showDetails: showDetails)
+                    to: agent ? "run" : sends ? "send" : "rewrite", autoStarts: chat.canAutoStart, showDetails: showDetails)
             }
             if chat.rewordsElsewhere {
                 RewordingElsewhere(cancel: chat.cancel)
@@ -1084,8 +1713,99 @@ private struct Compose: View {
             if !near, !llama {
                 DetailsRow(chat: chat)
             }
-            HStack(alignment: .bottom, spacing: 10) {
-                TextBox(text: $chat.draft, label: label, maxHeight: 160, autofocus: true, submit: chat.submit)
+            if let enabled = agentToast {
+                HStack(spacing: 6) {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(enabled ? Color.green : Color.secondary)
+                    Image(systemName: Chat.Kind.agentSymbol)
+                        .imageScale(.small)
+                    Text(enabled ? "Local agent box enabled" : "Local agent box disabled")
+                        .font(.callout.weight(.medium))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .glassEffect(.regular, in: .capsule)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            if llama, (!chat.localAttachments.isEmpty || chat.attachingLocalFiles || chat.localAttachmentError != nil) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !chat.localAttachments.isEmpty || chat.attachingLocalFiles {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(chat.localAttachments) { item in
+                                    HStack(spacing: 5) {
+                                        Image(systemName: Self.localAttachmentSymbol(for: item.kind))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text(item.name)
+                                            .font(.caption.weight(.medium))
+                                            .lineLimit(1)
+                                        if item.kind == .image {
+                                            Text("· OCR")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        if item.truncated {
+                                            Text("· excerpt")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Button {
+                                            chat.removeLocalAttachment(item.id)
+                                        } label: {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 9, weight: .semibold))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .tip("Remove \(item.name)")
+                                    }
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 4)
+                                    .background(.quaternary.opacity(0.65), in: Capsule())
+                                }
+                                if chat.attachingLocalFiles {
+                                    HStack(spacing: 5) {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                        Text("Reading file…")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 4)
+                                    .background(.quaternary.opacity(0.5), in: Capsule())
+                                }
+                            }
+                        }
+                    }
+                    if let error = chat.localAttachmentError {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.circle")
+                                .foregroundStyle(.orange)
+                            Text(error)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                            Button {
+                                chat.localAttachmentError = nil
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption2)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .font(.caption)
+                    }
+                }
+            }
+            // Clean prompt input bubble with integrated Send/Stop button.
+            HStack(alignment: .bottom, spacing: 8) {
+                TextBox(
+                    text: $chat.draft, label: label, maxHeight: 160, autofocus: true,
+                    focusTrigger: FocusKey(selection: chat.selection, tick: focusTick),
+                    submit: chat.submit,
+                    onDropFiles: llama ? { chat.attachLocalFiles($0) } : nil)
                     .overlay(alignment: .topLeading) {
                         if chat.draft.isEmpty {
                             Text(label)
@@ -1096,108 +1816,781 @@ private struct Compose: View {
                                 .accessibilityHidden(true)
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
                 if running || answering, let conversation {
                     Button("Stop", systemImage: "stop.fill") {
                         if llama { chat.stopAnswer(in: conversation.id) } else { chat.agent.stop(conversation.id) }
                     }
-                        .buttonStyle(RoundButtonStyle())
-                        .tip("Stop")
-                        .keyboardShortcut(".", modifiers: .command)
-                        .padding(.bottom, 4)
+                    .buttonStyle(RoundButtonStyle())
+                    .tip("Stop")
+                    .keyboardShortcut(".", modifiers: .command)
+                    .padding(.bottom, 2)
                 } else {
-                    let title = agent ? "Run" : llama ? "Ask" : sends ? "Send" : "Reword"
-                    // Reword's symbol where the press only rewords.
+                    let title = agent ? "Run" : llama ? "Ask" : sends ? "Send" : "Rewrite"
                     Button(title, systemImage: !agent && !llama && !sends ? "pencil.line" : "arrow.up") { chat.submit() }
                         .buttonStyle(RoundButtonStyle())
                         .tip(title)
                         .disabled(!chat.canSubmit)
-                        // Level with a box of one line.
-                        .padding(.bottom, 4)
+                        .padding(.bottom, 2)
                 }
             }
-            HStack(spacing: 16) {
-                if let conversation, conversation.turns.isEmpty, chat.rewording?.conversation != conversation.id {
-                    HStack(spacing: 6) {
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(
+                        llama && isDroppingLocalFiles ? Color.accentColor : Color(nsColor: .separatorColor),
+                        lineWidth: llama && isDroppingLocalFiles ? 1.5 : 1)
+            )
+            .overlay(alignment: .center) {
+                if llama && isDroppingLocalFiles {
+                    Label("Drop files to attach locally", systemImage: "paperclip")
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.regularMaterial, in: Capsule())
+                        .allowsHitTesting(false)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .onTapGesture { focusTick += 1 }
+            .onDrop(of: [.fileURL], isTargeted: $isDroppingLocalFiles) { providers in
+                guard llama else { return false }
+                return handleLocalFileDrop(providers)
+            }
+
+            // Mode selector & controls cleanly below the prompt input bubble.
+            let showModeControls = conversation.map { $0.turns.isEmpty && chat.rewording?.conversation != $0.id } ?? false
+            let showTokenProvider = mode == .token && !agent
+            let showCoverToggle = mode == .token || mode == .v
+            let setupRequirement = ModeSetupRequirement.evaluate(
+                chat: chat, mode: mode, agent: agent, conversation: conversation)
+            let showBottomRow = showModeControls || showTokenProvider || showCoverToggle || setupRequirement != nil || llama || near || neverReword
+                || (agent && chat.supervisor.phase == .running && (conversation.map(chat.startsFresh) == true || chat.runBlock(in: mode) != nil))
+            if showBottomRow {
+                HStack(spacing: 8) {
+                    if showModeControls {
                         ModeSwitch(kind: $chat.kind)
                             .fixedSize()
                         if chat.kind.hasAgent {
-                            SwitchPill(
-                                title: Chat.Kind.agentName, symbol: Chat.Kind.agentSymbol, isOn: $chat.agentOn,
-                                help: Chat.Kind.agentAbout)
-                        }
-                        SymbolButton("Modes", symbol: "info.circle") { chat.showingModes = true }
-                            .foregroundStyle(.secondary)
-                        if chat.kind == .token {
-                            BoundlessTempoButton(arrowEdge: .top)
+                            AgentPill(
+                                isOn: Binding(
+                                    get: { chat.agentOn },
+                                    set: { newValue in
+                                        chat.agentOn = newValue
+                                        showAgentToast(enabled: newValue)
+                                    }),
+                                showTour: { chat.openTour(step: 2) })
                         }
                     }
+                    if llama {
+                        LocalComposeControls(
+                            activeCount: chat.settings.activeLocalContextSummary.count,
+                            onAttachFiles: pickLocalFiles,
+                            onOpenLocalAccess: showLocalAccessSettings)
+                    }
+                    if showTokenProvider {
+                        TokenProviderToggle(
+                            provider: Binding(
+                                get: { chat.settings.payProvider },
+                                set: { chat.selectPayProvider($0) }))
+                    }
+                    if showCoverToggle {
+                        CompactPrivacyToggleButton(
+                            symbol: "waveform.path",
+                            label: "Cover Traffic",
+                            isOn: chat.settings.cover,
+                            isActive: chat.settings.cover && chat.supervisor.phase == .running,
+                            isBusy: false,
+                            tip: chat.settings.cover
+                                ? (chat.supervisor.phase == .running
+                                    ? "Cover Traffic is ON — sending random public Tor fetches (~3/min) to blur prompt timing. Click to turn off."
+                                    : "Cover Traffic is ON (starts when Cloak runs). Click to turn off.")
+                                : "Cover Traffic is OFF — click to send random public Tor fetches (~3/min) to blur prompt timing."
+                        ) {
+                            chat.settings.cover.toggle()
+                        }
+                    }
+                    if near {
+                        NearSwitches(
+                            settings: chat.settings, nearMode: chat.nearMode,
+                            supervisor: chat.supervisor, download: chat.rewordingDownload)
+                    }
+                    if neverReword {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .tip("Prompt rewriting is off — messages send as written.")
+                            .accessibilityLabel("Prompt rewriting is off — messages send as written.")
+                    } else if agent, let conversation, chat.supervisor.phase == .running, chat.startsFresh(conversation) {
+                        Label("Starts fresh", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .tip("The agent won't remember the earlier tasks here.")
+                    }
+                    Spacer(minLength: 0)
+                    if let setupRequirement {
+                        ModeSetupPill(
+                            requirement: setupRequirement,
+                            openFunds: { chat.showingWallet = true },
+                            openNearSettings: showNearSettings)
+                    } else if agent, chat.supervisor.phase == .running, let block = chat.runBlock(in: mode) {
+                        Text(block)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Funds…") { chat.showingWallet = true }
+                            .controlSize(.small)
+                    }
                 }
-                if neverReword {
-                    // Constant while ticked, since no reworded text is shown.
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .tip("Rewording is off. Messages go as you wrote them.")
-                        .accessibilityLabel("Rewording is off. Messages go as you wrote them.")
-                } else if agent, let conversation, chat.supervisor.phase == .running, chat.startsFresh(conversation) {
-                    Label("The agent won't remember the earlier tasks here.", systemImage: "info.circle")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                // While Cloak is not running, the notice above says so. A
-                // reason the wallet or the key fixes comes with the way there.
-                if agent, chat.supervisor.phase == .running, let block = chat.runBlock(in: mode) {
-                    Text(block)
-                        .foregroundStyle(.secondary)
-                    Button("Wallet…") { chat.showingWallet = true }
-                }
-                if near, chat.nearMode.hasKey == false, let block = chat.nearMode.sendBlock {
-                    Text(block)
-                        .foregroundStyle(.secondary)
-                    Button("Settings…", action: showNearSettings)
-                }
-            }
-            .font(.callout)
-            if near {
-                NearSwitches(settings: chat.settings, nearMode: chat.nearMode)
-            } else if !llama {
-                Switches(mode: mode)
             }
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: chat.picks.details)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: agentToast)
+        .onDisappear { agentToastTask?.cancel() }
+    }
+
+    private func showAgentToast(enabled: Bool) {
+        agentToastTask?.cancel()
+        agentToast = enabled
+        agentToastTask = Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            guard !Task.isCancelled else { return }
+            agentToast = nil
+        }
+    }
+
+    private static func localAttachmentSymbol(for kind: LocalAttachment.Kind) -> String {
+        switch kind {
+        case .image: "photo"
+        case .pdf, .document: "doc.richtext"
+        case .file: "doc.text"
+        }
+    }
+
+    private func pickLocalFiles() {
+        let panel = NSOpenPanel()
+        panel.title = "Attach Local Files"
+        panel.message = "Selected PDF, document, image (OCR), Markdown, text, or code files stay strictly on this Mac in Local Mode."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        let handleResponse: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, !panel.urls.isEmpty else { return }
+            chat.attachLocalFiles(panel.urls)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            panel.beginSheetModal(for: window, completionHandler: handleResponse)
+        } else {
+            panel.begin(completionHandler: handleResponse)
+        }
+    }
+
+    private func handleLocalFileDrop(_ providers: [NSItemProvider]) -> Bool {
+        let matching = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !matching.isEmpty else { return false }
+        Task {
+            var urls: [URL] = []
+            for provider in matching {
+                if let url = await Self.loadFileURL(from: provider) {
+                    urls.append(url)
+                }
+            }
+            if !urls.isEmpty {
+                chat.attachLocalFiles(urls)
+            }
+        }
+        return true
+    }
+
+    private static func loadFileURL(from provider: NSItemProvider) async -> URL? {
+        await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    continuation.resume(returning: url)
+                } else if let url = item as? URL {
+                    continuation.resume(returning: url)
+                } else if let nsurl = item as? NSURL, let url = nsurl as URL? {
+                    continuation.resume(returning: url)
+                } else {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
     }
 }
 
-/// Tor's symbol, for the Tor switches and the Routed light: three relays
-/// joined, as Tor passes each message through three.
-private let torSymbol = "point.3.connected.trianglepath.dotted"
-
-/// Tor and zkAPI, each a small glass pill of its symbol whose dot shows at
-/// a glance whether it is on. Tor is always on. zkAPI is on in V, which
-/// pays each request with a new key, and off in Token Inference, which
-/// pays from one wallet. Neither changes here, and a press on either says
-/// so.
-private struct Switches: View {
-    let mode: Chat.Kind
+/// Compact offline-only controls in the Local Mode composer bar: attach local
+/// files (PDF, documents, images via OCR, Markdown, text, code) or configure Local Access.
+private struct LocalComposeControls: View {
+    let activeCount: Int
+    let onAttachFiles: () -> Void
+    let onOpenLocalAccess: () -> Void
 
     var body: some View {
-        let v = mode == .v
         HStack(spacing: 6) {
-            SwitchPill(
-                title: "Tor", symbol: torSymbol, isOn: .constant(true),
-                help: "Tor: your messages reach the AI service from a Tor address, not this Mac's.",
-                fixed: v ? "Tor stays on in V chats." : "Tor stays on in Token Inference chats.")
-            SwitchPill(
-                title: "zkAPI", symbol: "ticket", isOn: .constant(v),
-                help: v ? "Each request is paid with a new key." : "zkAPI is off: one wallet pays for every chat.",
-                fixed: v ? "zkAPI stays on in V chats." : "Token Inference pays from one wallet. V pays with zkAPI.")
-            Spacer(minLength: 0)
+            Button(action: onAttachFiles) {
+                HStack(spacing: 4) {
+                    Image(systemName: "paperclip")
+                        .font(.caption.weight(.medium))
+                    Text("Attach")
+                        .font(.caption.weight(.medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 9)
+                .frame(minHeight: 26)
+                .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .hover(Capsule())
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .tip("Attach local PDF, document, image (OCR), Markdown, text, or code files — or drag & drop them into the message box.")
+
+            Button(action: onOpenLocalAccess) {
+                HStack(spacing: 5) {
+                    if activeCount > 0 {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 6, weight: .bold))
+                            .foregroundStyle(.green)
+                    }
+                    Image(systemName: "person.crop.rectangle.stack")
+                        .font(.caption.weight(.medium))
+                    Text(activeCount > 0 ? "Local Access (\(activeCount))" : "Local Access")
+                        .font(.caption.weight(.medium))
+                }
+                .foregroundStyle(activeCount > 0 ? .primary : .secondary)
+                .padding(.horizontal, 9)
+                .frame(minHeight: 26)
+                .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .hover(Capsule())
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .tip("Configure offline-only Mac info, Hermes memory, approved folders, and macOS Calendar, Reminders & Contacts.")
         }
-        .font(.callout)
+    }
+}
+
+/// Onboarding requirement for any remote mode whose wallet, deposit, or API key
+/// is not ready yet. Surfaced both as an inviting card below `EmptyChatHeader`
+/// and as a compact clickable pill in the composer bar (including mid-chat).
+private struct ModeSetupRequirement: Equatable {
+    enum Destination: Equatable {
+        case funds
+        case nearSettings
+    }
+
+    let badge: String
+    let symbol: String
+    let headline: String
+    let detail: String
+    let buttonTitle: String
+    let destination: Destination
+
+    @MainActor
+    static func evaluate(
+        chat: Chat, mode: Chat.Kind, agent: Bool, conversation: Conversation?
+    ) -> ModeSetupRequirement? {
+        switch mode {
+        case .llama:
+            return nil
+
+        case .near:
+            guard chat.nearMode.hasKey == false else { return nil }
+            return ModeSetupRequirement(
+                badge: "Requires API Key",
+                symbol: "key.fill",
+                headline: "Add your NEAR AI Cloud API key",
+                detail: "Enter your key from cloud.near.ai to chat with hardware-verified Qwen3.8-27B enclaves (no crypto required).",
+                buttonTitle: "Set Up Key…",
+                destination: .nearSettings)
+
+        case .token:
+            // Built-in Pi Agent in Token Inference uses Boundless / Tempo USDC.e.
+            if !agent && chat.usesVenice(for: conversation) {
+                switch chat.settings.venicePays {
+                case .wallet:
+                    if chat.veniceMode.presence == .absent {
+                        return ModeSetupRequirement(
+                            badge: "Requires Funding",
+                            symbol: "creditcard.fill",
+                            headline: "Set up your Venice Base USDC wallet",
+                            detail: "Create a local Base USDC wallet and top up $5–$10 via x402, or switch to a Venice API Key.",
+                            buttonTitle: "Set Up Venice…",
+                            destination: .funds)
+                    }
+                    if let credit = chat.veniceMode.credit, !credit.canSpend {
+                        return ModeSetupRequirement(
+                            badge: "Requires Funding",
+                            symbol: "creditcard.fill",
+                            headline: "Add Venice credit to send",
+                            detail: "Top up $5–$10 from your Base USDC wallet via x402 to start chatting over Tor.",
+                            buttonTitle: "Add Funds…",
+                            destination: .funds)
+                    }
+                    return nil
+                case .key:
+                    if chat.veniceMode.hasKey == false {
+                        return ModeSetupRequirement(
+                            badge: "Requires API Key",
+                            symbol: "key.fill",
+                            headline: "Add your Venice Inference API key",
+                            detail: "Save your key from venice.ai, or switch to a local Base USDC wallet in Funds.",
+                            buttonTitle: "Set Up Key…",
+                            destination: .funds)
+                    }
+                    if let account = chat.veniceMode.keyAccount, !account.canSpend {
+                        return ModeSetupRequirement(
+                            badge: "Requires Funding",
+                            symbol: "creditcard.fill",
+                            headline: "Your Venice API key has no spendable balance",
+                            detail: "Add credit on venice.ai or switch to a local Base USDC wallet in Funds.",
+                            buttonTitle: "Manage Funds…",
+                            destination: .funds)
+                    }
+                    return nil
+                }
+            } else {
+                if chat.wallet.presence == .absent {
+                    return ModeSetupRequirement(
+                        badge: "Requires Funding",
+                        symbol: "creditcard.fill",
+                        headline: "Set up your Boundless Tempo wallet",
+                        detail: "Create a local Tempo wallet and add USDC.e to pay per request through Boundless over Tor.",
+                        buttonTitle: "Set Up Wallet…",
+                        destination: .funds)
+                }
+                if chat.wallet.lacksFunds {
+                    return ModeSetupRequirement(
+                        badge: "Requires Funding",
+                        symbol: "creditcard.fill",
+                        headline: "Add USDC.e on Tempo to send",
+                        detail: "Send USDC.e on Tempo to your Boundless wallet address in Funds to start chatting.",
+                        buttonTitle: "Add Funds…",
+                        destination: .funds)
+                }
+                return nil
+            }
+
+        case .v:
+            switch chat.payer.state {
+            case .none:
+                return ModeSetupRequirement(
+                    badge: "Requires Funding",
+                    symbol: "creditcard.fill",
+                    headline: "Deposit ETH to activate zkAPI Anon Inference",
+                    detail: "Send ETH on Ethereum Mainnet and make a $5–$10 deposit to unlock one-time zkAPI credentials (including Tier 5 & Tier 25 models).",
+                    buttonTitle: "Add Funds…",
+                    destination: .funds)
+            case .taken:
+                return ModeSetupRequirement(
+                    badge: "Requires Funding",
+                    symbol: "creditcard.fill",
+                    headline: "Previous zkAPI deposit closed",
+                    detail: "Your earlier zkAPI deposit was closed on-chain. Make a new $5–$10 deposit in Funds to keep chatting.",
+                    buttonTitle: "Add Funds…",
+                    destination: .funds)
+            case .unread:
+                guard chat.payer.savedExpiry == nil else { return nil }
+                return ModeSetupRequirement(
+                    badge: "Requires Funding",
+                    symbol: "creditcard.fill",
+                    headline: "Set up your zkAPI ETH deposit",
+                    detail: "Start Cloak and make a $5–$10 ETH deposit on Ethereum Mainnet to pay each turn with a fresh one-time zkAPI credential.",
+                    buttonTitle: "Open Funds…",
+                    destination: .funds)
+            case .depositing, .ready, .settling, .withdrawing, .failed:
+                return nil
+            }
+        }
+    }
+}
+
+private struct ModeSetupCard: View {
+    let requirement: ModeSetupRequirement
+    let openFunds: () -> Void
+    let openNearSettings: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Label(requirement.badge, systemImage: requirement.symbol)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.orange.opacity(0.14)))
+                Spacer(minLength: 0)
+            }
+            Text(requirement.headline)
+                .font(.headline)
+            Text(requirement.detail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(requirement.buttonTitle) {
+                    switch requirement.destination {
+                    case .funds: openFunds()
+                    case .nearSettings: openNearSettings()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+        }
+        .padding(16)
+        .frame(maxWidth: 480, alignment: .leading)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.28), lineWidth: 1))
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+
+private struct ModeSetupPill: View {
+    let requirement: ModeSetupRequirement
+    let openFunds: () -> Void
+    let openNearSettings: () -> Void
+
+    var body: some View {
+        Button {
+            switch requirement.destination {
+            case .funds: openFunds()
+            case .nearSettings: openNearSettings()
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: requirement.symbol)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(requirement.badge)
+                    .font(.caption.weight(.semibold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .opacity(0.75)
+            }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 9)
+            .frame(minHeight: 26)
+            .background(Capsule().fill(Color.orange.opacity(0.13)))
+            .overlay(Capsule().strokeBorder(Color.orange.opacity(0.32), lineWidth: 0.75))
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .tip("\(requirement.headline) — click to \(requirement.buttonTitle.lowercased())")
+        .accessibilityLabel("\(requirement.badge). \(requirement.buttonTitle)")
+    }
+}
+
+/// Compact logo toggle for switching between Venice AI (Base USDC) and
+/// Boundless + Tempo (USDC.e) directly below the Token Inference composer —
+/// works both on new chats (beside the Agent hammer) and mid-chat.
+private struct TokenProviderToggle: View {
+    @Binding var provider: PayProvider
+    @Namespace private var pillNamespace
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 2) {
+            option(.venice, label: "Venice AI (Base USDC)") {
+                BrandMark.venice
+                    .fill(style: FillStyle(eoFill: true))
+                    .frame(width: 12, height: 13.5)
+            }
+            option(.boundless, label: "Boundless + Tempo (USDC.e)") {
+                BrandMark.boundless
+                    .fill(style: FillStyle(eoFill: true))
+                    .frame(width: 13.5, height: 13)
+            }
+        }
+        .padding(3)
+        .frame(minHeight: 28)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: provider)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Token Inference provider")
+    }
+
+    @ViewBuilder
+    private func option<Icon: View>(
+        _ value: PayProvider, label: String, @ViewBuilder icon: () -> Icon
+    ) -> some View {
+        let selected = provider == value
+        Button {
+            provider = value
+        } label: {
+            icon()
+                .foregroundStyle(selected ? HierarchicalShapeStyle.primary : HierarchicalShapeStyle.tertiary)
+                .frame(width: 26, height: 22)
+                .background {
+                    if selected {
+                        Capsule()
+                            .fill(Color.primary.opacity(0.14))
+                            .matchedGeometryEffect(id: "token-provider-active", in: pillNamespace)
+                    }
+                }
+                .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .tip(label)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Interactive Agent (hammer) toggle pill with an explanatory hover popover
+/// (including a clickable learn-more link) so users understand how the sealed
+/// local Linux agent box changes execution.
+private struct AgentPill: View {
+    @Binding var isOn: Bool
+    let showTour: () -> Void
+    @State private var showingInfo = false
+    @State private var hoveringPill = false
+    @State private var hoveringPopover = false
+    @State private var hoverTask: Task<Void, Never>?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let docsURL = URL(string: "https://regents.sh/cloak#agent")!
+
+    var body: some View {
+        Button {
+            showingInfo = false
+            isOn.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: isOn ? "circle.fill" : "circle")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(isOn ? Color.green : Color.secondary)
+                    .contentTransition(.symbolEffect(.replace))
+                Image(systemName: Chat.Kind.agentSymbol)
+                    .foregroundStyle(HierarchicalShapeStyle.primary)
+                Text(Chat.Kind.agentName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(HierarchicalShapeStyle.primary)
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 28)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .hover(Capsule())
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: isOn)
+        .onHover { inside in
+            hoveringPill = inside
+            schedulePopover()
+        }
+        .popover(isPresented: $showingInfo, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 0) {
+                BulletNote(
+                    "Local Agent Box",
+                    bullets: [
+                        "Runs multi-step tasks inside an isolated Linux VM on this Mac.",
+                        "Shell and coding tools never touch your macOS files directly.",
+                        "Prompts are rewritten locally and routed over Tor.",
+                        "Paid via zkAPI Anon Inference or Boundless/Tempo USDC.e in Token Inference.",
+                    ])
+                Divider()
+                HStack(spacing: 12) {
+                    Link(destination: Self.docsURL) {
+                        HStack(spacing: 3) {
+                            Text("Learn more")
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption2)
+                        }
+                    }
+                    Spacer()
+                    Button("Tour (⌘/)") {
+                        showingInfo = false
+                        showTour()
+                    }
+                    .buttonStyle(.link)
+                }
+                .font(.callout)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+            .frame(width: 310)
+            .onHover { inside in
+                hoveringPopover = inside
+                schedulePopover()
+            }
+        }
+        .onDisappear { hoverTask?.cancel() }
+        .accessibilityRepresentation {
+            Toggle(Chat.Kind.agentName, isOn: $isOn)
+                .toggleStyle(.switch)
+                .accessibilityHint(Chat.Kind.agentAbout)
+        }
+    }
+
+    private func schedulePopover() {
+        hoverTask?.cancel()
+        if hoveringPill || hoveringPopover {
+            guard !showingInfo, NSApp.isActive else { return }
+            hoverTask = Task {
+                guard (try? await Task.sleep(for: .milliseconds(450))) != nil else { return }
+                guard NSApp.isActive, hoveringPill || hoveringPopover else { return }
+                showingInfo = true
+            }
+        } else if showingInfo {
+            hoverTask = Task {
+                guard (try? await Task.sleep(for: .milliseconds(250))) != nil else { return }
+                if !hoveringPill, !hoveringPopover {
+                    showingInfo = false
+                }
+            }
+        }
+    }
+}
+
+/// Tor's symbol, shared by the toolbar Tor button, NEAR's Tor switch, Menu bar, and the Routed light.
+let torSymbol = "point.3.connected.trianglepath.dotted"
+
+/// Compact clickable Mode + Model capsule in Chat's native titlebar.
+/// Clicking opens a concise bulleted explanation popover + quick Settings/Tour links.
+private struct TitlebarModePill: View {
+    let chat: Chat
+    let kind: Chat.Kind
+    let showLlamaSettings: () -> Void
+    let showNearSettings: () -> Void
+    @State private var showingInfo = false
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var subtitle: String {
+        let model = chat.activeModelName(for: kind, conversation: chat.selected)
+        if let provider = chat.activeProviderName(for: kind, conversation: chat.selected),
+            !kind.name.localizedCaseInsensitiveContains(provider)
+        {
+            return "\(provider) · \(model)"
+        }
+        return model
+    }
+
+    private var tint: Color {
+        switch kind {
+        case .llama: .green
+        case .near: .accentColor
+        case .token: .orange
+        case .v: .purple
+        }
+    }
+
+    var body: some View {
+        Button {
+            showingInfo.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: kind.symbol)
+                    .imageScale(.small)
+                    .foregroundStyle(tint)
+                Text(kind.shortTitle)
+                    .fontWeight(.medium)
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text(subtitle)
+                    .foregroundStyle(contrast == .increased ? Color.primary : Color.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .padding(.horizontal, 4)
+        }
+        .popover(isPresented: $showingInfo, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 0) {
+                BulletNote(popoverTitle, bullets: popoverBullets)
+                if let credit = popoverCredit {
+                    Text(credit)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 10)
+                }
+                Divider()
+                HStack(spacing: 12) {
+                    if kind == .llama {
+                        Button("Local Models…") {
+                            showingInfo = false
+                            showLlamaSettings()
+                        }
+                        .buttonStyle(.link)
+                    } else if kind == .near {
+                        Button("NEAR AI Gateway Settings…") {
+                            showingInfo = false
+                            showNearSettings()
+                        }
+                        .buttonStyle(.link)
+                    } else {
+                        Button("Manage Funds…") {
+                            showingInfo = false
+                            chat.showingWallet = true
+                        }
+                        .buttonStyle(.link)
+                    }
+                    Spacer()
+                    Button("Tour (⌘/)") {
+                        showingInfo = false
+                        chat.showingTour = true
+                    }
+                    .buttonStyle(.link)
+                }
+                .font(.callout)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+            .frame(width: 310)
+        }
+        .tip("About \(kind.name) · Model: \(chat.activeModelFullName(for: kind, conversation: chat.selected)) (⌘1–⌘4 to switch modes)")
+    }
+
+    private var popoverTitle: String {
+        "\(kind.shortTitle) · \(subtitle)"
+    }
+
+    private var popoverCredit: LocalizedStringKey? {
+        if kind == .token, chat.usesVenice(for: chat.selected) {
+            return "Powered by [Venice AI](https://venice.ai) ([Docs](https://docs.venice.ai) · [GitHub](https://github.com/veniceai))."
+        }
+        return kind.credit
+    }
+
+    private var popoverBullets: [String] {
+        let modelLine = "Model: \(chat.activeModelFullName(for: kind, conversation: chat.selected))"
+        return switch kind {
+        case .llama:
+            [
+                modelLine,
+                "100% offline on this Mac — free, no account, no crypto.",
+                "Model weights are SHA-256 verified before loading.",
+                "Switch MLX/GGUF tiers or toggle Unfiltered LoRA in Settings.",
+            ]
+        case .near:
+            [
+                modelLine,
+                "Hardware-verified Intel TDX + NVIDIA enclaves using a NEAR API key.",
+                chat.settings.nearTor ? "Routing through Tor (hides your IP; slower)." : "Tor is off — toggle Tor below to hide your IP.",
+                "Attestation verifies enclave hardware; your key ties chats to one NEAR account.",
+            ]
+        case .token:
+            [
+                modelLine,
+                "Pays per prompt with a local USDC wallet over Tor — no account or card.",
+                chat.usesVenice(for: chat.selected)
+                    ? "Venice (Base USDC): Private & TEE models via dedicated Keychain wallet."
+                    : "Boundless (Tempo USDC.e): per-request payment channel.",
+                "Prompts are rewritten locally before leaving over Tor.",
+            ]
+        case .v:
+            [
+                modelLine,
+                "Zero-knowledge proofs (zkAPI) pay every prompt with a fresh one-time key.",
+                "Unlinkable even to your own earlier prompts.",
+                "Prompts are rewritten locally and routed through Tor.",
+            ]
+        }
     }
 }
 
@@ -1207,39 +2600,80 @@ private struct Switches: View {
 private struct NearSwitches: View {
     @Bindable var settings: AppSettings
     let nearMode: NearMode
+    let supervisor: Supervisor
+    let download: ModelDownload
 
     var body: some View {
         HStack(spacing: 6) {
-            SwitchPill(
-                title: "Tor", symbol: torSymbol, isOn: $settings.nearTor,
-                help: settings.nearTor ? "NEAR and Intel see a Tor address. Slower." : "NEAR and Intel see this Mac's internet address.")
+            CompactPrivacyToggleButton(
+                symbol: torSymbol,
+                label: "Tor",
+                isOn: settings.nearTor,
+                isActive: settings.nearTor && supervisor.phase == .running,
+                isBusy: settings.nearTor && supervisor.phase.state == .preparing,
+                tip: settings.nearTor
+                    ? (supervisor.phase == .running
+                        ? "Tor is ON for NEAR — NEAR and Intel see a Tor exit IP (slower). Click to turn off."
+                        : "Tor is ON for NEAR (starting Cloak…). Click to switch back to direct.")
+                    : "Tor is OFF for NEAR — NEAR and Intel see this Mac's IP. Click to route through Tor."
+            ) {
+                let next = !settings.nearTor
+                settings.nearTor = next
+                if next, supervisor.phase != .running, supervisor.phase.state != .preparing, download.state == .installed {
+                    supervisor.send(.start)
+                }
+            }
+            if settings.nearTor {
+                CompactPrivacyToggleButton(
+                    symbol: "waveform.path",
+                    label: "Cover Traffic",
+                    isOn: settings.cover,
+                    isActive: settings.cover && supervisor.phase == .running,
+                    isBusy: false,
+                    tip: settings.cover
+                        ? (supervisor.phase == .running
+                            ? "Cover Traffic is ON — sending random public Tor fetches (~3/min) to blur prompt timing. Click to turn off."
+                            : "Cover Traffic is ON (starts when Cloak runs). Click to turn off.")
+                        : "Cover Traffic is OFF — click to send random public Tor fetches (~3/min) to blur prompt timing."
+                ) {
+                    settings.cover.toggle()
+                }
+            }
             NearStatus(settings: settings, nearMode: nearMode)
-                .padding(.leading, 4)
-            Spacer(minLength: 0)
+                .font(.caption)
+                .padding(.leading, 2)
         }
-        .font(.callout)
         .task(id: nearMode.route) { await nearMode.check() }
     }
 }
 
 /// What NEAR's hardware check last found: under way, with how long it has
 /// taken; passed, as a shield and how long ago, the shield grey once the
-/// next message checks again; or stopped, saying why, with Check Again; or
-/// that Tor needs Cloak running. What a symbol stands for is its help.
+/// next message checks again; verified & refused, with an orange shield and
+/// Check Again; failed to reach NEAR/Intel, saying check failed; or paused
+/// while Tor needs Cloak running.
 private struct NearStatus: View {
     let settings: AppSettings
     let nearMode: NearMode
 
     var body: some View {
         if nearMode.route == nil {
-            Text("Not checked. Tor needs Cloak running.")
+            Text("Not checked · Tor paused")
                 .foregroundStyle(.secondary)
+                .tip("Hardware check over Tor runs once Cloak starts.")
         } else if let started = nearMode.checking {
             Busy(title: settings.nearTor ? "Checking NEAR's hardware through Tor" : "Checking NEAR's hardware", started: started)
         } else if let stop = nearMode.checkStop {
+            let verificationFailed = stop.kind == .refused || stop.kind == .pin || stop.kind == .reply
             HStack(spacing: 4) {
-                Text("Not checked: \(stop.title).")
-                    .foregroundStyle(.secondary)
+                Label {
+                    Text(verificationFailed ? stop.title : "Check failed: \(stop.title)")
+                        .foregroundStyle(verificationFailed ? Color.orange : Color.secondary)
+                } icon: {
+                    Image(systemName: verificationFailed ? "exclamationmark.shield.fill" : "shield.slash")
+                        .foregroundStyle(verificationFailed ? Color.orange : Color.secondary)
+                }
+                .tip("\(stop.title): \(stop.words)")
                 SymbolButton("Check Again", symbol: "arrow.clockwise") { Task { await nearMode.check() } }
             }
         } else if let proof = nearMode.proof {
@@ -1250,7 +2684,7 @@ private struct NearStatus: View {
                 let fresh = age < Double(settings.proofFreshness.rawValue)
                 let words = Self.checked(proof, age: age) + (fresh ? "." : ". Next message checks again.")
                 Label {
-                    Text(Self.age(age))
+                    Text(fresh ? "Verified · \(Self.age(age))" : Self.age(age))
                 } icon: {
                     Image(systemName: "checkmark.shield")
                         .foregroundStyle(fresh ? .green : .secondary)
@@ -1278,78 +2712,6 @@ private struct NearStatus: View {
     private static func age(_ age: TimeInterval) -> String {
         let minutes = Int(age / 60)
         return minutes < 1 ? "now" : "\(minutes) min"
-    }
-}
-
-/// NEAR Private AI's mark, with what goes and who pays as its help; and Limits, what NEAR's hardware check does
-/// not cover, behind the info button at the end.
-private struct NearBar: View {
-    let settings: AppSettings
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ModePill(title: "NEAR Private AI", help: "Sent as you wrote it. Your NEAR key pays.", tint: .accentColor)
-            Spacer(minLength: 0)
-            InfoButton("Limits") { Limits(settings: settings) }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.06))
-    }
-}
-
-/// Local Llama's mark, with where the answer comes from and what it needs
-/// as its help.
-private struct LlamaBar: View {
-    var body: some View {
-        HStack(spacing: 10) {
-            ModePill(
-                title: "Local Llama", help: "Answered on this Mac, with nothing to pay and no need to start Cloak.",
-                tint: .accentColor)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.06))
-    }
-}
-
-/// What NEAR's hardware check does not cover, as the settings are now.
-private struct Limits: View {
-    let settings: AppSettings
-
-    var body: some View {
-        let freshness = switch settings.proofFreshness {
-        case .everyMessage: "Each message is checked first."
-        case .tenMinutes: "With a reused check, the hardware was checked up to 10 minutes ago."
-        case .oneHour: "With a reused check, the hardware was checked up to 1 hour ago."
-        }
-        let lines = [
-            "The model's software isn't part of the measurement.",
-            "Your key ties every message to one NEAR account.",
-            "The GPU check covers one server, which NEAR picks.",
-            freshness,
-            settings.nearTor ? "Through Tor, they see a Tor address." : "Tor is off, so NEAR and Intel see this Mac's internet address.",
-            "On 8 November a flaw on one NEAR server exposed requests in progress.",
-        ]
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Not checked")
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
-            ForEach(lines, id: \.self) { line in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 4))
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                    Text(line)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .font(.callout)
-        .padding(16)
-        .frame(width: 340, alignment: .leading)
     }
 }
 
@@ -1405,26 +2767,35 @@ private struct ModeSwitch: NSViewRepresentable {
 }
 
 extension Chat.Kind {
-    /// The modes, in the switch's and the Modes page's order.
-    static let modes: [Chat.Kind] = [.v, .token, .near, .llama]
+    /// The modes, in the switch's and the Modes page's order: simplest first
+    /// (Local) to most paranoid (Paranoid (V)) (Decision R2b).
+    static let modes: [Chat.Kind] = [.llama, .near, .token, .v]
 
     static let agentName = "Agent"
     static let agentSymbol = "hammer"
     /// The Agent switch's help.
     static let agentAbout =
-        "Agent: your message becomes a task. Cloak's agent works on it step by step inside its sealed box on this Mac, through Tor. A remote model does the thinking, paid the same way as the chat."
+        "Runs multi-step tasks inside a sealed Linux VM on this Mac over Tor, paid the same way as this chat."
 
     var name: String {
         switch self {
-        case .v: "V"
+        case .llama: "Local"
+        case .near: "NEAR AI Gateway"
         case .token: "Token Inference"
-        case .near: "NEAR Private AI"
-        case .llama: "Local Llama"
+        case .v: "zkAPI Anon Inference"
         }
     }
 
-    /// Its symbol, here and in the chat list, which marks every chat but
-    /// V's.
+    var shortTitle: String {
+        switch self {
+        case .llama: "Local"
+        case .near: "NEAR AI Gateway"
+        case .token: "Token Inference"
+        case .v: "zkAPI Anon Inference"
+        }
+    }
+
+    /// Its symbol, here and in the chat list.
     var symbol: String {
         switch self {
         case .v: "theatermasks"
@@ -1434,159 +2805,88 @@ extension Chat.Kind {
         }
     }
 
-    /// Its help: its name, then what it does and who pays, in one sentence
-    /// or two.
+    /// Plain-English tooltip including approved "Why crypto?" rationale (Decision N4).
     var about: String {
         switch self {
-        case .v: "V: reworded on this Mac and sent through Tor. Each request is paid with a new key, from a deposit of ETH."
-        case .token: "Token Inference: reworded on this Mac and sent through Tor, paid with USDC.e on Tempo from one wallet on this Mac."
-        case .near: "NEAR Private AI: sent as you wrote it once NEAR's hardware check passes, paid by your NEAR key."
-        case .llama: "Local Llama: the model on this Mac answers, nothing is sent and there's nothing to pay."
+        case .llama: "Local: 100% offline on your Mac. Free, no account, no crypto."
+        case .near: "NEAR AI Gateway: Hardware-verified enclaves using a NEAR API key, with optional Trace Commons sharing."
+        case .token: "Token Inference: Pay per prompt over Tor with local USDC — no account or credit card."
+        case .v: "zkAPI Anon Inference: Zero-knowledge proofs pay every prompt with a fresh one-time key — unlinkable even to your own chats."
         }
     }
 
     /// What pays for it, on the Modes page.
     var paidWith: String {
         switch self {
-        case .v: "ETH on Ethereum"
-        case .token: "USDC.e on Tempo"
-        case .near: "A NEAR key from cloud.near.ai"
-        case .llama: "Nothing to pay"
+        case .llama: "Free · Runs on this Mac"
+        case .near: "NEAR API key (no crypto)"
+        case .token: CardOnRamp.isConfigured ? "Base USDC · Card / Apple Pay" : "Base USDC · Venice key · Tempo"
+        case .v: CardOnRamp.isConfigured ? "ETH via zkAPI (Card / crypto)" : "Ethereum Mainnet ETH (zkAPI)"
         }
     }
 
     /// What Cloak does in it, on the Modes page, a short line each.
     var lines: [String] {
         switch self {
-        case .v:
-            [
-                "Each message is reworded on this Mac, and you see both.", "Sent through Tor.",
-                "Each request is paid from your deposit with a new key.", "Cards aren't accepted.",
-                "With Agent on, a message becomes a task.",
-            ]
+        case .llama:
+            ["Runs completely on your Mac.", "No internet, no account, no cost, no crypto.", "Works offline immediately once downloaded."]
+        case .near:
+            ["Remote hardware cryptographically proves it's isolated.", "Paid with a standard NEAR API key — no crypto required.", "Optional Tor routing and Trace Commons export."]
         case .token:
             [
-                "Each message is reworded on this Mac, and you see both.", "Sent through Tor.",
-                "One wallet pays for every request, so the provider can link your chats.", "Cards aren't accepted.",
-                "With Agent on, a message becomes a task.",
+                "Prompts are rewritten locally and sent through Tor.",
+                "Why stablecoins? Credit cards tie every prompt to your name; a local USDC wallet pays per prompt with no account.",
+                "Supports Agent tasks.",
             ]
-        case .near:
-            ["Each message goes to NEAR as you wrote it.", "Sent once NEAR's hardware check passes.", "Through Tor when you turn it on."]
-        case .llama:
-            ["The model on this Mac answers.", "Nothing is sent.", "No need to start Cloak.", "Answers are simpler than a remote model's."]
+        case .v:
+            [
+                "Prompts are rewritten locally and sent through Tor.",
+                "Why ETH? Zero-knowledge proofs (zkAPI) pay every prompt with a fresh one-time key — impossible to link, even to your own earlier prompts.",
+                "Supports Agent tasks.",
+            ]
         }
     }
 
-    /// Where it comes from, with a link to its makers' post, under its
-    /// column.
+    /// Where it comes from, with links to its makers' website, repo, or post.
     var credit: LocalizedStringKey? {
         switch self {
-        case .v: "Inspired by Vitalik's [X post](https://x.com/VitalikButerin/status/2111046730959433793) about his preferred AI usage."
-        case .token: "Boundless runs the model, paid for each request on Tempo. [Blog post](https://boundless.network/news/mpp-payments)"
-        case .near: "Cloak is an alternate client to NEAR's own official one. [X post](https://x.com/NEARProtocol/status/2121041723992216043)"
-        case .llama: "Cloak is an alternate client to llama.cpp's own official one. [X post](https://x.com/ggerganov/status/2121246103312212124)"
+        case .v: "Powered by [zkAPI](https://zkapi.openanonymity.ai) ([GitHub](https://github.com/ethereum/zkapi)). Inspired by Vitalik's [X post](https://x.com/VitalikButerin/status/2111046730959433793)."
+        case .token: "Powered by [Boundless](https://boundless.network) on [Tempo](https://tempo.xyz) via [MPP](https://mpp.dev) ([GitHub](https://github.com/tempoxyz/mpp-rs))."
+        case .near: "Powered by [NEAR AI Cloud](https://cloud.near.ai) and [Trace Commons](https://github.com/TraceCommons/trace-commons) ([NEAR AI Gateway](https://gateway.near.ai))."
+        case .llama: "Powered by [vmlx-swift](https://github.com/osaurus-ai/vmlx-swift) and [llama.cpp](https://github.com/ggml-org/llama.cpp) ([X post](https://x.com/ggerganov/status/2121246103312212124))."
         }
     }
 }
 
-/// The modes side by side, a column each: its symbol and name, what pays
-/// for it, and what Cloak does in it, with where it comes from under the
-/// column. Pressing a column makes the new chat that mode and closes the
-/// page. Shown on the first launch, and from Details and Chat's Modes
-/// button; it starts nothing.
-private struct ModesPage: View {
-    let chat: Chat
+/// Why a Venice message stopped, with a direct Funds CTA for balance/key issues.
+private struct VeniceStopRow: View {
+    let stop: VeniceStop
+    let showFunds: () -> Void
+    let dismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Modes")
-                .font(.title2.weight(.semibold))
-                .accessibilityAddTraits(.isHeader)
-            HStack(alignment: .top, spacing: 12) {
-                ForEach(Chat.Kind.modes, id: \.self) { mode in
-                    VStack(alignment: .leading, spacing: 8) {
-                        ModeColumn(mode: mode, chosen: chat.kind == mode) {
-                            chat.kind = mode
-                            chat.newConversation()
-                            chat.showingModes = false
-                        }
-                        if let credit = mode.credit {
-                            Text(credit)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .frame(width: 176)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                }
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Text("Cloak lives in the menu bar and stays paused until you press Start.")
-                    .font(.callout)
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(stop.kind.title)
+                    .fontWeight(.medium)
+                Text(stop.kind.words)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 16)
-                Button("Close") { chat.showingModes = false }
-                    .keyboardShortcut(.cancelAction)
+                Text(stop.sent ? "Your message may have reached Venice." : "Nothing was sent.")
+                    .foregroundStyle(.secondary)
             }
-        }
-        .padding(20)
-    }
-}
-
-/// One mode's column on the Modes page, the whole of it a button: the
-/// chosen mode's has the accent edge, and the help is the mode's own.
-private struct ModeColumn: View {
-    let mode: Chat.Kind
-    let chosen: Bool
-    let choose: () -> Void
-
-    var body: some View {
-        Button(action: choose) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: mode.symbol)
-                        .font(.title2)
-                        .foregroundStyle(.tint)
-                        .accessibilityHidden(true)
-                    Spacer(minLength: 0)
-                    if mode == .token {
-                        BoundlessTempoMarks()
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(height: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(mode.name)
-                        .font(.headline)
-                    Label(mode.paidWith, systemImage: "creditcard")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .tip("Paid with")
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(mode.lines, id: \.self) { line in
-                        Text(line)
-                            .font(.callout)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 0)
+            Spacer()
+            if [.noBalance, .key, .keychain, .paymentRefused, .spendLimit].contains(stop.kind) {
+                Button("Funds…", action: showFunds)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(chosen ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator), lineWidth: chosen ? 2 : 1))
-            .contentShape(.rect(cornerRadius: 12))
+            Button("Dismiss", systemImage: "xmark", action: dismiss)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .hover(Circle(), outset: 4)
+                .tip("Dismiss")
         }
-        .buttonStyle(.plain)
-        .hover(RoundedRectangle(cornerRadius: 12))
-        .tip(mode.about)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 }
 
@@ -1623,11 +2923,211 @@ private struct NearStopRow: View {
     }
 }
 
-/// One switch, as a small glass pill: a dot, filled while on and hollow
-/// while off, then its symbol; read by VoiceOver as a switch with its name
-/// and state. Its help says what the switch controls. One with `fixed`
-/// can't be changed here: its symbol is dimmed, and a press shows those
-/// words, why.
+/// Inline first-run onboarding card in Chat's Local mode (Decision N6b):
+/// shows a single primary "Download Recommended Local Model (<size>)" CTA with
+/// inline progress + pause/cancel, secondary quick-switch links for cloud modes,
+/// and a 0.5-second interactive hover popover explaining the recommended model
+/// with a clickable hyperlink to its exact pinned HuggingFace repository.
+private struct LocalOnboardingCard: View {
+    let chat: Chat
+    let block: Chat.LlamaBlock
+    @State private var showingInfo = false
+    @State private var hoveringButton = false
+    @State private var hoveringPopover = false
+    @State private var hoverTask: Task<Void, Never>?
+    @State private var confirmingCancel = false
+
+    private var download: ModelDownload {
+        switch block {
+        case .missing(let missing), .mac(let missing): missing
+        case .unknown: chat.recommendedLocalDownload
+        }
+    }
+
+    private var isRecommended: Bool {
+        download.model.name == chat.recommendedLocalDownload.model.name && download.model.memory > 0
+    }
+
+    private var isAdapter: Bool {
+        download.model.memory == 0
+    }
+
+    var body: some View {
+        let size = DownloadSection.text(download.total)
+        let isInkling = download.model.label.localizedCaseInsensitiveContains("Inkling")
+        let repoURL = download.model.repositoryURL ?? URL(string: "https://huggingface.co")!
+
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: download.fits ? "laptopcomputer" : "cpu")
+                        .font(.title2)
+                        .foregroundStyle(.tint)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(
+                            !download.fits
+                                ? "Use NEAR AI Gateway on this Mac"
+                                : isRecommended
+                                    ? "Private AI on this Mac"
+                                    : isAdapter
+                                        ? "Download Unfiltered Adapter"
+                                        : "Download \(download.model.label)"
+                        )
+                        .font(.headline)
+                        Text(
+                            !download.fits
+                                ? "Local models need 16 GB+ Apple Silicon. NEAR AI Gateway works right away on this Mac."
+                                : isRecommended
+                                    ? "\(download.model.label) (\(size)) · runs offline with no account, cost, or crypto."
+                                    : isAdapter
+                                        ? "Optional \(size) uncensored LoRA adapter is enabled in Settings."
+                                        : "Download \(download.model.label) (\(size)) once to chat offline."
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                if !download.fits {
+                    HStack(spacing: 10) {
+                        Button {
+                            chat.kind = .near
+                        } label: {
+                            Label("Use NEAR AI Gateway", systemImage: "cpu")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button("Take a Tour") { chat.showingTour = true }
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    if download.isUnderWay || download.done > 0 {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ProgressView(value: Double(download.done), total: Double(max(download.total, 1)))
+                                .accessibilityLabel("Downloading \(download.model.label)")
+                                .accessibilityValue("\(DownloadSection.text(download.done)) of \(size)")
+                            HStack {
+                                Text("\(DownloadSection.status(download.state)) \(download.model.label)…")
+                                Spacer()
+                                Text("\(DownloadSection.text(download.done)) of \(size)")
+                                    .monospacedDigit()
+                            }
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let note = DownloadSection.note(download) {
+                        Label(note, systemImage: "exclamationmark.circle.fill")
+                            .symbolRenderingMode(.multicolor)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else if !download.isUnderWay, let block = download.blocked {
+                        Text(DownloadSection.text(block))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack(spacing: 10) {
+                        if download.isUnderWay {
+                            Button("Pause") { download.pause() }
+                            Button("Cancel") { confirmingCancel = true }
+                        } else {
+                            let title = download.done > 0 ? "Continue (\(size))" : "Download (\(size))"
+                            Button {
+                                if isRecommended {
+                                    chat.downloadRecommendedLocalModel()
+                                } else {
+                                    download.start()
+                                }
+                            } label: {
+                                Label(title, systemImage: "arrow.down.circle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(download.blocked != nil)
+                            .onHover { inside in
+                                hoveringButton = inside
+                                schedulePopover()
+                            }
+                            .popover(isPresented: $showingInfo, arrowEdge: .bottom) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    if download.model.engine == .vmlx {
+                                        Text("Best recent model is the Inkling 2 Mini (Fast, runs on 16 GB+ Macs at 60+ tok/s). Downloads from [HuggingFace](\(repoURL.absoluteString)).")
+                                    } else if isInkling {
+                                        Text("Best recent model is the Inkling 2 Mini. Downloads from [HuggingFace](\(repoURL.absoluteString)).")
+                                    } else {
+                                        Text("Downloads \(download.model.label) from [HuggingFace](\(repoURL.absoluteString)).")
+                                    }
+                                }
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(12)
+                                .frame(width: 280, alignment: .leading)
+                                .onHover { inside in
+                                    hoveringPopover = inside
+                                    schedulePopover()
+                                }
+                            }
+                            if download.hasPartials {
+                                Button("Cancel") { confirmingCancel = true }
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+
+                    Divider()
+
+                    HStack(spacing: 8) {
+                        Text("Or start right away without downloading:")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button("NEAR AI Gateway") { chat.kind = .near }
+                            .buttonStyle(.link)
+                        Text("·")
+                            .foregroundStyle(.tertiary)
+                        Button("Take a Tour") { chat.showingTour = true }
+                            .buttonStyle(.link)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+        .padding(.top, 8)
+        .onDisappear { hoverTask?.cancel() }
+        .confirmationDialog("Cancel the download?", isPresented: $confirmingCancel) {
+            Button("Cancel Download", role: .destructive) { download.cancel() }
+            Button("Keep Downloading", role: .cancel) {}
+        } message: {
+            Text("What has downloaded so far is deleted from this Mac.")
+        }
+    }
+
+    /// Shows the popover after 0.5 s of hovering the download button, and
+    /// keeps it open while the pointer moves into the popover to click the
+    /// HuggingFace hyperlink.
+    private func schedulePopover() {
+        hoverTask?.cancel()
+        if hoveringButton || hoveringPopover {
+            guard !showingInfo, NSApp.isActive else { return }
+            hoverTask = Task {
+                guard (try? await Task.sleep(for: .milliseconds(500))) != nil else { return }
+                guard NSApp.isActive, hoveringButton || hoveringPopover else { return }
+                showingInfo = true
+            }
+        } else if showingInfo {
+            hoverTask = Task {
+                guard (try? await Task.sleep(for: .milliseconds(250))) != nil else { return }
+                if !hoveringButton, !hoveringPopover {
+                    showingInfo = false
+                }
+            }
+        }
+    }
+}
+
+/// Interactive switch pill (used for real toggles like NEAR's Tor and Agent)
+/// with a short visible label so controls never rely on cryptic icons alone.
 private struct SwitchPill: View {
     let title: String
     let symbol: String
@@ -1647,6 +3147,9 @@ private struct SwitchPill: View {
                     .foregroundStyle(isOn ? Color.green : Color.secondary)
                     .contentTransition(.symbolEffect(.replace))
                 Image(systemName: symbol)
+                    .foregroundStyle(fixed == nil ? HierarchicalShapeStyle.primary : .secondary)
+                Text(title)
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(fixed == nil ? HierarchicalShapeStyle.primary : .secondary)
             }
             .padding(.horizontal, 10)
@@ -1673,67 +3176,125 @@ private struct SwitchPill: View {
     }
 }
 
-/// Cloak's state while it is not running, as its symbol, and Start; why
-/// rewording, sending as written or the agent waits is the symbol's help
-/// and what VoiceOver reads first. A failure says why in words, beside its
-/// fix (`Fix`) in Start's place, or, with none, what to do; while Cloak
-/// starts or stops, a spinner takes Start's place.
+/// Cloak's state while it is not running, with a visible 1-3 word status label
+/// and labeled primary CTA (Decision R1b). When `autoStarts` is true (Decision
+/// R3b), notes that Cloak will start automatically on Send.
 private struct Waiting: View {
     let supervisor: Supervisor
     /// The model that rewords', whose files the fix reads.
     let download: ModelDownload
     /// What waits, as the verb ending each sentence: reword, send or run.
     let to: String
+    var autoStarts = false
     let showDetails: () -> Void
 
     var body: some View {
         let phase = supervisor.phase
+        let needsRewriter = (phase == .paused || phase == .ready) && download.state != .installed
         let fix = phase.reason.flatMap { Fix(for: $0, download: download) }
-        let words = text(phase, fix: fix)
-        // A failure, a missing model among them, keeps its words on screen;
-        // the rest are help.
+        let words = needsRewriter
+            ? (download.isUnderWay ? "Downloading the local rewriter model to \(to)." : "Download the local rewriter model to \(to).")
+            : text(phase, fix: fix)
         let failed = if case .needsAttention = phase { true } else { false }
-        HStack(spacing: 4) {
-            Image(systemName: phase.symbol)
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .contentShape(.rect)
-                .tip(words)
-                .accessibilityHidden(true)
-            if failed {
-                Text(words)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: needsRewriter ? "arrow.down.circle" : phase.symbol)
+                    .foregroundStyle(failed ? Color.orange : Color.secondary)
                     .accessibilityHidden(true)
-                Spacer()
-            }
-            switch phase {
-            case .needsAttention:
-                switch fix {
-                case .start?: SymbolButton(Fix.start.title, symbol: "play.fill") { supervisor.send(.start) }
-                case .download(let underWay)?: Button(Fix.download(underWay: underWay).title, action: showDetails)
-                case .showModel?: Button(Fix.showModel.title, action: Fix.showModel)
-                case nil: EmptyView()
+                if needsRewriter {
+                    Text(download.isUnderWay ? "Downloading local rewriter…" : "Download local rewriter to \(to)")
+                        .fontWeight(.medium)
+                        .accessibilityHidden(true)
+                } else if failed {
+                    Text(words)
+                        .accessibilityHidden(true)
+                } else {
+                    Text(shortLabel(phase))
+                        .fontWeight(.medium)
+                        .accessibilityHidden(true)
+                    if autoStarts, phase == .paused || phase == .ready {
+                        Text("· Starts automatically when you send")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
                 }
-            case .paused, .ready:
-                SymbolButton("Start", symbol: "play.fill") { supervisor.send(.start) }
-            case .preparing, .stopping, .running:
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: 28, height: 28)
-                    .tip(words)
+                Spacer(minLength: 4)
+                if needsRewriter {
+                    Button(download.isUnderWay ? "Downloading…" : "Download Model…", action: showDetails)
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    switch phase {
+                    case .needsAttention:
+                        switch fix {
+                        case .start?:
+                            Button { supervisor.send(.start) } label: {
+                                Label(Fix.start.title, systemImage: "play.fill")
+                            }
+                            .controlSize(.small)
+                        case .download(let underWay)?:
+                            Button(Fix.download(underWay: underWay).title, action: showDetails)
+                                .controlSize(.small)
+                                .buttonStyle(.borderedProminent)
+                        case .repair?:
+                            Button(Fix.repair.title) { download.repair() }
+                                .controlSize(.small)
+                                .buttonStyle(.borderedProminent)
+                        case .showModel?:
+                            Button(Fix.showModel.title, action: Fix.showModel)
+                                .controlSize(.small)
+                        case nil: EmptyView()
+                        }
+                    case .paused, .ready:
+                        Button { supervisor.send(.start) } label: {
+                            Label("Start", systemImage: "play.fill")
+                        }
+                        .controlSize(.small)
+                    case .preparing:
+                        let stepIndex = (supervisor.startStep?.rawValue ?? 0) + 1
+                        let stepTotal = Supervisor.StartStep.allCases.count
+                        Text("Step \(stepIndex) of \(stepTotal)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                        ProgressView()
+                            .controlSize(.small)
+                            .tip(words)
+                    case .stopping, .running:
+                        ProgressView()
+                            .controlSize(.small)
+                            .tip(words)
+                    }
+                }
+            }
+            if phase.state == .preparing {
+                StartupProgressView(supervisor: supervisor)
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 12)
+        .padding(.vertical, phase.state == .preparing ? 10 : 8)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
         // The sentence, read once, then the button.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(words)
     }
 
+    private func shortLabel(_ phase: Phase) -> String {
+        switch phase {
+        case .paused, .ready: "Paused"
+        case .preparing: "Starting…"
+        case .stopping(.restart): "Restarting…"
+        case .stopping: "Stopping…"
+        case .running: "Running"
+        case .needsAttention: "Needs attention"
+        }
+    }
+
     private func text(_ phase: Phase, fix: Fix?) -> String {
         switch phase {
-        case .paused: "Cloak is paused. Start it to \(to)."
-        case .ready: "Cloak isn't running. Start it to \(to)."
+        case .paused: autoStarts ? "Cloak is paused. Send to auto-start, or press Start." : "Cloak is paused. Start it to \(to)."
+        case .ready: autoStarts ? "Cloak isn't running. Send to auto-start, or press Start." : "Cloak isn't running. Start it to \(to)."
         case .preparing: "Cloak is starting."
         case .stopping(.restart): "Cloak is restarting."
         case .stopping: "Cloak is stopping."
@@ -1741,6 +3302,7 @@ private struct Waiting: View {
             switch fix {
             case .start?: "\(reason.title(with: fix)) Start Cloak again to \(to)."
             case .download?: "\(reason.title) Download it to \(to)."
+            case .repair?: "\(reason.title) Repair it to \(to)."
             // No button does it all, so the words say what to do.
             case .showModel?, nil: "\(reason.title) \(reason.remedy)"
             }
@@ -1760,10 +3322,10 @@ private struct RewordingElsewhere: View {
             Image(systemName: "pencil.line")
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            Text("Another chat is rewording.")
+            Text("Another chat is rewriting a prompt.")
             Spacer()
             Button("Cancel", action: cancel)
-                .tip("Cancel the other chat's rewording")
+                .tip("Cancel the other chat's prompt rewrite")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -1846,9 +3408,9 @@ extension Chat.Stop {
     var title: String {
         switch reason {
         case .tooLong: "This message is too long."
-        case .timedOut: "Rewording took too long."
-        case .refused: "The rewording didn't come back right."
-        case .cancelled: "Rewording cancelled."
+        case .timedOut: "Prompt rewriting took too long."
+        case .refused: "Couldn't rewrite this prompt."
+        case .cancelled: "Rewriting cancelled."
         case .stopped: "The model stopped."
         }
     }
@@ -1953,6 +3515,7 @@ extension AnswerStop {
         case .stopped: "Stopped"
         case .interrupted: "Interrupted"
         case .tooLong: "Too long"
+        case .thinkingLimit: "Thinking limit reached"
         case .failed: "No answer"
         }
     }
@@ -1962,6 +3525,7 @@ extension AnswerStop {
         case .stopped: nil
         case .interrupted: "Cloak started or stopped while the model was answering. Ask again."
         case .tooLong: "This chat is too long for the model on this Mac. Start a new chat."
+        case .thinkingLimit: "The model spent its thinking budget before writing an answer. Try a simpler question or ask again."
         case .failed(let reason): "\(reason.title) Ask again."
         }
     }

@@ -16,7 +16,7 @@
         <command name="show agents" code="RCLKshag" description="Show the Agents window.">
             <cocoa class="CloakShowAgentsCommand"/>
         </command>
-        <command name="show darkbloom" code="RCLKshdb" description="Show the Darkbloom window.">
+        <command name="show darkbloom" code="RCLKshdb" description="Show the Inference Serving window.">
             <cocoa class="CloakShowDarkbloomCommand"/>
         </command>
         <command name="show details" code="RCLKshdt" description="Show the Details window.">

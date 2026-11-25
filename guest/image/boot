@@ -37,6 +37,7 @@ ip link set lo up
 # listens on vsock (guest/pay/zz_cloak_pay_linux.go). Its log, which holds no
 # content, stays in /run/cloak. One that does not start ends the guest, with
 # its log on the console. With no disk, no payer starts.
+pay_pid=""
 if [ -e /run/cloak/pay-disk-key ]; then
 	verb=open
 	[ -e /etc/cloak/pay-disk-new ] && verb=create
@@ -46,13 +47,17 @@ if [ -e /run/cloak/pay-disk-key ]; then
 	[ $opened = 0 ] || poweroff -f
 	echo "cloak-guest: payment disk open"
 
-	mkfifo /run/cloak/pay-tor-port-ready /run/cloak/pay-ready
-	unshare -n sh -c '
-		ip link set lo up || exit 1
-		su -s /bin/sh torport -c "exec /usr/bin/cloak-port 9050" > /run/cloak/pay-tor-port-ready &
-		read -r ready < /run/cloak/pay-tor-port-ready
-		[ "$ready" = ready ] || exit 1
-		exec su -s /bin/sh pay -c "exec /usr/bin/cloak-pay"' > /run/cloak/pay-ready 2> /run/cloak/pay.log &
+	mkfifo /run/cloak/pay-tor-port-ready /run/cloak/pay-ready /run/cloak/pay-ended
+	{
+		unshare -n sh -c '
+			ip link set lo up || exit 1
+			su -s /bin/sh torport -c "exec /usr/bin/cloak-port 9050" > /run/cloak/pay-tor-port-ready &
+			read -r ready < /run/cloak/pay-tor-port-ready
+			[ "$ready" = ready ] || exit 1
+			exec su -s /bin/sh pay -c "exec /usr/bin/cloak-pay"' > /run/cloak/pay-ready 2> /run/cloak/pay.log
+		echo "payer exited $?" > /run/cloak/pay-ended
+	} &
+	pay_pid=$!
 	read -r ready < /run/cloak/pay-ready
 	[ "$ready" = ready ] || { echo "cloak-guest: payer did not start"; cat /run/cloak/pay.log; poweroff -f; }
 	echo "cloak-guest: payer ready"
@@ -93,7 +98,14 @@ echo "cloak-guest: agent check exited $?"
 # out through the Tor port only. The runner or the sender ending ends the
 # guest: each notes its end as one line on the pipe the boot then reads.
 if [ -e /etc/cloak/serve ]; then
+	# Remove test/probe binaries from the writable tmpfs before any user agent
+	# sandbox runs, so a compromised tool never inherits raw vsock/routing probes.
+	rm -f /usr/bin/cloak-vsock-probe /usr/bin/cloak-routing-probe /usr/bin/cloak-rewrite-check /usr/bin/cloak-agent-check
+
 	mkfifo /run/cloak/door-port-ready /run/cloak/runner-ready /run/cloak/sender-ready /run/cloak/served
+	if [ -n "$pay_pid" ]; then
+		{ read -r pay_end < /run/cloak/pay-ended && echo "$pay_end" > /run/cloak/served; } &
+	fi
 	su -s /bin/sh door -c 'exec /usr/bin/cloak-port 8742' > /run/cloak/door-port-ready &
 	read -r ready < /run/cloak/door-port-ready
 	[ "$ready" = ready ] || { echo "cloak-guest: door port did not start"; poweroff -f; }
@@ -115,5 +127,16 @@ if [ -e /etc/cloak/serve ]; then
 	exec 3<> /run/cloak/served
 	until read -r ended <&3; do :; done
 	echo "cloak-guest: $ended"
+fi
+if [ -n "$pay_pid" ]; then
+	# Give cloak-pay a brief chance to settle cleanly and flush before poweroff.
+	pkill -TERM -x cloak-pay 2>/dev/null || true
+	waited=0
+	while [ "$waited" -lt 30 ] && pgrep -x cloak-pay >/dev/null 2>&1; do
+		sleep 0.1
+		waited=$((waited + 1))
+	done
+	sync
+	umount /var/lib/cloak-pay 2>/dev/null || true
 fi
 poweroff -f

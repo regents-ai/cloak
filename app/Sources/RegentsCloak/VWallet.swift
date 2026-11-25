@@ -18,12 +18,20 @@ struct VWallet: View {
     let payer: Payer
     @Bindable var settings: AppSettings
     let running: Bool
+    /// Preserved across Review Cancel so the user never has to retype addresses
+    /// or amounts after inspecting a quote.
+    @State private var depositText = "10"
+    @State private var transferDestination = ""
+    @State private var transferAmount = ""
 
     var body: some View {
-        if let stop = payer.stop {
+        // Show untargeted press errors or read errors at the top; deposit,
+        // withdrawal, and transfer errors render inline inside their own section.
+        if let stop = payer.stop, payer.stopTarget == nil || payer.state == .unread {
             Section {
                 PressStopRow(payer: payer, stop: stop)
             }
+            .id("v-stop-banner")
         } else if let stop = payer.readStop {
             Section {
                 ReadStopRow(payer: payer, stop: stop)
@@ -33,8 +41,20 @@ struct VWallet: View {
         case .unread:
             // Until a read stops; then its row says why, with Try Again.
             if running, payer.readStop == nil {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
+                Section {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .controlSize(.small)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Reading zkAPI ETH wallet over Tor…")
+                                .font(.callout.weight(.medium))
+                            Text("Loading Ethereum address, balance, and deposit.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
             }
         case .failed(let fault):
             Section {
@@ -42,13 +62,15 @@ struct VWallet: View {
             }
             // The ETH on the address can still be seen and sent out.
             if let funding = payer.funding {
-                AddressSection(payer: payer, funding: funding)
+                AddressSection(
+                    payer: payer, funding: funding, destination: $transferDestination, amount: $transferAmount)
             }
         default:
             if let funding = payer.funding {
-                AddressSection(payer: payer, funding: funding)
+                AddressSection(
+                    payer: payer, funding: funding, destination: $transferDestination, amount: $transferAmount)
             }
-            DepositSection(payer: payer)
+            DepositSection(payer: payer, settings: settings, depositText: $depositText)
             ModelSection(payer: payer, settings: settings)
         }
     }
@@ -61,12 +83,15 @@ struct VWallet: View {
 private struct AddressSection: View {
     let payer: Payer
     let funding: FundingStatus
+    @Binding var destination: String
+    @Binding var amount: String
+    @State private var onRampTarget: CardOnRamp.Target?
     /// The payer reads and sends ETH on Ethereum Mainnet and nothing else,
     /// and its key never leaves the guest.
-    private static let only = "Send only ETH on Ethereum Mainnet. Cloak can't return anything else sent to this address."
+    private static let only = "Send ETH on Ethereum Mainnet only — other assets can't be recovered."
 
     var body: some View {
-        Section("Wallet") {
+        Section {
             LabeledContent("Address") {
                 HStack(spacing: 4) {
                     Text(funding.address)
@@ -78,10 +103,13 @@ private struct AddressSection: View {
                     CodeButton(address: funding.address, only: Self.only)
                 }
             }
-            LabeledContent("Network", value: "Ethereum Mainnet")
-            LabeledContent("Asset", value: "ETH")
+            LabeledContent("Asset", value: "ETH · Ethereum Mainnet")
             Only(words: Self.only)
-            LabeledContent("Balance", value: Ether.text(wei: funding.ethBalance) ?? "—")
+            LabeledContent("Wallet Balance", value: Ether.text(wei: funding.ethBalance) ?? "—")
+            Text("Step 1: Send ETH here on Ethereum Mainnet. Step 2: Move ETH into your zkAPI Deposit below to unlock unlinkable one-time keys.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if let returning = payer.returning, returning.phase == "return_pending" {
                 LabeledContent("Pending") {
                     HStack(spacing: 4) {
@@ -93,18 +121,47 @@ private struct AddressSection: View {
                     }
                 }
             }
+            if let stop = payer.stop, payer.stopTarget == .transfer {
+                PressStopRow(payer: payer, stop: stop)
+                    .id("v-stop-banner")
+            }
             if let review = payer.review, case .transfer = review {
                 ReviewRows(payer: payer, review: review)
             } else {
                 HStack(spacing: 8) {
+                    if CardOnRamp.isConfigured {
+                        Button {
+                            onRampTarget = .ethereumETH(address: funding.address)
+                        } label: {
+                            Label("Add ETH with Card / Apple Pay", systemImage: "creditcard")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    if payer.activity == .quotingTransfer {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Fetching transfer quote over Tor…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    if let block = payer.transferBlock {
+                    if let block = payer.transferBlock, payer.activity != .quotingTransfer {
                         Text(block.words)
                             .foregroundStyle(.secondary)
                     }
-                    TransferButton(payer: payer, balance: funding.ethBalance)
-                        .disabled(payer.transferBlock != nil)
+                    TransferButton(payer: payer, balance: funding.ethBalance, destination: $destination, amount: $amount)
+                        .disabled(payer.transferBlock != nil || payer.activity == .quotingTransfer)
                 }
+            }
+        } header: {
+            Text("ETH Mainnet Wallet")
+        } footer: {
+            Text("This Ethereum Mainnet wallet is used for zkAPI deposits and payments. Its key stays encrypted on this Mac only (not synced to iCloud) — reinstalling Cloak keeps it, but withdraw ETH before wiping or switching Macs.")
+                .foregroundStyle(.secondary)
+        }
+        .sheet(item: $onRampTarget) { target in
+            CardOnRampSheet(target: target) {
+                payer.follow()
             }
         }
     }
@@ -119,9 +176,9 @@ private struct TransferButton: View {
     let payer: Payer
     /// The address's ETH, in wei as a decimal string.
     let balance: String
+    @Binding var destination: String
+    @Binding var amount: String
     @State private var open = false
-    @State private var destination = ""
-    @State private var amount = ""
     @State private var wrong: Wrong?
 
     private enum Wrong: String {
@@ -141,6 +198,7 @@ private struct TransferButton: View {
                             TextField("To", text: $destination, prompt: Text("0x…"))
                                 .font(.body.monospaced())
                                 .frame(width: 360)
+                                .accessibilityLabel("Recipient Ethereum address")
                         }
                         GridRow {
                             Text("Amount")
@@ -148,6 +206,7 @@ private struct TransferButton: View {
                                 TextField("Amount", text: $amount, prompt: Text("0.0"))
                                     .monospacedDigit()
                                     .frame(width: 160)
+                                    .accessibilityLabel("Amount in ETH")
                                 Text("ETH")
                                     .foregroundStyle(.secondary)
                                 Button("Max") { amount = Ether.exact(wei: balance) ?? "" }
@@ -200,21 +259,40 @@ private struct TransferButton: View {
 /// amount's place.
 private struct DepositSection: View {
     let payer: Payer
+    @Bindable var settings: AppSettings
+    @Binding var depositText: String
 
     var body: some View {
-        Section("Deposit") {
+        Section("zkAPI Deposit") {
+            if let stop = payer.stop, payer.stopTarget == .deposit || payer.stopTarget == .withdrawal {
+                PressStopRow(payer: payer, stop: stop)
+                    .id("v-stop-banner")
+            }
             switch payer.state {
             case .none:
-                if payer.transferBlock == .nothingToTransfer {
-                    Text("Deposits are paid in ETH from this wallet. Add ETH first; Deposit shows how much.")
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                LabeledContent("Active Deposit") {
+                    HStack(spacing: 6) {
+                        Text("$0.00")
+                            .font(.title3.weight(.semibold))
+                            .monospacedDigit()
+                        Text("· None yet")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                Text(
+                    payer.transferBlock == .nothingToTransfer
+                        ? "Send ETH to your wallet above first, then deposit ETH here to unlock unlinkable one-time keys."
+                        : "Moves ETH from your wallet above into the zkAPI vault. Chats spend from this deposit using fresh one-time keys, and unused ETH can be withdrawn back to your wallet anytime within 30 days."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 amount
             case .depositing(let stage):
                 Moving(symbol: "arrow.down.circle", title: "Depositing", help: Self.stage(stage), hash: payer.funding?.transactionHash)
             case .ready, .settling:
-                Held(payer: payer)
+                Held(payer: payer, settings: settings)
                 amount
             case .withdrawing(let phase):
                 Moving(
@@ -234,8 +312,9 @@ private struct DepositSection: View {
                     WithdrawRow(payer: payer, prominent: true)
                 }
             case .taken:
-                Text("This deposit was closed on the chain.")
+                Text("This deposit was closed on the chain. Any ETH still in the wallet above can still be transferred out.")
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             case .unread, .failed:
                 EmptyView()
             }
@@ -246,7 +325,7 @@ private struct DepositSection: View {
         if let review = payer.review, case .deposit = review {
             ReviewRows(payer: payer, review: review)
         } else {
-            Amount(payer: payer)
+            Amount(payer: payer, text: $depositText)
         }
     }
 
@@ -295,50 +374,55 @@ private struct Moving: View {
 /// its expiry with the warning when it is near or past, and Withdraw.
 private struct Held: View {
     let payer: Payer
+    @Bindable var settings: AppSettings
 
     var body: some View {
         let queue = payer.queue
-        let band = payer.band(at: .now)
-        LabeledContent {
-            if let balance = payer.withdrawal?.privateBalance {
-                Text(Ether.text(gwei: balance))
-                    .font(.title3.weight(.semibold))
-                    .monospacedDigit()
-            }
-        } label: {
-            let (symbol, words) =
-                if queue.held || (payer.state == .settling && !queue.sending) {
-                    ("clock", "Settling the last request.")
-                } else if queue.sending {
-                    ("arrow.up.circle", queue.waiting == 0 ? "1 sending" : "1 sending, \(queue.waiting) waiting")
-                } else {
-                    ("checkmark.circle", "Ready")
-                }
-            Label("Balance", systemImage: symbol)
-                .tip(words)
-                .accessibilityValue(words)
-        }
-        if let expiry = payer.expiry {
+        TimelineView(.everyMinute) { context in
+            let band = payer.band(at: context.date)
             LabeledContent {
-                Text(expiry.formatted(date: .abbreviated, time: .shortened))
+                if let balance = payer.withdrawal?.privateBalance {
+                    Text(Ether.text(gwei: balance))
+                        .font(.title3.weight(.semibold))
+                        .monospacedDigit()
+                }
             } label: {
-                HStack(spacing: 2) {
-                    Text("Expires")
-                    InfoButton("About Expiry", note: "After this date the service's operator can claim the deposit, spent or not. Withdraw before then.")
+                let (symbol, words) =
+                    if queue.held || (payer.state == .settling && !queue.sending) {
+                        ("clock", "Settling the last request.")
+                    } else if queue.sending {
+                        ("arrow.up.circle", queue.waiting == 0 ? "1 sending" : "1 sending, \(queue.waiting) waiting")
+                    } else {
+                        ("checkmark.circle", "Ready")
+                    }
+                Label("Balance", systemImage: symbol)
+                    .tip(words)
+                    .accessibilityValue(words)
+            }
+            if let expiry = payer.expiry {
+                LabeledContent {
+                    Text(expiry.formatted(date: .abbreviated, time: .shortened))
+                } label: {
+                    HStack(spacing: 2) {
+                        Text("Expires")
+                        InfoButton("About Expiry", note: "After this date the service's operator can claim the deposit, spent or not. Cloak notifies you at days 20, 25, and 28 — withdraw before then.")
+                    }
+                }
+                Toggle("Auto-withdraw 3 days before expiry", isOn: $settings.autoWithdrawBeforeExpiry)
+                    .tip("Automatically withdraws unspent ETH back to your wallet 3 days before expiry while Cloak is open and running.")
+                switch band {
+                case .near?:
+                    Label("Expires \(expiry.formatted(.dateTime.day().month())). Withdraw before then.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                case .due?:
+                    Label("Expired. Withdraw now.", systemImage: "exclamationmark.octagon.fill")
+                        .foregroundStyle(.red)
+                case .far?, nil:
+                    EmptyView()
                 }
             }
-            switch band {
-            case .near?:
-                Label("Expires \(expiry.formatted(.dateTime.day().month())). Withdraw before then.", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-            case .due?:
-                Label("Expired. Withdraw now.", systemImage: "exclamationmark.octagon.fill")
-                    .foregroundStyle(.red)
-            case .far?, nil:
-                EmptyView()
-            }
+            WithdrawRow(payer: payer, prominent: band == .near || band == .due)
         }
-        WithdrawRow(payer: payer, prominent: band == .near || band == .due)
     }
 }
 
@@ -352,15 +436,23 @@ private struct WithdrawRow: View {
         if let review = payer.review, case .withdrawal = review {
             ReviewRows(payer: payer, review: review)
         } else {
+            let quoting = payer.activity == .quotingWithdrawal
             HStack(spacing: 8) {
+                if quoting {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Fetching withdrawal quote over Tor…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                if let block = payer.withdrawBlock {
+                if let block = payer.withdrawBlock, !quoting {
                     Text(block.words)
                         .foregroundStyle(.secondary)
                 }
-                let withdraw = Button("Withdraw") { Task { await payer.quoteWithdrawal() } }
+                let withdraw = Button(quoting ? "Quoting…" : "Withdraw") { Task { await payer.quoteWithdrawal() } }
                     .tip("Returns the whole deposit to this wallet.")
-                    .disabled(payer.withdrawBlock != nil)
+                    .disabled(payer.withdrawBlock != nil || quoting)
                 if prominent {
                     withdraw.buttonStyle(.borderedProminent)
                 } else {
@@ -377,18 +469,29 @@ private struct WithdrawRow: View {
 /// was turned away shows until the text changes.
 private struct Amount: View {
     let payer: Payer
-    @State private var text = ""
+    @Binding var text: String
     @State private var wrong = false
 
     var body: some View {
         let dollars = Self.dollars(text)
         LabeledContent("Amount") {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
+                ForEach(["5", "10", "20"], id: \.self) { preset in
+                    Button("$\(preset)") {
+                        text = preset
+                        wrong = false
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    .tint(text == preset ? .accentColor : nil)
+                }
                 Text("$")
                     .foregroundStyle(.secondary)
-                TextField("Amount", text: $text, prompt: Text("20"))
+                    .padding(.leading, 4)
+                TextField("Amount", text: $text, prompt: Text("10"))
                     .labelsHidden()
-                    .fixedSize()
+                    .accessibilityLabel("Deposit amount in US dollars")
+                    .frame(width: 56)
                     .onSubmit {
                         // Nothing while Deposit is off.
                         if payer.depositBlock == nil { deposit() }
@@ -396,22 +499,34 @@ private struct Amount: View {
                     .onChange(of: text) { wrong = false }
             }
         }
+        Text("Start with $5–$10 ($5 unlocks up to Tier 25 models; $10+ gives room for multiple flagship turns). Unused deposits expire in 30 days.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         if wrong {
-            Text("Enter an amount in dollars, like 20.")
+            Text("Enter an amount in dollars, like 10.")
                 .foregroundStyle(.red)
         } else if let dollars, dollars > 50 {
             Text("Over $50. Deposit only what you'll spend.")
                 .foregroundStyle(.orange)
         }
+        let quoting = payer.activity == .quotingDeposit
         HStack(spacing: 8) {
+            if quoting {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Fetching ETH quote over Tor…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
-            if let block = payer.depositBlock {
+            if let block = payer.depositBlock, !quoting {
                 Text(block.words)
                     .foregroundStyle(.secondary)
             }
-            Button("Deposit", action: deposit)
-                .tip("Shows what the deposit costs in ETH before anything is sent.")
-                .disabled(payer.depositBlock != nil)
+            Button(quoting ? "Quoting…" : "Get Deposit Quote", action: deposit)
+                .tip("Shows what the deposit and Ethereum fee cost in ETH before anything is sent.")
+                .disabled(payer.depositBlock != nil || quoting)
         }
     }
 
@@ -475,23 +590,67 @@ private struct ReviewRows: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let expired = quote.expired(at: context.date)
                 let block = payer.confirmBlock(review)
-                HStack(spacing: 8) {
-                    if !expired, timed {
-                        Text(quote.expires, style: .timer)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .tip("The quote holds until this runs out.")
+                let busyQuoting = isQuoting
+                let busyApproving = isApproving
+                let busy = busyQuoting || busyApproving
+                VStack(alignment: .leading, spacing: 8) {
+                    if !busy, timed {
+                        Text(
+                            expired
+                                ? "This 30-second quote expired before confirmation. Click New Quote to fetch a fresh ETH rate and fee."
+                                : "Click \(title) before the timer runs out to sign and submit on Ethereum Mainnet."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(expired ? .orange : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer()
-                    if let block {
-                        Text(block.words)
-                            .foregroundStyle(.secondary)
-                    }
-                    Button("Cancel", action: payer.cancelReview)
-                    Button(expired ? again : title) { Task { await payer.confirm() } }
+                    HStack(spacing: 8) {
+                        if busyQuoting {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Refreshing quote over Tor…")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        } else if busyApproving {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Submitting on Ethereum over Tor…")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        } else if timed {
+                            if !expired {
+                                HStack(spacing: 4) {
+                                    Text("Quote valid for")
+                                        .foregroundStyle(.secondary)
+                                    Text(quote.expires, style: .timer)
+                                        .monospacedDigit()
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(.primary)
+                                }
+                                .font(.callout)
+                                .tip("Quotes hold for 30 seconds while ETH rate and gas are locked.")
+                            } else {
+                                Label("Quote expired", systemImage: "clock.badge.exclamationmark")
+                                    .font(.callout)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        Spacer()
+                        if let block, !busy {
+                            Text(block.words)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("Cancel", action: payer.cancelReview)
+                            .disabled(busyApproving)
+                        Button(busyQuoting ? "Quoting…" : busyApproving ? "Submitting…" : (expired ? again : title)) {
+                            Task { await payer.confirm() }
+                        }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!expired && block != nil)
+                        .disabled(busy || (!expired && block != nil))
+                    }
                 }
+                .id("v-review-actions")
             }
         }
     }
@@ -506,9 +665,9 @@ private struct ReviewRows: View {
 
     private var title: String {
         switch review {
-        case .deposit: "Deposit"
-        case .withdrawal: "Withdraw"
-        case .transfer: "Transfer"
+        case .deposit: "Confirm Deposit"
+        case .withdrawal: "Confirm Withdrawal"
+        case .transfer: "Confirm Transfer"
         }
     }
 
@@ -523,6 +682,20 @@ private struct ReviewRows: View {
     /// before anything is approved.
     private var again: String {
         timed ? "New Quote" : "Update Fee"
+    }
+
+    private var isQuoting: Bool {
+        switch (review, payer.activity) {
+        case (.deposit, .quotingDeposit), (.withdrawal, .quotingWithdrawal), (.transfer, .quotingTransfer): true
+        default: false
+        }
+    }
+
+    private var isApproving: Bool {
+        switch (review, payer.activity) {
+        case (.deposit, .approvingDeposit), (.withdrawal, .approvingWithdrawal), (.transfer, .approvingTransfer): true
+        default: false
+        }
     }
 }
 
@@ -557,29 +730,69 @@ private struct ModelSection: View {
     /// under way.
     @State private var stopped = false
 
+    private struct DepositTier: Identifiable {
+        let id: UInt64
+        let holdLabel: String
+        let depositLabel: String
+        let tierLabel: String
+        let examples: String
+        let badge: String?
+    }
+
+    private static let depositTiers: [DepositTier] = [
+        DepositTier(
+            id: 4_500_000, holdLabel: "$4.50", depositLabel: "$5+", tierLabel: "Tier 25",
+            examples: "Claude Fable 5.2, GPT-5.6 Terra Pro, GPT-5.6 Sol Pro", badge: "Best"),
+        DepositTier(
+            id: 3_000_000, holdLabel: "$3.00", depositLabel: "$3+", tierLabel: "Tier 5",
+            examples: "Claude Opus 5.5, GPT-5.6 Sol, Qwen 3.8 Max Prime", badge: "Best"),
+        DepositTier(
+            id: 2_000_000, holdLabel: "$2.00", depositLabel: "$2+", tierLabel: "Tier 3",
+            examples: "Claude Sonnet 5.5 (default), GPT-5.6 Terra, Grok 4.7", badge: nil),
+        DepositTier(
+            id: 1_000_000, holdLabel: "$1.00", depositLabel: "$1+", tierLabel: "Tier 1",
+            examples: "Claude Haiku 5.5, GPT-5.6 Luna, Gemini 3.8 Flash, DeepSeek V4.1 Flash", badge: nil),
+    ]
+
     var body: some View {
         Section {
             if let models = payer.models, let prices = payer.prices, let model = payer.model,
                 let chosen = models.first(where: { $0.id == model })
             {
+                let byID = Dictionary(uniqueKeysWithValues: models.map { ($0.id, $0) })
+                let recommended = Payer.recommendedModels.compactMap { byID[$0] }
+                let recommendedIDs = Set(recommended.map(\.id))
+                let rest = models.filter { !recommendedIDs.contains($0.id) }
+                let chosenHold = Self.hold(chosen.cap)
                 let help =
-                    "Prices per million tokens: in | out. Up to \(Self.price(Decimal(chosen.cap) / 1_000_000)) is set aside while a request to this model is out; what it doesn't use stays in your deposit."
+                    "Prices per million tokens: in | out. Up to \(chosenHold) is temporarily held from your deposit while a turn runs; only actual tokens are spent and the rest stays in your deposit."
                 Picker("Model", selection: Binding(get: { model }, set: { settings.vModel = $0 })) {
-                    ForEach(models) { model in
-                        if let price = prices[model.id]?.perMillion {
-                            let input = Self.price(price.input), output = Self.price(price.output)
-                            Text("\(model.id): \(input) | \(output)")
-                                // Read aloud, a bar says nothing of which side is which.
-                                .accessibilityLabel("\(model.id), \(input) in, \(output) out")
-                                .tag(model.id)
-                        } else {
-                            Text(model.id)
-                                .tag(model.id)
+                    if !recommended.isEmpty {
+                        Section("Recommended") {
+                            ForEach(recommended) { item in
+                                modelOption(item, prices: prices)
+                            }
+                        }
+                        Section("All Models") {
+                            ForEach(rest) { item in
+                                modelOption(item, prices: prices)
+                            }
+                        }
+                    } else {
+                        ForEach(models) { item in
+                            modelOption(item, prices: prices)
                         }
                     }
                 }
                 .tip(help)
                 .accessibilityHint(help)
+
+                Text("Temporarily holds up to \(chosenHold) per turn while running — only actual tokens are charged; unused funds stay in your deposit.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                depositTierTable(selectedCap: chosen.cap)
             } else {
                 LabeledContent("Model") {
                     if payer.models != nil, payer.prices != nil {
@@ -596,12 +809,99 @@ private struct ModelSection: View {
                             .controlSize(.small)
                     }
                 }
+                depositTierTable(selectedCap: nil)
             }
+        } footer: {
+            Text("A $5 deposit unlocks every model up through Tier 25 ($4.50 hold); $10+ gives room for multiple flagship turns. Powered by [Open Anonymity / zkAPI](https://zkapi.openanonymity.ai) ([GitHub](https://github.com/ethereum/zkapi) · [Vitalik's post](https://x.com/VitalikButerin/status/2111046730959433793)).")
+                .foregroundStyle(.secondary)
         }
         .task(id: payer.state == .unread) {
             guard payer.state != .unread else { return }
             await load()
         }
+    }
+
+    @ViewBuilder
+    private func modelOption(_ item: PayModel, prices: [String: PayPrice]) -> some View {
+        let holdText = Self.hold(item.cap)
+        if let price = prices[item.id]?.perMillion {
+            let input = Self.price(price.input), output = Self.price(price.output)
+            Text("\(item.id): \(input) | \(output) · \(holdText) hold")
+                // Read aloud, a bar says nothing of which side is which.
+                .accessibilityLabel("\(item.id), \(input) in, \(output) out, \(holdText) temporary hold")
+                .tag(item.id)
+        } else {
+            Text("\(item.id) · \(holdText) hold")
+                .accessibilityLabel("\(item.id), \(holdText) temporary hold")
+                .tag(item.id)
+        }
+    }
+
+    @ViewBuilder
+    private func depositTierTable(selectedCap: UInt64?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Deposit & Model Tiers")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("Deposit")
+                        .frame(width: 44, alignment: .leading)
+                    Text("Hold")
+                        .frame(width: 44, alignment: .leading)
+                    Text("What You Unlock")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+
+                Divider()
+
+                ForEach(Self.depositTiers) { tier in
+                    let isSelected = selectedCap == tier.id
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(tier.depositLabel)
+                            .font(.caption.monospacedDigit().weight(isSelected ? .semibold : .medium))
+                            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                            .frame(width: 44, alignment: .leading)
+                        Text(tier.holdLabel)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                            .frame(width: 44, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 5) {
+                                if let badge = tier.badge {
+                                    Text("\(tier.tierLabel) · \(badge)")
+                                        .font(.caption2.weight(.semibold))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(
+                                            Capsule().fill(
+                                                isSelected ? Color.accentColor.opacity(0.22) : Color.secondary.opacity(0.14)))
+                                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                                } else {
+                                    Text(tier.tierLabel)
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Text(tier.examples)
+                                .font(.caption)
+                                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.035)))
+        }
+        .padding(.top, 2)
     }
 
     /// Reads the service's models and their prices through the payer.
@@ -613,6 +913,11 @@ private struct ModelSection: View {
         } catch {
             stopped = true
         }
+    }
+
+    /// "$2.00" or "$4.50"
+    private static func hold(_ capMicroUSD: UInt64) -> String {
+        (Decimal(capMicroUSD) / 1_000_000).formatted(.currency(code: "USD").precision(.fractionLength(2)))
     }
 
     /// "$0.27"
@@ -700,7 +1005,7 @@ struct PayStopRow: View {
         let noDeposit = stop.code == .noDeposit
         StopLine(title: noDeposit ? "Deposit to \(verb)." : stop.title, words: noDeposit ? nil : stop.words) {
             if noDeposit || stop.code == .modelUnavailable, let showWallet {
-                Button("Wallet…", action: showWallet)
+                Button("Funds…", action: showWallet)
             }
             DismissButton(action: dismiss)
         }
@@ -749,7 +1054,8 @@ private struct DismissButton: View {
 extension Payer.Stop {
     var title: String {
         switch self {
-        case .quote(let stop), .approve(let stop): stop.title
+        case .quote: "Couldn't get quote"
+        case .approve(let stop): stop.code == .failed ? "Couldn't submit transaction" : stop.title
         case .unread: "Unavailable"
         }
     }
@@ -758,14 +1064,26 @@ extension Payer.Stop {
     /// no answer says so; an approve may have been sent.
     var words: String {
         switch self {
-        case .quote(let stop) where stop.unanswered:
-            "No quote came. Nothing was sent. Try again."
-        case .approve(let stop) where stop.unanswered:
-            "No answer came. It may have been sent: the Wallet shows it once the chain does."
-        case .quote(let stop), .approve(let stop):
-            stop.words
+        case .quote(let stop):
+            if stop.detail.localizedCaseInsensitiveContains("payment rpc unavailable") || stop.detail.contains("502") {
+                "The Ethereum RPC was temporarily unreachable over Tor. Nothing was sent — wait a moment and try again."
+            } else if stop.unanswered {
+                "No quote came back over Tor. Nothing was sent — try again."
+            } else {
+                "Nothing was sent. \(stop.words)"
+            }
+        case .approve(let stop):
+            if stop.detail.localizedCaseInsensitiveContains("expired") {
+                "That 30-second quote expired before submission. Nothing was sent — click New Quote to try again."
+            } else if stop.detail.localizedCaseInsensitiveContains("payment rpc unavailable") || stop.detail.contains("502") {
+                "The Ethereum RPC was temporarily unreachable over Tor. Refresh in a moment to verify, then try again."
+            } else if stop.unanswered {
+                "No answer came back over Tor. The transaction may have been sent — refresh in a moment to check."
+            } else {
+                stop.words
+            }
         case .unread:
-            "Cloak hasn't read the deposit, so nothing was sent. Try again."
+            "Cloak hasn't loaded your zkAPI deposit yet, so nothing was sent. Try again."
         }
     }
 }
@@ -786,14 +1104,21 @@ extension PayStop {
         case .timedOut: "No answer"
         case .ended: "Interrupted"
         case .cancelled: "Stopped"
-        case .failed: "Failed"
+        case .failed: "Couldn't complete"
         }
     }
 
-    /// For a read of V's wallet. A read sends nothing, so one that got no
+    /// For a read of the zkAPI ETH wallet. A read sends nothing, so one that got no
     /// answer says so.
     var readWords: String {
-        unanswered ? "Cloak couldn't read V's wallet. Nothing was sent. Try again." : words
+        switch code {
+        case .timedOut, .ended, .providerFailed:
+            "Couldn't load your zkAPI ETH wallet over Tor. Nothing was sent — try again."
+        case .failed:
+            "Couldn't load your zkAPI Ethereum balance or deposit status over Tor. Wait a moment and try again."
+        default:
+            words
+        }
     }
 
     /// No answer came: in time, before the connection ended, or from the
@@ -808,11 +1133,11 @@ extension PayStop {
     /// What happened and what to do, for a chat request.
     var words: String {
         switch code {
-        case .unreachable: "Cloak couldn't reach V's wallet. Pause and start Cloak, then try again."
-        case .noDeposit: "Make a deposit in Wallet, then try again."
+        case .unreachable: "Couldn't reach the zkAPI payment service. Pause and start Cloak, then try again."
+        case .noDeposit: "Make a deposit in Funds, then try again."
         case .withdrawing: "The deposit is being withdrawn, so it can't pay for requests now."
-        case .busy: "V's wallet is busy with another request. Try again."
-        case .modelUnavailable: "The service can't use this model now. Pick another in Wallet."
+        case .busy: "zkAPI Anon Inference is busy with another request. Try again in a moment."
+        case .modelUnavailable: "The service can't use this model now. Pick another in Funds."
         case .torDown: "Cloak couldn't reach the service through Tor. Try again."
         case .refused: "The service declined the request."
         case .providerFailed: "The provider failed. The request may have been paid for."
@@ -821,7 +1146,7 @@ extension PayStop {
         case .timedOut: "No answer came in time. The request may have been paid for."
         case .ended: "The connection ended before the answer. The request may have been paid for."
         case .cancelled: "The request was stopped."
-        case .failed: "V's wallet couldn't finish this. Try again."
+        case .failed: "zkAPI Anon Inference couldn't complete this over Tor. Wait a moment and try again."
         }
     }
 }

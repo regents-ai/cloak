@@ -10,21 +10,6 @@ import SwiftUI
 /// chat requests, each with its texts once reworded, as the app wrote them
 /// and as Cloak sent them. The door keeps those in memory only.
 struct AgentsView: View {
-    static func window(
-        _ door: Door, supervisor: Supervisor, download: ModelDownload,
-        openDoor: @escaping () -> Void, showDetails: @escaping () -> Void, showDoorSettings: @escaping () -> Void
-    ) -> NSWindow {
-        let window = ClosingWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
-            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
-        window.title = "Agents"
-        window.contentViewController = NSHostingController(
-            rootView: AgentsView(
-                door: door, supervisor: supervisor, download: download, openDoor: openDoor,
-                showDetails: showDetails, showDoorSettings: showDoorSettings))
-        return window
-    }
-
     let door: Door
     let supervisor: Supervisor
     /// The download of the model that rewords, for the Start row's fix.
@@ -32,8 +17,10 @@ struct AgentsView: View {
     /// Opens the door again, in turn with the app's own opens and closes.
     let openDoor: () -> Void
     let showDetails: () -> Void
-    /// Settings, on its Door pane, where the port is chosen.
+    /// Settings, on its Advanced pane, where the port is chosen.
     let showDoorSettings: () -> Void
+    /// Opens the unified Funds sheet.
+    let showFunds: () -> Void
     /// Nil while no app is being added.
     @State private var adding: Adding?
     @State private var removing: AgentApp?
@@ -52,7 +39,16 @@ struct AgentsView: View {
                         Text("Base URL")
                         InfoButton(
                             "About Base URL",
-                            note: "Cloak rewords what you write on this Mac before it leaves; your apps' instructions, tools, tool results and the model's earlier answers go as the apps send them. Each request is paid from V's deposit, with a new key.")
+                            hint: "OpenAI-compatible local endpoint. Rewrites your prompts locally, routes over Tor, and pays via zkAPI Anon Inference."
+                        ) {
+                            BulletNote(
+                                "OpenAI-Compatible Endpoint",
+                                bullets: [
+                                    "Serves /v1/chat/completions and /v1/models on localhost only.",
+                                    "Your prompts are rewritten locally before leaving over Tor.",
+                                    "Paid from your zkAPI deposit with a fresh key per request.",
+                                ])
+                        }
                     }
                 }
                 LabeledContent("Status") {
@@ -94,16 +90,24 @@ struct AgentsView: View {
                         Button("Try Again", action: openDoor)
                     }
                 }
+                LabeledContent("Funds") {
+                    Button("Manage Funds…", action: showFunds)
+                }
             }
             if let problem = door.problem {
                 Section {
-                    Label(problem, systemImage: "exclamationmark.triangle.fill")
-                        .symbolRenderingMode(.multicolor)
+                    HStack(spacing: 8) {
+                        Label(problem, systemImage: "exclamationmark.triangle.fill")
+                            .symbolRenderingMode(.multicolor)
+                        Spacer()
+                        Button("Try Again") { Task { await door.load() } }
+                    }
                 }
             }
             Section {
                 if door.apps.isEmpty {
-                    Text("No apps yet.")
+                    Text("Add an app to create a local API key for Cursor, Cline, Continue, Aider, or other OpenAI-compatible tools.")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
                 ForEach(door.apps) { app in
@@ -142,8 +146,6 @@ struct AgentsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 520, height: 560)
         .task { await door.load() }
         .sheet(item: $adding) { stage in
             AddApp(door: door, adding: stage) { adding = $0 }

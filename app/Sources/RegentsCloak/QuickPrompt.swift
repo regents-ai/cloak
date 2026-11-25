@@ -128,9 +128,16 @@ private final class PromptPanel: NSPanel, NSTextFieldDelegate {
         backgroundColor = .clear
         hasShadow = true
 
-        field.placeholderString = "Message"
+        field.placeholderAttributedString = NSAttributedString(
+            string: "Message",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 20),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
         field.setAccessibilityLabel("Message")
         field.font = .systemFont(ofSize: 20)
+        field.textColor = .labelColor
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -176,6 +183,27 @@ private final class PromptPanel: NSPanel, NSTextFieldDelegate {
     override func resignKey() {
         super.resignKey()
         dismiss()
+    }
+
+    /// Standard Edit shortcuts when Cloak runs in `.accessory` mode with no main menu.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard let key = event.charactersIgnoringModifiers?.lowercased() else {
+            return super.performKeyEquivalent(with: event)
+        }
+        if flags == .command {
+            switch key {
+            case "v": return NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: self)
+            case "c": return NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: self)
+            case "x": return NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: self)
+            case "a": return NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: self)
+            case "z": return NSApp.sendAction(Selector(("undo:")), to: nil, from: self)
+            default: break
+            }
+        } else if flags == [.command, .shift], key == "z" {
+            return NSApp.sendAction(Selector(("redo:")), to: nil, from: self)
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {

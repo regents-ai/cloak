@@ -282,6 +282,9 @@ func prepare(task request) (home, workspace, copied string, err error) {
 	if err != nil {
 		return
 	}
+	// Give every agent conversation its own Tor circuit for tool egress via
+	// IsolateSOCKSAuth, rather than sharing an unauthenticated circuit.
+	torsocks = append(torsocks, []byte(fmt.Sprintf("\nSOCKS5Username cloak-agent-%s\nSOCKS5Password cloak\n", task.Session))...)
 	models, err := json.Marshal(map[string]any{"providers": map[string]any{"cloak": map[string]any{
 		"baseUrl": door, "api": "openai-completions", "apiKey": task.Pass,
 		"models": []map[string]any{{"id": task.Model}},

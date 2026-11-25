@@ -42,8 +42,15 @@ struct TextBox: NSViewRepresentable {
     var maxHeight: CGFloat = 320
     /// Takes the keyboard when it first appears.
     var autofocus = false
+    /// Whenever this value changes, takes the keyboard again (for example,
+    /// switching conversations or pressing Command-N).
+    var focusTrigger: AnyHashable? = nil
     /// When set, Return calls it and Shift-Return starts a new line.
     var submit: (() -> Void)?
+    /// Optional handler for files dropped directly onto the text view (used in
+    /// Local Mode so dragging a file onto the message field attaches it cleanly
+    /// instead of inserting a file path).
+    var onDropFiles: (([URL]) -> Void)? = nil
 
     private static let font = NSFont.systemFont(ofSize: 13)
     private static let inset = NSSize(width: 2, height: 6)
@@ -53,8 +60,9 @@ struct TextBox: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> PassingScrollView {
-        let textView = NSTextView(usingTextLayoutManager: false)
+        let textView = DroppingTextView(usingTextLayoutManager: false)
         textView.delegate = context.coordinator
+        textView.onDropFiles = onDropFiles
         textView.isRichText = false
         textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -79,15 +87,32 @@ struct TextBox: NSViewRepresentable {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.automaticallyAdjustsContentInsets = false
+        if #available(macOS 27.0, *) {
+            scrollView.isTouchScrollingEnabled = true
+        }
         if autofocus {
             DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
         }
+        context.coordinator.lastFocusTrigger = focusTrigger
         return scrollView
     }
 
     func updateNSView(_ scrollView: PassingScrollView, context: Context) {
         context.coordinator.box = self
         let textView = scrollView.textView
+        if let dropping = textView as? DroppingTextView {
+            dropping.onDropFiles = onDropFiles
+        }
+        if focusTrigger != context.coordinator.lastFocusTrigger {
+            context.coordinator.lastFocusTrigger = focusTrigger
+            if autofocus, editable, context.environment.isEnabled {
+                DispatchQueue.main.async {
+                    if textView.window?.isKeyWindow == true, textView.window?.firstResponder !== textView {
+                        textView.window?.makeFirstResponder(textView)
+                    }
+                }
+            }
+        }
         textView.isEditable = editable && context.environment.isEnabled
         textView.setAccessibilityLabel(label)
         if textView.string != text { textView.string = text }
@@ -122,6 +147,7 @@ struct TextBox: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var box: TextBox
+        var lastFocusTrigger: AnyHashable?
 
         init(_ box: TextBox) {
             self.box = box
@@ -139,7 +165,10 @@ struct TextBox: NSViewRepresentable {
                 if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
                     textView.insertNewlineIgnoringFieldEditor(nil)
                 } else {
-                    submit()
+                    // Defer out of AppKit's synchronous key-event handling so
+                    // SwiftUI never tears down sibling NSViewRepresentables
+                    // mid-doCommandBy.
+                    DispatchQueue.main.async { submit() }
                 }
                 return true
             case #selector(NSResponder.insertTab(_:)):
@@ -152,6 +181,46 @@ struct TextBox: NSViewRepresentable {
                 return false
             }
         }
+    }
+}
+
+/// `NSTextView` subclass that intercepts Finder file drops when `onDropFiles`
+/// is configured, forwarding the dropped file URLs to the caller instead of
+/// letting AppKit paste raw file paths into the text buffer.
+private final class DroppingTextView: NSTextView {
+    var onDropFiles: (([URL]) -> Void)?
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if onDropFiles != nil, !droppedFileURLs(from: sender).isEmpty {
+            return .copy
+        }
+        return super.draggingEntered(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if onDropFiles != nil, !droppedFileURLs(from: sender).isEmpty {
+            return true
+        }
+        return super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if let onDropFiles {
+            let urls = droppedFileURLs(from: sender)
+            if !urls.isEmpty {
+                onDropFiles(urls)
+                return true
+            }
+        }
+        return super.performDragOperation(sender)
+    }
+
+    private func droppedFileURLs(from info: any NSDraggingInfo) -> [URL] {
+        guard let objects = info.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] else { return [] }
+        return objects
     }
 }
 

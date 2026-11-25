@@ -22,6 +22,9 @@ let package = Package(
                 "CloakControl", "CloakSupervisor", "CloakChat", "CloakDoor", .product(name: "Sparkle", package: "Sparkle"),
             ]),
         .executableTarget(
+            name: "CloakWidgets",
+            dependencies: ["CloakControl"]),
+        .executableTarget(
             name: "cloak",
             dependencies: ["CloakControl", .product(name: "ArgumentParser", package: "swift-argument-parser")]),
         .testTarget(

@@ -18,6 +18,15 @@
 set -eu
 cd "$(dirname "$0")/.."
 
+case "${1:-}" in
+""|darkbloom) darkbloom="" ;;
+no-darkbloom) darkbloom="no-darkbloom" ;;
+*)
+	echo "usage: app/release.sh [no-darkbloom]" >&2
+	exit 2
+	;;
+esac
+
 identity=$(plutil -extract identity raw app/release.json)
 downloads=https://github.com/regents-ai/cloak-releases/releases/download
 
@@ -27,7 +36,7 @@ if git status --porcelain | grep -qvx '?? app/.DS_Store'; then
 	exit 1
 fi
 
-app/build.sh
+app/build.sh $darkbloom
 app="app/build/Cloak.app"
 release=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")
 build=$(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist")
@@ -107,8 +116,49 @@ if ! grep -qF "$downloads/$tag/Regents-Cloak-$tag.dmg" "$out/appcast.xml"; then
 	exit 1
 fi
 printf '%s\n' "$tag" > "$out/tag"
+
+# Compute independent release checksums (DMG + installed Mach-O binary + Apple CDHash)
+# so users can verify both the download and the installed app with built-in macOS tools.
+dmg_sha256=$(shasum -a 256 "$dmg" | awk '{print $1}')
+app_bin_sha256=$(shasum -a 256 "$app/Contents/MacOS/RegentsCloak" | awk '{print $1}')
+codesign_info=$(codesign -dvvv "$app" 2>&1)
+cdhash=$(printf '%s\n' "$codesign_info" | awk -F= '/^CDHash=/{print $2; exit}')
+cdhash_full=$(printf '%s\n' "$codesign_info" | awk -F= '/^CandidateCDHashFull sha256=/{print $2; exit}')
+team_id=$(printf '%s\n' "$codesign_info" | awk -F= '/^TeamIdentifier=/{print $2; exit}')
+
+cat > "$out/SHA256SUMS.txt" <<EOF
+# Regents Cloak $release ($build) — Release Checksums
+# Verify DMG:        shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+# Verify installed:  shasum -a 256 "/Applications/Cloak.app/Contents/MacOS/RegentsCloak"
+# Verify signature:  codesign -dvv --strict "/Applications/Cloak.app"
+# Verify notarized:  spctl --assess --type execute -vv "/Applications/Cloak.app"
+#
+# Apple Developer ID Team: $team_id
+# App Code Directory Hash (CDHash): $cdhash
+# Installed App Binary SHA-256: $app_bin_sha256  Cloak.app/Contents/MacOS/RegentsCloak
+
+$dmg_sha256  Regents-Cloak-$tag.dmg
+$dmg_sha256  Regents-Cloak.dmg
+EOF
+
+cat > "$out/checksums.json" <<EOF
+{
+  "tag": "$tag",
+  "release": "$release",
+  "build": "$build",
+  "dmg_filename": "Regents-Cloak-$tag.dmg",
+  "dmg_sha256": "$dmg_sha256",
+  "app_binary_sha256": "$app_bin_sha256",
+  "cdhash": "$cdhash",
+  "cdhash_full": "$cdhash_full",
+  "team_id": "$team_id"
+}
+EOF
+
 rm -rf "$work"
 
 echo "$dmg"
 echo "$out/appcast.xml"
+echo "$out/SHA256SUMS.txt"
+echo "$out/checksums.json"
 echo "$out/tag"

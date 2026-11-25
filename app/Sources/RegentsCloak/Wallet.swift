@@ -18,6 +18,7 @@ final class Wallet {
     /// The cheapest suitable open model in the provider's list when this was
     /// written; any model in the list can be picked.
     static let defaultModel = "deepseek/deepseek-v4-flash-0731"
+    private static let modelKey = "tokenModel"
 
     let supervisor: Supervisor
     let folder: URL
@@ -25,7 +26,11 @@ final class Wallet {
     var deposits: DepositStore?
     private(set) var presence = WalletPresence.looking
     private(set) var look: Look?
-    var model = Wallet.defaultModel
+    var model: String {
+        didSet {
+            UserDefaults.standard.set(model, forKey: Self.modelKey)
+        }
+    }
     /// The last Create, Close or Withdraw that stopped, until the next one
     /// is pressed or it is dismissed. A read of the wallet never clears it.
     private(set) var stop: RemoteStop?
@@ -38,6 +43,7 @@ final class Wallet {
     init(supervisor: Supervisor, folder: URL) {
         self.supervisor = supervisor
         self.folder = folder
+        self.model = UserDefaults.standard.string(forKey: Self.modelKey) ?? Self.defaultModel
     }
 
     var exchange: Exchange {
@@ -139,7 +145,7 @@ final class Wallet {
     }
 
     private func recorded(_ stop: RemoteStop) -> RemoteStop {
-        logger.error("wallet request stopped: \(stop.code.rawValue, privacy: .public) \(stop.detail, privacy: .private)")
+        logger.error("wallet request stopped: \(stop.code.rawValue, privacy: .public) \(stop.detail, privacy: .public)")
         return stop
     }
 }

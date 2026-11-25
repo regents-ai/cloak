@@ -21,10 +21,11 @@ final class Worker: Sendable {
         case answering(Task<Void, Never>)
     }
 
-    /// The most tokens one Local Llama answer takes, thinking and all; the
-    /// rest of the model's pinned context (`answers.context_tokens`) is
-    /// the conversation's.
+    /// Visible answer token budget for one Local Llama answer.
     static let answerTokens: Int32 = 4_096
+    /// Separate thinking token budget for reasoning models like Inkling 2 Mini
+    /// (Decision R7) so long reasoning doesn't eat the visible answer budget.
+    static let thinkingTokens: Int32 = 8_192
 
     let pin: ModelPin
     let engine: Engine
@@ -73,7 +74,9 @@ final class Worker: Sendable {
         // Idle before the answer goes out: the supervisor sends its next
         // request as soon as it has read this answer.
         state.withLock { $0 = .idle }
-        Frames.answer(status: status, body: reply)
+        if !Frames.answer(status: status, body: reply) {
+            log.info("supervisor channel closed while writing answer")
+        }
     }
 
     /// Applies the model's own chat template with the pinned settings, then
@@ -98,7 +101,7 @@ final class Worker: Sendable {
         switch rewrite.finish {
         case .stop: finishReason = "stop"
         case .length: finishReason = "length"
-        case .tooLong: preconditionFailure("only a Local Llama answer has a cap")
+        case .tooLong, .thinkingExhausted: preconditionFailure("only a Local Llama answer has a cap")
         case .cancelled:
             log.info("\(name, privacy: .public) cancelled")
             return (499, Reply.error("cancelled"))
@@ -129,7 +132,14 @@ final class Worker: Sendable {
             log.info("rejected a conversation that is not a Local Llama chat, or went to a model that does not answer them")
             return (400, Reply.error("invalid request"))
         }
-        let answer = await engine.answer(conversation, maxTokens: Self.answerTokens, maxContext: answers.contextTokens)
+        let answer = await engine.answer(
+            conversation, maxAnswerTokens: Self.answerTokens, maxThinkingTokens: Self.thinkingTokens,
+            maxContext: answers.contextTokens
+        ) { [engine] partial in
+            if !Frames.partial(Data(partial.utf8)) {
+                engine.cancel()
+            }
+        }
         let finishReason: String
         switch answer.finish {
         case .stop: finishReason = "stop"
@@ -137,6 +147,9 @@ final class Worker: Sendable {
         case .tooLong:
             log.info("answer too long: \(answer.promptTokens) prompt tokens")
             return (413, Reply.error("conversation too long"))
+        case .thinkingExhausted:
+            log.info("answer exhausted thinking budget after \(answer.generatedTokens) tokens")
+            return (422, Reply.error("thinking limit reached"))
         case .cancelled:
             log.info("answer cancelled")
             return (499, Reply.error("cancelled"))
@@ -150,7 +163,7 @@ final class Worker: Sendable {
         return (
             200,
             Reply.completion(
-                model: pin.name, text: answer.text, promptTokens: answer.promptTokens,
+                model: pin.name, text: answer.text, reasoning: answer.reasoning, promptTokens: answer.promptTokens,
                 completionTokens: answer.generatedTokens, finishReason: finishReason)
         )
     }

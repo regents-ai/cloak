@@ -114,7 +114,14 @@ func cloakGuestServe(args []string, logger *log.Logger) error {
 	}
 	api.DefaultModel = c.DefaultModel
 	api.RewriterNotice = c.Rewriter.Notice
-	api.RequireAPIKey = c.RequireAPIKey
+	// In serving mode (/etc/cloak/serve), Pi talks to the Mac's door rather than
+	// this daemon; require the daemon's random in-memory API key so a sandboxed
+	// agent on loopback cannot trigger host rewrites while cover traffic runs.
+	if _, err := os.Stat("/etc/cloak/serve"); err == nil {
+		api.RequireAPIKey = true
+	} else {
+		api.RequireAPIKey = c.RequireAPIKey
+	}
 	api.Status = server.ServiceStatus{Backend: c.Backend, Network: c.ZKAPI.Network, RequestBudgetPolicy: "model"}
 	// The mark the daemon's own serve sets (runConfiguredServe): this is the
 	// long-running API, which owns cover traffic.

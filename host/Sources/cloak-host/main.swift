@@ -122,7 +122,7 @@ do { tor = try await Tor.start(executable: path("--tor"), data: path("--tor-data
 }
 
 do {
-    try guest.prepare(base: path("--initrd"), cases: try Data(contentsOf: path("--cases")), model: arguments["--name"]!,
+    try await guest.prepare(base: path("--initrd"), cases: try Data(contentsOf: path("--cases")), model: arguments["--name"]!,
                       relay: relay, tor: tor, cover: true, serve: serving,
                       door: arguments["--door"].map { door in { guest in carry(guest, to: door) } })
     if let tasks = arguments["--runner"] {

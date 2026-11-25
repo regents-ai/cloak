@@ -1,7 +1,9 @@
 import CloakControl
+import CloakHost
 import CryptoKit
 import Foundation
 import Security
+import Synchronization
 
 // Token Inference (decisions 10 and 25 in docs/plan.md): a turn's reworded
 // text, or its original when its owner chose to send it as written
@@ -18,36 +20,29 @@ import Security
 public enum WalletKeychain {
     static let service = "sh.regents.cloak.wallet"
 
+    private static var base: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+        ]
+    }
+
     /// The wallet's address, or nil when there is none.
     @concurrent
     public static func address() async throws(Keychain.Failure) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status != errSecItemNotFound else { return nil }
-        guard status == errSecSuccess, let attributes = result as? [String: Any],
+        let result = KeychainStore.readAttributes(matching: base)
+        guard result.status != errSecItemNotFound else { return nil }
+        guard result.status == errSecSuccess, let attributes = result.attributes,
             let address = attributes[kSecAttrAccount as String] as? String
-        else { throw Keychain.Failure(status: status) }
+        else { throw Keychain.Failure(status: result.status) }
         return address
     }
 
     /// The wallet's key. Blocking: called while a request is built, off the
     /// main thread.
     public static func key() throws(Keychain.Failure) -> Data {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let key = result as? Data, key.count == 32 else { throw Keychain.Failure(status: status) }
+        let result = KeychainStore.readData(matching: base, migrationLabel: "Regents Cloak wallet")
+        guard result.status == errSecSuccess, let key = result.data, key.count == 32 else { throw Keychain.Failure(status: result.status) }
         return key
     }
 
@@ -55,15 +50,48 @@ public enum WalletKeychain {
     @concurrent
     public static func store(key: Data, address: String) async throws(Keychain.Failure) {
         guard try await self.address() == nil else { throw Keychain.Failure(status: errSecDuplicateItem) }
-        let item: [String: Any] = [
+        var item = base
+        item[kSecAttrAccount as String] = address
+        let status = KeychainStore.addUnique(base: item, label: "Regents Cloak wallet", data: key)
+        guard status == errSecSuccess else { throw Keychain.Failure(status: status) }
+    }
+}
+
+/// Dedicated Keychain storage for Venice's Base USDC wallet (Decision R5b):
+/// separate private key and Ethereum address from Boundless's Tempo wallet so
+/// Tempo and Base activity can never be correlated across providers.
+public enum VeniceWalletKeychain {
+    static let service = "sh.regents.cloak.venice-wallet"
+
+    private static var base: [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: address,
-            kSecAttrLabel as String: "Regents Cloak wallet",
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            kSecValueData as String: key,
         ]
-        let status = SecItemAdd(item as CFDictionary, nil)
+    }
+
+    @concurrent
+    public static func address() async throws(Keychain.Failure) -> String? {
+        let result = KeychainStore.readAttributes(matching: base)
+        guard result.status != errSecItemNotFound else { return nil }
+        guard result.status == errSecSuccess, let attributes = result.attributes,
+            let address = attributes[kSecAttrAccount as String] as? String
+        else { throw Keychain.Failure(status: result.status) }
+        return address
+    }
+
+    public static func key() throws(Keychain.Failure) -> Data {
+        let result = KeychainStore.readData(matching: base, migrationLabel: "Regents Cloak Venice wallet")
+        guard result.status == errSecSuccess, let key = result.data, key.count == 32 else { throw Keychain.Failure(status: result.status) }
+        return key
+    }
+
+    @concurrent
+    public static func store(key: Data, address: String) async throws(Keychain.Failure) {
+        guard try await self.address() == nil else { throw Keychain.Failure(status: errSecDuplicateItem) }
+        var item = base
+        item[kSecAttrAccount as String] = address
+        let status = KeychainStore.addUnique(base: item, label: "Regents Cloak Venice wallet", data: key)
         guard status == errSecSuccess else { throw Keychain.Failure(status: status) }
     }
 }
@@ -130,11 +158,21 @@ public struct DepositStore: Sendable {
     /// Keeps the deposit as the sender reported it; its `null` means it is gone.
     public func keep(_ deposit: Data) throws {
         if try JSONSerialization.jsonObject(with: deposit, options: .fragmentsAllowed) is NSNull {
-            if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+            do {
+                try FileManager.default.removeItem(at: file)
+            } catch CocoaError.fileNoSuchFile {}
             return
         }
         try Places.makeOwnerOnly(file.deletingLastPathComponent())
         try ConversationStore.replace(file, with: try ChaChaPoly.seal(deposit, using: key, authenticating: Self.tag).combined)
+    }
+
+    /// Removes the kept deposit only if it is still the exact record `previous`
+    /// that a `look` sent, so a concurrent `complete` opening a new deposit is
+    /// never deleted by a stale read.
+    package func forgetIfUnchanged(_ previous: Data) throws {
+        guard let current = try load(), current == previous else { return }
+        try keep(Data("null".utf8))
     }
 }
 
@@ -181,7 +219,32 @@ public struct Amount: Sendable, Equatable, Comparable, Decodable {
         self.units = units
     }
 
+    /// Dollars as typed, with or without a dollar sign: whole units of a
+    /// millionth, never rounded. Nil for no amount, more than six places,
+    /// or more than an amount holds.
+    public init?(dollars text: String) {
+        var text = text.trimmingCharacters(in: .whitespaces)
+        if text.hasPrefix("$") { text.removeFirst() }
+        let parts = text.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+        let digits = Set("0123456789")
+        guard let whole = parts.first, !whole.isEmpty, whole.allSatisfy(digits.contains) else { return nil }
+        let fraction = parts.count == 2 ? parts[1] : ""
+        guard fraction.count <= 6, fraction.allSatisfy(digits.contains), let dollars = UInt64(whole) else { return nil }
+        let (scaled, over) = dollars.multipliedReportingOverflow(by: 1_000_000)
+        let micros = UInt64(fraction.padding(toLength: 6, withPad: "0", startingAt: 0))!
+        let (units, past) = scaled.addingReportingOverflow(micros)
+        guard !over, !past, units > 0 else { return nil }
+        self.units = units
+    }
+
     public var dollars: Decimal { Decimal(units) / 1_000_000 }
+
+    /// How much more than `funds` this amount needs; nil when `funds` are
+    /// enough, or were not read.
+    public func lacking(in funds: Amount?) -> Amount? {
+        guard let funds, funds < self else { return nil }
+        return Amount(units: units - funds.units)
+    }
 
     public static func < (a: Amount, b: Amount) -> Bool { a.units < b.units }
 }
@@ -250,13 +313,18 @@ public enum Remote {
     }
 
     /// The balance, the provider's setup and models, and the deposit; a
-    /// deposit the network shows closed is forgotten.
+    /// deposit the network shows closed is forgotten unless a concurrent send
+    /// replaced it meanwhile.
     public static func look(address: String, deposits: DepositStore, exchange: Exchange) async throws(RemoteStop) -> Look {
+        let sent = Mutex<Data?>(nil)
         let look: Look = try await run(exchange, keep: deposits.keep) {
-            ["op": "wallet", "address": address, "deposit": try deposit(deposits)]
+            let raw = try deposits.load()
+            sent.withLock { $0 = raw }
+            let object = try raw.map { try JSONSerialization.jsonObject(with: $0) } ?? NSNull()
+            return ["op": "wallet", "address": address, "deposit": object]
         }
-        if look.deposit?.gone == true {
-            do { try deposits.keep(Data("null".utf8)) } catch {
+        if look.deposit?.gone == true, let previous = sent.withLock({ $0 }) {
+            do { try deposits.forgetIfUnchanged(previous) } catch {
                 throw RemoteStop(code: .failed, detail: "cannot forget the closed deposit: \(error)")
             }
         }
@@ -363,6 +431,122 @@ public enum Remote {
             turn.answer.map { [["role": "user", "content": turn.sent], ["role": "assistant", "content": $0]] } ?? []
         }
         return earlier + [["role": "user", "content": conversation.turns[index].sent]]
+    }
+
+    /// The wallet's EIP-191 signature of Venice's sign-in, made in the guest
+    /// (`venice_sign`), which signs nothing but Venice's sign-in.
+    public static func veniceSign(_ message: String, key: @escaping Key, exchange: Exchange) async throws(RemoteStop) -> String {
+        let signed: Signed = try await run(exchange, keep: { _ in }) { ["op": "venice_sign", "key": try hexKey(key), "message": message] }
+        return signed.signature
+    }
+
+    /// The wallet's EIP-712 signature of `typed`, made in the guest
+    /// (`venice_typed`), which signs nothing but a USDC transfer on Base.
+    public static func veniceTyped(_ typed: Data, key: @escaping Key, exchange: Exchange) async throws(RemoteStop) -> String {
+        let signed: Signed = try await run(exchange, keep: { _ in }) {
+            ["op": "venice_typed", "key": try hexKey(key), "typed": String(decoding: typed, as: UTF8.self)]
+        }
+        return signed.signature
+    }
+
+    /// The address's USDC on Base at the latest block (`venice_funds`).
+    public static func veniceFunds(address: String, exchange: Exchange) async throws(RemoteStop) -> Amount {
+        struct Funds: Decodable { let balance: Amount }
+        let funds: Funds = try await run(exchange, keep: { _ in }) { ["op": "venice_funds", "address": address] }
+        return funds.balance
+    }
+
+    /// The wallet's signer for Venice: each signature is made in the guest
+    /// with `key`, read as each request is built.
+    public static func veniceSigner(address: String, key: @escaping Key, exchange: @escaping Exchange) -> VeniceSigner {
+        VeniceSigner(
+            address: address, personal: { try await veniceSign($0, key: key, exchange: exchange) },
+            typed: { try await veniceTyped($0, key: key, exchange: exchange) })
+    }
+
+    /// Carries Venice's requests through the guest's sender (`venice`), each
+    /// through Tor as `identity`, and its answer back as it comes: `stream`
+    /// is `Supervisor.venice` in the app. Failures before any response header
+    /// arrive report `sent: false` when the stream closed before sending or
+    /// Tor was down.
+    public static func veniceTransport(
+        identity: String, stream: @escaping @Sendable (Data) async throws -> AsyncThrowingStream<Sender.Piece, any Error>
+    ) -> VeniceTransport {
+        { request throws(VeniceUnreachable) in
+            let line: Data
+            do {
+                line = try JSONSerialization.data(
+                    withJSONObject: [
+                        "op": "venice", "identity": identity, "method": request.method, "url": request.url.absoluteString,
+                        "headers": request.headers, "body": request.body.map { String(decoding: $0, as: UTF8.self) } ?? NSNull(),
+                    ] as [String: Any], options: .withoutEscapingSlashes)
+            } catch {
+                throw VeniceUnreachable(sent: false)
+            }
+            let pieces: AsyncThrowingStream<Sender.Piece, any Error>
+            do {
+                pieces = try await stream(line)
+            } catch {
+                throw VeniceUnreachable(sent: false)
+            }
+            let (heads, head) = AsyncStream.makeStream(of: Result<(Int, [String: String]), VeniceUnreachable>.self)
+            let (body, feed) = AsyncThrowingStream.makeStream(of: Data.self, throwing: (any Error).self)
+            let forward = Task {
+                var headed = false
+                do {
+                    for try await piece in pieces {
+                        switch piece {
+                        case .head(let status, let headers):
+                            headed = true
+                            head.yield(.success((status, headers)))
+                            head.finish()
+                        case .body(let bytes):
+                            feed.yield(bytes)
+                        case .end(let answer):
+                            let ended = try? JSONDecoder().decode(Ended.self, from: answer)
+                            guard headed else {
+                                head.yield(.failure(VeniceUnreachable(sent: ended?.stop?.code != RemoteStop.Code.torDown.rawValue)))
+                                head.finish()
+                                return
+                            }
+                            if ended?.ok != nil { feed.finish() } else { feed.finish(throwing: VeniceUnreachable(sent: true)) }
+                            return
+                        }
+                    }
+                    throw Sender.Failure(description: "the stream ended without an answer")
+                } catch {
+                    let failure = error as? Sender.Failure
+                    let beforeSend = !headed && (failure?.description.contains("before its turn") == true
+                        || failure?.description.contains("before the request") == true
+                        || failure?.description.contains("gave no turn") == true)
+                    head.yield(.failure(VeniceUnreachable(sent: !beforeSend)))
+                    head.finish()
+                    feed.finish(throwing: VeniceUnreachable(sent: true))
+                }
+            }
+            feed.onTermination = { _ in forward.cancel() }
+            var first = heads.makeAsyncIterator()
+            switch await first.next() {
+            case .success(let (status, headers))?:
+                return VeniceResponse(status: status, headers: headers, body: body)
+            case .failure(let unreachable)?:
+                throw unreachable
+            case nil:
+                // This task was cancelled first.
+                forward.cancel()
+                throw VeniceUnreachable(sent: false)
+            }
+        }
+    }
+
+    private struct Signed: Decodable { let signature: String }
+
+    /// The sender's last word on a Venice request: `{"ok":{}}`, or a stop.
+    private struct Ended: Decodable {
+        let ok: Empty?
+        let stop: Stop?
+        struct Empty: Decodable {}
+        struct Stop: Decodable { let code: String }
     }
 
     private static func deposit(_ deposits: DepositStore) throws -> Any {

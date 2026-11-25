@@ -22,16 +22,69 @@ release=${tag%-*}
 build=${tag##*-}
 
 ln -f "$out/Regents-Cloak-$tag.dmg" "$out/Regents-Cloak.dmg"
-gh release create "$tag" "$out/Regents-Cloak-$tag.dmg" "$out/Regents-Cloak.dmg" --repo "$repo" \
-	--title "Regents Cloak $release ($build)" --notes-file app/release-notes.md
 
-# Replacing the file needs its current sha; creating it needs none.
-sha=$(gh api "repos/$repo/contents?ref=main" --jq '.[] | select(.name == "appcast.xml") | .sha')
-gh api -X PUT "repos/$repo/contents/appcast.xml" --silent \
-	-f message="Regents Cloak $release ($build)" \
-	-f branch=main \
-	-f content="$(base64 -i "$out/appcast.xml")" \
-	${sha:+-f "sha=$sha"}
+# Append release checksums and built-in macOS verification commands to the GitHub Release body.
+dmg_sha256=$(plutil -extract dmg_sha256 raw "$out/checksums.json")
+app_bin_sha256=$(plutil -extract app_binary_sha256 raw "$out/checksums.json")
+cdhash=$(plutil -extract cdhash raw "$out/checksums.json")
+team_id=$(plutil -extract team_id raw "$out/checksums.json")
+notes_out="$out/release-notes-with-checksums.md"
+{
+	cat app/release-notes.md
+	cat <<EOF
+
+---
+
+## Checksums & Verification
+
+Compare these checksums against \`regents.sh/cloak/install\` and Cloak's **Settings → Status** pane:
+
+- **DMG (\`Regents-Cloak-$tag.dmg\` / \`Regents-Cloak.dmg\`) SHA-256:**
+  \`$dmg_sha256\`
+- **Installed App Binary (\`Cloak.app/Contents/MacOS/RegentsCloak\`) SHA-256:**
+  \`$app_bin_sha256\`
+- **Apple Code Signature \`CDHash\`:** \`$cdhash\` (Team \`$team_id\`)
+
+Verify independently using macOS built-in tools in Terminal:
+
+\`\`\`sh
+# 1. Verify downloaded DMG before opening
+shasum -a 256 ~/Downloads/Regents-Cloak-$tag.dmg
+
+# 2. Verify installed app binary after dragging to Applications
+shasum -a 256 "/Applications/Cloak.app/Contents/MacOS/RegentsCloak"
+
+# 3. Verify Apple Developer ID signature & CDHash (Team $team_id)
+codesign -dvv --strict "/Applications/Cloak.app"
+
+# 4. Verify Apple Notarization & Gatekeeper
+spctl --assess --type execute -vv "/Applications/Cloak.app"
+\`\`\`
+EOF
+} > "$notes_out"
+
+gh release create "$tag" \
+	"$out/Regents-Cloak-$tag.dmg" \
+	"$out/Regents-Cloak.dmg" \
+	"$out/SHA256SUMS.txt" \
+	"$out/checksums.json" \
+	--repo "$repo" \
+	--title "Regents Cloak $release ($build)" --notes-file "$notes_out"
+
+# Update appcast.xml, SHA256SUMS.txt, and checksums.json on main branch.
+upload_main_file() {
+	local_path="$1"
+	remote_name="$2"
+	sha=$(gh api "repos/$repo/contents?ref=main" --jq ".[] | select(.name == \"$remote_name\") | .sha")
+	gh api -X PUT "repos/$repo/contents/$remote_name" --silent \
+		-f message="Regents Cloak $release ($build)" \
+		-f branch=main \
+		-f content="$(base64 -i "$local_path")" \
+		${sha:+-f "sha=$sha"}
+}
+upload_main_file "$out/appcast.xml" "appcast.xml"
+upload_main_file "$out/SHA256SUMS.txt" "SHA256SUMS.txt"
+upload_main_file "$out/checksums.json" "checksums.json"
 
 # raw.githubusercontent.com may serve its earlier copy for up to five
 # minutes.

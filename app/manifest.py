@@ -39,6 +39,11 @@ PARTS = [
     ("near", "near/cloak-near"),
 ]
 
+OPTIONAL_VMLX_PARTS = [
+    ("vmlx_worker", "worker/cloak-worker-vmlx"),
+    ("vmlx_metallib", "worker/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"),
+]
+
 
 def digest(path: Path) -> str:
     h = hashlib.sha256()
@@ -55,29 +60,44 @@ def main() -> None:
 
     def file(model: dict, entry: dict) -> dict:
         source = models[entry.get("from", model["name"])]
+        remote = entry.get("remote_path", entry["path"])
         return {"path": entry["path"], "size": entry["size"], "sha256": entry["sha256"],
-                "url": url(source["repo"], source["revision"], entry["path"])}
+                "url": url(source["repo"], source["revision"], remote)}
 
     def answer_model(model: dict) -> dict:
         answers = model["answers"]
-        return {
+        out = {
             "name": model["name"],
             "label": answers["label"],
+            "engine": model.get("engine", "llama"),
             "memory": round(answers["memory_gib"] * 2**30),
             "context_tokens": answers["context_tokens"],
             "files": [file(model, entry) for entry in model["files"]],
         }
+        if lora_name := model.get("unfiltered_lora"):
+            lora = models[lora_name]
+            out["unfiltered_lora"] = {
+                "name": lora["name"],
+                "label": lora.get("label", lora["name"]),
+                "file": file(lora, lora["files"][0]),
+            }
+        return out
 
-    answer_models = sorted((answer_model(m) for m in models.values() if "answers" in m), key=lambda m: m["memory"])
+    has_vmlx = all((resources / path).is_file() for _, path in OPTIONAL_VMLX_PARTS)
+    answer_models = sorted(
+        (answer_model(m) for m in models.values() if "answers" in m and (has_vmlx or m.get("engine", "llama") != "vmlx")),
+        key=lambda m: m["memory"],
+    )
     if release["model"] not in [m["name"] for m in answer_models]:
         raise SystemExit(f"{release['model']}, the model that rewords, is not a model that answers in reference/models.json")
+    parts = list(PARTS) + (list(OPTIONAL_VMLX_PARTS) if has_vmlx else [])
     manifest = {
         "release": release["release"],
         "build": build,
         "cloak_memory": round(release["cloak_memory_gib"] * 2**30),
         "model": release["model"],
         "answer_models": answer_models,
-        "pins": [{"part": part, "path": path, "sha256": digest(resources / path)} for part, path in PARTS],
+        "pins": [{"part": part, "path": path, "sha256": digest(resources / path)} for part, path in parts],
     }
     (resources / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 

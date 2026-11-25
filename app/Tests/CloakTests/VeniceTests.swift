@@ -248,7 +248,7 @@ struct VeniceTests {
             try await Venice(auth: .key("sk-test"), transport: standIn.transport).topUpTerms()
         }
 
-        #expect(stop?.kind == .failed)
+        #expect(stop?.kind == .notUSDC)
         #expect(standIn.sent.count == 1)
     }
 
@@ -290,5 +290,99 @@ struct VeniceTests {
             read
                 == VeniceTopUpTerms(
                     payTo: "0x2670b922ef37c7df47158725c0cc407b5382293f", least: Amount(units: 5_000_000), timeout: 300, name: "USD Coin", version: "2"))
+    }
+
+    @Test
+    func topUpRefusesBelowMinimumWithoutSigning() async {
+        let signed = Mutex(false)
+        let standIn = StandIn { _ in (200, [:], "{}") }
+        let signer = VeniceSigner(
+            address: Self.address,
+            personal: { _ in "" },
+            typed: { _ in
+                signed.withLock { $0 = true }
+                return Self.signature
+            })
+        let terms = VeniceTopUpTerms(
+            payTo: "0x2670B922ef37C7Df47158725C0CC407b5382293F", least: Amount(units: 5_000_000),
+            timeout: 300, name: "USD Coin", version: "2")
+        let venice = Venice(auth: .wallet(signer), transport: standIn.transport)
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await venice.topUp(Amount(units: 1_000_000), on: terms, by: signer)
+        }
+
+        #expect(stop?.kind == .belowLeast)
+        #expect(stop?.sent == false)
+        #expect(!signed.withLock { $0 })
+        #expect(standIn.sent.isEmpty)
+    }
+
+    @Test
+    func topUpSigningFailureMarksNothingSent() async {
+        struct SignBoom: Error {}
+        let standIn = StandIn { _ in (200, [:], "{}") }
+        let signer = VeniceSigner(
+            address: Self.address,
+            personal: { _ in "" },
+            typed: { _ in throw SignBoom() })
+        let terms = VeniceTopUpTerms(
+            payTo: "0x2670B922ef37C7Df47158725C0CC407b5382293F", least: Amount(units: 5_000_000),
+            timeout: 300, name: "USD Coin", version: "2")
+        let venice = Venice(auth: .wallet(signer), transport: standIn.transport)
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await venice.topUp(Amount(units: 5_000_000), on: terms, by: signer)
+        }
+
+        #expect(stop?.kind == .signing)
+        #expect(stop?.sent == false)
+        #expect(standIn.sent.isEmpty)
+    }
+
+    @Test(arguments: [
+        (400, VeniceStop.Kind.paymentRefused),
+        (402, VeniceStop.Kind.paymentRefused),
+        (500, VeniceStop.Kind.failed),
+        (503, VeniceStop.Kind.failed),
+    ])
+    func topUpHttpFailuresMarkSentTrue(status: Int, expected: VeniceStop.Kind) async {
+        let standIn = StandIn { _ in (status, [:], #"{"error":"nope"}"#) }
+        let signer = VeniceSigner(address: Self.address, personal: { _ in "" }, typed: { _ in Self.signature })
+        let terms = VeniceTopUpTerms(
+            payTo: "0x2670B922ef37C7Df47158725C0CC407b5382293F", least: Amount(units: 5_000_000),
+            timeout: 300, name: "USD Coin", version: "2")
+        let venice = Venice(auth: .wallet(signer), transport: standIn.transport)
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await venice.topUp(Amount(units: 5_000_000), on: terms, by: signer)
+        }
+
+        #expect(stop?.kind == expected)
+        #expect(stop?.sent == true)
+    }
+
+    @Test
+    func midStreamDropMarksSentTrue() async {
+        struct Drop: Error {}
+        let venice = Venice(auth: .key("sk-test")) { request in
+            if request.url.path == "/api/v1/models" {
+                return VeniceResponse(status: 200, headers: [:], body: AsyncThrowingStream { c in
+                    c.yield(Data(Self.list.utf8))
+                    c.finish()
+                })
+            }
+            return VeniceResponse(status: 200, headers: [:], body: AsyncThrowingStream { c in
+                c.yield(Data("data: {\"choices\":[{\"delta\":{\"content\":\"half\"}}]}\n\n".utf8))
+                c.finish(throwing: Drop())
+            })
+        }
+
+        let stop = await #expect(throws: VeniceStop.self) {
+            try await Self.ask(venice, VeniceChat(model: "llama-3.3-70b", tier: .private))
+        }
+
+        #expect(stop?.kind == .unreachable)
+        #expect(stop?.sent == true)
     }
 }

@@ -58,21 +58,36 @@ public final class WorkerChannel: Sendable {
         output = fromWorker.fileHandleForReading
     }
 
+    /// Maximum time allowed for a worker process to verify weights and signal
+    /// ready before it is terminated and killed.
+    static let startLimit = Duration.seconds(120)
+
     /// Starts the worker and returns once it has signalled ready, waiting on a
-    /// thread of its own while the worker loads. A start that is cancelled
-    /// stops the worker at once, which ends the wait. Throws, once the worker
-    /// has exited, when it was cancelled, or `NotReady` when the worker ended
-    /// or sent anything else first.
+    /// thread of its own while the worker loads. A start that is cancelled or
+    /// exceeds `startLimit` stops the worker (escalating to SIGKILL after
+    /// `Child.exitLimit`), which ends the wait. Throws, once the worker has
+    /// exited, when it was cancelled, or `NotReady` when the worker ended or
+    /// sent anything else first.
     public static func start(executable: URL, arguments: [String]) async throws -> WorkerChannel {
         let channel = try WorkerChannel(executable: executable, arguments: arguments)
+        let stopWithKill: @Sendable () -> Void = {
+            channel.child.process.terminate()
+            Task { await channel.child.stopped("the worker") }
+        }
+        let watchdog = Task {
+            guard (try? await Task.sleep(for: startLimit)) != nil else { return }
+            stopWithKill()
+        }
+        defer { watchdog.cancel() }
         let ready = try await withTaskCancellationHandler {
             try await onThread { () -> Bool in
                 guard let (kind, payload) = channel.readFrame() else { return false }
                 return kind == 0x59 && payload.isEmpty
             }
         } onCancel: {
-            channel.child.process.terminate()
+            stopWithKill()
         }
+        watchdog.cancel()
         guard ready, !Task.isCancelled else {
             channel.child.process.terminate()
             await channel.child.stopped("the worker")
@@ -135,21 +150,30 @@ public final class WorkerChannel: Sendable {
     }
 
     /// The answer to the request sent (status and body), or nil when the
-    /// worker is lost. The read waits outside the lock, so a cancel can reach
-    /// the worker meanwhile.
-    func answer() -> Data? {
-        let frame = readFrame()
-        return state.withLock { state in
-            switch state {
-            case .idle, .lost:
-                preconditionFailure("an answer awaited with no request at the worker")
-            case .running, .cancelling:
-                guard let (kind, payload) = frame, kind == 0x41, payload.count >= 2 else {
-                    lose(&state)
+    /// worker is lost. Any `P` (0x50) partial frames emitted before the final
+    /// `A` (0x41) frame are delivered to `onPartial` as they arrive. The read
+    /// waits outside the lock, so a cancel can reach the worker meanwhile.
+    func answer(onPartial: (@Sendable (Data) -> Void)? = nil) -> Data? {
+        while true {
+            let frame = readFrame()
+            if let (kind, payload) = frame, kind == 0x50 {
+                onPartial?(payload)
+                continue
+            }
+            return state.withLock { state in
+                switch state {
+                case .idle:
+                    preconditionFailure("an answer awaited with no request at the worker")
+                case .lost:
                     return nil
+                case .running, .cancelling:
+                    guard let (kind, payload) = frame, kind == 0x41, payload.count >= 2 else {
+                        lose(&state)
+                        return nil
+                    }
+                    state = .idle
+                    return payload
                 }
-                state = .idle
-                return payload
             }
         }
     }
@@ -158,7 +182,10 @@ public final class WorkerChannel: Sendable {
     /// A busy worker first stops its request, which fails. One that has not
     /// exited within `Child.exitLimit` is killed.
     public func finish() async {
-        try? input.close()
+        state.withLock { state in
+            state = .lost
+            try? input.close()
+        }
         await child.stopped("the worker")
     }
 

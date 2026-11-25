@@ -101,16 +101,19 @@ public struct ConversationStore: Sendable {
         Data(id.uuidString.utf8)
     }
 
-    /// The key for the conversations in `folder`: the one `find` finds, or
-    /// one `make` makes when none is found and no conversation file is
-    /// there. Nil when the key is missing but files are there: a new key
-    /// over them would never open them, so none is made. `find` failing
+    /// The key for the conversations in `folder` (and any sibling sealed files
+    /// in `alsoSealed`, such as the Tempo deposit and Agents passes): the one
+    /// `find` finds, or one `make` makes when none is found and no sealed file
+    /// is there. Nil when the key is missing but sealed files are there: a new
+    /// key over them would never open them, so none is made. `find` failing
     /// makes no key either.
     public static func key(
-        for folder: URL, find: () async throws -> SymmetricKey?, make: () async throws -> SymmetricKey
+        for folder: URL, alsoSealed: [URL] = [],
+        find: () async throws -> SymmetricKey?, make: () async throws -> SymmetricKey
     ) async throws -> SymmetricKey? {
         if let key = try await find() { return key }
         guard try ids(in: folder).isEmpty else { return nil }
+        guard !alsoSealed.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return nil }
         return try await make()
     }
 }

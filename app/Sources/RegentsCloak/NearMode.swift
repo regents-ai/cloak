@@ -18,6 +18,7 @@ final class NearMode {
     let near: Near
     let supervisor: Supervisor
     let settings: AppSettings
+    let traces: NearTraces
     /// Whether a NEAR key is kept, as the keychain last answered; nil until
     /// it has. A read, save or remove the keychain refuses leaves it as it
     /// was and throws to whoever asked, which shows the stop where it asked:
@@ -31,6 +32,9 @@ final class NearMode {
     /// The last check that stopped, until one passes.
     private(set) var checkStop: NearStop?
     @ObservationIgnored private var checks = 0
+    /// Monotonic token so an older or cancelled check never overwrites a newer
+    /// proof when the route changes (e.g. toggling Tor).
+    @ObservationIgnored private var checkGeneration = 0
     private let nearIdentity = Chat.newIdentity()
     private let intelIdentity = Chat.newIdentity()
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "near")
@@ -39,6 +43,7 @@ final class NearMode {
         self.near = near
         self.supervisor = supervisor
         self.settings = settings
+        self.traces = NearTraces(settings: settings)
         // For Send's block. A refusal here has nowhere to show; Settings and
         // the Wallet each ask again as they appear, and show their own.
         Task { try? await find() }
@@ -55,6 +60,7 @@ final class NearMode {
     /// certain to stop: no key kept, or Tor on while Cloak is not running. A
     /// check or a send under way never turns it off.
     var sendBlock: String? {
+        if hasKey == nil { return "Checking NEAR key…" }
         if hasKey == false { return "Add your NEAR key to send." }
         if route == nil { return "Start Cloak to send through Tor." }
         return nil
@@ -64,6 +70,8 @@ final class NearMode {
     /// within the freshness chosen. Sends nothing to the model.
     func check() async {
         guard let route else { return }
+        checkGeneration += 1
+        let generation = checkGeneration
         if checking == nil { checking = .now }
         checks += 1
         defer {
@@ -71,9 +79,12 @@ final class NearMode {
             if checks == 0 { checking = nil }
         }
         do throws(NearStop) {
-            proof = try await near.check(route: route, proofAge: settings.proofFreshness)
+            let verified = try await near.check(route: route, proofAge: settings.proofFreshness)
+            guard generation == checkGeneration, !Task.isCancelled else { return }
+            proof = verified
             checkStop = nil
         } catch {
+            guard generation == checkGeneration, !Task.isCancelled else { return }
             logger.error("a NEAR check stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .private)")
             proof = nil
             checkStop = error

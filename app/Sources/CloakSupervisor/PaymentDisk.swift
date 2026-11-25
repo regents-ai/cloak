@@ -92,13 +92,9 @@ enum PaymentDiskKey {
     /// The key, or nil when there is none.
     @concurrent
     static func find() async throws(Failure) -> Data? {
-        var query = item
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status != errSecItemNotFound else { return nil }
-        guard status == errSecSuccess, let data = result as? Data, data.count == 32 else { throw Failure(status: status) }
+        let result = KeychainStore.readData(matching: item, migrationLabel: "Regents Cloak payment disk")
+        guard result.status != errSecItemNotFound else { return nil }
+        guard result.status == errSecSuccess, let data = result.data, data.count == 32 else { throw Failure(status: result.status) }
         return data
     }
 
@@ -106,11 +102,7 @@ enum PaymentDiskKey {
     @concurrent
     static func make() async throws(Failure) -> Data {
         let key = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
-        var query = item
-        query[kSecAttrLabel as String] = "Regents Cloak payment disk"
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        query[kSecValueData as String] = key
-        let status = SecItemAdd(query as CFDictionary, nil)
+        let status = KeychainStore.addUnique(base: item, label: "Regents Cloak payment disk", data: key)
         guard status == errSecSuccess else { throw Failure(status: status) }
         return key
     }

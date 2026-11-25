@@ -10,6 +10,21 @@
 	<string>RegentsCloak</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>sh.regents.cloak.action</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cloak</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleIdentifier</key>
 	<string>sh.regents.cloak</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -32,6 +47,12 @@
 	<false/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Cloak reads upcoming Calendar events strictly on this Mac when you enable Calendar in Local Access settings. Nothing is sent over the network.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Cloak reads open Reminders strictly on this Mac when you enable Reminders in Local Access settings. Nothing is sent over the network.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Cloak looks up Contacts mentioned in your prompt strictly on this Mac when you enable Contacts in Local Access settings. Nothing is sent over the network.</string>
 	<key>OSAScriptingDefinition</key>
 	<string>RegentsCloak.sdef</string>
 </dict>

@@ -9,8 +9,8 @@ import Foundation
 /// progress. Only the app sends `L`: the host's relay forwards a guest's
 /// request as `R` and nothing else, so what a guest sends is never read as a
 /// conversation, and a chat message is never read as a rewrite.
-/// Out: `Y` ready (empty), `A` an answer: 2-byte big-endian HTTP status, then
-/// the reply body.
+/// Out: `Y` ready (empty), `P` partial streamed Local Llama answer (UTF-8),
+/// `A` an answer: 2-byte big-endian HTTP status, then the reply body.
 public enum Frames {
     static let maxPayload = 1 << 20
 
@@ -31,19 +31,27 @@ public enum Frames {
 
     public static func claimOutput() { _ = output }
 
-    public static func ready() { write(kind: 0x59, payload: Data()) }
+    @discardableResult
+    public static func ready() -> Bool { write(kind: 0x59, payload: Data()) }
 
-    public static func answer(status: UInt16, body: Data) {
+    @discardableResult
+    public static func partial(_ text: Data) -> Bool {
+        write(kind: 0x50, payload: text)
+    }
+
+    @discardableResult
+    public static func answer(status: UInt16, body: Data) -> Bool {
         write(kind: 0x41, payload: Data([UInt8(status >> 8), UInt8(status & 0xff)]) + body)
     }
 
-    private static func write(kind: UInt8, payload: Data) {
+    private static func write(kind: UInt8, payload: Data) -> Bool {
         let length = UInt32(payload.count)
         let header = Data([kind, UInt8(length >> 24), UInt8(length >> 16 & 0xff), UInt8(length >> 8 & 0xff), UInt8(length & 0xff)])
         do {
             try output.write(contentsOf: header + payload)
+            return true
         } catch {
-            stop("supervisor channel closed")
+            return false
         }
     }
 

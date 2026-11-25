@@ -201,6 +201,12 @@ public final class Door {
     private var serving: [UUID: Task<Void, Never>] = [:]
     /// By app, and by the agent's conversation.
     @ObservationIgnored private var memories: [UUID: Memory] = [:]
+    /// Serializes memory read-rewrite-commit per app so concurrent requests
+    /// from the same app never desynchronize digests from transcripts.
+    @ObservationIgnored private var memoryTurns: [UUID: Task<Void, Never>] = [:]
+    /// Coalesced background flush of request counts so `admit` never blocks
+    /// the main actor with `fsync` on every HTTP call.
+    @ObservationIgnored private var appFlush: Task<Void, Never>?
     /// The box passes, by the agent's conversation, and how each
     /// conversation pays, until the door closes.
     @ObservationIgnored private var boxes: [UUID: (pass: String, fingerprint: Data, payment: Payment)] = [:]
@@ -288,6 +294,8 @@ public final class Door {
     }
 
     private func keep(_ apps: [AgentApp], key: SymmetricKey) -> Bool {
+        appFlush?.cancel()
+        appFlush = nil
         do {
             try AgentStore(file: file, key: key).save(apps)
             self.apps = apps
@@ -298,6 +306,26 @@ public final class Door {
             problem = "Cloak couldn't keep the change to your apps."
             return false
         }
+    }
+
+    private func scheduleKeep(key: SymmetricKey) {
+        appFlush?.cancel()
+        let snapshot = apps
+        let store = AgentStore(file: file, key: key)
+        appFlush = Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            do {
+                try await Self.saveApps(snapshot, to: store)
+            } catch {
+                logger.error("cannot keep the apps: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
+
+    @concurrent
+    private static func saveApps(_ apps: [AgentApp], to store: AgentStore) async throws {
+        try store.save(apps)
     }
 
     // MARK: Opening and closing
@@ -317,9 +345,14 @@ public final class Door {
             return
         }
         let port = chosen()
+        guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
+            opened = nil
+            state = .refused(.address)
+            return
+        }
         opened = port
         let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: endpointPort)
         parameters.allowLocalEndpointReuse = false
         parameters.acceptLocalOnly = true
         let listener: NWListener
@@ -327,6 +360,7 @@ public final class Door {
             listener = try NWListener(using: parameters)
         } catch {
             logger.error("door cannot listen: \(String(describing: error), privacy: .public)")
+            opened = nil
             state = .refused(.address)
             return
         }
@@ -353,10 +387,12 @@ public final class Door {
             logger.info("door open on 127.0.0.1:\(self.port, privacy: .public)")
             state = .open
         case .failed(let error), .waiting(let error):
+            let attempted = port
             logger.error("door refused: \(String(describing: error), privacy: .public)")
             listener?.cancel()
             listener = nil
-            state = .refused(error == .posix(.EADDRINUSE) ? .portTaken(port) : .address)
+            opened = nil
+            state = .refused(error == .posix(.EADDRINUSE) ? .portTaken(attempted) : .address)
         default:
             break
         }
@@ -371,11 +407,47 @@ public final class Door {
         if state == .open { logger.info("door closed") }
         state = .closed
         opened = nil
-        for conversation in boxes.keys { memories[conversation] = nil }
+        for conversation in boxes.keys {
+            memories[conversation] = nil
+            memoryTurns[conversation] = nil
+        }
         boxes = [:]
         let serving = Array(self.serving.values)
         for task in serving { task.cancel() }
         for task in serving { await task.value }
+        if let pending = appFlush {
+            pending.cancel()
+            appFlush = nil
+            if case .read(let key?) = access {
+                try? await Self.saveApps(apps, to: AgentStore(file: file, key: key))
+            }
+        }
+    }
+
+    /// Runs `Memory.rewrite` for `app` one request at a time and commits the
+    /// updated digests, Tor identity and transcript only once rewriting
+    /// succeeds, so concurrent or failed requests never corrupt `memories`.
+    private func rewriteInOrder(for app: UUID, asked: Asked) async throws(Failure) -> (identity: String, messages: [[UInt8]]) {
+        let previous = memoryTurns[app]
+        let (done, release) = AsyncStream<Void>.makeStream()
+        let marker = Task {
+            for await _ in done {}
+        }
+        memoryTurns[app] = marker
+        defer {
+            release.finish()
+            if memoryTurns[app] == marker { memoryTurns[app] = nil }
+        }
+        if let previous {
+            await previous.value
+        }
+        guard !Task.isCancelled else { throw Failure(503, "cloak_stopped", "Cloak was paused or stopped.") }
+        var memory = memories[app] ?? Memory()
+        let identity = memory.identity(for: asked.messages)
+        let (messages, transcript) = try await memory.rewrite(asked, reword: parts.reword)
+        memory.transcript = transcript
+        memories[app] = memory
+        return (identity, messages)
     }
 
     /// A request is at the door: from its connection's start until it has
@@ -613,10 +685,9 @@ public final class Door {
             found = index
         }
         guard let found, case .read(let key?) = access else { throw .pass }
-        var apps = self.apps
         apps[found].requests += 1
         apps[found].lastUsed = .now
-        _ = keep(apps, key: key)
+        scheduleKeep(key: key)
         return (apps[found].id, .zkapi)
     }
 
@@ -688,11 +759,7 @@ public final class Door {
         guard ids.contains(asked.model) else {
             throw Failure(404, "model_not_found", "The provider has no model \(asked.model).")
         }
-        var memory = memories[app] ?? Memory()
-        let identity = memory.identity(for: asked.messages)
-        memories[app] = memory
-        let (messages, transcript) = try await memory.rewrite(asked, reword: parts.reword)
-        memories[app]?.transcript = transcript
+        let (identity, messages) = try await rewriteInOrder(for: app, asked: asked)
         note(listed) { entry in
             entry.reworded = asked.messages.count { $0.draft != nil }
             entry.stage = .sending
@@ -709,7 +776,7 @@ public final class Door {
             let key = try await sealing()
             do {
                 guard try await parts.wallet() != nil else {
-                    throw Failure(402, "no_wallet", "Cloak has no wallet yet. Create one in Chat, under Wallet.")
+                    throw Failure(402, "no_wallet", "Cloak has no wallet yet. Create one in Chat, under Funds.")
                 }
             } catch let failure as Failure {
                 throw failure

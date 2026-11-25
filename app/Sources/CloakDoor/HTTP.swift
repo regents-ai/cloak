@@ -234,21 +234,17 @@ final class GuestLink: Link {
     }
 
     func write(_ data: Data, final: Bool) async {
-        await withTaskCancellationHandler {
-            var done = 0
-            while done < data.count {
-                let n = data.withUnsafeBytes { Darwin.write(socket, $0.baseAddress! + done, data.count - done) }
-                if n > 0 {
-                    done += n
-                    continue
-                }
-                guard n < 0, errno == EAGAIN || errno == EINTR else { return }
-                await ready(DispatchSource.makeWriteSource(fileDescriptor: socket, queue: queue))
+        var done = 0
+        while done < data.count {
+            let n = data.withUnsafeBytes { Darwin.write(socket, $0.baseAddress! + done, data.count - done) }
+            if n > 0 {
+                done += n
+                continue
             }
-            if final { shutdown(socket, SHUT_WR) }
-        } onCancel: {
-            cancel()
+            guard n < 0, errno == EAGAIN || errno == EINTR else { return }
+            await ready(DispatchSource.makeWriteSource(fileDescriptor: socket, queue: queue))
         }
+        if final { shutdown(socket, SHUT_WR) }
     }
 
     func cancel() {
