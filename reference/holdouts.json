@@ -1,5 +1,0 @@
-{
- "about": "The stage 4 holdouts' pins: each holdout's sha256, size and entry count, recorded by scripts/stage4.py pin before any model runs on it. A pin is never replaced. Null: not yet written.",
- "EVAL02": null,
- "EVAL03": null
-}
