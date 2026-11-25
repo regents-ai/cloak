@@ -279,12 +279,13 @@ final class AppSettings {
         }
     }
 
-    /// Which provider Pay-Per-Prompt uses for new chats: defaults to Venice
-    /// (Base USDC) per Decision N5.1b, with Boundless (Tempo USDC.e) alongside it.
+    /// Which provider Token Inference uses for new chats: defaults to Boundless
+    /// (Tempo USDC.e) for new users while keeping Venice (Base USDC) on the left
+    /// of the toggle slider; persists whichever provider the user last toggled.
     var payProvider: PayProvider {
         get {
             access(keyPath: \.payProvider)
-            return defaults.string(forKey: Key.payProvider.rawValue).flatMap(PayProvider.init) ?? .venice
+            return defaults.string(forKey: Key.payProvider.rawValue).flatMap(PayProvider.init) ?? .boundless
         }
         set {
             withMutation(keyPath: \.payProvider) {

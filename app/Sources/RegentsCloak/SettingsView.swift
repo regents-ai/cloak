@@ -278,25 +278,30 @@ private struct WalletsPane: View {
                 }
                 VWallet(payer: payer, settings: settings, running: running)
 
-                // 2. Cloud Inference — Venice (Base USDC / API Key)
+                // 2. Token Inference — Venice (left) / Boundless (right), Boundless selected for new users, last toggle persisted
                 Section {
                     WalletGroupHeader(
                         symbol: "dollarsign.circle",
-                        title: "Cloud Inference · Venice",
-                        subtitle: "Dedicated Base USDC wallet (x402 credit top-ups) or your Venice Inference API key over Tor.")
+                        title: "Token Inference",
+                        subtitle: "Pay per call over Tor with Venice (Base USDC / API key) or Boundless + Tempo (USDC.e).")
+                    LabeledContent("Provider") {
+                        Picker("Provider", selection: $settings.payProvider) {
+                            Text("Venice (Base)").tag(PayProvider.venice)
+                            Text("Boundless + Tempo").tag(PayProvider.boundless)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
                 }
-                VeniceFundsSections(venice: veniceMode, settings: settings, running: running)
-
-                // 3. Cloud Inference — Boundless (Tempo USDC.e)
-                Section {
-                    WalletGroupHeader(
-                        symbol: "dollarsign.circle",
-                        title: "Cloud Inference · Boundless",
-                        subtitle: "Dedicated Tempo USDC.e wallet and MPP payment channel over Tor.")
+                switch settings.payProvider {
+                case .venice:
+                    VeniceFundsSections(venice: veniceMode, settings: settings, running: running)
+                case .boundless:
+                    WalletSections(wallet: wallet, running: running)
                 }
-                WalletSections(wallet: wallet, running: running)
 
-                // 4. NEAR AI Gateway (API Key)
+                // 3. NEAR AI Gateway (API Key)
                 Section {
                     WalletGroupHeader(
                         symbol: "cpu",
@@ -322,7 +327,7 @@ private struct WalletsPane: View {
                 }
             }
         }
-        .task(id: running) {
+        .task(id: "\(settings.payProvider.rawValue)-\(running)") {
             await wallet.ensureLoaded()
             guard running else { return }
             refreshAll()
@@ -336,8 +341,11 @@ private struct WalletsPane: View {
 
     private func refreshAll() {
         payer.follow()
-        Task { await veniceMode.refresh() }
-        Task { await wallet.ensureLoaded() }
+        if settings.payProvider == .venice {
+            Task { await veniceMode.refresh() }
+        } else {
+            Task { await wallet.refresh() }
+        }
     }
 }
 
