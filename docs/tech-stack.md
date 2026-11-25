@@ -1,10 +1,10 @@
 # Regents Cloak — Mode & Integration Tech Stack Reference
 
-> **Release scope:** `v0.2.3` (`regents-ai/cloak` MIT-licensed release tree and canonical GitHub Releases).  
+> **Release scope:** `v0.2.4` (`regents-ai/cloak` MIT-licensed release tree and canonical GitHub Releases).  
 > **Last verified against source:** `2026-11-25`.  
 > **Audit status:** Cloak's privacy protections have not been independently audited.
 
-Complete code-level map of every **mode** and **integration** in Regents Cloak (`v0.2.3`), showing:
+Complete code-level map of every **mode** and **integration** in Regents Cloak (`v0.2.4`), showing:
 1. **Where it is referenced** (UI surfaces, copy, icons, credits, docs, source pins)
 2. **Where it is used at runtime** (Swift modules, helpers, guest binaries, protocols, endpoints, Keychain items, disk files, and tests)
 

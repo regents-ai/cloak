@@ -10,7 +10,7 @@ Cloak is a macOS menu bar app for private AI — local on Apple Silicon, or rout
 
 ![Cloak](docs/media/cloak-hero.jpg)
 
-> **Status (`v0.2.3 Beta`):** Signed, notarized `.dmg` builds are published directly on [GitHub Releases](https://github.com/regents-ai/cloak/releases). Cloak is **beta software** and its privacy protections have not yet undergone an independent security audit — keep wallet balances small, back up or withdraw funds before wiping your Mac, and read the [Wallet Security, Recovery & 30-Day zkAPI Limit](docs/wallet-security.md) guide ([web copy](https://regents.sh/docs/cloak/wallets)).
+> **Status (`v0.2.4 Beta`):** Signed, notarized `.dmg` builds are published directly on [GitHub Releases](https://github.com/regents-ai/cloak/releases). Cloak is **beta software** and its privacy protections have not yet undergone an independent security audit — keep wallet balances small, back up or withdraw funds before wiping your Mac, and read the [Wallet Security, Recovery & 30-Day zkAPI Limit](docs/wallet-security.md) guide ([web copy](https://regents.sh/docs/cloak/wallets)).
 
 ## Install
 
@@ -65,7 +65,9 @@ Each conversation locks its mode on turn 1. The **Active Guarantees** rail in th
 
 ## Example requests
 
-Generate a per-app bearer key (`cloak-<64 hex>`) in **Settings → Connected Apps**, then point Cursor, Cline, Continue, Aider, or any OpenAI SDK at `http://127.0.0.1:8742/v1` (rephrases `role == "user"` text locally and pays via **zkAPI Anon Inference** over Tor):
+Generate a per-app bearer key (`cloak-<64 hex>`) in **Settings → Connected Apps**, then point OpenAI Chat Completions clients (Cursor, Cline, Continue, Aider, OpenCode, or any OpenAI SDK) at `http://127.0.0.1:8742/v1` (rephrases `role == "user"` text locally and pays via **zkAPI Anon Inference** over Tor).
+
+> **Current API scope (`v0.2`):** `CloakDoor` serves `GET /v1/models` and `POST /v1/chat/completions` (supporting `tools`, `tool_choice`, `tool_calls`, `max_completion_tokens`, `reasoning_effort`, inline `data:` images, and buffered `stream: true` SSE). External Mac apps currently bill exclusively through **zkAPI Anon Inference** (funding Boundless/Venice alone will not pay Connected Apps). Anthropic `POST /v1/messages` (for Claude Code), OpenAI `/v1/responses`, and Token Inference billing for Connected Apps are planned for `v0.3`.
 
 List available models:
 

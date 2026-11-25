@@ -267,7 +267,7 @@ fn check(
     let runtime = runtime_data(intel, nonce);
 
     let gateway = token(&answer.gateway.token, &keys, now)?;
-    gateway_half(&gateway, &runtime, pins, now)?;
+    gateway_half(&gateway, &runtime, intel, pins, now)?;
 
     let [entry] = answer.models.as_slice() else {
         return Err(GpuRefusal::Models);
@@ -276,7 +276,7 @@ fn check(
         return Err(GpuRefusal::Models);
     }
     let claims = token(&entry.token, &keys, now)?;
-    let material = gateway_half(&claims, &runtime, pins, now)?;
+    let material = gateway_half(&claims, &runtime, intel, pins, now)?;
     let nvgpu = claims.nvgpu.as_ref().ok_or(GpuRefusal::NoGpus)?;
     gpu_half(nvgpu, &claims.tdx.verifier_nonce, &material)
 }
@@ -314,6 +314,7 @@ fn runtime_data(intel: &IntelProof, nonce: &[u8; 32]) -> String {
 fn gateway_half(
     claims: &Claims,
     runtime: &str,
+    intel: &IntelProof,
     pins: &Pins,
     now: u64,
 ) -> Result<Vec<u8>, GpuRefusal> {
@@ -335,13 +336,14 @@ fn gateway_half(
     if tdx.tdx_report_data != expected.as_slice() {
         return Err(GpuRefusal::ReportData);
     }
-    if !pins.gateway.iter().any(|pin| {
-        pin.mrtd == tdx.tdx_mrtd
-            && pin.rtmr0 == tdx.tdx_rtmr0
-            && pin.rtmr1 == tdx.tdx_rtmr1
-            && pin.rtmr2 == tdx.tdx_rtmr2
-            && pin.mrconfigid == tdx.tdx_mrconfigid
-    }) {
+    if tdx.tdx_mrconfigid != intel.gateway_mrconfigid
+        || !pins.gateway.iter().any(|pin| {
+            pin.mrtd == tdx.tdx_mrtd
+                && pin.rtmr0 == tdx.tdx_rtmr0
+                && pin.rtmr1 == tdx.tdx_rtmr1
+                && pin.rtmr2 == tdx.tdx_rtmr2
+        })
+    {
         return Err(GpuRefusal::NotGateway);
     }
     if tdx.attester_tcb_status != "UpToDate" {

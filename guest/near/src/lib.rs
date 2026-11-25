@@ -128,41 +128,58 @@ pub struct Collateral {
 /// more than one model, so the model sets are not tied to a model.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Pins {
-    pub gateway: Vec<Measurements>,
+    pub gateway: Vec<GatewayMeasurements>,
     pub model: Vec<ModelMeasurements>,
 }
 
 /// One server's measurements, read from its verified quote and from its
-/// replayed RTMR3 event log; a gateway's are pinned as they are. Every value
-/// is hex in the pins file.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// replayed RTMR3 event log.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Measurements {
     /// The TD's firmware.
-    #[serde(with = "hex")]
     pub mrtd: Vec<u8>,
     /// Firmware configuration.
-    #[serde(with = "hex")]
     pub rtmr0: Vec<u8>,
     /// The kernel.
-    #[serde(with = "hex")]
     pub rtmr1: Vec<u8>,
     /// The kernel command line and initial file system.
-    #[serde(with = "hex")]
     pub rtmr2: Vec<u8>,
     /// 01, the SHA-256 of the app's compose file, then 15 zero bytes.
-    #[serde(with = "hex")]
     pub mrconfigid: Vec<u8>,
     /// RTMR3 event `app-id`.
-    #[serde(with = "hex")]
     pub app_id: Vec<u8>,
     /// RTMR3 event `key-provider`: which key service hands out its keys.
-    #[serde(with = "hex")]
     pub key_provider: Vec<u8>,
     /// RTMR3 event `mr-kms`.
-    #[serde(with = "hex")]
     pub mr_kms: Vec<u8>,
     /// RTMR3 event `os-image-hash`.
+    pub os_image_hash: Vec<u8>,
+}
+
+/// A gateway server's measurements as they are pinned: Intel TDX firmware,
+/// kernel, initrd, OS image, and dstack KMS identity (`app-id`, `key-provider`,
+/// `mr-kms`). `MRCONFIGID` is still verified against `app_compose` on the
+/// quote and matched against Intel Trust Authority's gateway token, rather
+/// than statically pinned, because NEAR rotates `nearaidev/cloud-api`
+/// containers daily while prompts remain E2EE v2 encrypted to the strictly
+/// compose-pinned model enclave. Every value is hex in the pins file.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GatewayMeasurements {
+    #[serde(with = "hex")]
+    pub mrtd: Vec<u8>,
+    #[serde(with = "hex")]
+    pub rtmr0: Vec<u8>,
+    #[serde(with = "hex")]
+    pub rtmr1: Vec<u8>,
+    #[serde(with = "hex")]
+    pub rtmr2: Vec<u8>,
+    #[serde(with = "hex")]
+    pub app_id: Vec<u8>,
+    #[serde(with = "hex")]
+    pub key_provider: Vec<u8>,
+    #[serde(with = "hex")]
+    pub mr_kms: Vec<u8>,
     #[serde(with = "hex")]
     pub os_image_hash: Vec<u8>,
 }
@@ -235,6 +252,9 @@ pub struct IntelProof {
     /// SHA-256 of the gateway's TLS key: the one seen on the connection, and
     /// the one its quote binds.
     pub gateway_tls_key: [u8; 32],
+    /// The gateway quote's verified MRCONFIGID (binding its `app_compose`),
+    /// cross-checked against Intel Trust Authority's gateway token.
+    pub gateway_mrconfigid: Vec<u8>,
     /// The model's one Ed25519 encryption key, bound to every instance's
     /// quote.
     pub model_key: [u8; 32],

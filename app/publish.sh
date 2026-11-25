@@ -61,12 +61,17 @@ spctl --assess --type execute -vv "/Applications/Cloak.app"
 EOF
 } > "$notes_out"
 
-gh release create "$tag" \
+set -- \
 	"$out/Regents-Cloak-$tag.dmg" \
 	"$out/Regents-Cloak.dmg" \
 	"$out/appcast.xml" \
 	"$out/SHA256SUMS.txt" \
-	"$out/checksums.json" \
+	"$out/checksums.json"
+for delta in "$out"/*.delta; do
+	[ -f "$delta" ] && set -- "$@" "$delta"
+done
+
+gh release create "$tag" "$@" \
 	--repo "$repo" \
 	--target "$commit" \
 	--title "Regents Cloak $release Beta ($build)" --notes-file "$notes_out"

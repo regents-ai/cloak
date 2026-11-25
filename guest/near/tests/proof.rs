@@ -465,8 +465,15 @@ fn an_old_intel_nonce_or_an_unpinned_gateway_is_refused() {
 
     let mut case = GpuCase::real();
     for pin in &mut case.pins.gateway {
-        pin.mrconfigid[1] ^= 1;
+        pin.rtmr1[1] ^= 1;
     }
+    assert_eq!(gpu_refusal(case), GpuRefusal::NotGateway);
+
+    // A gateway token whose MRCONFIGID differs from the verified report's gateway.
+    let mut case = GpuCase::real();
+    case.resign(GATEWAY, |c| {
+        c["tdx"]["tdx_mrconfigid"] = json!("01".to_owned() + &"aa".repeat(32) + &"00".repeat(15));
+    });
     assert_eq!(gpu_refusal(case), GpuRefusal::NotGateway);
 }
 

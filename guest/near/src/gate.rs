@@ -262,6 +262,7 @@ fn proof(pin: [u8; 32]) -> Proof {
         intel: IntelProof {
             gateway_key: [0; 32],
             gateway_tls_key: pin,
+            gateway_mrconfigid: Vec::new(),
             model_key: model_key().public(),
             instances: 1,
             gateway_tcb: TcbStatus::UpToDate,

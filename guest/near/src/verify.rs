@@ -13,7 +13,9 @@ use dcap_qvl::{QuotePolicy, TcbStatus};
 use serde::Deserialize;
 use sha2::{Digest, Sha256, Sha384};
 
-use crate::{Collateral, GpuRefusal, IntelProof, Measurements, ModelMeasurements, Pins};
+use crate::{
+    Collateral, GatewayMeasurements, GpuRefusal, IntelProof, Measurements, ModelMeasurements, Pins,
+};
 
 /// What names a model server's own host in its compose file, followed by
 /// one to four digits: `INSTANCE_LABEL=gpu04`.
@@ -258,7 +260,11 @@ pub fn verify_intel(
         models.push(measured);
     }
 
-    pinned(Who::Gateway, &gateway_measured.measurements, &pins.gateway)?;
+    pinned(
+        Who::Gateway,
+        &gateway_measurements(&gateway_measured.measurements),
+        &pins.gateway,
+    )?;
     for (index, pin) in model_pins.iter().enumerate() {
         pinned(Who::Model(index), pin, &pins.model)?;
     }
@@ -266,6 +272,7 @@ pub fn verify_intel(
     Ok(IntelProof {
         gateway_key,
         gateway_tls_key: *spki_sha256,
+        gateway_mrconfigid: gateway_measured.measurements.mrconfigid,
         model_key,
         instances: models.len(),
         gateway_tcb: gateway_measured.tcb,
@@ -427,6 +434,22 @@ fn server(
     })
 }
 
+/// A gateway server's measurements as they are pinned: Intel TDX hardware,
+/// OS image, and dstack KMS identity (`MRCONFIGID` is still checked against
+/// `app_compose` in `server` and bound to Intel Trust Authority's token).
+fn gateway_measurements(measured: &Measurements) -> GatewayMeasurements {
+    GatewayMeasurements {
+        mrtd: measured.mrtd.clone(),
+        rtmr0: measured.rtmr0.clone(),
+        rtmr1: measured.rtmr1.clone(),
+        rtmr2: measured.rtmr2.clone(),
+        app_id: measured.app_id.clone(),
+        key_provider: measured.key_provider.clone(),
+        mr_kms: measured.mr_kms.clone(),
+        os_image_hash: measured.os_image_hash.clone(),
+    }
+}
+
 /// A model server's measurements as they are pinned: MRCONFIGID gives way
 /// to the SHA-256 of its compose file without its label's digits.
 fn model_measurements(
@@ -484,13 +507,13 @@ fn pinned<T: PartialEq + fmt::Display>(who: Who, seen: &T, accepted: &[T]) -> Re
 }
 
 /// What a gateway's refusal names.
-impl fmt::Display for Measurements {
+impl fmt::Display for GatewayMeasurements {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "MRTD {}, MRCONFIGID {}, os-image-hash {}",
+            "MRTD {}, app-id {}, os-image-hash {}",
             hex::encode(&self.mrtd),
-            hex::encode(&self.mrconfigid),
+            hex::encode(&self.app_id),
             hex::encode(&self.os_image_hash)
         )
     }

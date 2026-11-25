@@ -270,6 +270,7 @@ mod checks {
                 intel: IntelProof {
                     gateway_key: [0; 32],
                     gateway_tls_key: [7; 32],
+                    gateway_mrconfigid: Vec::new(),
                     model_key: ReplyKey([0x42; 32]).public(),
                     instances: 3,
                     gateway_tcb: TcbStatus::UpToDate,

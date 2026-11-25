@@ -48,9 +48,16 @@ if [ ! -x "$generate_appcast" ]; then
 fi
 
 out=app/build/release
+history=app/build/release-history
 work=app/build/notarize
+mkdir -p "$history"
+# Preserve previously released DMGs before clearing $out so Sparkle can build
+# signed binary deltas from recent versions without re-downloading them.
+for prev in "$out"/Regents-Cloak-*-*.dmg; do
+	[ -f "$prev" ] && ln -f "$prev" "$history/$(basename "$prev")"
+done
 rm -rf "$out" "$work"
-mkdir -p "$out" "$work/volume"
+mkdir -p "$out" "$work/volume" "$work/appcast"
 
 # Sends a file to Apple's notary service and waits for its answer. Stops
 # unless that is Accepted, printing Apple's log of why. The answer is read
@@ -97,22 +104,43 @@ spctl --assess --type execute -v "$app"
 
 # generate_appcast adds to the appcast.xml in the folder it is given, so
 # the public feed goes there first. None yet (404) means this is the first
-# release. --maximum-versions 0 keeps every earlier release in it.
+# release. --maximum-versions 0 keeps every earlier release in it, while
+# staging the 3 newest previous DMGs lets Sparkle build tiny EdDSA-signed
+# binary deltas (--maximum-deltas 3) for existing users.
 feed=$(plutil -extract update_feed raw app/release.json)
-code=$(curl --silent --show-error --location --output "$out/appcast.xml" --write-out '%{http_code}' "$feed")
+code=$(curl --silent --show-error --location --output "$work/appcast/appcast.xml" --write-out '%{http_code}' "$feed")
 case $code in
 200) ;;
-404) rm "$out/appcast.xml" ;;
+404) rm "$work/appcast/appcast.xml" ;;
 *)
 	echo "$feed answered $code." >&2
 	exit 1
 	;;
 esac
+ln -f "$dmg" "$work/appcast/$(basename "$dmg")"
+# Stage up to 3 most recent previous DMGs for delta generation.
+delta_sources=0
+for prev in $(ls -t "$history"/Regents-Cloak-*-*.dmg 2>/dev/null || true); do
+	prev_base=$(basename "$prev")
+	[ "$prev_base" = "Regents-Cloak-$tag.dmg" ] && continue
+	ln -f "$prev" "$work/appcast/$prev_base"
+	delta_sources=$((delta_sources + 1))
+	[ "$delta_sources" -ge 3 ] && break
+done
 # Release notes are read from a file named as the image; .txt is plain text.
-cp app/release-notes.md "$out/Regents-Cloak-$tag.txt"
+cp app/release-notes.md "$work/appcast/Regents-Cloak-$tag.txt"
 "$generate_appcast" --account cloak --embed-release-notes --maximum-versions 0 \
-	--download-url-prefix "$downloads/$tag/" "$out"
-rm "$out/Regents-Cloak-$tag.txt"
+	--maximum-deltas 3 --delta-compression lzma --versions "$build" \
+	--download-url-prefix "$downloads/$tag/" "$work/appcast"
+cp "$work/appcast/appcast.xml" "$out/appcast.xml"
+for delta in "$work/appcast"/*.delta; do
+	[ -f "$delta" ] && cp "$delta" "$out/"
+done
+# Keep this DMG in local release history (pruned to newest 5) for future deltas.
+ln -f "$dmg" "$history/Regents-Cloak-$tag.dmg"
+ls -t "$history"/Regents-Cloak-*-*.dmg 2>/dev/null | tail -n +6 | while IFS= read -r stale; do
+	rm -f "$stale"
+done
 if ! grep -qF "$downloads/$tag/Regents-Cloak-$tag.dmg" "$out/appcast.xml"; then
 	echo "generate_appcast left no entry for $tag in $out/appcast.xml." >&2
 	exit 1
@@ -142,6 +170,11 @@ cat > "$out/SHA256SUMS.txt" <<EOF
 $dmg_sha256  Regents-Cloak-$tag.dmg
 $dmg_sha256  Regents-Cloak.dmg
 EOF
+for delta in "$out"/*.delta; do
+	[ -f "$delta" ] || continue
+	delta_sha256=$(shasum -a 256 "$delta" | awk '{print $1}')
+	printf '%s  %s\n' "$delta_sha256" "$(basename "$delta")" >> "$out/SHA256SUMS.txt"
+done
 
 cat > "$out/checksums.json" <<EOF
 {
