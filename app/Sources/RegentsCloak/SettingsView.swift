@@ -799,7 +799,22 @@ private struct FeedbackPane: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Section("Feedback Channels") {
+            Section("Support & Feedback") {
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        CopyButton("Copy Agent Prompt", side: 26, text: Self.agentPrompt)
+                        Button("Open Patchbay…") { NSWorkspace.shared.open(Self.patchbayURL) }
+                            .buttonStyle(.borderedProminent)
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Patchbay (Primary)")
+                        Text("regents.sh/patchbay/cloak")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 LabeledContent {
                     HStack(spacing: 6) {
                         CopyButton("Copy Email", side: 26, text: Self.email)
@@ -809,20 +824,6 @@ private struct FeedbackPane: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Email")
                         Text(Self.email)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                LabeledContent {
-                    HStack(spacing: 6) {
-                        CopyButton("Copy Agent Prompt", side: 26, text: Self.agentPrompt)
-                        Button("Open…") { NSWorkspace.shared.open(Self.patchbayURL) }
-                    }
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Patchbay")
-                        Text("regents.sh/patchbay/cloak")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
