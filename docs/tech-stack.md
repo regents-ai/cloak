@@ -1,10 +1,10 @@
 # Regents Cloak — Mode & Integration Tech Stack Reference
 
-> **Release scope:** `v0.2.0` (`regents-ai/cloak` v0.2.0 release tree and canonical GitHub Releases).  
-> **Last verified against source:** `2026-11-24`.  
+> **Release scope:** `v0.2.3` (`regents-ai/cloak` MIT-licensed release tree and canonical GitHub Releases).  
+> **Last verified against source:** `2026-11-25`.  
 > **Audit status:** Cloak's privacy protections have not been independently audited.
 
-Complete code-level map of every **mode** and **integration** in Regents Cloak (`v0.2.0`), showing:
+Complete code-level map of every **mode** and **integration** in Regents Cloak (`v0.2.3`), showing:
 1. **Where it is referenced** (UI surfaces, copy, icons, credits, docs, source pins)
 2. **Where it is used at runtime** (Swift modules, helpers, guest binaries, protocols, endpoints, Keychain items, disk files, and tests)
 
@@ -15,8 +15,8 @@ Complete code-level map of every **mode** and **integration** in Regents Cloak (
 - [0. System Overview: Ports, Keychain, Binaries & Pins](#0-system-overview-ports-keychain-binaries--pins)
 - [1. Mode: Local (`vmlx-swift` MLX + `llama.cpp` GGUF & Unfiltered LoRA)](#1-mode-local-vmlx-swift-mlx--llamacpp-gguf--unfiltered-lora)
 - [2. Mode: NEAR AI Gateway — NEAR AI Cloud (Intel TDX + NVIDIA TEE) & Trace Commons](#2-mode-near-ai-gateway--near-ai-cloud-intel-tdx--nvidia-tee--trace-commons)
-- [3. Mode: Token Inference — Venice AI (Default, Base USDC x402 / API Key)](#3-mode-token-inference--venice-ai-default-base-usdc-x402--api-key)
-- [4. Mode: Token Inference — Boundless + Tempo MPP (`USDC.e`)](#4-mode-token-inference--boundless--tempo-mpp-usdce)
+- [3. Mode: Token Inference — Venice AI (Toggle, Base USDC x402 / API Key)](#3-mode-token-inference--venice-ai-toggle-base-usdc-x402--api-key)
+- [4. Mode: Token Inference — Boundless + Tempo MPP (Default, `USDC.e`)](#4-mode-token-inference--boundless--tempo-mpp-default-usdce)
 - [5. Mode: zkAPI Anon Inference — Open Anonymity / zkAPI (Ethereum Mainnet)](#5-mode-anon-v--open-anonymity--zkapi-ethereum-mainnet)
 - [6. Integration: Local Prompt Rewriter (`Qwen 3.5 9B`) & Detail Suggestions](#6-integration-local-prompt-rewriter-qwen-35-9b--detail-suggestions)
 - [7. Integration: Tor Network, Linux MicroVM Sandbox, & Cover Traffic](#7-integration-tor-network-linux-microvm-sandbox--cover-traffic)
@@ -164,13 +164,13 @@ Every conversation thread in Cloak is **strictly self-contained** across both mo
 
 ---
 
-## 3. Mode: Token Inference — Venice AI (Default, Base USDC x402 / API Key)
+## 3. Mode: Token Inference — Venice AI (Toggle, Base USDC x402 / API Key)
 
-**Privacy model:** Remote inference over per-conversation Tor circuits with local prompt rephrasing (`Qwen 3.5 9B`). Venice AI's zero-data-retention policy and `Private` / `TEE` tier labels are **provider-reported by Venice**—Cloak filters to `Private` and `TEE` models by default and refuses silent mid-conversation tier downgrades, but unlike NEAR AI Gateway, Cloak does **not** independently verify a Venice TEE quote. Defaults to a dedicated local **Base USDC** wallet (`sh.regents.cloak.venice-wallet`, kept separate from the Boundless/Tempo wallet to avoid cross-chain address reuse), authenticating via Sign-In with Ethereum (SIWE) and topping up credit via HTTP `x402` (`EIP-3009` USDC transfer)—no Venice account or credit card required. Optionally accepts a user's own Venice Inference API key. A reused wallet address or API key can still link requests made with it.
+**Privacy model:** Remote inference over per-conversation Tor circuits with local prompt rephrasing (`Qwen 3.5 9B`). Venice AI's zero-data-retention policy and `Private` / `TEE` tier labels are **provider-reported by Venice**—Cloak filters to `Private` and `TEE` models by default and refuses silent mid-conversation tier downgrades, but unlike NEAR AI Gateway, Cloak does **not** independently verify a Venice TEE quote. Uses a dedicated local **Base USDC** wallet (`sh.regents.cloak.venice-wallet`, kept separate from the Boundless/Tempo wallet to avoid cross-chain address reuse), authenticating via Sign-In with Ethereum (SIWE) and topping up credit via HTTP `x402` (`EIP-3009` USDC transfer) with a persistent `Codable` `VeniceTopUpGuard` that survives restarts—no Venice account or credit card required. Optionally accepts a user's own Venice Inference API key. Switching providers (`Venice ↔ Boundless`) mid-chat prompts before sending existing thread history to the newly selected provider. A reused wallet address or API key can still link requests made with it.
 
 ### 3.1 Places that *refer* to Venice AI
-- **Provider selection (`Funds → Token Inference`, default):**
-  - `app/Sources/RegentsCloak/AppSettings.swift`: `PayProvider.venice` (`"Venice (Base USDC)"` / `"Venice"` — default), `venicePays` (`.wallet` vs `.key`), `veniceModel`, `veniceAllTiers` (`Settings → Advanced → Show all Venice tiers`).
+- **Provider selection (`Funds → Token Inference`, left toggle beside Boundless):**
+  - `app/Sources/RegentsCloak/AppSettings.swift`: `PayProvider.venice` (`"Venice (Base USDC)"` / `"Venice"` — selectable alongside default `.boundless`), `venicePays` (`.wallet` vs `.key`), `veniceModel`, `veniceAllTiers` (`Settings → Advanced → Show all Venice tiers`).
 - **Funds sheet (`VeniceFundsSections`):**
   - `app/Sources/RegentsCloak/WalletView.swift`: `Pay with` segmented picker (`Base USDC Wallet` / `Venice API Key`), Base USDC wallet creation/address/QR/balance, `$5`/`$10`/`$20`/custom x402 credit top-up, API key save/remove + `venice.ai/settings/api` link, Private/TEE model picker with per-1M token pricing, and `Powered by Venice AI (Docs · GitHub)` footer.
 - **Chat UI, titlebar, & stops:**
@@ -194,9 +194,9 @@ Every conversation thread in Cloak is **strictly self-contained** across both mo
 
 ---
 
-## 4. Mode: Token Inference — Boundless + Tempo MPP (`USDC.e`)
+## 4. Mode: Token Inference — Boundless + Tempo MPP (Default, `USDC.e`)
 
-**Privacy model:** Accountless per-request payment channel over per-conversation Tor circuits with local prompt rephrasing (`Qwen 3.5 9B`). Uses HTTP 402 Machine Payments Protocol (`MPP`) sessions on Tempo Mainnet (`USDC.e`, Chain `4217`) with instant cooperative `Close` and unilateral on-chain `Withdraw` (15-minute grace period). Keeps its own Tempo wallet (`sh.regents.cloak.wallet`) separate from the Venice Base wallet to avoid cross-chain address reuse; a reused wallet or channel still links chats funded by it. Secondary provider in `Funds → Token Inference` and used by Token Inference Agent tasks.
+**Privacy model:** Accountless per-request payment channel over per-conversation Tor circuits with local prompt rephrasing (`Qwen 3.5 9B`). Uses HTTP 402 Machine Payments Protocol (`MPP`) sessions on Tempo Mainnet (`USDC.e`, Chain `4217`) with instant cooperative `Close` and unilateral on-chain `Withdraw` (15-minute grace period). Keeps its own Tempo wallet (`sh.regents.cloak.wallet`) separate from the Venice Base wallet to avoid cross-chain address reuse; a reused wallet or channel still links chats funded by it. Default provider for new users in `Funds → Token Inference` and used by Token Inference Agent tasks.
 
 ### 4.1 Places that *refer* to Boundless + Tempo
 - **Provider picker & labels:**

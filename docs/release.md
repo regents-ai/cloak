@@ -323,49 +323,38 @@ What Sean supplies and decides first:
    nothing from a chat. Its address goes into `update_feed`, and must be
    HTTPS.
 
-Sean's answers, 18 November:
+Maintainer signing notes, 18 November:
 
-- Developer ID: yes. Its private key was made that day, at Sean's word,
-  inside the login keychain of this Mac (named "Regents Cloak Developer
-  ID", RSA 2048), and never written to a file. The request file for
-  Apple went to his Desktop for him to upload. He installed the
-  certificate the same day: "Developer ID Application: Sean Brennan",
-  Team ID 367G3Z7G3J, good until 18 December 2027, in the System
-  keychain. Apple's public intermediate certificate (Developer ID
-  Certification Authority, G2) was added to the login keychain, and the
-  Mac then showed one valid signing identity. It is in his personal
-  name. Sean is getting a D-U-N-S number for Regent Labs, Inc so that
-  the public release is signed by the company; when that Apple account
-  exists, a new key and certificate are made the same way and this one
-  is used for nothing public (changed 19 November: it signs the friends'
-  build, below). No backup of the key is kept, by his
-  choice: it can be replaced at Apple. The notarization sign-in is still
-  to come (saved 19 November as the keychain profile `cloak-notary`).
-- The key: made that day with `generate_keys --account cloak`, on his
-  decision, in the login keychain of this Mac. Its public half is
+- Developer ID: yes. Its private key was made that day inside the login
+  keychain of the release Mac (named "Regents Cloak Developer ID", RSA
+  2048), and never written to a file. The CSR was uploaded to Apple and
+  the certificate installed the same day under Team ID `367G3Z7G3J`,
+  good until 18 December 2027, in the System keychain. Apple's public
+  intermediate certificate (Developer ID Certification Authority, G2)
+  was added to the login keychain, and the Mac then showed one valid
+  signing identity. Once the Regent Labs, Inc. organization Apple
+  Developer account is active, a new organization certificate will
+  replace it. No backup of the key is kept by choice: it can be replaced
+  at Apple. The notarization sign-in is saved as the keychain profile
+  `cloak-notary`.
+- The key: made that day with `generate_keys --account cloak`, in the
+  login keychain of the release Mac. Its public half is
   `Dw2edhocMd1y+8c+Q5Lm0kG15miKI4TX+zj7tYuomjk=`. The private half is
-  backed up, by Sean's own hand that day, as an entry in his Passwords
-  app; the file used for the copy was deleted.
-- Hosting: this repository, regents-ai/cloak, once it is public, which
-  is its own decision. The feed will be
-  `https://raw.githubusercontent.com/regents-ai/cloak/main/appcast.xml`
-  and the downloads the repository's releases. Until then `update_feed`
-  and `update_key` stay empty, since a private repository's feed cannot
-  be read and a check would only fail. Replaced on 19 November, below.
+  backed up in a password manager; the temporary file used for the copy
+  was deleted.
+- Hosting: this repository, `regents-ai/cloak`, once it is public. The
+  feed is published directly alongside each tagged release at
+  `https://github.com/regents-ai/cloak/releases/latest/download/appcast.xml`.
 
-Sean's answers, 19 November (friends' build):
+Maintainer release notes, 19 November (initial signed build):
 
-- Close friends download Cloak, install it and test it.
-- Their build is signed and notarized with the certificate in his own
-  name, "Developer ID Application: Sean Brennan (367G3Z7G3J)".
-- Updates are on in that build.
-- The downloads and the feed live in `regents-ai/cloak-releases`, a new
-  public repository that holds only signed builds. This replaces the
-  plan to host them in this repository once it is public. The feed is
-  `https://raw.githubusercontent.com/regents-ai/cloak-releases/main/appcast.xml`,
-  and each download is a release there.
-- The page at regents.sh/cloak will be a listed page, its text approved
-  by him separately.
+- Signed and notarized with Team ID `367G3Z7G3J`.
+- Sparkle updates are enabled in the signed build.
+- Initial beta downloads were staged in `regents-ai/cloak-releases` and
+  subsequently consolidated directly onto `regents-ai/cloak` GitHub
+  Releases (`v0.2.0` onward).
+- The page at `regents.sh/cloak` links directly to the signed releases
+  and published checksums.
 
 Then each release, by the chief alone, on this Mac:
 

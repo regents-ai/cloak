@@ -82,24 +82,26 @@ struct WalletView: View {
     var body: some View {
         let running = wallet.supervisor.phase == .running
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
+            HStack(spacing: 14) {
                 HStack(spacing: 6) {
                     Text("Funds")
                         .font(.headline)
                         .fixedSize()
                     BetaBadge()
                 }
-                Spacer()
+                .fixedSize()
+                Spacer(minLength: 16)
                 Picker("Mode", selection: $tab) {
                     ForEach(FundsTab.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
+                Spacer(minLength: 12)
                 WhyCryptoButton(tab: tab)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 14)
             Divider()
             ScrollViewReader { proxy in
                 Form {
@@ -212,7 +214,7 @@ struct WalletView: View {
             .padding(.vertical, 16)
         }
         // As tall as what it shows, up to 660 points; past that, the form scrolls.
-        .frame(width: 600)
+        .frame(width: 680)
         .textSelection(.enabled)
         .onChange(of: kind) { _, newKind in
             tab = FundsTab(kind: newKind)
@@ -872,7 +874,19 @@ struct NearPayment: View {
                     }
                 }
             }
-            LabeledContent("Model", value: Near.displayModel)
+            LabeledContent {
+                Text(Near.displayModel)
+                    .foregroundStyle(.secondary)
+                    .tip("More models in next update.")
+            } label: {
+                HStack(spacing: 2) {
+                    Text("Model")
+                    InfoButton(
+                        "About Model",
+                        note: "Hardware attestation verifies the enclave server, not the model weights. More models in next update."
+                    )
+                }
+            }
             if let tokens {
                 LabeledContent("Tokens", value: String(localized: "\(tokens.input) in, \(tokens.output) out"))
             }

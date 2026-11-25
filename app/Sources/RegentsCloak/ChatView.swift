@@ -543,6 +543,7 @@ private struct Detail: View {
                             WalletButton(chat: chat, v: kind == .v)
                         }
                         .visibilityPriority(.high)
+                        ToolbarSpacer(.fixed)
                     }
                     ToolbarItem {
                         Button {
@@ -563,6 +564,7 @@ private struct Detail: View {
                         ToolbarItem {
                             WalletButton(chat: chat, v: kind == .v)
                         }
+                        ToolbarSpacer(.fixed)
                     }
                     ToolbarItem {
                         Button {
@@ -2620,7 +2622,11 @@ private struct TitlebarModePill: View {
             }
             .frame(width: 310)
         }
-        .tip("About \(kind.name) · Model: \(chat.activeModelFullName(for: kind, conversation: chat.selected)) (⌘1–⌘4 to switch modes)")
+        .tip(
+            kind == .near
+                ? "About \(kind.name) · Model: \(chat.activeModelFullName(for: kind, conversation: chat.selected)) · More models in next update (⌘1–⌘4 to switch modes)"
+                : "About \(kind.name) · Model: \(chat.activeModelFullName(for: kind, conversation: chat.selected)) (⌘1–⌘4 to switch modes)"
+        )
     }
 
     private var popoverTitle: String {
@@ -2646,7 +2652,7 @@ private struct TitlebarModePill: View {
             ]
         case .near:
             [
-                modelLine,
+                "\(modelLine) (More models in next update.)",
                 "Hardware-verified Intel TDX + NVIDIA enclaves using a NEAR API key.",
                 chat.settings.nearTor ? "Routing through Tor (hides your IP; slower)." : "Tor is off — toggle Tor below to hide your IP.",
                 "Attestation verifies enclave hardware; your key ties chats to one NEAR account.",

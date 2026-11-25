@@ -70,8 +70,9 @@ struct SettingsView: View {
                 openDoor: openDoor, showChat: showChat, showFunds: showFunds, showTour: showTour, darkbloom: darkbloom, selection: selection))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
-        window.setContentSize(NSSize(width: 720, height: 520))
-        window.setFrameAutosaveName("sh.regents.cloak.window.settings")
+        window.contentMinSize = NSSize(width: 700, height: 460)
+        window.setContentSize(NSSize(width: 780, height: 520))
+        window.setFrameAutosaveName("sh.regents.cloak.window.settings.v2")
         // ClosingWindow hides instead of destroying the SwiftUI view hierarchy,
         // so explicitly close Darkbloom's stream/key on window close and refresh
         // when the window becomes key again while Inference Serving is active.
@@ -105,8 +106,9 @@ struct SettingsView: View {
                 openDoor: openDoor, showChat: showChat, showFunds: showFunds, showTour: showTour, selection: selection))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
-        window.setContentSize(NSSize(width: 720, height: 520))
-        window.setFrameAutosaveName("sh.regents.cloak.window.settings")
+        window.contentMinSize = NSSize(width: 700, height: 460)
+        window.setContentSize(NSSize(width: 780, height: 520))
+        window.setFrameAutosaveName("sh.regents.cloak.window.settings.v2")
         return window
     }
     #endif
@@ -170,7 +172,7 @@ struct SettingsView: View {
                     .sidebarHover(selected: row == selection.pane)
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 205, ideal: 215, max: 250)
+            .navigationSplitViewColumnWidth(min: 236, ideal: 246, max: 280)
             .toolbar(removing: .sidebarToggle)
             .toolbar {
                 ToolbarItem {
@@ -196,6 +198,7 @@ struct SettingsView: View {
                     WalletsPane(
                         wallet: wallet, veniceMode: veniceMode, payer: payer, settings: settings,
                         nearMode: near, supervisor: supervisor, download: download,
+                        showFunds: showFunds,
                         showStatus: { selection.pane = .status },
                         showNearSettings: { selection.pane = .near })
                 case .near: NearPane(settings: settings, mode: near)
@@ -223,7 +226,7 @@ struct SettingsView: View {
             .textSelection(.enabled)
             .navigationTitle(shown.pageTitle)
         }
-        .frame(minWidth: 620, minHeight: 460)
+        .frame(minWidth: 700, minHeight: 460)
     }
 }
 
@@ -238,6 +241,7 @@ private struct WalletsPane: View {
     let nearMode: NearMode
     let supervisor: Supervisor
     let download: ModelDownload
+    let showFunds: () -> Void
     let showStatus: () -> Void
     let showNearSettings: () -> Void
 
@@ -245,16 +249,23 @@ private struct WalletsPane: View {
         let running = supervisor.phase == .running
         ScrollViewReader { proxy in
             Form {
-                if !running {
-                    Section {
-                        BetaWalletNotice(includeZkAPILimit: true)
+                Section {
+                    HStack(spacing: 10) {
+                        Image(systemName: "creditcard")
+                            .foregroundStyle(.tint)
+                        Text("Simple menu for wallet funds and API connections")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Button("Open", action: showFunds)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .textSelection(.disabled)
+                            .tip("Open the Funds menu")
                     }
-                    Section {
-                        StartRow(supervisor: supervisor, download: download, showDetails: showStatus)
-                    }
-                } else {
-                    Section {
-                        BetaWalletNotice(includeZkAPILimit: true)
+                }
+                Section {
+                    BetaWalletNotice(includeZkAPILimit: true)
+                    if running {
                         HStack {
                             Text("All Cloak wallets stay on this Mac only (never synced to iCloud).")
                                 .font(.callout)
@@ -267,6 +278,25 @@ private struct WalletsPane: View {
                             }
                             .controlSize(.small)
                         }
+                    }
+                } header: {
+                    HStack(spacing: 10) {
+                        Rectangle()
+                            .fill(.separator)
+                            .frame(height: 1)
+                        Text("More Wallet Details")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                        Rectangle()
+                            .fill(.separator)
+                            .frame(height: 1)
+                    }
+                    .padding(.top, 4)
+                }
+                if !running {
+                    Section {
+                        StartRow(supervisor: supervisor, download: download, showDetails: showStatus)
                     }
                 }
 
@@ -1176,9 +1206,10 @@ private struct NearPane: View {
                 Text("Cloak keeps chats end-to-end encrypted and uploads nothing itself. Add the folder as Exported traces in [NEAR AI Gateway](https://gateway.near.ai) ([Trace Commons](https://github.com/TraceCommons/trace-commons)).")
             }
             Section {
-                Row("Model", note: "Hardware attestation verifies the enclave server, not the model weights.") {
+                Row("Model", note: "Hardware attestation verifies the enclave server, not the model weights. More models in next update.") {
                     Text(Near.displayModel)
                         .foregroundStyle(.secondary)
+                        .tip("More models in next update.")
                 }
             } footer: {
                 Text("Powered by [NEAR AI Cloud](https://cloud.near.ai) · [NEAR AI Gateway](https://gateway.near.ai) · [Trace Commons](https://github.com/TraceCommons/trace-commons) · [Dstack TEE](https://github.com/Dstack-TEE/dstack).")

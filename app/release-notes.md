@@ -1,11 +1,11 @@
-Cloak v0.2.2 (Beta) refines the macOS menu bar experience, enables app-wide selectable text, hardens Venice top-up persistence and Dev isolation, and clarifies privacy/attachment/Connected Apps behavior.
+Cloak v0.2.3 (Beta) polishes the Chat toolbar, Funds sheet layout, Settings sidebar readability, NEAR AI model tooltips, and Wallets navigation.
 
-What's new in v0.2.2:
-- Menu Bar & Sidebar Polish: Eliminated rectangular dark shadow artifacts in the rounded corners of the Liquid Glass menu bar panel, anchored the right-click quick menu natively so the header never clips under a scroll chevron, synced right-click quick actions with the new panel (including Funds), and removed the duplicate "+ New chat" sidebar row when starting with zero chats.
-- Copyable Text Everywhere: Enabled native text selection across Settings, Funds/Wallets, Connected Apps, Inference Serving, Credits, and the menu bar panel so notices, error messages, and details can be highlighted and copied directly.
-- Persistent Venice Top-Up Guard: Pending uncertain Venice x402 top-ups now persist across app restarts and require a full top-up balance delta (not a 1-cent wiggle) before unlocking another payment while the EIP-3009 authorization can still settle.
-- Precise Privacy Copy & Honest Attachments: Tightened zkAPI copy to clearly distinguish payment unlinkability from multi-turn prompt/history correlation, added "Reattach to use" badges when persisted Local Mode attachment text was cleared on quit, documented CloakDoor's buffered SSE and message/size limits in Connected Apps, and added a keyboard-focusable info button beside the Agent pill.
-- Cloak Dev Build Isolation: Fixed `app/build.sh dev` so Cloak Dev registers strictly `cloak-dev://` (never intercepting production `cloak://` links), updated URL handling to match the active bundle scheme, and added a shared-daemon warning banner in Dev's Inference Serving pane.
+What's new in v0.2.3:
+- Separate Toolbar Items: Separated the Funds button and Settings gear icon into distinct macOS toolbar items so they no longer merge into a single pill.
+- Roomier Funds Sheet: Widened the Funds sheet to 680 pt with balanced left/right padding so "Funds [BETA]" never clips on the left and the segmented mode switcher has clean breathing room.
+- Readable Settings Sidebar: Raised the Settings sidebar minimum width and window autosave key so "NEAR AI Gateway", "Connected Apps", and "Inference Serving" remain fully readable after updates and restarts.
+- Wallets → Funds Shortcut: Added a top "Simple menu for wallet funds and API connections" row with an Open button and a "More Wallet Details" divider in Settings → Wallets.
+- NEAR AI Model Hover & Tooltip: Clarified across Settings, Funds, and the titlebar mode pill that NEAR AI Gateway currently runs pinned Qwen3.8-27B with more models coming in the next update.
 
 Beta & Wallet Security Notice: Cloak v0.2 is beta software and has not yet been independently audited. Keep wallet balances small, back up or withdraw funds before wiping or switching Macs (keys never sync to iCloud), and note the 30-day protocol limit on untouched zkAPI deposits. Read the full Wallet Security & Recovery guide at regents.sh/docs/cloak/wallets.
 
