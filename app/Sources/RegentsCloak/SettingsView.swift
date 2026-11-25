@@ -246,10 +246,14 @@ private struct WalletsPane: View {
             Form {
                 if !running {
                     Section {
+                        BetaWalletNotice(includeZkAPILimit: true)
+                    }
+                    Section {
                         StartRow(supervisor: supervisor, download: download, showDetails: showStatus)
                     }
                 } else {
                     Section {
+                        BetaWalletNotice(includeZkAPILimit: true)
                         HStack {
                             Text("All Cloak wallets stay on this Mac only (never synced to iCloud).")
                                 .font(.callout)

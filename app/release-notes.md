@@ -1,6 +1,8 @@
-Cloak v0.2 brings fast local Apple Silicon AI, hardware-verified NEAR AI Gateway enclaves, anonymous token inference & zero-knowledge crypto payments, offline Local Access & data packs, and Apple Silicon inference serving together in one native macOS app with zero telemetry.
+Cloak v0.2 (Beta) brings fast local Apple Silicon AI, hardware-verified NEAR AI Gateway enclaves, anonymous token inference & zero-knowledge crypto payments, offline Local Access & data packs, and Apple Silicon inference serving together in one native macOS app with zero telemetry.
 
-Note for earlier preview testers: Cloak's public versioning now starts at v0.2.0 (this build supersedes all earlier 0.5.x internal preview builds and preserves your chats and local wallets).
+Beta & Wallet Security Notice: Cloak v0.2 is beta software and has not yet been independently audited. Keep wallet balances small, back up or withdraw funds before wiping or switching Macs (keys never sync to iCloud), and note the 30-day protocol limit on untouched zkAPI deposits. Read the full Wallet Security & Recovery guide at regents.sh/docs/cloak/wallets.
+
+Note for earlier preview testers: Cloak's public versioning now starts at v0.2.0 Beta (this build supersedes all earlier 0.5.x internal preview builds and preserves your chats and local wallets).
 
 What's new in v0.2:
 - Local (Free, Offline): Pure-Swift MLX worker (vmlx-swift) running Inkling 2 Mini (10.21 GB) at ~56–64 tok/s on 16 GB+ Macs with multi-turn reasoning support, plus upgraded llama.cpp (b12633) with RAM-tiered GGUF models, live streaming, an 8,192-token thinking budget, an opt-in 44 MB Unfiltered LoRA toggle, live model startup & answering indicators, and offline Local Access (Mac snapshot, Hermes-compatible memory, read-only approved folders, drag-and-drop PDF/document/image-OCR/code attachments, and opt-in Calendar/Reminders/Contacts).

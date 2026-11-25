@@ -156,7 +156,7 @@ private struct AddressSection: View {
         } header: {
             Text("ETH Mainnet Wallet")
         } footer: {
-            Text("This Ethereum Mainnet wallet is used for zkAPI deposits and payments. Its key stays encrypted on this Mac only (not synced to iCloud) — reinstalling Cloak keeps it, but withdraw ETH before wiping or switching Macs.")
+            Text("Beta: keep working balances small. This Ethereum Mainnet wallet stays encrypted on this Mac only (not synced to iCloud) and has no separate seed export — withdraw ETH before wiping or switching Macs, or funds will be permanently lost. [Wallet security & recovery](https://regents.sh/docs/cloak/wallets).")
                 .foregroundStyle(.secondary)
         }
         .sheet(item: $onRampTarget) { target in
@@ -221,6 +221,10 @@ private struct TransferButton: View {
                             .font(.callout)
                             .foregroundStyle(.red)
                     }
+                    Text("Beta: Ethereum Mainnet transfers are irreversible. Double-check the recipient address before confirming.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     HStack {
                         Spacer()
                         Button("Review", action: review)
@@ -499,7 +503,7 @@ private struct Amount: View {
                     .onChange(of: text) { wrong = false }
             }
         }
-        Text("Start with $5–$10 ($5 unlocks up to Tier 25 models; $10+ gives room for multiple flagship turns). Unused deposits expire in 30 days.")
+        Text("Start with $5–$10 ($5 unlocks up to Tier 25 models; $10+ gives room for multiple flagship turns). Beta · 30-day protocol limit: untouched zkAPI deposits expire after 30 days at the protocol layer and can be claimed by the operator — withdraw unused ETH before day 30. [Wallet security & 30-day limit](https://regents.sh/docs/cloak/wallets).")
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -602,6 +606,23 @@ private struct ReviewRows: View {
                         )
                         .font(.caption)
                         .foregroundStyle(expired ? .orange : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !busy {
+                        Text(
+                            {
+                                switch review {
+                                case .deposit:
+                                    return "Beta: irreversible Ethereum Mainnet deposit. Untouched zkAPI deposits expire after 30 days at the protocol layer — withdraw unused ETH before day 30."
+                                case .transfer:
+                                    return "Beta: irreversible Ethereum Mainnet transfer. Verify the recipient address and fee before confirming."
+                                case .withdrawal:
+                                    return "Beta: returns unspent ETH from your zkAPI deposit to your local ETH wallet on Ethereum Mainnet."
+                                }
+                            }()
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     }
                     HStack(spacing: 8) {

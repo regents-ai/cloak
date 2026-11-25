@@ -69,7 +69,7 @@ gh release create "$tag" \
 	"$out/SHA256SUMS.txt" \
 	"$out/checksums.json" \
 	--repo "$repo" \
-	--title "Regents Cloak $release ($build)" --notes-file "$notes_out"
+	--title "Regents Cloak $release Beta ($build)" --notes-file "$notes_out"
 
 # Update appcast.xml, SHA256SUMS.txt, and checksums.json on main branch.
 upload_main_file() {

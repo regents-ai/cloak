@@ -6,7 +6,7 @@ Cloak is a macOS menu bar app for private AI — local on Apple Silicon, or rout
 
 ![Cloak](docs/media/cloak-hero.png)
 
-> **Status (`v0.2.0`):** Signed, notarized `.dmg` builds are published at [regents-ai/cloak-releases](https://github.com/regents-ai/cloak-releases/releases). Cloak's privacy protections have not yet undergone an independent security audit — check each mode's guarantees and limits below.
+> **Status (`v0.2.0 Beta`):** Signed, notarized `.dmg` builds are published at [regents-ai/cloak-releases](https://github.com/regents-ai/cloak-releases/releases). Cloak is **beta software** and its privacy protections have not yet undergone an independent security audit — keep wallet balances small, back up or withdraw funds before wiping your Mac, and read the [Wallet Security, Recovery & 30-Day zkAPI Limit](docs/wallet-security.md) guide ([web copy](https://regents.sh/docs/cloak/wallets)).
 
 ## Install
 
@@ -118,6 +118,7 @@ swift test --package-path app
 
 ## Docs & Feedback
 
+- **Wallet security & recovery (30-day zkAPI limit):** [docs/wallet-security.md](docs/wallet-security.md) · [regents.sh/docs/cloak/wallets](https://regents.sh/docs/cloak/wallets)
 - **Architecture & codebase map:** [docs/tech-stack.md](docs/tech-stack.md) · **Runbook:** [docs/dev-runbook.md](docs/dev-runbook.md) · **Licenses:** [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 - **Website & reference docs:** [regents.sh/cloak](https://regents.sh/cloak) · [regents.sh/docs/cloak/reference](https://regents.sh/docs/cloak/reference)
 - **Issues & feedback:** [GitHub Issues](https://github.com/regents-ai/cloak/issues) · [Patchbay](https://regents.sh/patchbay/cloak) · [@regents_sh](https://x.com/regents_sh) · [build@regents.sh](mailto:build@regents.sh)

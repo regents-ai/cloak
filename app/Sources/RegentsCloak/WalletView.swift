@@ -82,10 +82,13 @@ struct WalletView: View {
     var body: some View {
         let running = wallet.supervisor.phase == .running
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text("Funds")
-                    .font(.headline)
-                    .fixedSize()
+            HStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Text("Funds")
+                        .font(.headline)
+                        .fixedSize()
+                    BetaBadge()
+                }
                 Spacer()
                 Picker("Mode", selection: $tab) {
                     ForEach(FundsTab.allCases) { Text($0.title).tag($0) }
@@ -100,6 +103,11 @@ struct WalletView: View {
             Divider()
             ScrollViewReader { proxy in
                 Form {
+                    if tab == .paranoid || tab == .payPerPrompt {
+                        Section {
+                            BetaWalletNotice(includeZkAPILimit: tab == .paranoid)
+                        }
+                    }
                     if tab == .paranoid || tab == .payPerPrompt, !running {
                         Section {
                             StartRow(supervisor: wallet.supervisor, download: download) {
@@ -507,11 +515,11 @@ struct VeniceFundsSections: View {
             } header: {
                 Text("Venice Base Wallet")
             } footer: {
-                Text("Stored in this Mac's Keychain (not synced to iCloud). Reinstalling Cloak keeps this wallet, but back up your private key or keep working balances small before wiping or switching Macs.")
+                Text("Beta: keep working balances small. Stored in this Mac's Keychain (not synced to iCloud) — without a private-key backup, wiping or losing this Mac permanently loses funds. [Wallet security & recovery](https://regents.sh/docs/cloak/wallets).")
                     .foregroundStyle(.secondary)
             }
 
-            Section("Venice AI Credit") {
+            Section {
                 LabeledContent("Credit Balance") {
                     if let usd = venice.credit?.usd {
                         Text(usd.formatted(.currency(code: "USD")))
@@ -551,6 +559,10 @@ struct VeniceFundsSections: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    Text("Beta: Base USDC x402 top-ups are irreversible on-chain transfers. Move only what you expect to spend.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     if topUpInvalid {
                         Text("Enter a valid dollar amount (e.g. 5).")
                             .font(.caption)
@@ -566,6 +578,8 @@ struct VeniceFundsSections: View {
                             .font(.callout)
                     }
                 }
+            } header: {
+                Text("Venice AI Credit")
             }
         }
     }
@@ -883,9 +897,52 @@ private struct Account: View {
         } header: {
             Text("Wallet")
         } footer: {
-            Text("Stored in this Mac's Keychain (not synced to iCloud). Reinstalling Cloak keeps this wallet, but back up your private key or keep working balances small before wiping or switching Macs.")
+            Text("Beta: keep working balances small. Stored in this Mac's Keychain (not synced to iCloud) — without a private-key backup, wiping or losing this Mac permanently loses funds. [Wallet security & recovery](https://regents.sh/docs/cloak/wallets).")
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+/// Shared compact orange `BETA` pill used on wallet and deposit surfaces.
+struct BetaBadge: View {
+    var body: some View {
+        Text("BETA")
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.orange.opacity(0.14), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.orange.opacity(0.35), lineWidth: 0.5))
+            .fixedSize()
+    }
+}
+
+/// Shared beta and self-custody notice displayed above wallet transfer and deposit flows.
+struct BetaWalletNotice: View {
+    var includeZkAPILimit: Bool = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text("Beta Wallet Notice")
+                        .font(.callout.weight(.semibold))
+                    BetaBadge()
+                }
+                Text(
+                    includeZkAPILimit
+                        ? "Cloak v0.2 is beta software and has not been independently audited. Keep balances small, back up or withdraw funds before wiping your Mac, and note the 30-day protocol limit on untouched zkAPI deposits. [Wallet security & recovery guide](https://regents.sh/docs/cloak/wallets)."
+                        : "Cloak v0.2 is beta software and has not been independently audited. Keep balances small — wallet keys stay on this Mac only (never synced to iCloud), so wiping or losing this Mac without a backup permanently loses funds. [Wallet security & recovery guide](https://regents.sh/docs/cloak/wallets)."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -1113,7 +1170,7 @@ private struct Holding: View {
         // A deposit the network shows closed is already forgotten.
         let deposit = look?.deposit.flatMap { $0.gone == true ? nil : $0 }
         let none = look != nil && deposit == nil
-        Section("Deposit") {
+        Section {
             LabeledContent("Amount") {
                 if let deposit {
                     Text("\(deposit.deposit.text), \(deposit.spent.text) spent")
@@ -1126,6 +1183,11 @@ private struct Holding: View {
             if running {
                 ending(deposit, unread: look == nil, none: none)
             }
+        } header: {
+            Text("Deposit")
+        } footer: {
+            Text("Beta: Boundless opens an on-chain Tempo USDC.e payment channel. Close or withdraw unspent funds before switching Macs. [Wallet security & recovery](https://regents.sh/docs/cloak/wallets).")
+                .foregroundStyle(.secondary)
         }
     }
 
