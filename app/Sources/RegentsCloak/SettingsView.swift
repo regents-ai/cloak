@@ -247,6 +247,7 @@ private struct WalletsPane: View {
 
     var body: some View {
         let running = supervisor.phase == .running
+        let tokenReady = !settings.tokenTor || running
         ScrollViewReader { proxy in
             Form {
                 Section {
@@ -265,7 +266,7 @@ private struct WalletsPane: View {
                 }
                 Section {
                     BetaWalletNotice(includeZkAPILimit: true)
-                    if running {
+                    if running || tokenReady {
                         HStack {
                             Text("All Cloak wallets stay on this Mac only (never synced to iCloud).")
                                 .font(.callout)
@@ -314,7 +315,9 @@ private struct WalletsPane: View {
                     WalletGroupHeader(
                         symbol: "dollarsign.circle",
                         title: "Token Inference",
-                        subtitle: "Pay per call over Tor with Venice (Base USDC / API key) or Boundless + Tempo (USDC.e).")
+                        subtitle: settings.tokenTor
+                            ? "Pay per call over Tor with Venice (Base USDC / API key) or Boundless + Tempo (USDC.e)."
+                            : "Pay per call directly over HTTPS (faster, no Tor/VM) with Venice (Base USDC / API key) or Boundless + Tempo (USDC.e).")
                     LabeledContent("Provider") {
                         Picker("Provider", selection: $settings.payProvider) {
                             Text("Venice (Base)").tag(PayProvider.venice)
@@ -324,12 +327,20 @@ private struct WalletsPane: View {
                         .labelsHidden()
                         .fixedSize()
                     }
+                    Row(
+                        "Route through Tor",
+                        note: settings.tokenTor
+                            ? "Hides your IP from Boundless and Venice (slower, requires Cloak running)."
+                            : "Direct HTTPS — faster replies with no Tor/VM needed (provider sees your IP)."
+                    ) {
+                        Switch("Route through Tor", isOn: $settings.tokenTor)
+                    }
                 }
                 switch settings.payProvider {
                 case .venice:
-                    VeniceFundsSections(venice: veniceMode, settings: settings, running: running)
+                    VeniceFundsSections(venice: veniceMode, settings: settings, running: tokenReady)
                 case .boundless:
-                    WalletSections(wallet: wallet, running: running)
+                    WalletSections(wallet: wallet, running: tokenReady)
                 }
 
                 // 3. NEAR AI Gateway (API Key)
@@ -358,24 +369,30 @@ private struct WalletsPane: View {
                 }
             }
         }
-        .task(id: "\(settings.payProvider.rawValue)-\(running)") {
+        .task(id: "\(settings.payProvider.rawValue)-\(running)-\(tokenReady)") {
             await wallet.ensureLoaded()
-            guard running else { return }
-            refreshAll()
+            if running || tokenReady {
+                refreshAll()
+            }
         }
         .onReturn {
             Task { await wallet.ensureLoaded() }
-            guard running else { return }
-            refreshAll()
+            if running || tokenReady {
+                refreshAll()
+            }
         }
     }
 
     private func refreshAll() {
-        payer.follow()
-        if settings.payProvider == .venice {
-            Task { await veniceMode.refresh() }
-        } else {
-            Task { await wallet.refresh() }
+        if supervisor.phase == .running {
+            payer.follow()
+        }
+        if !settings.tokenTor || supervisor.phase == .running {
+            if settings.payProvider == .venice {
+                Task { await veniceMode.refresh() }
+            } else {
+                Task { await wallet.refresh() }
+            }
         }
     }
 }

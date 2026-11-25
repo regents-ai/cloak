@@ -21,6 +21,7 @@ final class Wallet {
     private static let modelKey = "tokenModel"
 
     let supervisor: Supervisor
+    let settings: AppSettings
     let folder: URL
     /// Set once the conversations' key is open; the deposit is sealed with it.
     var deposits: DepositStore?
@@ -51,14 +52,26 @@ final class Wallet {
     @ObservationIgnored private var refreshGeneration: UInt64 = 0
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "wallet")
 
-    init(supervisor: Supervisor, folder: URL) {
+    init(supervisor: Supervisor, settings: AppSettings, folder: URL) {
         self.supervisor = supervisor
+        self.settings = settings
         self.folder = folder
         self.model = UserDefaults.standard.string(forKey: Self.modelKey) ?? Self.defaultModel
     }
 
+    var canConnect: Bool {
+        !settings.tokenTor || supervisor.phase == .running
+    }
+
     var exchange: Exchange {
-        { [supervisor] request, keep in try await supervisor.exchange(request: request, keep: keep) }
+        let useTor = settings.tokenTor
+        return { [supervisor] request, keep in
+            if useTor {
+                try await supervisor.exchange(request: request, keep: keep)
+            } else {
+                try await supervisor.exchangeDirect(request: request, keep: keep)
+            }
+        }
     }
 
     /// A deposit that can pay now, as the network last showed it: not gone,
@@ -130,7 +143,7 @@ final class Wallet {
 
     /// Reads the balance, the provider's setup and models, and the deposit.
     func refresh() async {
-        guard let address = presence.address, let deposits, supervisor.phase == .running else { return }
+        guard let address = presence.address, let deposits, canConnect else { return }
         refreshGeneration &+= 1
         let gen = refreshGeneration
         let err = await run { [exchange] () async throws(RemoteStop) in
@@ -139,7 +152,7 @@ final class Wallet {
             self.look = next
         }
         guard self.refreshGeneration == gen else { return }
-        if supervisor.phase != .running || Task.isCancelled { return }
+        if !canConnect || Task.isCancelled { return }
         readStop = err
     }
 

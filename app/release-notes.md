@@ -1,8 +1,8 @@
-Cloak v0.2.4 (Beta) fixes NEAR AI Gateway verification across daily NEAR gateway container rotations and enables fast Sparkle delta updates.
+Cloak v0.2.5 (Beta) adds an optional direct (no-Tor) toggle for Token Inference (Boundless & Venice) and streamlines the Welcome Tour with a new Quickstart guide and clear Tor vs. speed guidance.
 
-What's new in v0.2.4:
-- Resilient NEAR AI Gateway Verification: Updated cloak-near to pin the NEAR gateway on its full Intel TDX hardware, OS image, and dstack KMS identity (MRTD, RTMR0-2, app-id, key-provider, mr-kms, os-image-hash) while verifying MRCONFIGID against app_compose and cross-binding it to Intel Trust Authority's gateway token. Routine daily nearaidev/cloud-api container deployments no longer trigger "Proof refused" while the E2EE v2 model enclave retains strict compose pinning.
-- Sparkle Delta Updates: Added EdDSA-signed binary delta updates (LZMA) so existing Cloak users updating from recent builds download only a few megabytes instead of the full ~170 MB DMG (with automatic verified full-DMG fallback).
+What's new in v0.2.5:
+- Optional Direct (No-Tor) Mode for Boundless & Venice: Toggle Tor off in Token Inference (directly below Chat, in the menu bar panel, in Funds, or in Settings → Wallets) to connect over direct HTTPS using the pinned macOS cloak-sender helper with no Linux VM or Tor startup delay (works on 8 GB+ Macs too, while still rewriting prompts locally on 16 GB+ Macs when the rewriter is installed). Tor stays on by default to protect your IP, and Local Agent Box (Pi) continues to run inside the sealed Linux microVM over Tor.
+- Redesigned 3-Step Welcome Tour & Quickstart: Starts directly on "Welcome to Cloak" with an upfront explanation of when Tor is used and its latency tradeoff, moves Agent Mode & Power Tools to Step 2, and adds a new Step 3 "Quickstart" showing exactly how to begin each mode (Local model download, NEAR API key, Tempo USDC.e / Base USDC / Venice API key, and Ethereum Mainnet ETH for zkAPI).
 
 Beta & Wallet Security Notice: Cloak v0.2 is beta software and has not yet been independently audited. Keep wallet balances small, back up or withdraw funds before wiping or switching Macs (keys never sync to iCloud), and note the 30-day protocol limit on untouched zkAPI deposits. Read the full Wallet Security & Recovery guide at regents.sh/docs/cloak/wallets.
 

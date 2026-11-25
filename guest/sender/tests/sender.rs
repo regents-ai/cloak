@@ -166,7 +166,7 @@ impl Stage {
             rpc: format!("http://{RPC}/"),
             venice: format!("http://{VENICE}"),
             base: format!("http://{BASE}/"),
-            tor,
+            tor: Some(tor),
         };
         Self {
             _stand_ins: stand_ins,
@@ -670,10 +670,12 @@ fn each_way_a_send_stops_has_its_code() {
 #[test]
 fn a_tor_port_that_refuses_is_tor_down() {
     let mut stage = Stage::new(200, json!({}), 5_000_000);
-    stage.network.tor = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap();
+    stage.network.tor = Some(
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap(),
+    );
     for request in [
         json!({ "op": "wallet", "address": "0x0000000000000000000000000000000000000001", "deposit": null }),
         json!({ "op": "models" }),
@@ -1038,12 +1040,96 @@ fn no_key_reaches_a_stop_or_the_log() {
     for request in &requests {
         check(&stage, request);
     }
-    stage.network.tor = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap();
+    stage.network.tor = Some(
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap(),
+    );
     check(
         &stage,
         &venice_chat(&format!("http://{VENICE}/api/v1/chat/completions")),
     );
+}
+
+#[test]
+fn direct_mode_reaches_provider_and_venice_without_tor() {
+    let stand_ins = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let seen = Seen {
+        connections: Default::default(),
+        requests: Default::default(),
+        rpc: Default::default(),
+        venice: Default::default(),
+        cut: Default::default(),
+    };
+    let (provider_addr, venice_addr) = stand_ins.block_on(async {
+        let provider = Router::new().route(
+            "/mpp/v1/models",
+            get(|| async { Json(json!({ "data": [{ "id": "direct-model", "pricing": { "input": 0.1, "output": 0.2 } }] })) }),
+        );
+        let provider_addr = listen(provider).await;
+        let venice_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let venice_addr = venice_listener.local_addr().unwrap();
+        tokio::spawn(venice(venice_listener, seen.clone()));
+        (provider_addr, venice_addr)
+    });
+    let sender = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let network = Network {
+        provider: format!("http://{provider_addr}/mpp"),
+        rpc: format!("http://{provider_addr}/"),
+        venice: format!("http://{venice_addr}"),
+        base: format!("http://{provider_addr}/"),
+        tor: None,
+    };
+
+    // Boundless models list over direct HTTP (no SOCKS5 proxy).
+    let (s1, h1) = UnixStream::pair().unwrap();
+    let reply: Value = std::thread::scope(|scope| {
+        let served = scope.spawn(|| serve(&sender, &network, s1).unwrap());
+        let mut frames = Frames::new(h1);
+        assert_eq!(frames.read().unwrap().unwrap().0, b'Y');
+        frames
+            .write(b'R', &serde_json::to_vec(&json!({ "op": "models" })).unwrap())
+            .unwrap();
+        let (kind, payload) = frames.read().unwrap().unwrap();
+        assert_eq!(kind, b'A');
+        assert_eq!(served.join().unwrap(), ("models", "ok"));
+        serde_json::from_slice(&payload).unwrap()
+    });
+    assert!(reply["ok"]["models"].as_str().unwrap().contains("direct-model"));
+
+    // Venice streaming chat over direct HTTP (no SOCKS5 proxy).
+    let (s2, h2) = UnixStream::pair().unwrap();
+    let venice_url = format!("http://{venice_addr}/api/v1/chat/completions");
+    let body: Vec<u8> = std::thread::scope(|scope| {
+        let served = scope.spawn(|| serve(&sender, &network, s2).unwrap());
+        let mut frames = Frames::new(h2);
+        assert_eq!(frames.read().unwrap().unwrap().0, b'Y');
+        frames
+            .write(b'R', &serde_json::to_vec(&venice_chat(&venice_url)).unwrap())
+            .unwrap();
+        let mut out = vec![];
+        loop {
+            let (kind, payload) = frames.read().unwrap().unwrap();
+            match kind {
+                b'L' => {}
+                b'P' => out.extend(payload),
+                b'A' => {
+                    assert_eq!(served.join().unwrap(), ("venice", "ok"));
+                    break out;
+                }
+                other => panic!("unexpected frame {other}"),
+            }
+        }
+    });
+    assert!(String::from_utf8_lossy(&body).contains("Sage"));
+    assert!(seen.connections.lock().unwrap().is_empty());
 }

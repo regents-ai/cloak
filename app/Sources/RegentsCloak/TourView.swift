@@ -36,6 +36,8 @@ struct TourView: View {
 
     private let totalSteps = 3
     private static let agentDocsURL = URL(string: "https://regents.sh/cloak#agent")!
+    private static let nearCloudURL = URL(string: "https://cloud.near.ai")!
+    private static let walletGuideURL = URL(string: "https://regents.sh/docs/cloak/wallets")!
 
     private var localFits: Bool {
         chat.recommendedLocalDownload.fits
@@ -45,9 +47,9 @@ struct TourView: View {
         VStack(spacing: 0) {
             Group {
                 switch step {
-                case 0: whyCloakStep
-                case 1: choosePathStep
-                default: superpowersStep
+                case 0: choosePathStep
+                case 1: superpowersStep
+                default: quickstartStep
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -92,93 +94,62 @@ struct TourView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
-        .frame(width: 620, height: 530)
+        .frame(width: 640, height: 610)
     }
 
-    // MARK: Step 1 — What Cloak Does Differently
-
-    private var whyCloakStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Welcome to Cloak")
-                    .font(.title2.weight(.semibold))
-                Text("Private AI for macOS. Zero accounts. Zero telemetry.")
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(spacing: 10) {
-                ComparisonRow(
-                    symbol: "laptopcomputer",
-                    tint: .green,
-                    title: "Cloak Local (16 GB+ Macs)",
-                    summary: "Runs completely offline on your Mac. Free, fast, no account, no crypto."
-                )
-                ComparisonRow(
-                    symbol: "lock.shield",
-                    tint: .accentColor,
-                    title: "Private & Anonymous Cloud",
-                    summary: "Strips writing style locally, routes over Tor, and pays via hardware enclaves or unlinkable crypto."
-                )
-            }
-
-            Divider()
-
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "exclamationmark.icloud")
-                    .font(.title3)
-                    .foregroundStyle(.red)
-                    .frame(width: 26)
-                    .padding(.top, 2)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Cloak **does not** support normal cloud AI inference.")
-                        .font(.system(size: 13.5, weight: .regular))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Standard cloud AI ties your identity, IP address, and writing style to every prompt.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor), in: ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true))
-            .overlay(ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
-        }
-    }
-
-    // MARK: Step 2 — Choose Your Starting Path (Hardware-Aware)
+    // MARK: Step 1 — Welcome & Choose Your Path (Hardware-Aware + Tor Tradeoffs)
 
     private var choosePathStep: some View {
         let download = chat.recommendedLocalDownload
         let size = DownloadSection.text(download.total)
         let installed = download.state == .installed
 
-        return VStack(alignment: .leading, spacing: 14) {
+        return VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Choose how to start")
+                Text("Welcome to Cloak")
                     .font(.title2.weight(.semibold))
                 Text(
                     localFits
-                        ? "Switch modes anytime in Chat."
-                        : "Local models need 16 GB+ Apple Silicon. NEAR AI Gateway works right away on this Mac."
+                        ? "Private, zero-account AI for macOS — offline local models, hardware enclaves, and anonymous pay-per-prompt cloud."
+                        : "Private, zero-account AI for macOS. Local models need 16 GB+ Apple Silicon; NEAR and Direct Token Inference work right away on this Mac."
                 )
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: torSymbol)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .frame(width: 22)
+                    .padding(.top, 1)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("**When Tor is used — and why it's slower**")
+                        .font(.callout)
+                    Text("Tor hides your IP address across 3 relays, which adds noticeable latency. **No Tor (fast):** Local (offline), NEAR (direct by default, hardware-encrypted), and Token Inference if you toggle Tor off. **Tor ON:** zkAPI (always) and Token Inference by default — toggle Tor below Chat anytime.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(Color.orange.opacity(0.08), in: ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true))
+            .overlay(ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true).stroke(Color.orange.opacity(0.24), lineWidth: 1))
+
+            VStack(spacing: 8) {
                 if localFits {
                     PathCard(
                         symbol: "laptopcomputer",
                         title: "Local",
-                        badge: installed ? "Ready" : download.isUnderWay ? "Downloading" : "Free · Offline",
+                        badge: installed ? "Ready · No Tor" : download.isUnderWay ? "Downloading" : "Free · Offline",
                         badgeTint: .green,
                         detail: installed
-                            ? "\(download.model.label) is ready for offline chat."
+                            ? "\(download.model.label) is ready for instant offline chat."
                             : download.isUnderWay
                                 ? "Downloading \(download.model.label) (\(DownloadSection.text(download.done)) of \(size))…"
-                                : "Download \(download.model.label) (\(size)) once. Works offline forever.",
+                                : "Download \(download.model.label) (\(size)) once. Fast, offline, no account or crypto.",
                         actionTitle: installed ? "Open Local" : download.isUnderWay ? "View Progress" : "Download (\(size))"
                     ) {
                         chat.selectMode(.llama)
@@ -192,9 +163,9 @@ struct TourView: View {
                 PathCard(
                     symbol: "cpu",
                     title: "NEAR AI Gateway",
-                    badge: localFits ? "No Download" : "Recommended",
+                    badge: localFits ? "Fast Direct · Optional Tor" : "Recommended · Fast",
                     badgeTint: .accentColor,
-                    detail: "Hardware-verified Intel TDX + NVIDIA enclaves using a standard NEAR API key.",
+                    detail: "Hardware-verified Intel TDX + NVIDIA enclaves using a NEAR API key. Direct by default; toggle Tor on to hide your IP.",
                     actionTitle: "Set Up…"
                 ) {
                     chat.selectMode(.near)
@@ -202,20 +173,18 @@ struct TourView: View {
                     showNearSettings()
                 }
 
-                if localFits {
-                    PathCard(
-                        symbol: "theatermasks",
-                        title: "Token Inference & zkAPI Anon Inference",
-                        badge: "Tor + Rewriter",
-                        badgeTint: .orange,
-                        detail: "Anonymous pay-per-prompt with USDC or unlinkable ETH (zkAPI).",
-                        actionTitle: "Funds…"
-                    ) {
-                        chat.selectMode(.token)
-                        dismiss()
-                        DispatchQueue.main.async {
-                            chat.showingWallet = true
-                        }
+                PathCard(
+                    symbol: "theatermasks",
+                    title: "Token Inference & zkAPI Anon Inference",
+                    badge: "Tor Optional / Always",
+                    badgeTint: .orange,
+                    detail: "Pay per prompt with Boundless (Tempo USDC.e) or Venice (Base USDC) — Tor optional for speed — or unlinkable zkAPI ETH (always Tor).",
+                    actionTitle: "Funds…"
+                ) {
+                    chat.selectMode(.token)
+                    dismiss()
+                    DispatchQueue.main.async {
+                        chat.showingWallet = true
                     }
                 }
 
@@ -236,7 +205,7 @@ struct TourView: View {
         }
     }
 
-    // MARK: Step 3 — Agent Mode & Power Tools
+    // MARK: Step 2 — Agent Mode & Power Tools
 
     private var superpowersStep: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -320,33 +289,152 @@ struct TourView: View {
             }
         }
     }
+
+    // MARK: Step 3 — Quickstart
+
+    private var quickstartStep: some View {
+        let modelLabel = chat.recommendedLocalDownload.model.label
+
+        return VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Quickstart")
+                    .font(.title2.weight(.semibold))
+                Text("What you need to start each mode.")
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 8) {
+                QuickstartRow(
+                    symbol: "laptopcomputer",
+                    tint: .green,
+                    title: "Local",
+                    badge: "16 GB+ Macs",
+                    detail: localFits
+                        ? "Download \(modelLabel) once — free, offline, no account or crypto."
+                        : "Requires 16 GB+ Apple Silicon. Download \(modelLabel) once for free, offline chat."
+                ) {
+                    Button("Models…") {
+                        dismiss()
+                        showLlamaSettings()
+                    }
+                    .controlSize(.small)
+                }
+
+                QuickstartRow(
+                    symbol: "cpu",
+                    tint: .accentColor,
+                    title: "NEAR AI Gateway",
+                    badge: "API Key",
+                    detail: "Create an API key at cloud.near.ai and save it in NEAR settings. Runs on 8 GB+ Macs with 0 GB download."
+                ) {
+                    HStack(spacing: 8) {
+                        Link(destination: Self.nearCloudURL) {
+                            HStack(spacing: 3) {
+                                Text("Get Key")
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption2)
+                            }
+                        }
+                        .controlSize(.small)
+                        Button("NEAR Key…") {
+                            chat.selectMode(.near)
+                            dismiss()
+                            showNearSettings()
+                        }
+                        .controlSize(.small)
+                    }
+                }
+
+                QuickstartRow(
+                    symbol: "dollarsign.circle",
+                    tint: .orange,
+                    title: "Token Inference",
+                    badge: "Tempo · Base",
+                    detail: "Open Funds to create a local wallet, then send a little USDC.e on Tempo (Boundless) or USDC on Base (Venice, or a Venice API key). Toggle Tor off below Chat for faster direct replies."
+                ) {
+                    Button("Funds…") {
+                        chat.selectMode(.token)
+                        dismiss()
+                        DispatchQueue.main.async {
+                            chat.showingWallet = true
+                        }
+                    }
+                    .controlSize(.small)
+                }
+
+                QuickstartRow(
+                    symbol: "theatermasks",
+                    tint: .purple,
+                    title: "zkAPI Anon Inference",
+                    badge: "Ethereum L1",
+                    detail: "Open Funds → zkAPI, send a small amount of mainnet ETH (+ L1 gas) to your local address, and deposit for unlinkable one-time keys."
+                ) {
+                    Button("Funds…") {
+                        chat.selectMode(.v)
+                        dismiss()
+                        DispatchQueue.main.async {
+                            chat.showingWallet = true
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            }
+
+            HStack(spacing: 6) {
+                Text("Start with a small balance ($5–$20) while Cloak is in beta.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Link(destination: Self.walletGuideURL) {
+                    HStack(spacing: 3) {
+                        Text("Wallet guide")
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption2)
+                    }
+                    .font(.caption)
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
 }
 
-private struct ComparisonRow: View {
+private struct QuickstartRow<Accessory: View>: View {
     let symbol: String
     let tint: Color
     let title: String
-    let summary: String
+    let badge: String
+    let detail: String
+    @ViewBuilder let accessory: () -> Accessory
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: symbol)
                 .font(.title3)
                 .foregroundStyle(tint)
-                .frame(width: 26)
-                .padding(.top, 2)
+                .frame(width: 24)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.headline)
-                Text(summary)
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.headline)
+                    Text(badge)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(tint)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(tint.opacity(0.14), in: Capsule())
+                }
+                Text(detail)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+            accessory()
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .background(Color(nsColor: .controlBackgroundColor), in: ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true))
         .overlay(ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
     }

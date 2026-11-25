@@ -126,6 +126,7 @@ public final class Supervisor {
     /// local worker wait for it.
     @ObservationIgnored private var localEnding: Task<Void, Never>?
     @ObservationIgnored private lazy var coverTraffic = CoverTraffic(log: coverLog)
+    @ObservationIgnored private lazy var directSender = DirectSender(manifest: manifest, layout: layout)
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "supervisor")
 
     /// Everything started for one run, each part as soon as it is up, so
@@ -313,10 +314,24 @@ public final class Supervisor {
     }
 
     /// Rewords one message's texts through the worker in one call, exactly
-    /// as the guest's daemon would (`Rewrite`), while Running. The log has
-    /// how it ended and how long it took, never the text.
+    /// as the guest's daemon would (`Rewrite`). While Running, uses the run's
+    /// worker; while paused/ready (e.g. direct Token Inference with Tor off),
+    /// wakes the local rewriter worker directly on macOS without booting the
+    /// Linux VM or Tor. The log has how it ended and how long it took, never
+    /// the text.
     public func rewrite(_ texts: [String]) async throws(RewriteStop) -> [String] {
-        guard case .running = phase, let relay = stack.relay else { throw .stopped }
+        let relay: Relay
+        if case .running = phase, let runningRelay = stack.relay {
+            relay = runningRelay
+        } else {
+            _ = await settled()
+            guard !Task.isCancelled else { throw .cancelled }
+            if case .running = phase, let runningRelay = stack.relay {
+                relay = runningRelay
+            } else {
+                relay = openLocal(manifest.rewordingModel, lora: nil).0
+            }
+        }
         let started = ContinuousClock.now
         do {
             let reworded = try await Rewrite.run(
@@ -536,6 +551,17 @@ public final class Supervisor {
         return try await Sender.exchange(socket, request: request, keep: keep)
     }
 
+    /// One exchange with the pinned host `cloak-sender` helper over direct
+    /// HTTPS (no Tor, no Linux VM) when Token Inference's Tor toggle is off.
+    public func exchangeDirect(
+        request: @escaping @Sendable () throws -> Data, keep: @escaping @Sendable (Data) throws -> Void
+    ) async throws -> Data {
+        let started = ContinuousClock.now
+        defer { logger.info("direct sender exchange ended after \(started.duration(to: .now), privacy: .public)") }
+        let socket = try await directSender.connect()
+        return try await Sender.exchange(socket, request: request, keep: keep)
+    }
+
     /// One Venice request through the guest's sender while Running
     /// (`Sender.stream`): Venice's answer as it comes. Ending the stream
     /// first closes its connection. One under way when Cloak pauses, stops
@@ -543,6 +569,12 @@ public final class Supervisor {
     public func venice(_ request: Data) async throws -> AsyncThrowingStream<Sender.Piece, any Error> {
         guard case .running = phase, let guest = stack.guest else { throw Sender.Failure(description: "Cloak is not running") }
         return Sender.stream(try await guest.connect(to: Sender.port), request: request)
+    }
+
+    /// One Venice request through the pinned host `cloak-sender` helper over
+    /// direct HTTPS (no Tor, no Linux VM) when Token Inference's Tor toggle is off.
+    public func veniceDirect(_ request: Data) async throws -> AsyncThrowingStream<Sender.Piece, any Error> {
+        Sender.stream(try await directSender.connect(), request: request)
     }
 
     /// One exchange with the guest's payer while Running (`Pay.exchange`):
@@ -881,6 +913,7 @@ public final class Supervisor {
             await stack.relay?.finish()
             await stack.tor?.stop()
             if case .stopping(.quit) = phase {
+                await directSender.stop()
                 quitting?()
             } else {
                 send(.stopped)

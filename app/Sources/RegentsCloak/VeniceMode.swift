@@ -112,7 +112,7 @@ final class VeniceMode {
     }
 
     var running: Bool {
-        supervisor.phase == .running
+        !settings.tokenTor || supervisor.phase == .running
     }
 
     var working: Int {
@@ -120,11 +120,25 @@ final class VeniceMode {
     }
 
     private var exchange: Exchange {
-        { [supervisor] request, keep in try await supervisor.exchange(request: request, keep: keep) }
+        let useTor = settings.tokenTor
+        return { [supervisor] request, keep in
+            if useTor {
+                try await supervisor.exchange(request: request, keep: keep)
+            } else {
+                try await supervisor.exchangeDirect(request: request, keep: keep)
+            }
+        }
     }
 
     private func transport(_ identity: String) -> VeniceTransport {
-        Remote.veniceTransport(identity: identity) { [supervisor] in try await supervisor.venice($0) }
+        let useTor = settings.tokenTor
+        return Remote.veniceTransport(identity: identity) { [supervisor] in
+            if useTor {
+                try await supervisor.venice($0)
+            } else {
+                try await supervisor.veniceDirect($0)
+            }
+        }
     }
 
     private func signer(_ address: String) -> VeniceSigner {

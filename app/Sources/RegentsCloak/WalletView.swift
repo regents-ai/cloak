@@ -81,6 +81,7 @@ struct WalletView: View {
 
     var body: some View {
         let running = wallet.supervisor.phase == .running
+        let tokenReady = !settings.tokenTor || running
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 HStack(spacing: 6) {
@@ -110,7 +111,7 @@ struct WalletView: View {
                             BetaWalletNotice(includeZkAPILimit: tab == .paranoid)
                         }
                     }
-                    if tab == .paranoid || tab == .payPerPrompt, !running {
+                    if (tab == .paranoid && !running) || (tab == .payPerPrompt && !tokenReady) {
                         Section {
                             StartRow(supervisor: wallet.supervisor, download: download) {
                                 dismiss()
@@ -132,12 +133,24 @@ struct WalletView: View {
                                 .labelsHidden()
                                 .fixedSize()
                             }
+                            Toggle(isOn: $settings.tokenTor) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Route through Tor")
+                                    Text(
+                                        settings.tokenTor
+                                            ? "Hides your IP from Boundless and Venice (slower, requires Cloak running)."
+                                            : "Direct HTTPS — faster, no Tor/VM needed (provider sees your IP)."
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                }
+                            }
                         }
                         switch settings.payProvider {
                         case .venice:
-                            VeniceFundsSections(venice: veniceMode, settings: settings, running: running)
+                            VeniceFundsSections(venice: veniceMode, settings: settings, running: tokenReady)
                         case .boundless:
-                            WalletSections(wallet: wallet, running: running)
+                            WalletSections(wallet: wallet, running: tokenReady)
                         }
                     case .privateCloud:
                         NearPayment(mode: nearMode, tokens: tokens) {
@@ -166,11 +179,12 @@ struct WalletView: View {
                 }
             }
             .refreshable {
-                guard running else { return }
                 switch tab {
                 case .paranoid:
+                    guard running else { return }
                     payer.follow()
                 case .payPerPrompt:
+                    guard tokenReady else { return }
                     if settings.payProvider == .venice {
                         await veniceMode.refresh()
                     } else {
@@ -199,9 +213,9 @@ struct WalletView: View {
                 switch tab {
                 case .paranoid where running:
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { payer.follow() }
-                case .payPerPrompt where running && settings.payProvider == .venice:
+                case .payPerPrompt where tokenReady && settings.payProvider == .venice:
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await veniceMode.refresh() } }
-                case .payPerPrompt where running && settings.payProvider == .boundless && wallet.presence.address != nil:
+                case .payPerPrompt where tokenReady && settings.payProvider == .boundless && wallet.presence.address != nil:
                     SymbolButton("Refresh", symbol: "arrow.clockwise") { Task { await wallet.refresh() } }
                 case .paranoid, .payPerPrompt, .privateCloud:
                     EmptyView()
@@ -220,8 +234,8 @@ struct WalletView: View {
             tab = FundsTab(kind: newKind)
         }
         .frame(maxHeight: 660)
-        // As it opens, when tabs or provider switch, and when Cloak starts or stops under it.
-        .task(id: "\(tab.rawValue)-\(settings.payProvider.rawValue)-\(running)") {
+        // As it opens, when tabs or provider switch, and when Cloak or Tor changes under it.
+        .task(id: "\(tab.rawValue)-\(settings.payProvider.rawValue)-\(running)-\(tokenReady)") {
             switch tab {
             case .paranoid: payer.follow()
             case .payPerPrompt:
@@ -419,6 +433,7 @@ struct VeniceFundsSections: View {
             Section {
                 StopRow(
                     stop: stop,
+                    viaTor: settings.tokenTor,
                     retry: running && venice.presence == .absent ? { Task { await venice.createWallet() } } : nil,
                     dismiss: { venice.dismissWalletStop() }
                 )
@@ -776,6 +791,7 @@ struct WalletSections: View {
             Section {
                 StopRow(
                     stop: stop,
+                    viaTor: wallet.settings.tokenTor,
                     retry: canRetryRead ? { Task { await wallet.refresh() } } : nil,
                     dismiss: { wallet.dismiss() }
                 )
@@ -1351,6 +1367,7 @@ private struct Models: View {
 /// (no funds, or a model that can't be used) comes with the way there.
 struct StopRow: View {
     let stop: RemoteStop
+    var viaTor: Bool = true
     var showWallet: (() -> Void)?
     var retry: (() -> Void)?
     let dismiss: () -> Void
@@ -1360,9 +1377,9 @@ struct StopRow: View {
             Image(systemName: "exclamationmark.circle.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text(stop.title)
+                Text(stop.title(viaTor: viaTor))
                     .fontWeight(.medium)
-                Text(stop.words)
+                Text(stop.words(viaTor: viaTor))
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -1382,29 +1399,41 @@ struct StopRow: View {
 }
 
 extension RemoteStop {
-    var title: String {
+    func title(viaTor: Bool) -> String {
         switch code {
         case .noFunds: "Insufficient funds"
         case .walletRefused: "Wallet declined"
         case .modelUnavailable: "Model unavailable"
-        case .torDown: "Tor connection failed"
-        case .torExitBlocked: "Tor exit blocked"
+        case .torDown: viaTor ? "Tor connection failed" : "Connection failed"
+        case .torExitBlocked: viaTor ? "Tor exit blocked" : "Blocked by provider"
         case .answerRefused: "No answer"
-        case .failed: "Failed over Tor"
-        case .unreachable: "Not running"
+        case .failed: viaTor ? "Failed over Tor" : "Request failed"
+        case .unreachable: viaTor ? "Not running" : "Direct helper unavailable"
         }
     }
 
-    var words: String {
+    func words(viaTor: Bool) -> String {
         switch code {
         case .noFunds: "Add USDC.e on Tempo to the wallet, then try again."
         case .walletRefused: "The provider declined this wallet."
         case .modelUnavailable: "This model can't be used now. Pick another in Funds."
-        case .torDown: "Tor couldn't reach the network (slow or dropped Tor circuit). Try again for a fresh Tor exit."
-        case .torExitBlocked: "The provider's firewall blocked this Tor exit node. Try again to switch to a fresh Tor circuit."
+        case .torDown:
+            viaTor
+                ? "Tor couldn't reach the network (slow or dropped Tor circuit). Try again for a fresh Tor exit."
+                : "Couldn't reach the network over direct HTTPS. Check your internet connection and try again."
+        case .torExitBlocked:
+            viaTor
+                ? "The provider's firewall blocked this Tor exit node. Try again to switch to a fresh Tor circuit."
+                : "The provider's firewall rejected the request. Try again in a moment."
         case .answerRefused: "The model declined to answer."
-        case .failed: "No complete response came back over Tor. Try again for a fresh Tor circuit."
-        case .unreachable: "Start Cloak, then try again."
+        case .failed:
+            viaTor
+                ? "No complete response came back over Tor. Try again for a fresh Tor circuit."
+                : "No complete response came back. Try again."
+        case .unreachable:
+            viaTor
+                ? "Start Cloak, then try again."
+                : "Couldn't reach Cloak's direct sender helper. Try again or enable Tor."
         }
     }
 }

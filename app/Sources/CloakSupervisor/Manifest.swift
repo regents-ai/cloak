@@ -23,10 +23,12 @@ public struct Manifest: Codable, Sendable, Equatable {
         case vmlxMetallib = "vmlx_metallib"
         /// NEAR mode's helper, cloak-near.
         case near
+        /// Direct (no-Tor) host helper for Token Inference, cloak-sender.
+        case sender
 
         /// Parts required in every release bundle regardless of whether the
         /// optional vMLX worker is bundled.
-        static let core: [Part] = [.kernel, .initrd, .tor, .libevent, .worker, .near]
+        static let core: [Part] = [.kernel, .initrd, .tor, .libevent, .worker, .near, .sender]
     }
 
     /// A part's path in the bundle's Resources folder, and its sha256.
@@ -265,6 +267,9 @@ public struct Layout: Sendable {
     /// Where each guest's boot files are while it starts: in the owner-only
     /// control folder.
     var bootFiles: URL { support.appending(path: "control/boot") }
+
+    /// Owner-only Unix socket for the optional direct (no-Tor) host `cloak-sender`.
+    var directSenderSocket: URL { support.appending(path: "control/sender.sock") }
 
     /// The Chat window's sealed conversations, one file each.
     public var conversations: URL { support.appending(path: "conversations") }

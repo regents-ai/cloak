@@ -523,11 +523,13 @@ private struct MenuPanelView: View {
 
     /// Compact icon toggle strip directly below the draft input — only shows
     /// switches that are genuinely toggleable for the active mode:
-    /// - NEAR: Tor (Direct vs. Tor), plus Cover Traffic when Tor is on.
-    /// - Token Inference & Anon V: Cover Traffic only (Tor is always required).
+    /// - NEAR & Token Inference: Tor (Direct vs. Tor), plus Cover Traffic when Tor is on.
+    /// - Anon V: Cover Traffic only (Tor is always required).
     /// - Local: hidden (100% offline).
     private var privacyToggleStrip: some View {
-        HStack(spacing: 6) {
+        let tokenTorActive = state.selectedMode == .token && settings.tokenTor
+        let nearTorActive = state.selectedMode == .near && settings.nearTor
+        return HStack(spacing: 6) {
             if state.selectedMode == .near {
                 CompactPrivacyToggleButton(
                     symbol: torSymbol,
@@ -547,8 +549,27 @@ private struct MenuPanelView: View {
                         supervisor.send(.start)
                     }
                 }
+            } else if state.selectedMode == .token {
+                CompactPrivacyToggleButton(
+                    symbol: torSymbol,
+                    label: "Tor",
+                    isOn: settings.tokenTor,
+                    isActive: settings.tokenTor && supervisor.phase == .running,
+                    isBusy: settings.tokenTor && supervisor.phase.state == .preparing,
+                    tip: settings.tokenTor
+                        ? (supervisor.phase == .running
+                            ? "Tor is ON for Token Inference — hides your IP (slower). Click to switch to direct (faster)."
+                            : "Tor is ON for Token Inference (requires Cloak running) — click to switch to direct (faster).")
+                        : "Tor is OFF for Token Inference (direct HTTPS, faster) — click to route through Tor."
+                ) {
+                    let next = !settings.tokenTor
+                    settings.tokenTor = next
+                    if next, supervisor.phase != .running, supervisor.phase.state != .preparing, download.state == .installed {
+                        supervisor.send(.start)
+                    }
+                }
             }
-            if state.selectedMode == .token || state.selectedMode == .v || (state.selectedMode == .near && settings.nearTor) {
+            if state.selectedMode == .v || tokenTorActive || nearTorActive {
                 CompactPrivacyToggleButton(
                     symbol: "waveform.path",
                     label: "Cover Traffic",

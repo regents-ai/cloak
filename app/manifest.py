@@ -37,6 +37,7 @@ PARTS = [
     ("libevent", "tor/libevent-2.1.7.dylib"),
     ("worker", "worker/cloak-rewriter-llama"),
     ("near", "near/cloak-near"),
+    ("sender", "sender/cloak-sender"),
 ]
 
 OPTIONAL_VMLX_PARTS = [

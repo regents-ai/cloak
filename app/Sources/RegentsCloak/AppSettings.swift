@@ -32,6 +32,7 @@ final class AppSettings {
         case review
         case savedChats
         case nearTor
+        case tokenTor
         case nearShareTraces
         case proofFreshness
         case answerModel
@@ -58,6 +59,7 @@ final class AppSettings {
     /// answers with the model that rewords.
     nonisolated static let defaultFreeMemory = FreeMemory.fifteenMinutes
     nonisolated static let defaultProofFreshness = ProofFreshness.tenMinutes
+    nonisolated static let defaultTokenTor = true
     nonisolated static let defaultDoorPort: UInt16 = Places.isDev ? 8743 : 8742
     /// The ports the door may take: none the system keeps for itself.
     nonisolated static let doorPorts: ClosedRange<Int> = 1024...65535
@@ -175,6 +177,20 @@ final class AppSettings {
         }
         set {
             withMutation(keyPath: \.nearTor) { defaults.set(newValue, forKey: Key.nearTor.rawValue) }
+        }
+    }
+
+    /// Whether Token Inference (Boundless / Venice) routes through Tor inside
+    /// Cloak's Linux VM. On by default; when off, uses the pinned host
+    /// `cloak-sender` over direct HTTPS (much faster, no VM/Tor needed, exposes
+    /// this Mac's IP address to Boundless/Venice).
+    var tokenTor: Bool {
+        get {
+            access(keyPath: \.tokenTor)
+            return defaults.object(forKey: Key.tokenTor.rawValue) as? Bool ?? Self.defaultTokenTor
+        }
+        set {
+            withMutation(keyPath: \.tokenTor) { defaults.set(newValue, forKey: Key.tokenTor.rawValue) }
         }
     }
 
@@ -556,6 +572,7 @@ final class AppSettings {
             case .review: withMutation(keyPath: \.review, remove)
             case .savedChats: withMutation(keyPath: \.savedChats, remove)
             case .nearTor: withMutation(keyPath: \.nearTor, remove)
+            case .tokenTor: withMutation(keyPath: \.tokenTor, remove)
             case .nearShareTraces: withMutation(keyPath: \.nearShareTraces, remove)
             case .proofFreshness: withMutation(keyPath: \.proofFreshness, remove)
             case .answerModel: withMutation(keyPath: \.answerModel, remove)

@@ -124,15 +124,15 @@ const BASE_RPC_FALLBACKS: [&str; 4] = [
 ];
 
 /// Where the sender's requests go: the provider's MPP root, the Tempo
-/// network's RPC, Venice's API origin, Base's RPC and the guest's Tor port.
-/// Only tests name others.
+/// network's RPC, Venice's API origin, Base's RPC and an optional Tor SOCKS5
+/// port (`Some` in the Linux guest, `None` for direct host mode on macOS).
 #[derive(Clone)]
 pub struct Network {
     pub provider: String,
     pub rpc: String,
     pub venice: String,
     pub base: String,
-    pub tor: SocketAddr,
+    pub tor: Option<SocketAddr>,
 }
 
 impl Network {
@@ -142,7 +142,19 @@ impl Network {
             rpc: TEMPO_RPC_URL.into(),
             venice: "https://api.venice.ai".into(),
             base: BASE_RPC_URL.into(),
-            tor: SocketAddr::from(([127, 0, 0, 1], 9050)),
+            tor: Some(SocketAddr::from(([127, 0, 0, 1], 9050))),
+        }
+    }
+
+    /// Direct HTTPS (no Tor SOCKS5 proxy) for optional fast host-side Token
+    /// Inference on macOS.
+    pub fn direct() -> Self {
+        Self {
+            provider: "https://api.inference.boundless.network/mpp".into(),
+            rpc: TEMPO_RPC_URL.into(),
+            venice: "https://api.venice.ai".into(),
+            base: BASE_RPC_URL.into(),
+            tor: None,
         }
     }
 
@@ -150,42 +162,40 @@ impl Network {
         format!("{}/v1/chat/completions", self.provider)
     }
 
-    /// A client whose every connection goes through Tor as `identity`,
-    /// with names resolved by Tor, no proxy from the environment, no
-    /// redirect followed and no header of its own beyond what HTTP needs.
-    fn client(&self, identity: &str) -> Result<reqwest::Client, Stop> {
-        let proxy = reqwest::Proxy::all(format!("socks5h://{identity}:cloak@{}", self.tor))?;
-        Ok(reqwest::Client::builder()
+    fn build_client(
+        &self,
+        identity: &str,
+        connect: Duration,
+        timeout: Duration,
+    ) -> Result<reqwest::Client, Stop> {
+        let mut builder = reqwest::Client::builder()
             .no_proxy()
-            .proxy(proxy)
             .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_LIMIT)
-            .timeout(REQUEST_LIMIT)
-            .build()?)
+            .connect_timeout(connect)
+            .timeout(timeout);
+        if let Some(tor) = self.tor {
+            let proxy = reqwest::Proxy::all(format!("socks5h://{identity}:cloak@{tor}"))?;
+            builder = builder.proxy(proxy);
+        }
+        Ok(builder.build()?)
     }
 
-    /// Shorter-timeout Tor client for JSON-RPC reads so fallback RPCs can all
-    /// be tried quickly if one Tor exit stalls.
+    /// A client whose connections go through Tor as `identity` when `self.tor`
+    /// is set (with names resolved by Tor), or directly when `self.tor` is
+    /// `None`; no proxy from the environment, no redirect followed and no
+    /// extra headers beyond what HTTP needs.
+    fn client(&self, identity: &str) -> Result<reqwest::Client, Stop> {
+        self.build_client(identity, CONNECT_LIMIT, REQUEST_LIMIT)
+    }
+
+    /// Shorter-timeout client for JSON-RPC reads so fallback RPCs can all
+    /// be tried quickly if one endpoint or Tor exit stalls.
     fn rpc_client(&self, identity: &str) -> Result<reqwest::Client, Stop> {
-        let proxy = reqwest::Proxy::all(format!("socks5h://{identity}:cloak@{}", self.tor))?;
-        Ok(reqwest::Client::builder()
-            .no_proxy()
-            .proxy(proxy)
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_LIMIT)
-            .timeout(RPC_LIMIT)
-            .build()?)
+        self.build_client(identity, CONNECT_LIMIT, RPC_LIMIT)
     }
 
     fn probe_client(&self, identity: &str) -> Result<reqwest::Client, Stop> {
-        let proxy = reqwest::Proxy::all(format!("socks5h://{identity}:cloak@{}", self.tor))?;
-        Ok(reqwest::Client::builder()
-            .no_proxy()
-            .proxy(proxy)
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(PROVIDER_PROBE_LIMIT)
-            .timeout(PROVIDER_PROBE_LIMIT)
-            .build()?)
+        self.build_client(identity, PROVIDER_PROBE_LIMIT, PROVIDER_PROBE_LIMIT)
     }
 
     fn rpc(&self, client: &reqwest::Client) -> Result<RootProvider<TempoNetwork>, Stop> {

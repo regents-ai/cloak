@@ -298,7 +298,7 @@ final class Chat {
     var showingWallet = false
     /// The 3-step hardware-aware Welcome Tour sheet is shown.
     var showingTour = false
-    /// Step to open the Welcome Tour on (`0` by default; `2` when opened from Local Agent Box).
+    /// Step to open the Welcome Tour on (`0` by default; `1` when opened from Local Agent Box).
     var tourStep = 0
 
     func openTour(step: Int = 0) {
@@ -343,7 +343,8 @@ final class Chat {
         self.supervisor = supervisor
         self.settings = settings
         self.folder = folder
-        self.wallet = Wallet(supervisor: supervisor, folder: wallet)
+        let walletModel = Wallet(supervisor: supervisor, settings: settings, folder: wallet)
+        self.wallet = walletModel
         let veniceMode = VeniceMode(supervisor: supervisor, settings: settings)
         self.veniceMode = veniceMode
         let payer = Payer(
@@ -369,6 +370,14 @@ final class Chat {
                 // V's deposit is read as Cloak starts, and forgotten as it
                 // stops.
                 payer.follow()
+            }
+        }
+        Task {
+            for await useTor in Observations({ settings.tokenTor }) {
+                if !useTor {
+                    Task { await walletModel.refresh() }
+                    Task { await veniceMode.refresh() }
+                }
             }
         }
     }
@@ -424,10 +433,18 @@ final class Chat {
         supervisor.phase == .running || canAutoStart
     }
 
-    /// Rewording needs the store open, Cloak running (or ready to auto-start)
-    /// and no rewording under way in any chat: one model on this Mac.
+    /// Whether the local prompt rewriter model is downloaded and fits on this Mac
+    /// so Direct Token Inference can reword prompts locally without booting the VM.
+    var canRewordLocally: Bool {
+        rewordingDownload.state == .installed && rewordingDownload.fits
+    }
+
+    /// Rewording needs the store open, Cloak running (or ready to auto-start, or
+    /// standalone local rewriter ready in Direct Token Inference) and no rewording
+    /// under way in any chat: one model on this Mac.
     var canReword: Bool {
-        isOpen && rewording == nil && autoStarting == nil && runningOrCanAutoStart
+        let directTokenReword = selected.map(kind(of:)) == .token && !settings.tokenTor && canRewordLocally
+        return isOpen && rewording == nil && autoStarting == nil && (runningOrCanAutoStart || directTokenReword)
     }
 
     /// With Never reword ticked, a message is added without Cloak running;
@@ -448,6 +465,9 @@ final class Chat {
         if isAgent(selected) { return isOpen && runBlock(in: mode) == nil && agent.runs[selected.id] == nil }
         if mode == .near {
             return isOpen && (nearMode.sendBlock == nil || (nearMode.hasKey == true && nearMode.route == nil && canAutoStart))
+        }
+        if mode == .token && !settings.tokenTor {
+            return isOpen && rewording == nil
         }
         return settings.neverReword ? isOpen : canReword
     }
@@ -832,7 +852,7 @@ final class Chat {
     /// Why Run is off now, or nil when it is on: off only where running is
     /// certain to stop, as for Send.
     func runBlock(in mode: Kind) -> String? {
-        switch block(in: mode) {
+        switch block(in: mode, forAgent: true) {
         case .notRunning?: "Start Cloak to run."
         case .noWallet?: "Create a wallet to run."
         case .noFunds?: "Add funds to run."
@@ -848,14 +868,14 @@ final class Chat {
         if mode == .token, !agentActive, usesVenice(for: selected) {
             return veniceMode.walletBlocks(for: selected)
         }
-        return switch block(in: mode) {
+        return switch block(in: mode, forAgent: agentActive) {
         case .noWallet?, .noFunds?, .closed?: true
         case .notRunning?, nil: false
         }
     }
 
-    private func block(in mode: Kind) -> Block? {
-        let running = runningOrCanAutoStart
+    private func block(in mode: Kind, forAgent: Bool = false) -> Block? {
+        let running = (mode == .token && !forAgent && !settings.tokenTor) || runningOrCanAutoStart
         return mode == .token
             ? Block(running: running, hasWallet: wallet.presence.address != nil, lacksFunds: wallet.lacksFunds)
             : Block(running: running, closed: payer.closed)
@@ -1174,13 +1194,20 @@ final class Chat {
             conversation.turns.append(turn)
             update(conversation)
             ask(turn.id, in: id)
-        } else if settings.neverReword {
+        } else if settings.neverReword || (mode == .token && !settings.tokenTor && !canRewordLocally) {
             let turn = Turn(original: original, reworded: nil)
             mark(&conversation, as: mode)
             conversation.turns.append(turn)
             opened = turn.id
             update(conversation)
             send(turn.id, in: id, approvedProvider: approvedProvider)
+        } else if mode == .token && !settings.tokenTor {
+            let sends = !settings.review
+            start(
+                id, original,
+                .new(
+                    draft: written, picks: picked, mode: mode, sends: sends,
+                    approvedProvider: sends ? approvedProvider : nil))
         } else {
             let sends = !settings.review
             startThen(in: id, onAbort: restoreDraft) { [weak self] in
@@ -1198,6 +1225,12 @@ final class Chat {
     /// on or off.
     func reword(_ turn: Turn, in conversation: UUID) {
         guard canReword, turn.answer == nil, sending[turn.id] == nil else { return }
+        if let conv = conversations.first(where: { $0.id == conversation }),
+            kind(of: conv) == .token, !settings.tokenTor, canRewordLocally
+        {
+            start(conversation, turn.original, .again(turn.id))
+            return
+        }
         startThen(in: conversation) { [weak self] in
             self?.start(conversation, turn.original, .again(turn.id))
         }
@@ -1348,11 +1381,14 @@ final class Chat {
                 action: .send(turn: turn))
             return
         }
-        if supervisor.phase != .running, canAutoStart {
-            startThen(in: id) { [weak self] in self?.send(turn, in: id, approvedProvider: approvedProvider) }
-            return
+        let needsRunning = mode == .v || settings.tokenTor
+        if needsRunning {
+            if supervisor.phase != .running, canAutoStart {
+                startThen(in: id) { [weak self] in self?.send(turn, in: id, approvedProvider: approvedProvider) }
+                return
+            }
+            guard supervisor.phase == .running else { return }
         }
-        guard supervisor.phase == .running else { return }
         if mode == .token {
             // Route according to the active Token Inference provider toggle
             // (after explicit user confirmation if switching mid-thread).

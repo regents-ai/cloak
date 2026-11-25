@@ -325,7 +325,7 @@ private struct ActiveGuaranteesView: View {
         let agent = conversation.map(chat.isAgent) ?? false
         let settings = chat.settings
         let running = chat.supervisor.phase == .running
-        let usesTorMode = mode == .token || mode == .v || (mode == .near && settings.nearTor)
+        let usesTorMode = (mode == .token && (agent || settings.tokenTor)) || mode == .v || (mode == .near && settings.nearTor)
 
         var items: [Item] = []
 
@@ -952,7 +952,7 @@ private struct TurnCard: View {
                 Group {
                     switch sendStop.reason {
                     case .tempo(let stop):
-                        StopRow(stop: stop, showWallet: { chat.showingWallet = true }, dismiss: dismiss)
+                        StopRow(stop: stop, viaTor: chat.settings.tokenTor, showWallet: { chat.showingWallet = true }, dismiss: dismiss)
                     case .venice(let stop):
                         VeniceStopRow(stop: stop, showFunds: { chat.showingWallet = true }, dismiss: dismiss)
                     case .zkapi(let stop):
@@ -974,7 +974,8 @@ private struct TurnCard: View {
             } else if open {
                 if !near {
                     Lights(
-                        reworded: turn.reworded.map { !Chat.isBlank($0) } ?? false, routed: chat.supervisor.phase == .running,
+                        reworded: turn.reworded.map { !Chat.isBlank($0) } ?? false,
+                        routed: mode == .token ? (chat.settings.tokenTor && chat.supervisor.phase == .running) : chat.supervisor.phase == .running,
                         linkable: mode == .token)
                 }
                 HStack(spacing: 12) {
@@ -1754,6 +1755,8 @@ private struct Compose: View {
                         supervisor: chat.supervisor, download: chat.rewordingDownload, to: "send through Tor",
                         autoStarts: false, showDetails: showDetails)
                 }
+            } else if mode == .token, !agent, !chat.settings.tokenTor {
+                // Direct Token Inference (Tor OFF) uses the pinned host helper — no VM/Tor startup needed.
             } else if chat.supervisor.phase != .running,
                 !(chat.canAutoStart && (chat.supervisor.phase == .paused || chat.supervisor.phase == .ready))
             {
@@ -1918,7 +1921,7 @@ private struct Compose: View {
                 $0.turns.isEmpty && chat.rewording?.conversation != $0.id && chat.autoStarting?.conversation != $0.id
             } ?? false
             let showTokenProvider = mode == .token && !agent
-            let showCoverToggle = mode == .token || mode == .v
+            let showCoverToggle = mode == .v || (mode == .token && (agent || chat.settings.tokenTor))
             let setupRequirement = ModeSetupRequirement.evaluate(
                 chat: chat, mode: mode, agent: agent, conversation: conversation)
             let showBottomRow = showModeControls || showTokenProvider || showCoverToggle || setupRequirement != nil || llama || near || neverReword
@@ -1936,7 +1939,7 @@ private struct Compose: View {
                                         chat.agentOn = newValue
                                         showAgentToast(enabled: newValue)
                                     }),
-                                showTour: { chat.openTour(step: 2) })
+                                showTour: { chat.openTour(step: 1) })
                         }
                     }
                     if llama {
@@ -1950,6 +1953,26 @@ private struct Compose: View {
                             provider: Binding(
                                 get: { chat.settings.payProvider },
                                 set: { chat.selectPayProvider($0) }))
+                        CompactPrivacyToggleButton(
+                            symbol: torSymbol,
+                            label: "Tor",
+                            isOn: chat.settings.tokenTor,
+                            isActive: chat.settings.tokenTor && chat.supervisor.phase == .running,
+                            isBusy: chat.settings.tokenTor && chat.supervisor.phase.state == .preparing,
+                            tip: chat.settings.tokenTor
+                                ? (chat.supervisor.phase == .running
+                                    ? "Tor is ON for Token Inference — hides your IP from Boundless/Venice (slower). Click to switch to direct (faster)."
+                                    : "Tor is ON for Token Inference (starts Cloak on Send). Click to switch to direct HTTPS (faster, no VM/Tor).")
+                                : "Tor is OFF for Token Inference — faster direct HTTPS (provider sees your IP). Click to route through Tor."
+                        ) {
+                            let next = !chat.settings.tokenTor
+                            chat.settings.tokenTor = next
+                            if next, chat.supervisor.phase != .running, chat.supervisor.phase.state != .preparing,
+                                chat.rewordingDownload.state == .installed
+                            {
+                                chat.supervisor.send(.start)
+                            }
+                        }
                     }
                     if showCoverToggle {
                         CompactPrivacyToggleButton(
@@ -2660,11 +2683,13 @@ private struct TitlebarModePill: View {
         case .token:
             [
                 modelLine,
-                "Pays per prompt with a local USDC wallet over Tor — no account or card.",
+                "Pays per prompt with a local USDC wallet — no account or card.",
                 chat.usesVenice(for: chat.selected)
                     ? "Venice (Base USDC): Private & TEE models via dedicated Keychain wallet."
                     : "Boundless (Tempo USDC.e): per-request payment channel.",
-                "Prompts are rewritten locally before leaving over Tor.",
+                chat.settings.tokenTor
+                    ? "Routing through Tor (hides your IP; slower). Toggle Tor off below for speed."
+                    : "Direct HTTPS (faster, no Tor/VM). Toggle Tor on below to hide your IP.",
             ]
         case .v:
             [

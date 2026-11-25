@@ -52,6 +52,7 @@ ls guest/build/Image guest/build/initrd.gz host/.build/tor/tor host/.build/tor/l
 
 # The cd matters: rustup reads rust-toolchain.toml from the working folder.
 (cd guest/near && lockf /tmp/cloak-build.lock nice -n 10 cargo build --locked --release -j 2 --bin cloak-near)
+(cd guest/sender && lockf /tmp/cloak-build.lock nice -n 10 cargo build --locked --release -j 2 --bin cloak-sender)
 # Unquoted: two words or none.
 # shellcheck disable=SC2086
 lockf /tmp/cloak-build.lock nice -n 10 swift build --package-path app -c release -j 2 $darkbloom
@@ -64,7 +65,7 @@ else
 fi
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/PlugIns" "$app/Contents/Resources/guest" \
-	"$app/Contents/Resources/tor" "$app/Contents/Resources/near" "$app/Contents/Resources/worker"
+	"$app/Contents/Resources/tor" "$app/Contents/Resources/near" "$app/Contents/Resources/sender" "$app/Contents/Resources/worker"
 cp "$bin/RegentsCloak" "$bin/cloak" "$app/Contents/MacOS/"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 # SwiftPM's run path is the binary's own folder; the framework is in Frameworks.
@@ -84,6 +85,7 @@ fi
 cp guest/build/Image guest/build/initrd.gz "$app/Contents/Resources/guest/"
 cp host/.build/tor/tor host/.build/tor/libevent-2.1.7.dylib "$app/Contents/Resources/tor/"
 cp guest/near/target/release/cloak-near "$app/Contents/Resources/near/"
+cp guest/sender/target/release/cloak-sender "$app/Contents/Resources/sender/"
 # Signed into its sandbox by llama-worker/install.sh. The app copies it to
 # its Application Support folder at each Start and runs it from there: the
 # sandbox cannot start a program kept under ~/Documents or ~/Downloads.
@@ -96,6 +98,7 @@ fi
 # Signed before the manifest pins them: signing rewrites the file. The
 # worker is already signed so, into its sandbox, by llama-worker/install.sh.
 sign "$app/Contents/Resources/near/cloak-near"
+sign "$app/Contents/Resources/sender/cloak-sender"
 sign "$app/Contents/Resources/tor/libevent-2.1.7.dylib"
 sign "$app/Contents/Resources/tor/tor"
 
