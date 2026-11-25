@@ -2324,62 +2324,68 @@ private struct ModeSetupPill: View {
 /// Compact logo toggle for switching between Venice AI (Base USDC) and
 /// Boundless + Tempo (USDC.e) directly below the Token Inference composer —
 /// works both on new chats (beside the Agent hammer) and mid-chat.
+/// Clicking anywhere on the capsule switches to the other provider.
 private struct TokenProviderToggle: View {
     @Binding var provider: PayProvider
     @Namespace private var pillNamespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var nextProvider: PayProvider {
+        provider == .venice ? .boundless : .venice
+    }
+
     var body: some View {
-        HStack(spacing: 2) {
-            option(.venice, label: "Venice AI (Base USDC)") {
-                BrandMark.venice
-                    .fill(style: FillStyle(eoFill: true))
-                    .frame(width: 12, height: 13.5)
+        Button {
+            provider = nextProvider
+        } label: {
+            HStack(spacing: 2) {
+                badge(.venice) {
+                    BrandMark.venice
+                        .fill(style: FillStyle(eoFill: true))
+                        .frame(width: 12, height: 13.5)
+                }
+                badge(.boundless) {
+                    BrandMark.boundless
+                        .fill(style: FillStyle(eoFill: true))
+                        .frame(width: 13.5, height: 13)
+                }
             }
-            option(.boundless, label: "Boundless + Tempo (USDC.e)") {
-                BrandMark.boundless
-                    .fill(style: FillStyle(eoFill: true))
-                    .frame(width: 13.5, height: 13)
-            }
+            .padding(3)
+            .frame(minHeight: 28)
+            .hover(Capsule())
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .contentShape(.capsule)
         }
-        .padding(3)
-        .frame(minHeight: 28)
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .buttonStyle(.plain)
+        .contentShape(.capsule)
         .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: provider)
-        .accessibilityElement(children: .contain)
+        .tip("\(provider.title) — click to switch to \(nextProvider.title)")
         .accessibilityLabel("Token Inference provider")
+        .accessibilityValue(provider.title)
+        .accessibilityHint("Switches to \(nextProvider.title)")
     }
 
     @ViewBuilder
-    private func option<Icon: View>(
-        _ value: PayProvider, label: String, @ViewBuilder icon: () -> Icon
+    private func badge<Icon: View>(
+        _ value: PayProvider, @ViewBuilder icon: () -> Icon
     ) -> some View {
         let selected = provider == value
-        Button {
-            provider = value
-        } label: {
-            icon()
-                .foregroundStyle(selected ? HierarchicalShapeStyle.primary : HierarchicalShapeStyle.tertiary)
-                .frame(width: 26, height: 22)
-                .background {
-                    if selected {
-                        Capsule()
-                            .fill(Color.primary.opacity(0.14))
-                            .matchedGeometryEffect(id: "token-provider-active", in: pillNamespace)
-                    }
+        icon()
+            .foregroundStyle(selected ? HierarchicalShapeStyle.primary : HierarchicalShapeStyle.tertiary)
+            .frame(width: 26, height: 22)
+            .background {
+                if selected {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.14))
+                        .matchedGeometryEffect(id: "token-provider-active", in: pillNamespace)
                 }
-                .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .tip(label)
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(selected ? .isSelected : [])
+            }
     }
 }
 
-/// Interactive Agent (hammer) toggle pill with an explanatory hover popover
-/// (including a clickable learn-more link) so users understand how the sealed
-/// local Linux agent box changes execution.
+/// Interactive Agent (hammer) toggle pill with a non-transient explanatory hover
+/// popover (including a clickable learn-more link) so clicking anywhere on the
+/// pill toggles Agent immediately even while the tooltip is open or opening.
 private struct AgentPill: View {
     @Binding var isOn: Bool
     let showTour: () -> Void
@@ -2393,7 +2399,6 @@ private struct AgentPill: View {
 
     var body: some View {
         Button {
-            showingInfo = false
             isOn.toggle()
         } label: {
             HStack(spacing: 5) {
@@ -2409,17 +2414,18 @@ private struct AgentPill: View {
             }
             .padding(.horizontal, 10)
             .frame(minHeight: 28)
+            .hover(Capsule())
+            .glassEffect(.regular.interactive(), in: .capsule)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
-        .hover(Capsule())
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .contentShape(.capsule)
         .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: isOn)
         .onHover { inside in
             hoveringPill = inside
             schedulePopover()
         }
-        .popover(isPresented: $showingInfo, arrowEdge: .top) {
+        .hoverPopover(isPresented: $showingInfo, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 0) {
                 BulletNote(
                     "Local Agent Box",
