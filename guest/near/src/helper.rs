@@ -299,7 +299,7 @@ mod checks {
             .unwrap()
             .as_secs();
         let mut kept = Kept::new(Duration::from_secs(3600)).unwrap();
-        kept.keep(MODEL, &passed(now - 5), 600);
+        kept.keep(true, MODEL, &passed(now - 5), 600);
 
         let check = json!({"request": "check", "model": MODEL, "route": route, "proof_age": 600});
         let answer: Value =

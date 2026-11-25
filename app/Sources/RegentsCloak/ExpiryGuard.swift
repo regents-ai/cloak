@@ -18,6 +18,11 @@ final class ExpiryGuard {
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "expiry")
     private var watchTask: Task<Void, Never>?
     private var autoWithdrawTask: Task<Void, Never>?
+    private var notificationTask: Task<Void, Never>?
+    /// True while `autoWithdrawTask` is actively executing `quoteWithdrawal()` /
+    /// `confirm()`, so the resulting `.ready -> .withdrawing("quoted")` state
+    /// transition never self-cancels our own in-flight `confirm()`.
+    private var isExecutingAutoWithdraw = false
     /// The expiry timestamp we already attempted an automatic withdrawal for,
     /// so we never loop if a quote/withdrawal fails.
     private var attemptedExpiry: Date?
@@ -27,6 +32,7 @@ final class ExpiryGuard {
         "sh.regents.cloak.expiry.5d",
         "sh.regents.cloak.expiry.2d",
     ]
+    private static let autoWithdrawFailureID = "sh.regents.cloak.expiry.autowithdraw.failed"
     /// Automatically withdraw 3 days before expiry when opted in.
     private static let autoWithdrawLead: TimeInterval = 3 * 24 * 60 * 60
 
@@ -49,6 +55,7 @@ final class ExpiryGuard {
     deinit {
         watchTask?.cancel()
         autoWithdrawTask?.cancel()
+        notificationTask?.cancel()
     }
 
     private struct Snapshot: Equatable {
@@ -65,6 +72,8 @@ final class ExpiryGuard {
     private func syncNotifications(expiry: Date?) {
         // UNUserNotificationCenter requires a bundled app identifier.
         guard Bundle.main.bundleIdentifier != nil else { return }
+        notificationTask?.cancel()
+        notificationTask = nil
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: Self.notificationIDs)
         guard let expiry, expiry > .now else { return }
@@ -87,11 +96,12 @@ final class ExpiryGuard {
             ),
         ]
 
-        Task { [logger] in
+        notificationTask = Task { [logger] in
             let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            guard granted else { return }
+            guard granted, !Task.isCancelled else { return }
             let now = Date.now
             for item in schedule {
+                guard !Task.isCancelled else { return }
                 let fireAt = expiry.addingTimeInterval(-TimeInterval(item.daysBefore) * 24 * 60 * 60)
                 guard fireAt > now else { continue }
                 let content = UNMutableNotificationContent()
@@ -111,6 +121,10 @@ final class ExpiryGuard {
     }
 
     private func scheduleAutoWithdraw(_ snapshot: Snapshot) {
+        // Never self-cancel while our own quoteWithdrawal -> confirm flow is
+        // executing (quoteWithdrawal triggers `follow()` which transitions
+        // `payer.state` from `.ready` to `.withdrawing("quoted")`).
+        if isExecutingAutoWithdraw { return }
         autoWithdrawTask?.cancel()
         autoWithdrawTask = nil
         guard snapshot.autoWithdraw, let expiry = snapshot.expiry, snapshot.state == .ready else { return }
@@ -128,16 +142,66 @@ final class ExpiryGuard {
                     guard (try? await Task.sleep(for: .seconds(step))) != nil else { return }
                 }
             }
+            // Wait briefly if a chat turn, wallet review, or another press is in flight
+            // rather than clobbering user UI or burning our single attempt.
+            while let self, !Task.isCancelled {
+                guard self.settings.autoWithdrawBeforeExpiry, self.settings.depositExpires == expiry else { return }
+                guard self.payer.state == .ready else { return }
+                let busy = self.payer.queue.sending
+                    || self.payer.queue.held
+                    || self.payer.review != nil
+                    || self.payer.working > 0
+                    || self.payer.activity != nil
+                    || self.payer.view == nil
+                if !busy { break }
+                guard (try? await Task.sleep(for: .seconds(15))) != nil else { return }
+            }
             guard let self, !Task.isCancelled else { return }
-            guard self.settings.autoWithdrawBeforeExpiry, self.payer.state == .ready, self.settings.depositExpires == expiry else {
+            guard self.settings.autoWithdrawBeforeExpiry,
+                self.payer.state == .ready,
+                self.settings.depositExpires == expiry,
+                self.payer.withdrawBlock == nil
+            else {
                 return
             }
             self.attemptedExpiry = expiry
+            self.isExecutingAutoWithdraw = true
+            defer { self.isExecutingAutoWithdraw = false }
             self.logger.notice("auto-withdrawing zkAPI deposit approaching expiry")
             await self.payer.quoteWithdrawal()
-            if case .withdrawal = self.payer.review {
-                await self.payer.confirm()
+            guard case .withdrawal(let quote) = self.payer.review else {
+                self.notifyAutoWithdrawNeedsAttention(
+                    body: "Cloak couldn't prepare your automatic zkAPI withdrawal. Open Funds to withdraw before expiry.")
+                return
             }
+            if let block = self.payer.confirmBlock(.withdrawal(quote)) {
+                self.payer.cancelReview()
+                self.logger.notice("auto-withdraw blocked: \(String(describing: block), privacy: .public)")
+                self.notifyAutoWithdrawNeedsAttention(
+                    body: "Add a small amount of ETH for Ethereum gas in Cloak Funds, then withdraw your expiring zkAPI deposit.")
+                return
+            }
+            await self.payer.confirm()
+            if self.payer.stop != nil || self.payer.withdrawal?.phase == "waiting_funds" {
+                self.notifyAutoWithdrawNeedsAttention(
+                    body: "Automatic zkAPI withdrawal needs your attention in Cloak Funds before the 30-day limit.")
+            }
+        }
+    }
+
+    private func notifyAutoWithdrawNeedsAttention(body: String) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let center = UNUserNotificationCenter.current()
+        Task { [logger] in
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Action needed: zkAPI auto-withdraw"
+            content.body = body
+            content.sound = .default
+            let request = UNNotificationRequest(identifier: Self.autoWithdrawFailureID, content: content, trigger: nil)
+            try? await center.add(request)
+            logger.notice("posted auto-withdraw attention alert")
         }
     }
 }

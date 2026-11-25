@@ -95,20 +95,26 @@ final class NearMode {
     /// NEAR's answer and the tokens it counted for it, when its reply says,
     /// or throws why it stopped, which Chat keeps with the turn.
     func send(_ turn: UUID, in conversation: Conversation, route: NearRoute) async throws(NearStop) -> (text: String, tokens: Tokens?) {
+        let generation = checkGeneration
         do throws(NearStop) {
             let answer = try await near.ask(
                 route: route, proofAge: settings.proofFreshness, key: { try NearKeychain.key() }, turn: turn, in: conversation)
-            proof = answer.proof
-            checkStop = nil
+            if self.route == route && checkGeneration == generation {
+                proof = answer.proof
+                checkStop = nil
+            }
             return (answer.text, answer.tokens)
         } catch {
-            // The helper keeps no check after these, so the next message
-            // checks again.
-            switch error.kind {
-            case .fetch, .refused, .pin, .reply, .helper, .ended:
-                proof = nil
-                checkStop = error
-            case .line, .request, .connect, .send, .status, .key: break
+            // The helper keeps no check after genuine attestation/pin/transport
+            // failures; a model content refusal (`.reply`) is NOT a TEE failure,
+            // and stale sends from a prior route must not clobber the active route.
+            if self.route == route && checkGeneration == generation {
+                switch error.kind {
+                case .fetch, .refused, .pin, .helper, .ended:
+                    proof = nil
+                    checkStop = error
+                case .reply, .line, .request, .connect, .send, .status, .key: break
+                }
             }
             throw error
         }

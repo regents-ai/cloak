@@ -162,17 +162,6 @@ struct WalletView: View {
                         }
                     }
                 }
-                .onChange(of: settings.payProvider) { _, provider in
-                    guard running else { return }
-                    Task {
-                        switch provider {
-                        case .venice:
-                            await veniceMode.refresh()
-                        case .boundless:
-                            await wallet.refresh()
-                        }
-                    }
-                }
             }
             .refreshable {
                 guard running else { return }
@@ -573,9 +562,13 @@ struct VeniceFundsSections: View {
                             .foregroundStyle(.green)
                     }
                     if let stop = venice.topUpStop {
-                        Label("\(stop.kind.title): \(stop.kind.words)", systemImage: "exclamationmark.triangle.fill")
+                        let message = stop.sent
+                            ? "Top-up was submitted over Tor and may have moved Base USDC. Refresh and verify your balances above before trying again."
+                            : "\(stop.kind.title): \(stop.kind.words)"
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
                             .symbolRenderingMode(.multicolor)
                             .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             } header: {
@@ -604,6 +597,20 @@ struct VeniceFundsSections: View {
                 }
                 if let usd = venice.keyAccount?.usd {
                     LabeledContent("USD Balance", value: usd.formatted(.currency(code: "USD")))
+                }
+                if let stop = venice.keyAccountStop {
+                    Label("\(stop.kind.title): \(stop.kind.words)", systemImage: "exclamationmark.triangle.fill")
+                        .symbolRenderingMode(.multicolor)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if venice.hasKey == nil {
+                HStack(spacing: 8) {
+                    Text("Couldn't check Venice API key in Keychain.")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Try Again") { Task { await venice.findKey() } }
+                        .controlSize(.small)
                 }
             } else {
                 HStack(spacing: 8) {
@@ -1208,12 +1215,12 @@ private struct Holding: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Close") { Task { await wallet.close() } }
-                    .disabled(unread || none)
+                Button(wallet.mutating ? "Closing…" : "Close") { Task { await wallet.close() } }
+                    .disabled(unread || none || wallet.mutating)
                     .tip("Refunds what's unspent.")
                     .accessibilityHint("Refunds what's unspent.")
-                Button("Withdraw") { Task { await wallet.withdraw() } }
-                    .disabled(unread || none || waiting)
+                Button(wallet.mutating ? "Submitting…" : "Withdraw") { Task { await wallet.withdraw() } }
+                    .disabled(unread || none || waiting || wallet.mutating)
                     .tip(withdraw)
                     .accessibilityHint(withdraw)
             }

@@ -731,4 +731,72 @@ struct StateMachineTests {
         let allFiles = Set(devdocs.files(upTo: 4).map(\.installedName))
         #expect(devdocs.highestCompleteLevel(installed: allFiles) == 4)
     }
+
+    @Test func localAttachmentEnforcesSymlinkAndDirectoryGuards() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "cloak-attach-guard-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Symlink to a directory must be rejected (cannot bypass isDirectory check).
+        let sub = dir.appending(path: "subdir")
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        let dirLink = dir.appending(path: "link-to-dir.txt")
+        try FileManager.default.createSymbolicLink(at: dirLink, withDestinationURL: sub)
+        #expect(throws: LocalAttachment.ReadError.self) {
+            _ = try LocalAttachment.from(url: dirLink)
+        }
+
+        // Symlink to an oversized (>25 MB) file must be rejected by the resolved file size.
+        let big = dir.appending(path: "huge.txt")
+        FileManager.default.createFile(atPath: big.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: big)
+        try handle.truncate(atOffset: UInt64(LocalAttachment.maxFileBytes + 1024))
+        try handle.close()
+        let bigLink = dir.appending(path: "tiny-symlink.txt")
+        try FileManager.default.createSymbolicLink(at: bigLink, withDestinationURL: big)
+        #expect(throws: LocalAttachment.ReadError.self) {
+            _ = try LocalAttachment.from(url: bigLink)
+        }
+
+        // Valid text file via symlink still reads cleanly.
+        let valid = dir.appending(path: "note.txt")
+        try "hello private world".write(to: valid, atomically: true, encoding: .utf8)
+        let validLink = dir.appending(path: "alias.txt")
+        try FileManager.default.createSymbolicLink(at: validLink, withDestinationURL: valid)
+        let loaded = try LocalAttachment.from(url: validLink)
+        #expect(loaded.text == "hello private world")
+    }
+
+    @Test func remoteSerializesConcurrentTempoOperations() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "cloak-tempo-serial-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = DepositStore(folder: dir, key: SymmetricKey(size: .bits256))
+        let inFlight = Mutex<Int>(0)
+        let maxConcurrent = Mutex<Int>(0)
+
+        let exchange: Exchange = { request, keep in
+            _ = try request()
+            let current = inFlight.withLock { count -> Int in
+                count += 1
+                return count
+            }
+            maxConcurrent.withLock { peak in
+                peak = max(peak, current)
+            }
+            try await Task.sleep(for: .milliseconds(40))
+            try keep(Data("{\"channel\":\"0xabc\"}".utf8))
+            inFlight.withLock { $0 -= 1 }
+            return Data("{\"ok\":{\"completion\":\"{\\\"choices\\\":[{\\\"message\\\":{\\\"content\\\":\\\"ok\\\"},\\\"finish_reason\\\":\\\"stop\\\"}]}\"}}".utf8)
+        }
+
+        let body = Data("{\"model\":\"m\",\"messages\":[]}".utf8)
+        let key: Remote.Key = { Data(repeating: 1, count: 32) }
+        async let r1 = Remote.complete(body, identity: "a", key: key, deposits: store, exchange: exchange)
+        async let r2 = Remote.complete(body, identity: "b", key: key, deposits: store, exchange: exchange)
+        _ = try await (r1, r2)
+
+        #expect(maxConcurrent.withLock { $0 } == 1)
+    }
 }

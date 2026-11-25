@@ -134,8 +134,9 @@ pub struct Kept {
     keys_at: u64,
     /// Intel Trust Authority's key list as it came.
     keys: Vec<u8>,
-    /// The last proof that passed for each model, by the model's name.
-    proofs: HashMap<String, Passed>,
+    /// The last proof that passed for each (route_kind, model) so toggling Tor
+    /// ON never reuses a Direct-IP attestation proof without verifying over Tor.
+    proofs: HashMap<(bool, String), Passed>,
 }
 
 /// A proof that passed, as [`check`] gives it and [`Kept`] keeps it.
@@ -162,21 +163,25 @@ impl Kept {
         })
     }
 
-    /// The proof kept for `model`, if it passed no longer than `proof_age`
+    fn route_uses_tor(routes: &Routes) -> bool {
+        !matches!(routes.near, Route::Direct)
+    }
+
+    /// The proof kept for `(via_tor, model)`, if it passed no longer than `proof_age`
     /// seconds before `now`; none when `proof_age` is zero. One that passed
     /// after `now`, as when the clock went back, is taken as too old.
-    fn proof_for(&self, model: &str, proof_age: u64, now: u64) -> Option<Passed> {
+    fn proof_for(&self, via_tor: bool, model: &str, proof_age: u64, now: u64) -> Option<Passed> {
         self.proofs
-            .get(model)
+            .get(&(via_tor, model.to_owned()))
             .filter(|passed| proof_age > 0 && passed.at <= now && now - passed.at <= proof_age)
             .cloned()
     }
 
-    /// Keeps `passed` as `model`'s proof, in place of the one before it;
+    /// Keeps `passed` as `(via_tor, model)`'s proof, in place of the one before it;
     /// nothing when the proof age is zero.
-    pub(crate) fn keep(&mut self, model: &str, passed: &Passed, proof_age: u64) {
+    pub(crate) fn keep(&mut self, via_tor: bool, model: &str, passed: &Passed, proof_age: u64) {
         if proof_age > 0 {
-            self.proofs.insert(model.to_owned(), passed.clone());
+            self.proofs.insert((via_tor, model.to_owned()), passed.clone());
         }
     }
 
@@ -250,6 +255,7 @@ pub fn ask(
     // costs no fetch.
     checked(body, model, api_key)?;
     let passed = check(routes, model, pins, kept, proof_age)?;
+    let via_tor = Kept::route_uses_tor(routes);
     // Only now, holding a proof that passed, is the request sent.
     let reply = send(
         &passed.proof,
@@ -263,7 +269,7 @@ pub fn ask(
         // Another TLS key, or a reply that did not open: the proof is not
         // used again.
         if matches!(stop, Stop::Pin | Stop::Reply(_)) {
-            kept.proofs.remove(model);
+            kept.proofs.remove(&(via_tor, model.to_owned()));
         }
     })?;
     Ok(Answered {
@@ -274,7 +280,7 @@ pub fn ask(
 }
 
 /// A proof that passed for `model`, and nothing sent to the chat endpoint:
-/// the one `kept` holds for `model` if it passed no longer than `proof_age`
+/// the one `kept` holds for `(route_kind, model)` if it passed no longer than `proof_age`
 /// before, or else a new one, fetched and checked in full in the order
 /// `prove` follows. A new check takes the place of the model's kept proof:
 /// by its own proof when it passes and `proof_age` is above zero, otherwise
@@ -291,12 +297,13 @@ pub fn check(
         return Err(Stop::Request("the proof age is over an hour".into()));
     }
     let proof_age = proof_age.as_secs();
-    if let Some(passed) = kept.proof_for(model, proof_age, seconds()?) {
+    let via_tor = Kept::route_uses_tor(routes);
+    if let Some(passed) = kept.proof_for(via_tor, model, proof_age, seconds()?) {
         return Ok(passed);
     }
-    kept.proofs.remove(model);
+    kept.proofs.remove(&(via_tor, model.to_owned()));
     let passed = prove(routes, model, pins, kept)?;
-    kept.keep(model, &passed, proof_age);
+    kept.keep(via_tor, model, &passed, proof_age);
     Ok(passed)
 }
 
@@ -740,28 +747,38 @@ mod proof_age {
     fn a_proof_older_than_the_proof_age_is_not_used() {
         let now = seconds().unwrap();
         let mut kept = Kept::new(DAY).unwrap();
-        kept.keep(MODEL, &passed(now - 590), 600);
+        kept.keep(true, MODEL, &passed(now - 590), 600);
         assert!(reuses(&mut kept, MODEL, TEN_MINUTES));
         // The same proof, for a call with a shorter proof age.
         assert!(!reuses(&mut kept, MODEL, Duration::from_secs(589)));
-        kept.keep(MODEL, &passed(now - 601), 600);
+        kept.keep(true, MODEL, &passed(now - 601), 600);
         assert!(!reuses(&mut kept, MODEL, TEN_MINUTES));
         // Passed after now, as when the clock went back: too old.
-        kept.keep(MODEL, &passed(now + 60), 600);
+        kept.keep(true, MODEL, &passed(now + 60), 600);
         assert!(!reuses(&mut kept, MODEL, TEN_MINUTES));
 
         // The last second it is used, and the first it is not.
-        kept.keep(MODEL, &passed(1_000_000), 600);
-        assert!(kept.proof_for(MODEL, 600, 1_000_600).is_some());
-        assert!(kept.proof_for(MODEL, 600, 1_000_601).is_none());
-        assert!(kept.proof_for(MODEL, 600, 999_999).is_none());
+        kept.keep(true, MODEL, &passed(1_000_000), 600);
+        assert!(kept.proof_for(true, MODEL, 600, 1_000_600).is_some());
+        assert!(kept.proof_for(true, MODEL, 600, 1_000_601).is_none());
+        assert!(kept.proof_for(true, MODEL, 600, 999_999).is_none());
+    }
+
+    #[test]
+    fn a_direct_proof_is_never_reused_for_tor() {
+        let now = seconds().unwrap();
+        let mut kept = Kept::new(DAY).unwrap();
+        kept.keep(false, MODEL, &passed(now), 600);
+        assert!(kept.proof_for(false, MODEL, 600, now).is_some());
+        assert!(kept.proof_for(true, MODEL, 600, now).is_none());
+        assert!(!reuses(&mut kept, MODEL, TEN_MINUTES));
     }
 
     #[test]
     fn a_new_check_that_fails_leaves_no_proof_kept() {
         let now = seconds().unwrap();
         let mut kept = Kept::new(DAY).unwrap();
-        kept.keep(MODEL, &passed(now - 590), 600);
+        kept.keep(true, MODEL, &passed(now - 590), 600);
         // Too old for this call: a new check is made, and fails.
         assert!(!reuses(&mut kept, MODEL, Duration::from_secs(60)));
         // The proof it did not pass is not used by a call with a longer age.
@@ -771,7 +788,7 @@ mod proof_age {
     #[test]
     fn a_proof_kept_for_one_model_is_never_used_for_another() {
         let mut kept = Kept::new(DAY).unwrap();
-        kept.keep(MODEL, &passed(seconds().unwrap()), 3600);
+        kept.keep(true, MODEL, &passed(seconds().unwrap()), 3600);
         assert!(!reuses(&mut kept, OTHER, HOUR));
         assert!(reuses(&mut kept, MODEL, HOUR));
     }
@@ -779,11 +796,11 @@ mod proof_age {
     #[test]
     fn a_proof_age_of_zero_uses_and_keeps_nothing() {
         let mut kept = Kept::new(DAY).unwrap();
-        kept.keep(MODEL, &passed(seconds().unwrap()), 0);
+        kept.keep(true, MODEL, &passed(seconds().unwrap()), 0);
         assert!(kept.proofs.is_empty());
         // A proof that passed this second is not used under a proof age of
         // zero, and the new check leaves nothing kept.
-        kept.keep(MODEL, &passed(seconds().unwrap()), 600);
+        kept.keep(true, MODEL, &passed(seconds().unwrap()), 600);
         assert!(!reuses(&mut kept, MODEL, Duration::ZERO));
         assert!(kept.proofs.is_empty());
     }
@@ -791,7 +808,7 @@ mod proof_age {
     #[test]
     fn a_proof_age_over_an_hour_is_refused_before_anything_is_fetched() {
         let mut kept = Kept::new(DAY).unwrap();
-        kept.keep(MODEL, &passed(seconds().unwrap()), 3600);
+        kept.keep(true, MODEL, &passed(seconds().unwrap()), 3600);
         let over = HOUR + Duration::from_secs(1);
         assert!(matches!(
             attempt(&mut kept, MODEL, over),

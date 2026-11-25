@@ -81,6 +81,8 @@ public final class Payer {
         case needs(Decimal)
         case needsFee
         case nothingToTransfer
+        case activeDeposit
+        case pendingTransaction
     }
 
     /// A press that stopped, as one value: what it had asked for, and why.
@@ -163,6 +165,9 @@ public final class Payer {
     /// while it was out: what it read may be older than what the approve
     /// set.
     @ObservationIgnored private var approved = 0
+    /// Monotonic counter incremented on cancel/new quote so an earlier
+    /// in-flight quote returning over Tor can never resurrect a cancelled review.
+    @ObservationIgnored private var quoteGeneration: UInt64 = 0
     /// Quotes currently being approved, preventing accidental double-approves
     /// of the exact same quote id.
     @ObservationIgnored private var approving: Set<String> = []
@@ -200,8 +205,12 @@ public final class Payer {
             state = .unread
             (funding, withdrawal, returning, view, readStop) = (nil, nil, nil, nil, nil)
             (models, prices) = (nil, nil)
-            // A quote can't be approved while Cloak is not running.
+            // A quote can't be approved while Cloak is not running, and stale
+            // errors from a prior session must not mask fresh reads on restart.
+            quoteGeneration &+= 1
             review = nil
+            stop = nil
+            stopTarget = nil
             return
         }
         let approved = approved
@@ -214,7 +223,10 @@ public final class Payer {
             guard self.approved == approved else { return }
             (self.view, self.funding, self.withdrawal, self.returning, readStop) = (view, funding, withdrawal, returning, nil)
             settle()
-            let expiry = view.wallet.note.map { Date(timeIntervalSince1970: TimeInterval($0.expiryTs)) }
+            pruneStaleReview()
+            let expiry: Date? = state == .taken
+                ? nil
+                : view.wallet.note.map { Date(timeIntervalSince1970: TimeInterval($0.expiryTs)) }
             if expiry != savedExpiry {
                 savedExpiry = expiry
                 keep(expiry)
@@ -222,12 +234,61 @@ public final class Payer {
         } catch {
             logger.error("anon-v refresh stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
             readStop = error
-            // The chain is not known now, so it blocks no button.
-            view = nil
+            // Keep the last valid view on transient read errors so safety
+            // blocks and withdrawal quotes don't break on a brief Tor hiccup.
             return
         }
         if case .failed = state { return }
-        await carryOn()
+        let transitioned = await carryOn(allowRevertReset: false)
+        if transitioned {
+            // Re-read full wallet/chain state right after a deposit activates,
+            // a withdrawal completes, or a transfer finalizes so `view`,
+            // `funding.ethBalance`, `savedExpiry`, and `state` stay in sync.
+            await refreshAfterTransition()
+        }
+    }
+
+    /// Lightweight full state sync after `carryOn()` reports a terminal phase
+    /// transition (e.g., deposit activated or withdrawal/transfer completed).
+    private func refreshAfterTransition() async {
+        guard running() else { return }
+        let approved = approved
+        do throws(PayStop) {
+            let view = try await queue.view(chain: true)
+            let funding: FundingStatus = try decode(await queue.call("GET", "/admin/funding/address"))
+            let withdrawal: WithdrawalStatus = try decode(await queue.call("GET", "/admin/withdrawal"))
+            let returning: ReturnStatus = try decode(await queue.call("GET", "/admin/return"))
+            guard self.approved == approved else { return }
+            (self.view, self.funding, self.withdrawal, self.returning, readStop) = (view, funding, withdrawal, returning, nil)
+            settle()
+            pruneStaleReview()
+            let expiry: Date? = state == .taken
+                ? nil
+                : view.wallet.note.map { Date(timeIntervalSince1970: TimeInterval($0.expiryTs)) }
+            if expiry != savedExpiry {
+                savedExpiry = expiry
+                keep(expiry)
+            }
+        } catch {
+            logger.error("zkapi post-transition refresh stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
+            readStop = error
+        }
+    }
+
+    /// Clears a review quote when live chain/daemon state proves it is already
+    /// superseded (e.g. a timed-out approve actually broadcast on-chain).
+    private func pruneStaleReview() {
+        guard let review else { return }
+        switch review {
+        case .deposit:
+            if case .depositing = state { self.review = nil }
+            else if state == .ready || state == .settling { self.review = nil }
+        case .withdrawal:
+            if case .withdrawing(let phase) = state, phase != "quoted" { self.review = nil }
+            else if state == .none || state == .taken { self.review = nil }
+        case .transfer:
+            if returning?.phase == "return_pending" { self.review = nil }
+        }
     }
 
     /// The state, from the last read.
@@ -269,34 +330,56 @@ public final class Payer {
     /// The follow calls the last read allows: a deposit sent or confirming,
     /// with its saved amount; a withdrawal sent or confirming, with its saved
     /// destination and note; a send of the leftover ETH under way. A follow
-    /// call never signs anew. Each answer lands only if no approve was
-    /// answered while it was out.
-    private func carryOn() async {
+    /// call never signs anew. Returns `true` when any in-flight operation
+    /// reached a terminal phase requiring a full `refresh()` of `view` and balances.
+    @discardableResult
+    private func carryOn(allowRevertReset: Bool) async -> Bool {
         let approved = approved
+        var transitioned = false
         do throws(PayStop) {
-            if let funding, ["deposit_pending", "confirming"].contains(funding.phase), let amount = funding.amount {
+            if let funding,
+                (["deposit_pending", "confirming"].contains(funding.phase) || (allowRevertReset && funding.phase == "reverted")),
+                let amount = funding.amount
+            {
                 let answer: FundingStatus = try decode(await queue.call("POST", "/admin/funding/deposit", body: json(["amount": amount])))
-                guard self.approved == approved else { return }
+                guard self.approved == approved else { return false }
+                let oldPhase = funding.phase
                 self.funding = answer
+                if answer.phase != oldPhase && !["deposit_pending", "confirming"].contains(answer.phase) {
+                    transitioned = true
+                }
             }
             if let withdrawal, ["withdrawal_pending", "confirming"].contains(withdrawal.phase),
                 let destination = withdrawal.destination, let note = withdrawal.noteId
             {
                 let answer: WithdrawalStatus = try decode(
                     await queue.call("POST", "/admin/withdrawal", body: json(["destination": destination, "note_id": note])))
-                guard self.approved == approved else { return }
+                guard self.approved == approved else { return false }
+                let oldPhase = withdrawal.phase
                 self.withdrawal = answer
+                if answer.phase != oldPhase && !["withdrawal_pending", "confirming"].contains(answer.phase) {
+                    transitioned = true
+                }
             }
             if returning?.phase == "return_pending" {
                 let answer: ReturnStatus = try decode(await queue.call("POST", "/admin/return"))
-                guard self.approved == approved else { return }
+                guard self.approved == approved else { return false }
                 returning = answer
+                if answer.phase != "return_pending" {
+                    transitioned = true
+                }
             }
-            settle()
+            // Only settle immediately when no terminal transition occurred;
+            // terminal transitions immediately re-read `view` + balances first
+            // so `settle()` never computes `.none`/`.ready` against stale `view`.
+            if !transitioned {
+                settle()
+            }
         } catch {
             logger.error("anon-v follow stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
             readStop = error
         }
+        return transitioned
     }
 
     /// Reads now, and again every 10 seconds while a deposit, a withdrawal,
@@ -321,11 +404,12 @@ public final class Payer {
             await refresh()
             if reads == .reading(again: true) {
                 reads = .reading(again: false)
-            } else if readStop == nil, moving || review.map({ !$0.quote.expired(at: .now) }) == true {
-                // A quote under review counts while it holds: what its
-                // button waits for, ETH arriving at the address, shows as
-                // the chain does.
-                let nap = Task { _ = try? await Task.sleep(for: .seconds(10)) }
+            } else if running(), moving || (readStop == nil && review.map({ !$0.quote.expired(at: .now) }) == true) {
+                // Keep polling while money is moving even across a transient
+                // Tor/RPC error (back off slightly to 15s on read error) so an
+                // in-flight deposit, withdrawal, or transfer is never abandoned.
+                let delay = readStop == nil ? 10 : 15
+                let nap = Task { _ = try? await Task.sleep(for: .seconds(delay)) }
                 reads = .waiting(nap: nap)
                 await nap.value
                 reads = .reading(again: false)
@@ -356,7 +440,10 @@ public final class Payer {
     public func retry() async {
         stop = nil
         stopTarget = nil
-        await carryOn()
+        let transitioned = await carryOn(allowRevertReset: true)
+        if transitioned {
+            await refreshAfterTransition()
+        }
         follow()
     }
 
@@ -374,7 +461,8 @@ public final class Payer {
     /// address (decision 23), and shows it for review. With no deposit read,
     /// nothing is asked, and the stop says so.
     public func quoteWithdrawal() async {
-        guard let address = funding?.address, let note = view?.wallet.note?.noteId else {
+        let note: UInt64? = view?.wallet.note.map { UInt64($0.noteId) } ?? withdrawal?.noteId
+        guard let address = funding?.address, let note else {
             stop = .unread
             stopTarget = .withdrawal
             return
@@ -398,6 +486,11 @@ public final class Payer {
     }
 
     private func quote(_ kind: Activity, target: StopTarget, _ make: () async throws(PayStop) -> Review) async {
+        // Never allow overlapping wallet quotes or approvals to clobber `activity`
+        // or the daemon's single active quote slot.
+        guard activity == nil else { return }
+        quoteGeneration &+= 1
+        let gen = quoteGeneration
         stop = nil
         stopTarget = nil
         working += 1
@@ -407,9 +500,13 @@ public final class Payer {
             if activity == kind { activity = nil }
         }
         do {
-            review = try await make()
+            let next = try await make()
+            // Ignore late response if user cancelled or paused while waiting over Tor.
+            guard quoteGeneration == gen, running() else { return }
+            review = next
             follow()
         } catch {
+            guard quoteGeneration == gen else { return }
             logger.error("zkapi quote stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
             stop = .quote(error)
             stopTarget = target
@@ -420,7 +517,7 @@ public final class Payer {
     /// is sent from: approves the quote shown, or, once it has expired,
     /// quotes it again and shows that, unapproved. Each press is sent.
     public func confirm() async {
-        guard let review else { return }
+        guard activity == nil, let review else { return }
         let quote = review.quote
         guard !quote.expired(at: .now) else {
             switch review {
@@ -464,6 +561,24 @@ public final class Payer {
             settle()
         } catch {
             logger.error("zkapi approve stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
+            // If the daemon rejected the quote as changed or expired before the
+            // local 30s clock elapsed, immediately expire the local review so
+            // the CTA switches straight to "New Quote" / "Update Fee".
+            let lower = error.detail.lowercased()
+            if (lower.contains("quote") && (lower.contains("expired") || lower.contains("changed"))),
+                self.review == review
+            {
+                let expired = PayQuote(
+                    inputMicroUsd: quote.inputMicroUsd, id: quote.id, kind: quote.kind, amount: quote.amount,
+                    destination: quote.destination, noteId: quote.noteId, principalWei: quote.principalWei,
+                    requiredFeeWei: quote.requiredFeeWei, requiredTotalWei: quote.requiredTotalWei,
+                    shortfallWei: quote.shortfallWei, expiresAt: 0)
+                switch review {
+                case .deposit(_, let microUSD): self.review = .deposit(expired, microUSD: microUSD)
+                case .withdrawal: self.review = .withdrawal(expired)
+                case .transfer(_, let to, let wei): self.review = .transfer(expired, to: to, wei: wei)
+                }
+            }
             stop = .approve(error)
             stopTarget = target
         }
@@ -472,6 +587,7 @@ public final class Payer {
 
     /// Closes the review; nothing is approved.
     public func cancelReview() {
+        quoteGeneration &+= 1
         review = nil
         if stopTarget != nil {
             stop = nil
@@ -504,8 +620,16 @@ public final class Payer {
         return nil
     }
 
-    /// Why Transfer is certain to fail now.
+    /// Why Transfer is certain to fail now. Matches `ensureAddressReturnAllowed`
+    /// in the guest payer so the UI disables Transfer instead of failing with 502.
     public var transferBlock: Block? {
+        if returning?.phase == "return_pending" { return .pendingTransaction }
+        if case .depositing = state { return .pendingTransaction }
+        if case .withdrawing = state { return .pendingTransaction }
+        if case .settling = state { return .pendingTransaction }
+        if view?.wallet.hasNote == true || view?.wallet.pendingRequest == true || state == .ready {
+            return .activeDeposit
+        }
         guard let balance = view?.chain.flatMap({ Decimal(string: $0.balanceWei, locale: Self.posix) }) else { return nil }
         return balance == 0 ? .nothingToTransfer : nil
     }

@@ -37,7 +37,10 @@ enum MoveToApplications {
         if alert.suppressionButton?.state == .on {
             UserDefaults.standard.set(true, forKey: suppressKey)
         }
-        guard response == .alertFirstButtonReturn else { return false }
+        guard response == .alertFirstButtonReturn else {
+            NSApp.setActivationPolicy(.accessory)
+            return false
+        }
 
         do {
             let destination = try installCopy(from: bundleURL)
@@ -50,6 +53,7 @@ enum MoveToApplications {
             failed.messageText = "Couldn't move Cloak automatically"
             failed.informativeText = "Drag Cloak.app into your Applications folder in Finder, then open it from there."
             failed.runModal()
+            NSApp.setActivationPolicy(.accessory)
             return false
         }
     }
@@ -111,8 +115,9 @@ enum MoveToApplications {
         let xattr = Process()
         xattr.executableURL = URL(filePath: "/usr/bin/xattr")
         xattr.arguments = ["-dr", "com.apple.quarantine", staging.path]
-        try? xattr.run()
-        xattr.waitUntilExit()
+        if (try? xattr.run()) != nil {
+            xattr.waitUntilExit()
+        }
 
         if fm.fileExists(atPath: destination.path) {
             _ = try fm.replaceItemAt(destination, withItemAt: staging)
@@ -127,8 +132,13 @@ enum MoveToApplications {
         // single-instance lock (`Instance.claim`) is free, then opens the new copy.
         let pid = ProcessInfo.processInfo.processIdentifier
         let destPath = destination.path
-        let mountedVolume: String? = previous.path.hasPrefix("/Volumes/")
-            ? previous.deletingLastPathComponent().path : nil
+        // Only detach the Cloak installer disk image — never attempt to unmount
+        // an arbitrary external drive under `/Volumes/…`.
+        let parentDir = previous.deletingLastPathComponent()
+        let mountedVolume: String? =
+            (previous.path.hasPrefix("/Volumes/")
+                && (parentDir.lastPathComponent == "Cloak" || parentDir.lastPathComponent.hasPrefix("Regents Cloak")))
+            ? parentDir.path : nil
 
         let script: String
         if let volume = mountedVolume {

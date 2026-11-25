@@ -293,6 +293,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             conversations.showingTour = true
             showChat()
+        } else if AppSettings.standard.depositExpires != nil {
+            // Ensure ExpiryGuard is active immediately even when Cloak runs
+            // purely in the menu bar without opening Chat or Settings.
+            _ = conversations
         }
     }
 

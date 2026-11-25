@@ -323,10 +323,12 @@ private struct WalletsPane: View {
             }
         }
         .task(id: running) {
+            await wallet.ensureLoaded()
             guard running else { return }
             refreshAll()
         }
         .onReturn {
+            Task { await wallet.ensureLoaded() }
             guard running else { return }
             refreshAll()
         }
@@ -335,7 +337,7 @@ private struct WalletsPane: View {
     private func refreshAll() {
         payer.follow()
         Task { await veniceMode.refresh() }
-        Task { await wallet.refresh() }
+        Task { await wallet.ensureLoaded() }
     }
 }
 

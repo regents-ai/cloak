@@ -1860,7 +1860,9 @@ private struct Compose: View {
             }
 
             // Mode selector & controls cleanly below the prompt input bubble.
-            let showModeControls = conversation.map { $0.turns.isEmpty && chat.rewording?.conversation != $0.id } ?? false
+            let showModeControls = conversation.map {
+                $0.turns.isEmpty && chat.rewording?.conversation != $0.id && chat.autoStarting?.conversation != $0.id
+            } ?? false
             let showTokenProvider = mode == .token && !agent
             let showCoverToggle = mode == .token || mode == .v
             let setupRequirement = ModeSetupRequirement.evaluate(

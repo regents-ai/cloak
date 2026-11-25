@@ -34,9 +34,11 @@ final class VeniceMode {
     private(set) var listStop: VeniceStop?
     /// Balance for API-key billing.
     private(set) var keyAccount: VeniceAccount?
+    /// Last API-key account-balance read stop.
+    private(set) var keyAccountStop: VeniceStop?
     /// Credit balance on Venice for wallet billing.
     private(set) var credit: VeniceAccount?
-    /// Last account-balance read stop.
+    /// Last wallet account-balance read stop.
     private(set) var accountStop: VeniceStop?
     /// On-chain USDC balance on Base for this Venice wallet.
     private(set) var funds: Amount?
@@ -54,6 +56,10 @@ final class VeniceMode {
     private(set) var walletStop: RemoteStop?
     /// Reads in flight for toolbar/sheet spinner.
     private(set) var reading = 0
+    /// Monotonic refresh generations so stale out-of-order Tor reads never
+    /// overwrite newer balances or model lists.
+    @ObservationIgnored private var modelsGeneration: UInt64 = 0
+    @ObservationIgnored private var balancesGeneration: UInt64 = 0
     /// Live streaming partial answers, by turn.
     private(set) var partial: [UUID: Partial] = [:]
     /// Last send stop per turn (in memory only).
@@ -107,10 +113,16 @@ final class VeniceMode {
     }
 
     /// Effective model choice for a new Venice chat: user's saved pick (if still
-    /// permitted by tier filter) or the first offered Private/TEE model.
+    /// permitted by tier filter and still offered at the same tier when live
+    /// models are loaded) or the first offered Private/TEE model.
     var effectiveChoice: VeniceChoice? {
         if let chosen = settings.veniceModel, chosen.tier.isVenicePrivate || settings.veniceAllTiers {
-            return chosen
+            if models == nil {
+                return chosen
+            }
+            if let live = offered.first(where: { $0.id == chosen.id && $0.tier == chosen.tier }) {
+                return VeniceChoice(id: live.id, name: live.name, tier: live.tier)
+            }
         }
         guard let first = offered.first(where: { !$0.offline }) ?? offered.first else { return nil }
         return VeniceChoice(id: first.id, name: first.name, tier: first.tier)
@@ -133,13 +145,21 @@ final class VeniceMode {
         let pays = conversation?.venice?.pays ?? settings.venicePays
         switch pays {
         case .wallet:
-            if presence.address == nil { return "Create a Venice wallet in Funds." }
+            switch presence {
+            case .held: break
+            case .looking: return "Reading Venice wallet…"
+            case .unreadable: return "Couldn't read Venice wallet in Funds."
+            case .absent, .creating: return "Create a Venice wallet in Funds."
+            }
         case .key:
             if hasKey == false { return "Add your Venice key in Funds." }
-            if hasKey == nil { return "Checking Venice key…" }
+            if hasKey == nil { return "Couldn't verify Venice key. Check Funds." }
         }
         if conversation?.venice == nil && effectiveChoice == nil {
-            return running ? "Loading Venice models…" : nil
+            if running {
+                return listStop != nil ? "Couldn't load Venice models. Refresh in Funds." : "Loading Venice models…"
+            }
+            return nil
         }
         return nil
     }
@@ -148,15 +168,19 @@ final class VeniceMode {
         let pays = conversation?.venice?.pays ?? settings.venicePays
         switch pays {
         case .wallet: return presence.address == nil
-        case .key: return hasKey == false
+        case .key: return hasKey != true
         }
     }
 
     // MARK: Dedicated Venice Wallet (Decision R5b)
 
     func findWallet() async {
+        presence = .looking
         do throws(Keychain.Failure) {
             presence = WalletPresence(.success(try await VeniceWalletKeychain.address()))
+            if running, presence.address != nil {
+                await refreshBalances()
+            }
         } catch {
             logger.error("cannot read Venice wallet from keychain: \(error.description, privacy: .public)")
             presence = .unreadable
@@ -183,7 +207,11 @@ final class VeniceMode {
 
     func findKey() async {
         do throws(Keychain.Failure) {
-            hasKey = try await ProviderKeychain.venice.has()
+            let found = try await ProviderKeychain.venice.has()
+            hasKey = found
+            if running, found {
+                await refreshBalances()
+            }
         } catch {
             logger.error("cannot check Venice API key: \(error.description, privacy: .public)")
             hasKey = nil
@@ -193,13 +221,17 @@ final class VeniceMode {
     func saveKey(_ key: String) async throws(Keychain.Failure) {
         try await ProviderKeychain.venice.store(key)
         hasKey = true
+        keyAccount = nil
+        keyAccountStop = nil
         await refresh()
     }
 
     func removeKey() async throws(Keychain.Failure) {
         try await ProviderKeychain.venice.remove()
+        balancesGeneration &+= 1
         hasKey = false
         keyAccount = nil
+        keyAccountStop = nil
     }
 
     // MARK: Refresh & x402 Top-Up
@@ -213,55 +245,85 @@ final class VeniceMode {
 
     func refreshModels() async {
         guard running else { return }
+        modelsGeneration &+= 1
+        let gen = modelsGeneration
         do throws(VeniceStop) {
             let list = try await read { () async throws(VeniceStop) in
                 try await Venice.models(transport: self.transport(self.listIdentity))
             }
+            guard modelsGeneration == gen, !Task.isCancelled else { return }
             models = list
             modelsFetchedAt = .now
             listStop = nil
-            // Auto-select a sensible Private/TEE model on first load so it "just works".
-            if settings.veniceModel == nil, let pick = offered.first(where: { !$0.offline }) ?? offered.first {
-                settings.veniceModel = VeniceChoice(id: pick.id, name: pick.name, tier: pick.tier)
+            // Auto-select a sensible Private/TEE model on first load, or update
+            // if a previously saved model was retired or changed privacy tier.
+            if let pick = offered.first(where: { !$0.offline }) ?? offered.first {
+                let savedStillValid = settings.veniceModel.map { saved in
+                    offered.contains { $0.id == saved.id && $0.tier == saved.tier }
+                } ?? false
+                if !savedStillValid {
+                    settings.veniceModel = VeniceChoice(id: pick.id, name: pick.name, tier: pick.tier)
+                }
             }
         } catch {
+            guard modelsGeneration == gen, !Task.isCancelled, error.kind != .cancelled, running else { return }
             listStop = error
         }
     }
 
     func refreshBalances() async {
         guard running else { return }
+        balancesGeneration &+= 1
+        let gen = balancesGeneration
         if hasKey == true {
             do {
-                let key = try ProviderKeychain.venice.key()
+                let key = try await Task.detached(priority: .userInitiated) {
+                    try ProviderKeychain.venice.key()
+                }.value
+                guard balancesGeneration == gen, !Task.isCancelled, hasKey == true else { return }
                 let venice = Venice(auth: .key(key), transport: transport(keyIdentity))
-                keyAccount = try await read { () async throws(VeniceStop) in try await venice.account() }
-                accountStop = nil
+                let acct = try await read { () async throws(VeniceStop) in try await venice.account() }
+                guard balancesGeneration == gen, !Task.isCancelled, hasKey == true else { return }
+                keyAccount = acct
+                keyAccountStop = nil
             } catch let stop as VeniceStop {
-                accountStop = stop
+                guard balancesGeneration == gen, !Task.isCancelled, stop.kind != .cancelled, running else { return }
+                keyAccountStop = stop
             } catch {
-                accountStop = VeniceStop(.keychain, sent: false, "could not read Venice API key")
+                guard balancesGeneration == gen, !Task.isCancelled, running else { return }
+                keyAccountStop = VeniceStop(.keychain, sent: false, "could not read Venice API key")
             }
         }
-        guard let address = presence.address else { return }
+        guard balancesGeneration == gen, !Task.isCancelled, running, let address = presence.address else { return }
         let venice = Venice(auth: .wallet(signer(address)), transport: transport(walletIdentity))
         do throws(RemoteStop) {
             reading += 1
             defer { reading -= 1 }
-            funds = try await Remote.veniceFunds(address: address, exchange: exchange)
+            let nextFunds = try await Remote.veniceFunds(address: address, exchange: exchange)
+            guard balancesGeneration == gen, !Task.isCancelled else { return }
+            funds = nextFunds
             fundsFailed = false
         } catch {
+            guard balancesGeneration == gen, !Task.isCancelled, running else { return }
             logger.error("Venice Base USDC balance read failed: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .public)")
-            funds = nil
             fundsFailed = true
         }
+        guard balancesGeneration == gen, !Task.isCancelled, running else { return }
         do throws(VeniceStop) {
-            credit = try await read { () async throws(VeniceStop) in try await venice.account() }
+            let nextCredit = try await read { () async throws(VeniceStop) in try await venice.account() }
+            guard balancesGeneration == gen, !Task.isCancelled else { return }
+            credit = nextCredit
             accountStop = nil
         } catch {
+            guard balancesGeneration == gen, !Task.isCancelled, error.kind != .cancelled, running else { return }
             accountStop = error
         }
-        terms = try? await read { () async throws(VeniceStop) in try await venice.topUpTerms() }
+        guard balancesGeneration == gen, !Task.isCancelled, running else { return }
+        if let nextTerms = try? await read({ () async throws(VeniceStop) in try await venice.topUpTerms() }),
+            balancesGeneration == gen, !Task.isCancelled
+        {
+            terms = nextTerms
+        }
     }
 
     /// Moves `amount` of Base USDC from the local Venice wallet into Venice AI
@@ -277,10 +339,20 @@ final class VeniceMode {
         do throws(VeniceStop) {
             let result = try await venice.add(amount, by: signer(address))
             added = result
+            // Immediately reflect the server-confirmed post-top-up balance even
+            // if the follow-up balance refresh over Tor hiccups.
+            credit = VeniceAccount(usd: result.balance, diem: credit?.diem, canSpend: true)
+            accountStop = nil
             await refreshBalances()
         } catch {
             topUpStop = error
             logger.error("Venice top-up stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .public)")
+            // If the signed EIP-3009 authorization was already transmitted over Tor,
+            // refresh Base USDC + Venice Credit immediately so the user can see
+            // whether payment landed before ever attempting another nonce.
+            if error.sent {
+                await refreshBalances()
+            }
         }
     }
 
@@ -293,6 +365,10 @@ final class VeniceMode {
             logger.error("a Venice read stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .public)")
             throw error
         }
+    }
+
+    func recordStop(_ stop: VeniceStop, for turn: UUID) {
+        stops[turn] = stop
     }
 
     // MARK: Streaming Messages

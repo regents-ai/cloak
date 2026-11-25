@@ -27,7 +27,10 @@ struct VWallet: View {
     var body: some View {
         // Show untargeted press errors or read errors at the top; deposit,
         // withdrawal, and transfer errors render inline inside their own section.
-        if let stop = payer.stop, payer.stopTarget == nil || payer.state == .unread {
+        if let stop = payer.stop,
+            payer.stopTarget == nil || payer.state == .unread
+                || { if case .failed = payer.state { return payer.stopTarget != .transfer }; return false }()
+        {
             Section {
                 PressStopRow(payer: payer, stop: stop)
             }
@@ -120,6 +123,11 @@ private struct AddressSection: View {
                         }
                     }
                 }
+            } else if let returning = payer.returning, returning.phase == "reverted" {
+                Label("The last ETH transfer reverted on-chain. Your balance minus gas stays in this wallet.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let stop = payer.stop, payer.stopTarget == .transfer {
                 PressStopRow(payer: payer, stop: stop)
@@ -150,7 +158,7 @@ private struct AddressSection: View {
                             .foregroundStyle(.secondary)
                     }
                     TransferButton(payer: payer, balance: funding.ethBalance, destination: $destination, amount: $amount)
-                        .disabled(payer.transferBlock != nil || payer.activity == .quotingTransfer)
+                        .disabled(payer.transferBlock != nil || payer.activity != nil)
                 }
             }
         } header: {
@@ -456,7 +464,7 @@ private struct WithdrawRow: View {
                 }
                 let withdraw = Button(quoting ? "Quoting…" : "Withdraw") { Task { await payer.quoteWithdrawal() } }
                     .tip("Returns the whole deposit to this wallet.")
-                    .disabled(payer.withdrawBlock != nil || quoting)
+                    .disabled(payer.withdrawBlock != nil || payer.activity != nil)
                 if prominent {
                     withdraw.buttonStyle(.borderedProminent)
                 } else {
@@ -497,8 +505,8 @@ private struct Amount: View {
                     .accessibilityLabel("Deposit amount in US dollars")
                     .frame(width: 56)
                     .onSubmit {
-                        // Nothing while Deposit is off.
-                        if payer.depositBlock == nil { deposit() }
+                        // Nothing while Deposit is off or another wallet press is in flight.
+                        if payer.depositBlock == nil && payer.activity == nil { deposit() }
                     }
                     .onChange(of: text) { wrong = false }
             }
@@ -530,12 +538,12 @@ private struct Amount: View {
             }
             Button(quoting ? "Quoting…" : "Get Deposit Quote", action: deposit)
                 .tip("Shows what the deposit and Ethereum fee cost in ETH before anything is sent.")
-                .disabled(payer.depositBlock != nil || quoting)
+                .disabled(payer.depositBlock != nil || payer.activity != nil)
         }
     }
 
     private func deposit() {
-        guard let dollars = Self.dollars(text), dollars > 0 else {
+        guard let dollars = Self.dollars(text), dollars > 0, dollars <= 1_000_000 else {
             wrong = true
             return
         }
@@ -1086,26 +1094,71 @@ extension Payer.Stop {
     var words: String {
         switch self {
         case .quote(let stop):
-            if stop.detail.localizedCaseInsensitiveContains("payment rpc unavailable") || stop.detail.contains("502") {
-                "The Ethereum RPC was temporarily unreachable over Tor. Nothing was sent — wait a moment and try again."
+            if let reason = Self.specificDaemonReason(stop.detail) {
+                return "Nothing was sent. \(reason)"
+            } else if Self.looksLikeRPCUnavailable(stop.detail) {
+                return "The Ethereum RPC was temporarily unreachable over Tor. Nothing was sent — wait a moment and try again."
             } else if stop.unanswered {
-                "No quote came back over Tor. Nothing was sent — try again."
+                return "No quote came back over Tor. Nothing was sent — try again."
             } else {
-                "Nothing was sent. \(stop.words)"
+                return "Nothing was sent. \(stop.words)"
             }
         case .approve(let stop):
-            if stop.detail.localizedCaseInsensitiveContains("expired") {
-                "That 30-second quote expired before submission. Nothing was sent — click New Quote to try again."
-            } else if stop.detail.localizedCaseInsensitiveContains("payment rpc unavailable") || stop.detail.contains("502") {
-                "The Ethereum RPC was temporarily unreachable over Tor. Refresh in a moment to verify, then try again."
+            let lower = stop.detail.lowercased()
+            if lower.contains("expired") || (lower.contains("quote") && lower.contains("changed")) {
+                return "That 30-second quote changed or expired before submission. Nothing was sent — request a new quote to try again."
+            } else if let reason = Self.specificDaemonReason(stop.detail) {
+                return reason
+            } else if Self.looksLikeRPCUnavailable(stop.detail) {
+                return "The Ethereum RPC was temporarily unreachable over Tor. Refresh in a moment to verify, then try again."
             } else if stop.unanswered {
-                "No answer came back over Tor. The transaction may have been sent — refresh in a moment to check."
+                return "No answer came back over Tor. The transaction may have been sent — refresh in a moment to check."
             } else {
-                stop.words
+                return stop.words
             }
         case .unread:
-            "Cloak hasn't loaded your zkAPI deposit yet, so nothing was sent. Try again."
+            return "Cloak hasn't loaded your zkAPI deposit yet, so nothing was sent. Try again."
         }
+    }
+
+    /// Maps non-RPC daemon refusals (which the zkAPI admin API also returns as HTTP 502)
+    /// into clear plain-English explanations instead of falsely blaming Ethereum RPC.
+    private static func specificDaemonReason(_ detail: String) -> String? {
+        let lower = detail.lowercased()
+        if lower.contains("active deposit") || lower.contains("active note") || lower.contains("withdraw") && lower.contains("before") {
+            return "Withdraw your active zkAPI deposit before transferring ETH out of this wallet."
+        }
+        if lower.contains("pending") && (lower.contains("transaction") || lower.contains("return") || lower.contains("deposit") || lower.contains("withdrawal") || lower.contains("settlement")) {
+            return "Wait for your pending transaction or settlement to finish, then try again."
+        }
+        if lower.contains("insufficient") || lower.contains("shortfall") || lower.contains("exceeds balance") || lower.contains("not enough") {
+            return "Not enough ETH in this wallet to cover the amount plus Ethereum Mainnet gas fees."
+        }
+        if lower.contains("contract") && lower.contains("address") {
+            return "Transfers to contract addresses aren't supported here. Enter a standard Ethereum (EOA) address."
+        }
+        if lower.contains("self") || lower.contains("same address") || lower.contains("funding address") && lower.contains("destination") {
+            return "Destination address can't be the same as this Cloak wallet."
+        }
+        if lower.contains("revert") || lower.contains("simulation") {
+            return "Transaction simulation reverted on Ethereum Mainnet. Check the balance, address, and deposit status."
+        }
+        if lower.contains("paused") {
+            return "Deposits and withdrawals are temporarily paused by the zkAPI operator."
+        }
+        return nil
+    }
+
+    private static func looksLikeRPCUnavailable(_ detail: String) -> Bool {
+        let lower = detail.lowercased()
+        return lower.contains("payment rpc unavailable")
+            || lower.contains("dial tcp")
+            || lower.contains("context deadline exceeded")
+            || lower.contains("connection refused")
+            || lower.contains("eof")
+            || lower.contains("502 bad gateway")
+            || lower.contains("503")
+            || lower.contains("504")
     }
 }
 
@@ -1181,6 +1234,8 @@ extension Payer.Block {
         case .needs(let wei): "Insufficient balance: \(Ether.text(Decimal(sign: .plus, exponent: -18, significand: wei), up: true)) more needed"
         case .needsFee: "Insufficient ETH for the fee"
         case .nothingToTransfer: "Nothing to transfer"
+        case .activeDeposit: "Withdraw active deposit first"
+        case .pendingTransaction: "Transaction pending"
         }
     }
 }

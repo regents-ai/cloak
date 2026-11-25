@@ -165,6 +165,12 @@ public struct VeniceAccount: Sendable, Equatable {
     public let diem: Decimal?
     /// Venice says it may spend now.
     public let canSpend: Bool
+
+    public init(usd: Decimal?, diem: Decimal?, canSpend: Bool) {
+        self.usd = usd
+        self.diem = diem
+        self.canSpend = canSpend
+    }
 }
 
 /// One answer, read whole.
@@ -541,6 +547,7 @@ public struct Venice: Sendable {
         } catch let stop as VeniceStop {
             throw stop
         } catch {
+            if Task.isCancelled { throw VeniceStop(.cancelled, sent: true, "cancelled while reading") }
             throw VeniceStop(.unreachable, sent: true, "the answer broke off")
         }
         guard !Task.isCancelled else { throw VeniceStop(.cancelled, sent: true, "cancelled while reading") }
@@ -612,6 +619,7 @@ public struct Venice: Sendable {
         } catch let stop as VeniceStop {
             throw stop
         } catch {
+            if Task.isCancelled { throw VeniceStop(.cancelled, sent: true, "cancelled while reading") }
             throw VeniceStop(.unreachable, sent: true, "the answer broke off")
         }
         guard !Task.isCancelled else { throw VeniceStop(.cancelled, sent: true, "cancelled while answering") }

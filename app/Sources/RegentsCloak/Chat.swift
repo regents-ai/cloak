@@ -233,7 +233,8 @@ final class Chat {
     /// never attached to cloud chats.
     var localAttachments: [LocalAttachment] = []
     var localAttachmentError: String?
-    var attachingLocalFiles = false
+    private var attachingLocalFileCount = 0
+    var attachingLocalFiles: Bool { attachingLocalFileCount > 0 }
     @ObservationIgnored private var turnLocalAttachments: [UUID: [LocalAttachment]] = [:]
     /// The details of the message being written, from the model on this Mac
     /// (decision 13), and what is picked for them. Cleared when the draft is
@@ -378,10 +379,14 @@ final class Chat {
     }
 
     /// Whether pressing Send/Run while paused can automatically start Cloak
-    /// inline (Decision R3b): paused or ready, rewording model already on disk,
-    /// and no auto-start already in flight.
+    /// inline (Decision R3b): paused, ready, or recovered from `.modelMissing`
+    /// once the rewording model is on disk, with no auto-start already in flight.
     var canAutoStart: Bool {
-        (supervisor.phase == .paused || supervisor.phase == .ready)
+        let startable =
+            supervisor.phase == .paused
+            || supervisor.phase == .ready
+            || supervisor.phase == .needsAttention(.modelMissing)
+        return startable
             && rewordingDownload.state == .installed
             && autoStarting == nil
     }
@@ -409,7 +414,7 @@ final class Chat {
         let mode = kind(of: selected)
         if mode == .llama {
             let hasContent = !Self.isBlank(draft) || !localAttachments.isEmpty
-            return hasContent && isOpen && llamaBlock == nil && answering[selected.id] == nil
+            return hasContent && !attachingLocalFiles && isOpen && llamaBlock == nil && answering[selected.id] == nil
         }
         guard !Self.isBlank(draft) else { return false }
         if isAgent(selected) { return isOpen && runBlock(in: mode) == nil && agent.runs[selected.id] == nil }
@@ -425,7 +430,7 @@ final class Chat {
     func attachLocalFiles(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         localAttachmentError = nil
-        attachingLocalFiles = true
+        attachingLocalFileCount += 1
         let targetConversation = selection
         Task { [weak self] in
             let outcome: ([LocalAttachment], [String]) = await Task.detached(priority: .userInitiated) {
@@ -441,7 +446,7 @@ final class Chat {
                 return (items, errors)
             }.value
             guard let self else { return }
-            self.attachingLocalFiles = false
+            self.attachingLocalFileCount = max(0, self.attachingLocalFileCount - 1)
             // Drop results if the user switched conversations or left Local Mode while reading.
             guard self.selection == targetConversation,
                 let selected = self.selected, self.kind(of: selected) == .llama
@@ -699,16 +704,17 @@ final class Chat {
         }
     }
 
-    func sendBlock(_ turn: Turn, in mode: Kind) -> String? {
+    func sendBlock(_ turn: Turn, in mode: Kind, for conversation: Conversation? = nil) -> String? {
         if let reworded = turn.reworded, Self.isBlank(reworded) { return "Reword it to send." }
-        return originalBlock(in: mode)
+        return originalBlock(in: mode, for: conversation)
     }
 
     /// Why Send Original Text is off now, or nil when it is on: Send's
     /// reasons but a blank reworded text, which it does not send.
-    func originalBlock(in mode: Kind) -> String? {
-        if mode == .token, usesVenice(for: selected) {
-            return veniceMode.sendBlock(for: selected, canAutoStart: canAutoStart)
+    func originalBlock(in mode: Kind, for conversation: Conversation? = nil) -> String? {
+        let target = conversation ?? selected
+        if mode == .token, usesVenice(for: target) {
+            return veniceMode.sendBlock(for: target, canAutoStart: canAutoStart)
         }
         return switch block(in: mode) {
         case .notRunning?: "Start Cloak to send."
@@ -734,7 +740,8 @@ final class Chat {
     /// Whether Send and Run are off for a reason Funds fixes: no wallet,
     /// no funds, no Venice key, or a deposit closed.
     func walletBlocks(in mode: Kind) -> Bool {
-        if mode == .token, usesVenice(for: selected) {
+        let agentActive = selected.map(isAgent) ?? false
+        if mode == .token, !agentActive, usesVenice(for: selected) {
             return veniceMode.walletBlocks(for: selected)
         }
         return switch block(in: mode) {
@@ -801,7 +808,9 @@ final class Chat {
     /// empty for this.
     func newConversation() {
         guard isOpen else { return }
-        if let empty = conversations.first(where: { $0.turns.isEmpty && $0.id != rewording?.conversation }) {
+        if let empty = conversations.first(where: {
+            $0.turns.isEmpty && $0.id != rewording?.conversation && $0.id != autoStarting?.conversation
+        }) {
             selection = empty.id
         } else {
             let conversation = Conversation()
@@ -857,7 +866,7 @@ final class Chat {
         if autoStarting?.conversation == id { stopAutoStart() }
         if rewording?.conversation == id { rewording?.task.cancel() }
         stops[id] = nil
-        answering[id]?.task.cancel()
+        answering.removeValue(forKey: id)?.task.cancel()
         veniceMode.stop(in: conversation)
         agent.stop(id)
         identities[id] = nil
@@ -869,6 +878,11 @@ final class Chat {
                 problem = .delete
                 return
             }
+        }
+        // Also remove any exported plaintext NEAR trace so deleting a chat
+        // truly removes all copies from this Mac.
+        if conversation.isNear {
+            nearMode.traces.remove(id)
         }
         conversations.remove(at: removedIndex)
         for turn in conversation.turns {
@@ -945,10 +959,20 @@ final class Chat {
         }
         let task = Task { [weak self] in
             guard let self else { return }
-            self.supervisor.send(.start)
+            if Task.isCancelled {
+                onAbort()
+                return
+            }
+            if let refusal = self.supervisor.send(.start) {
+                self.logger.notice("auto-start refused: \(String(describing: refusal), privacy: .public)")
+                self.autoStarting = nil
+                onAbort()
+                return
+            }
             var sawPreparing = false
             for await phase in Observations({ self.supervisor.phase }) {
                 if Task.isCancelled {
+                    if self.autoStarting?.conversation == id { self.autoStarting = nil }
                     onAbort()
                     return
                 }
@@ -967,6 +991,10 @@ final class Chat {
                     return
                 }
             }
+            // `Observations` terminates its async sequence on cancellation
+            // without running another loop iteration — always restore the draft.
+            if self.autoStarting?.conversation == id { self.autoStarting = nil }
+            onAbort()
         }
         autoStarting = AutoStart(conversation: id, started: .now, task: task)
     }
@@ -987,7 +1015,7 @@ final class Chat {
         let id = conversation.id
         let mode = kind(of: conversation)
         let restoreDraft: @MainActor () -> Void = { [weak self] in
-            guard let self, self.conversations.contains(where: { $0.id == id }) else { return }
+            guard let self, self.selection == id, self.conversations.contains(where: { $0.id == id }) else { return }
             if Self.isBlank(self.draft) {
                 self.picks = picked
                 self.draft = written
@@ -997,7 +1025,7 @@ final class Chat {
         }
         if isAgent(conversation) {
             startThen(in: id, onAbort: restoreDraft) { [weak self] in
-                self?.run(original, in: id)
+                self?.run(original, in: id, mode: mode)
             }
         } else if mode == .near {
             let turn = Turn(original: written.trimmingCharacters(in: .whitespacesAndNewlines), reworded: nil)
@@ -1070,9 +1098,10 @@ final class Chat {
     /// chat's are: a V chat's through the payer, with V's model, read first,
     /// a Token Inference chat's from the Tempo wallet, with its model. The
     /// first task marks its conversation with its mode, saved with its turn.
-    private func run(_ task: String, in id: UUID) {
+    private func run(_ task: String, in id: UUID, mode fixedMode: Kind? = nil) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
-        let mode = kind(of: conversations[index])
+        let mode = fixedMode ?? kind(of: conversations[index])
+        guard mode == .v || mode == .token else { return }
         mark(&conversations[index], as: mode)
         let kept: (Turn) -> Void = { [weak self] turn in
             guard let self else { return }
@@ -1172,7 +1201,12 @@ final class Chat {
             return
         }
         let mode = kind(of: conversation)
-        guard sendBlock(conversation.turns[index], in: mode) == nil else { return }
+        let blockReason = sendBlock(conversation.turns[index], in: mode, for: conversation)
+        let awaitingVeniceModels =
+            mode == .token && settings.payProvider == .venice
+            && conversation.venice == nil && veniceMode.newChat == nil
+            && blockReason == "Loading Venice models…"
+        guard blockReason == nil || awaitingVeniceModels else { return }
         if supervisor.phase != .running, canAutoStart {
             startThen(in: id) { [weak self] in self?.send(turn, in: id) }
             return
@@ -1186,12 +1220,16 @@ final class Chat {
                 if conversation.venice == nil {
                     guard let chatConfig = veniceMode.newChat else {
                         // Load Venice models first if Cloak just started.
+                        guard sendTasks[turn] == nil else { return }
                         sendTasks[turn] = Task { [weak self] in
                             guard let self else { return }
                             await self.veniceMode.refreshModels()
                             self.sendTasks[turn] = nil
+                            guard !Task.isCancelled, self.settings.payProvider == .venice else { return }
                             if self.veniceMode.newChat != nil {
                                 self.send(turn, in: id)
+                            } else if let stop = self.veniceMode.listStop {
+                                self.veniceMode.recordStop(stop, for: turn)
                             }
                         }
                         return

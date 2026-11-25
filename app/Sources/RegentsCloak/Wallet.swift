@@ -38,6 +38,11 @@ final class Wallet {
     private(set) var readStop: RemoteStop?
     /// Requests under way, for their progress.
     private(set) var working = 0
+    /// True while a Close or Withdraw transaction is in flight so double-clicks
+    /// never submit duplicate Tempo transactions or collide on nonces.
+    private(set) var mutating = false
+    /// Monotonic generation counter so stale refreshes never overwrite newer state.
+    @ObservationIgnored private var refreshGeneration: UInt64 = 0
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "wallet")
 
     init(supervisor: Supervisor, folder: URL) {
@@ -98,17 +103,45 @@ final class Wallet {
         await refresh()
     }
 
+    /// Ensures `deposits` and `presence` are initialized even if Settings → Wallets
+    /// opens before the Chat window has ever opened.
+    func ensureLoaded() async {
+        if deposits == nil {
+            if let key = try? await ConversationStore.key(
+                for: Launch.layout.conversations,
+                alsoSealed: [folder.appending(path: "deposit"), Launch.layout.agents],
+                find: Keychain.find, make: Keychain.make)
+            {
+                deposits = DepositStore(folder: folder, key: key)
+            }
+        }
+        if presence == .looking {
+            await find()
+        } else {
+            await refresh()
+        }
+    }
+
     /// Reads the balance, the provider's setup and models, and the deposit.
     func refresh() async {
         guard let address = presence.address, let deposits, supervisor.phase == .running else { return }
-        readStop = await run { [exchange] () async throws(RemoteStop) in
-            self.look = try await Remote.look(address: address, deposits: deposits, exchange: exchange)
+        refreshGeneration &+= 1
+        let gen = refreshGeneration
+        let err = await run { [exchange] () async throws(RemoteStop) in
+            let next = try await Remote.look(address: address, deposits: deposits, exchange: exchange)
+            guard self.refreshGeneration == gen else { return }
+            self.look = next
         }
+        guard self.refreshGeneration == gen else { return }
+        if supervisor.phase != .running || Task.isCancelled { return }
+        readStop = err
     }
 
     /// Closes the deposit with the provider, which refunds what is unspent.
     func close() async {
-        guard let deposits else { return }
+        guard !mutating, let deposits else { return }
+        mutating = true
+        defer { mutating = false }
         stop = nil
         stop = await run { [exchange, model] () async throws(RemoteStop) in
             try await Remote.close(model: model, key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange)
@@ -118,7 +151,9 @@ final class Wallet {
 
     /// The network's own close: asks to close, or takes the deposit back.
     func withdraw() async {
-        guard let deposits else { return }
+        guard !mutating, let deposits else { return }
+        mutating = true
+        defer { mutating = false }
         stop = nil
         stop = await run { [exchange] () async throws(RemoteStop) in
             try await Remote.withdraw(key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange)

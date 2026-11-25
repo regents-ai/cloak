@@ -137,11 +137,39 @@ public enum WalletPresence: Sendable, Equatable {
 /// Sealed with ChaChaPoly under the conversations' key in one owner-only
 /// file, which is gone while there is no deposit. The sender waits until
 /// each change is on disk before it goes on, so a deposit about to open is
+/// Serializes host-side Tempo (`complete`/`close`/`withdraw`) operations so
+/// concurrent sends or rapid button clicks can never open duplicate on-chain
+/// Tempo channels, clobber voucher `cumulativeAmount`, or collide on nonces.
+private actor TempoGate {
+    static let shared = TempoGate()
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func run<T: Sendable>(_ operation: @Sendable () async throws(RemoteStop) -> T) async throws(RemoteStop) -> T {
+        if busy {
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+        }
+        busy = true
+        defer {
+            if waiters.isEmpty {
+                busy = false
+            } else {
+                let next = waiters.removeFirst()
+                next.resume()
+            }
+        }
+        return try await operation()
+    }
+}
+
 /// here before its payment leaves.
 public struct DepositStore: Sendable {
     public let file: URL
     private let key: SymmetricKey
     private static let tag = Data("deposit".utf8)
+    private static let lock = NSLock()
 
     public init(folder: URL, key: SymmetricKey) {
         file = folder.appending(path: "deposit")
@@ -150,6 +178,12 @@ public struct DepositStore: Sendable {
 
     /// The deposit, or nil when there is none.
     public func load() throws -> Data? {
+        try Self.lock.withLock {
+            try loadUnlocked()
+        }
+    }
+
+    private func loadUnlocked() throws -> Data? {
         guard FileManager.default.fileExists(atPath: file.path) else { return nil }
         let box = try ChaChaPoly.SealedBox(combined: Data(contentsOf: file))
         return try ChaChaPoly.open(box, using: key, authenticating: Self.tag)
@@ -157,6 +191,12 @@ public struct DepositStore: Sendable {
 
     /// Keeps the deposit as the sender reported it; its `null` means it is gone.
     public func keep(_ deposit: Data) throws {
+        try Self.lock.withLock {
+            try keepUnlocked(deposit)
+        }
+    }
+
+    private func keepUnlocked(_ deposit: Data) throws {
         if try JSONSerialization.jsonObject(with: deposit, options: .fragmentsAllowed) is NSNull {
             do {
                 try FileManager.default.removeItem(at: file)
@@ -171,8 +211,10 @@ public struct DepositStore: Sendable {
     /// that a `look` sent, so a concurrent `complete` opening a new deposit is
     /// never deleted by a stale read.
     package func forgetIfUnchanged(_ previous: Data) throws {
-        guard let current = try load(), current == previous else { return }
-        try keep(Data("null".utf8))
+        try Self.lock.withLock {
+            guard let current = try loadUnlocked(), current == previous else { return }
+            try keepUnlocked(Data("null".utf8))
+        }
     }
 }
 
@@ -387,14 +429,16 @@ public enum Remote {
     public static func complete(
         _ body: Data, identity: String, key: @escaping Key, deposits: DepositStore, exchange: Exchange
     ) async throws(RemoteStop) -> Data {
-        struct Completed: Decodable { let completion: String }
-        let completed: Completed = try await run(exchange, keep: deposits.keep) {
-            [
-                "op": "send", "key": try hexKey(key), "deposit": try deposit(deposits),
-                "body": String(decoding: body, as: UTF8.self), "identity": identity,
-            ]
+        try await TempoGate.shared.run { () async throws(RemoteStop) in
+            struct Completed: Decodable { let completion: String }
+            let completed: Completed = try await run(exchange, keep: deposits.keep) {
+                [
+                    "op": "send", "key": try hexKey(key), "deposit": try deposit(deposits),
+                    "body": String(decoding: body, as: UTF8.self), "identity": identity,
+                ]
+            }
+            return Data(completed.completion.utf8)
         }
-        return Data(completed.completion.utf8)
     }
 
     /// The provider's list of models, as it gave it.
@@ -406,18 +450,22 @@ public enum Remote {
 
     /// Closes the deposit with the provider, which refunds what is unspent.
     public static func close(model: String, key: @escaping Key, deposits: DepositStore, exchange: Exchange) async throws(RemoteStop) {
-        struct Closed: Decodable {}
-        let _: Closed = try await run(exchange, keep: deposits.keep) {
-            ["op": "close", "key": try hexKey(key), "deposit": try kept(deposits), "model": model]
+        try await TempoGate.shared.run { () async throws(RemoteStop) in
+            struct Closed: Decodable {}
+            let _: Closed = try await run(exchange, keep: deposits.keep) {
+                ["op": "close", "key": try hexKey(key), "deposit": try kept(deposits), "model": model]
+            }
         }
     }
 
     /// The network's own close: the first asks to close the deposit, the
     /// next, after the grace period, takes it back.
     public static func withdraw(key: @escaping Key, deposits: DepositStore, exchange: Exchange) async throws(RemoteStop) {
-        struct Submitted: Decodable { let step: String }
-        let _: Submitted = try await run(exchange, keep: deposits.keep) {
-            ["op": "withdraw", "key": try hexKey(key), "deposit": try kept(deposits)]
+        try await TempoGate.shared.run { () async throws(RemoteStop) in
+            struct Submitted: Decodable { let step: String }
+            let _: Submitted = try await run(exchange, keep: deposits.keep) {
+                ["op": "withdraw", "key": try hexKey(key), "deposit": try kept(deposits)]
+            }
         }
     }
 

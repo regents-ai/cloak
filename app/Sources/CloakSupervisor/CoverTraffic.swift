@@ -240,11 +240,15 @@ public final class CoverTraffic {
         task != nil
     }
 
+    @ObservationIgnored private var generation: UInt64 = 0
+
     /// Starts live cover fetches over `torSocket` (no-op if already running on
     /// the same socket).
     public func start(torSocket: String) {
         if task != nil, activeSocket == torSocket { return }
         stop()
+        generation &+= 1
+        let gen = generation
         activeSocket = torSocket
         let subset = Array(Self.defaultPool.shuffled().prefix(16))
         task = Task.detached(priority: .background) { [weak self] in
@@ -255,7 +259,8 @@ public final class CoverTraffic {
                     let entry = await Self.fetch(url: url, torSocket: torSocket)
                     if !Task.isCancelled {
                         await MainActor.run {
-                            self?.log.append(entry)
+                            guard let self, self.generation == gen, self.task != nil else { return }
+                            self.log.append(entry)
                         }
                     }
                 }
@@ -269,6 +274,7 @@ public final class CoverTraffic {
 
     /// Stops cover traffic immediately without disturbing Tor or the VM.
     public func stop() {
+        generation &+= 1
         task?.cancel()
         task = nil
         activeSocket = nil

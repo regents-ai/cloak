@@ -39,6 +39,7 @@ final class OfflineDataManager {
     private(set) var errors: [OfflineDatasetID: String] = [:]
 
     @ObservationIgnored private var tasks: [OfflineDatasetID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var activeTokens: [OfflineDatasetID: UUID] = [:]
 
     init(
         rootFolder: URL = OfflineDataManager.defaultRootFolder,
@@ -117,18 +118,26 @@ final class OfflineDataManager {
 
         let dir = folder(for: dataset.id)
         let id = dataset.id
+        let runToken = UUID()
+        activeTokens[id] = runToken
         tasks[id] = Task { [weak self] in
             guard let self else { return }
             defer {
-                self.tasks[id] = nil
-                self.activeDownloads[id] = nil
-                self.refreshFromDisk()
+                // Only clear state if this download was not superseded by a
+                // newer cancel + re-download for the same dataset.
+                if self.activeTokens[id] == runToken {
+                    self.tasks[id] = nil
+                    self.activeDownloads[id] = nil
+                    self.activeTokens[id] = nil
+                    self.refreshFromDisk()
+                }
             }
             do {
                 try Self.ensurePrivateFolder(dir)
                 var finishedPriorBytes: Int64 = 0
                 for (index, file) in missing.enumerated() {
                     try Task.checkCancellation()
+                    guard self.activeTokens[id] == runToken else { return }
                     self.activeDownloads[id] = ProgressState(
                         currentFileName: file.filename,
                         completedBytes: finishedPriorBytes,
@@ -145,29 +154,36 @@ final class OfflineDataManager {
                         destination: destination
                     ) { [weak self] received in
                         Task { @MainActor [weak self] in
-                            guard let self, var state = self.activeDownloads[id] else { return }
+                            guard let self, self.activeTokens[id] == runToken, var state = self.activeDownloads[id] else { return }
                             state.completedBytes = min(baseBytes + received, totalBytes)
                             self.activeDownloads[id] = state
                         }
                     }
+                    try Task.checkCancellation()
                     if file.extractTarGz {
-                        try Self.extractTarGz(archive: destination, into: dir)
+                        try await Task.detached(priority: .userInitiated) {
+                            try Self.extractTarGz(archive: destination, into: dir)
+                        }.value
                         try? FileManager.default.removeItem(at: destination)
                     }
                     finishedPriorBytes += file.expectedBytes
                     self.refreshFromDisk()
                 }
+                guard self.activeTokens[id] == runToken else { return }
                 self.defaults.set(targetLevel, forKey: self.downloadedKey(for: id))
                 self.defaults.set(targetLevel, forKey: self.selectedKey(for: id))
             } catch is CancellationError {
                 // Clean user cancel — leave already-finished files intact.
             } catch {
-                self.errors[id] = error.localizedDescription
+                if self.activeTokens[id] == runToken {
+                    self.errors[id] = error.localizedDescription
+                }
             }
         }
     }
 
     func cancel(_ id: OfflineDatasetID) {
+        activeTokens[id] = nil
         tasks[id]?.cancel()
         tasks[id] = nil
         activeDownloads[id] = nil
@@ -264,6 +280,7 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDownloadDeleg
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Void, any Error>?
     private var task: URLSessionDownloadTask?
+    private var cancelled = false
     private var lastReported: Int64 = 0
 
     init(destination: URL, partURL: URL, onBytes: @escaping @Sendable (Int64) -> Void) {
@@ -273,16 +290,33 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDownloadDeleg
     }
 
     func setContinuation(_ c: CheckedContinuation<Void, any Error>) {
-        lock.withLock { continuation = c }
+        let alreadyCancelled = lock.withLock { () -> Bool in
+            if cancelled { return true }
+            continuation = c
+            return false
+        }
+        if alreadyCancelled {
+            c.resume(throwing: CancellationError())
+        }
     }
 
     func setTask(_ t: URLSessionDownloadTask) {
-        lock.withLock { task = t }
+        let shouldCancel = lock.withLock { () -> Bool in
+            task = t
+            return cancelled
+        }
+        if shouldCancel {
+            t.cancel()
+        }
     }
 
     func cancel() {
-        let active = lock.withLock { task }
+        let active = lock.withLock { () -> URLSessionDownloadTask? in
+            cancelled = true
+            return task
+        }
         active?.cancel()
+        finish(.failure(CancellationError()))
     }
 
     private func finish(_ result: Result<Void, any Error>) {

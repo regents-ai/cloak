@@ -167,7 +167,11 @@ struct NearGatewayTracesView: View {
     private var traces: NearTraces { chat.nearMode.traces }
 
     private var nearChats: [Conversation] {
-        chat.conversations.filter { $0.isNear && $0.turns.contains(where: { $0.answer != nil }) }
+        chat.conversations.filter {
+            $0.isNear
+                && !chat.unsaved.contains($0.id)
+                && $0.turns.contains(where: { $0.answer != nil })
+        }
     }
 
     private var notExportedChats: [Conversation] {
@@ -507,7 +511,11 @@ struct NearGatewayInsightsView: View {
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var nearChats: [Conversation] {
-        chat.conversations.filter { $0.isNear && $0.turns.contains(where: { $0.answer != nil }) }
+        chat.conversations.filter {
+            $0.isNear
+                && !chat.unsaved.contains($0.id)
+                && $0.turns.contains(where: { $0.answer != nil })
+        }
     }
 
     private var totalCalls: Int {

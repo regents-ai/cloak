@@ -254,29 +254,37 @@ public struct LocalAttachment: Identifiable, Equatable, Sendable {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
+        // Resolve symlinks before inspecting directory/file size so a tiny
+        // symlink cannot bypass the 25 MB size cap or directory guard.
+        let resolved = url.resolvingSymlinksInPath()
         let name = url.lastPathComponent
-        let ext = url.pathExtension.lowercased()
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
-        if values?.isDirectory == true, ext != "rtfd" {
-            throw ReadError.unsupportedBinary(name)
-        }
-        if ext != "rtfd", let size = values?.fileSize, size > maxFileBytes {
+        let ext = resolved.pathExtension.lowercased().isEmpty ? url.pathExtension.lowercased() : resolved.pathExtension.lowercased()
+        let values = try? resolved.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+        if values?.isDirectory == true {
+            guard ext == "rtfd" else {
+                throw ReadError.unsupportedBinary(name)
+            }
+            let bundleSize = directoryByteSize(at: resolved, limit: maxFileBytes + 1)
+            if bundleSize > maxFileBytes {
+                throw ReadError.unreadable("\(name) (exceeds 25 MB)")
+            }
+        } else if let size = values?.fileSize, size > maxFileBytes {
             throw ReadError.unreadable("\(name) (exceeds 25 MB)")
         }
 
         if ext == "pdf" {
-            return try fromPDF(url: url, name: name)
+            return try fromPDF(url: resolved, name: name)
         }
 
         if imageExtensions.contains(ext) {
-            return try fromImage(url: url, name: name)
+            return try fromImage(url: resolved, name: name)
         }
 
         if richDocumentExtensions.contains(ext) {
-            return try fromRichDocument(url: url, name: name)
+            return try fromRichDocument(url: resolved, name: name)
         }
 
-        guard let data = try? Data(contentsOf: url) else {
+        guard let data = try? Data(contentsOf: resolved) else {
             throw ReadError.unreadable(name)
         }
         // Check UTF-16 BOM before rejecting NUL bytes so UTF-16 text files work.
@@ -301,9 +309,26 @@ public struct LocalAttachment: Identifiable, Equatable, Sendable {
             truncated: truncated)
     }
 
+    private static func directoryByteSize(at dir: URL, limit: Int) -> Int {
+        guard let enumerator = FileManager.default.enumerator(
+            at: dir, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsPackageDescendants])
+        else { return 0 }
+        var total = 0
+        for case let item as URL in enumerator {
+            if let sz = try? item.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += sz
+                if total >= limit { return total }
+            }
+        }
+        return total
+    }
+
     private static func fromPDF(url: URL, name: String) throws -> LocalAttachment {
         guard let doc = PDFDocument(url: url) else {
             throw ReadError.unreadable(name)
+        }
+        if doc.isLocked {
+            throw ReadError.unreadable("\(name) (password-protected PDF)")
         }
         var extracted = ""
         for pageIndex in 0..<doc.pageCount {
@@ -327,10 +352,20 @@ public struct LocalAttachment: Identifiable, Equatable, Sendable {
     }
 
     private static func fromRichDocument(url: URL, name: String) throws -> LocalAttachment {
-        guard let attributed = try? NSAttributedString(url: url, options: [:], documentAttributes: nil) else {
+        // AppKit's RTF/DOCX/ODT importers must run on the main thread on macOS.
+        let extract: () -> String? = {
+            (try? NSAttributedString(url: url, options: [:], documentAttributes: nil))?.string
+        }
+        let rawString: String?
+        if Thread.isMainThread {
+            rawString = extract()
+        } else {
+            rawString = DispatchQueue.main.sync(execute: extract)
+        }
+        guard let rawString else {
             throw ReadError.unreadable(name)
         }
-        let cleaned = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = rawString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { throw ReadError.empty(name) }
         let truncated = cleaned.count > maxCharacters
         return LocalAttachment(

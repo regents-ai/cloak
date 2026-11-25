@@ -476,31 +476,47 @@ final class DarkbloomMode {
         follow { await self.look(ensuring: true) }
     }
 
+    @ObservationIgnored private var startTask: Task<Void, Never>?
+    @ObservationIgnored private var startGeneration: UInt64 = 0
+    @ObservationIgnored private var followGeneration: UInt64 = 0
+
     /// Serves the model as `alsoServe` says, replacing whatever Darkbloom
     /// serves now.
     func start() {
         guard startBlock == nil, let found, let model = recommended else { return }
+        startTask?.cancel()
+        startGeneration &+= 1
+        let gen = startGeneration
         failure = nil
         lastCloakActionAt = .now
         lastChangeFromCLI = false
         starting = true
         let arguments = Darkbloom.startArguments(model: model.id, alsoServe: alsoServe)
-        Task {
+        startTask = Task {
             do throws(DarkbloomFailure) {
                 try await Darkbloom.run(found.binary, arguments, failing: "Couldn't start")
+                guard self.startGeneration == gen, !Task.isCancelled else { return }
                 // Refresh plist/launchd setup immediately before clearing `starting`
                 // so the next SSE snapshot never reverts `alsoServe` using stale setup.
                 let refreshed = await DarkbloomSetup.read(listening: snapshot?.endpoint != nil)
+                guard self.startGeneration == gen, !Task.isCancelled else { return }
                 self.setup = refreshed
                 self.lastSetupReadAt = .now
             } catch {
-                failure = error
+                if self.startGeneration == gen && !Task.isCancelled {
+                    failure = error
+                }
             }
-            starting = false
+            if self.startGeneration == gen {
+                starting = false
+            }
         }
     }
 
     func stop() {
+        startTask?.cancel()
+        startGeneration &+= 1
+        starting = false
         lastCloakActionAt = .now
         lastChangeFromCLI = false
         lastSetupReadAt = nil
@@ -541,9 +557,8 @@ final class DarkbloomMode {
             alsoServe = false
             if let link = snapshot?.operations.first(where: { $0.state == "running" && $0.action == "link" }) {
                 ask(.cancel(operation: link.id), failing: "Couldn't cancel")
-                return
             }
-            if isOn { stop() }
+            if isOn || starting { stop() }
         case .localOnly:
             guard let model = recommended, model.downloaded else {
                 alsoServe = false
@@ -623,9 +638,15 @@ final class DarkbloomMode {
 
     private func follow(_ body: @escaping @MainActor () async -> Void) {
         following?.cancel()
+        followGeneration &+= 1
+        let gen = followGeneration
         isFollowing = true
         following = Task {
-            defer { self.isFollowing = false }
+            defer {
+                if self.followGeneration == gen {
+                    self.isFollowing = false
+                }
+            }
             await body()
         }
     }

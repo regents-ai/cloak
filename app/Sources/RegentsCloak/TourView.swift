@@ -178,7 +178,7 @@ struct TourView: View {
                                 : "Download \(download.model.label) (\(size)) once. Works offline forever.",
                         actionTitle: installed ? "Open Local" : download.isUnderWay ? "View Progress" : "Download (\(size))"
                     ) {
-                        chat.kind = .llama
+                        chat.selectMode(.llama)
                         if !installed && !download.isUnderWay {
                             chat.downloadRecommendedLocalModel()
                         }
@@ -194,7 +194,7 @@ struct TourView: View {
                     detail: "Hardware-verified Intel TDX + NVIDIA enclaves using a standard NEAR API key.",
                     actionTitle: "Set Up…"
                 ) {
-                    chat.kind = .near
+                    chat.selectMode(.near)
                     dismiss()
                     showNearSettings()
                 }
@@ -208,9 +208,11 @@ struct TourView: View {
                         detail: "Anonymous pay-per-prompt with USDC or unlinkable ETH (zkAPI).",
                         actionTitle: "Funds…"
                     ) {
-                        chat.kind = .token
+                        chat.selectMode(.token)
                         dismiss()
-                        chat.showingWallet = true
+                        DispatchQueue.main.async {
+                            chat.showingWallet = true
+                        }
                     }
                 }
             }
