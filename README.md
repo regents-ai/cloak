@@ -6,7 +6,7 @@
 
 Cloak is a macOS menu bar app for private AI — local on Apple Silicon, or routed to remote models with explicit, inspectable privacy boundaries.
 
-[Watch the 60s walkthrough](docs/media/cloak-walkthrough-60s.mp4) 📽️ · [Website](https://regents.sh/cloak) · [Docs](https://regents.sh/docs/cloak/reference) · [Releases](https://github.com/regents-ai/cloak-releases/releases)
+[Watch the 60s walkthrough](https://regents.sh/images/cloak/demos/cloak-walkthrough-60s.mp4) 📽️ · [Website](https://regents.sh/cloak) · [Docs](https://regents.sh/docs/cloak/reference) · [Releases](https://github.com/regents-ai/cloak-releases/releases)
 
 ![Cloak](docs/media/cloak-hero.png)
 
@@ -100,13 +100,13 @@ On macOS 27+, **Settings → Inference Serving** integrates [Darkbloom](https://
 
 ## Demos
 
-- **[60-second full walkthrough](docs/media/cloak-walkthrough-60s.mp4)** — all four modes, Local Access, Wallets, and Darkbloom serving
-- **[Local Mode · Inkling 2 Mini (Fast)](docs/media/demo-local-inkling.mp4)** — offline Apple Silicon MLX streaming & attachments
-- **[NEAR AI Gateway + Trace Commons](docs/media/demo-near-traces.mp4)** — hardware TEE verification, E2EE v2, and local trace export
-- **[Token Inference · Venice AI (Base USDC)](docs/media/demo-venice.mp4)** — Tor-routed Venice Private/TEE models & Base USDC `x402`
-- **[Token Inference · Boundless + Tempo](docs/media/demo-boundless-tempo.mp4)** — Tempo `USDC.e` MPP payment channels & mid-chat switching
-- **[zkAPI Anon Inference](docs/media/demo-zkapi.mp4)** — Ethereum Mainnet wallet, one-time ZK spend credentials, and deposit tiers
-- **[Darkbloom Inference Serving](docs/media/demo-darkbloom.mp4)** — `Off` / `Local Only` / `Network + Local` serving & live monitor telemetry
+- **[60-second full walkthrough](https://regents.sh/images/cloak/demos/cloak-walkthrough-60s.mp4)** — all five modes, Local Access, Wallets, and Darkbloom serving
+- **[Local Mode · Inkling 2 Mini (Fast)](https://regents.sh/images/cloak/demos/demo-local-inkling.mp4)** — offline Apple Silicon MLX streaming & attachments
+- **[NEAR AI Gateway + Trace Commons](https://regents.sh/images/cloak/demos/demo-near-traces.mp4)** — hardware TEE verification, E2EE v2, and local trace export
+- **[Token Inference · Venice AI (Base USDC)](https://regents.sh/images/cloak/demos/demo-venice.mp4)** — Tor-routed Venice Private/TEE models & Base USDC `x402`
+- **[Token Inference · Boundless + Tempo](https://regents.sh/images/cloak/demos/demo-boundless-tempo.mp4)** — Tempo `USDC.e` MPP payment channels & mid-chat switching
+- **[zkAPI Anon Inference](https://regents.sh/images/cloak/demos/demo-zkapi.mp4)** — Ethereum Mainnet wallet, one-time ZK spend credentials, and deposit tiers
+- **[Darkbloom Inference Serving](https://regents.sh/images/cloak/demos/demo-darkbloom.mp4)** — `Off` / `Local Only` / `Network + Local` serving & live monitor telemetry
 
 ## Build from source
 
