@@ -1,4 +1,5 @@
 import AppKit
+import CloakControl
 import os
 import Sparkle
 
@@ -34,10 +35,14 @@ final class Updates: NSObject {
         startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "updates")
 
+    private let updatesEnabled = !Places.isDev && Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil
+
     /// Started once its User-Agent is set, so no check goes out with
-    /// Sparkle's own, which names the app and its version.
+    /// Sparkle's own, which names the app and its version. Disabled completely
+    /// in isolated `Cloak Dev.app` builds so they never compete with release updates.
     override init() {
         super.init()
+        guard updatesEnabled else { return }
         controller.updater.userAgentString = "curl/8.7.1"
         controller.startUpdater()
     }
@@ -45,12 +50,27 @@ final class Updates: NSObject {
     /// Whether Sparkle checks by itself, once a day. Off until the person
     /// answers Sparkle's question or turns it on.
     var checksAutomatically: Bool {
-        get { controller.updater.automaticallyChecksForUpdates }
-        set { controller.updater.automaticallyChecksForUpdates = newValue }
+        get { updatesEnabled ? controller.updater.automaticallyChecksForUpdates : false }
+        set {
+            guard updatesEnabled else { return }
+            controller.updater.automaticallyChecksForUpdates = newValue
+        }
     }
 
     /// Checks now, in Sparkle's window, with the app in front.
     func check() {
+        guard updatesEnabled else {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "Updates Disabled in Cloak Dev"
+            alert.informativeText =
+                "This is an isolated local test build (sh.regents.cloak.dev). Your release Cloak.app in /Applications updates independently through the normal channel."
+            alert.runModal()
+            AppWindow.leaveDock()
+            return
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         controller.checkForUpdates(nil)

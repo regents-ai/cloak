@@ -18,7 +18,7 @@ import Synchronization
 /// key being read. The key is read only when a request that signs is built,
 /// and goes to the sender in memory.
 public enum WalletKeychain {
-    static let service = "sh.regents.cloak.wallet"
+    static let service = KeychainStore.service("sh.regents.cloak.wallet")
 
     private static var base: [String: Any] {
         [
@@ -61,7 +61,7 @@ public enum WalletKeychain {
 /// separate private key and Ethereum address from Boundless's Tempo wallet so
 /// Tempo and Base activity can never be correlated across providers.
 public enum VeniceWalletKeychain {
-    static let service = "sh.regents.cloak.venice-wallet"
+    static let service = KeychainStore.service("sh.regents.cloak.venice-wallet")
 
     private static var base: [String: Any] {
         [

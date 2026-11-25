@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import CloakChat
+import CloakControl
 import Darwin
 import Observation
 import os
@@ -57,7 +58,7 @@ final class AppSettings {
     /// answers with the model that rewords.
     nonisolated static let defaultFreeMemory = FreeMemory.fifteenMinutes
     nonisolated static let defaultProofFreshness = ProofFreshness.tenMinutes
-    nonisolated static let defaultDoorPort: UInt16 = 8742
+    nonisolated static let defaultDoorPort: UInt16 = Places.isDev ? 8743 : 8742
     /// The ports the door may take: none the system keeps for itself.
     nonisolated static let doorPorts: ClosedRange<Int> = 1024...65535
 

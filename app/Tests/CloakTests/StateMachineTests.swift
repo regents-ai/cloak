@@ -931,4 +931,20 @@ struct StateMachineTests {
         let paths = calledPaths.withLock { $0 }
         #expect(!paths.contains("POST /admin/withdrawal/quote"))
     }
+
+    @Test func devFlavorIsolatesAllKeychainServicesFromProduction() {
+        let baseServices = [
+            "sh.regents.cloak.conversations",
+            "sh.regents.cloak.paydisk",
+            "sh.regents.cloak.wallet",
+            "sh.regents.cloak.venice-wallet",
+            "sh.regents.cloak.near",
+            "sh.regents.cloak.venice",
+        ]
+        for base in baseServices {
+            #expect(KeychainStore.service(base, isDev: false) == base)
+            #expect(KeychainStore.service(base, isDev: true) == "\(base).dev")
+        }
+        #expect(Set(baseServices.map { KeychainStore.service($0, isDev: true) }).isDisjoint(with: Set(baseServices)))
+    }
 }

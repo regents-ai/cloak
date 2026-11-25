@@ -1,4 +1,5 @@
 import AppKit
+import CloakControl
 import Foundation
 import os
 
@@ -16,6 +17,7 @@ enum MoveToApplications {
     /// opening first-launch UI in the exiting process).
     @discardableResult
     static func promptIfNeeded() -> Bool {
+        guard !Places.isDev else { return false }
         guard !UserDefaults.standard.bool(forKey: suppressKey) else { return false }
         let bundleURL = Bundle.main.bundleURL.standardizedFileURL
         guard shouldPrompt(for: bundleURL) else { return false }

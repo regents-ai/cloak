@@ -74,7 +74,7 @@ public struct NearStop: Error, Sendable, Equatable {
 /// The owner's NEAR key, stored in Apple's Data Protection Keychain when
 /// profiled (with transparent legacy fallback), this device only.
 public enum NearKeychain {
-    static let service = "sh.regents.cloak.near"
+    static let service = KeychainStore.service("sh.regents.cloak.near")
 
     private static var item: [String: Any] {
         [

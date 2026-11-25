@@ -22,10 +22,17 @@ import Security
 public enum KeychainStore {
     public static let accessGroup = "367G3Z7G3J.sh.regents.cloak"
 
+    /// Returns the isolated Keychain service identifier for the active app
+    /// flavor so `Cloak Dev.app` (`*.dev`) never touches production secrets.
+    public static func service(_ base: String, isDev: Bool = Places.isDev) -> String {
+        isDev ? "\(base).dev" : base
+    }
+
     /// True when the running `.app` bundle carries an embedded provisioning
-    /// profile authorizing Data Protection Keychain access.
+    /// profile authorizing Data Protection Keychain access (production only).
     public static var usesDataProtection: Bool {
-        FileManager.default.fileExists(
+        guard !Places.isDev else { return false }
+        return FileManager.default.fileExists(
             atPath: Bundle.main.bundleURL.appending(path: "Contents/embedded.provisionprofile").path
         )
     }

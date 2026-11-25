@@ -4,7 +4,16 @@ import os
 /// Where the app keeps its control channel and its single-instance lock: an
 /// owner-only folder in its Application Support folder.
 public enum Places {
-    public static let support = URL.applicationSupportDirectory.appending(path: "Regents Cloak")
+    /// True when running as the isolated local test flavor (`Cloak Dev.app`,
+    /// `sh.regents.cloak.dev`), built via `app/build.sh dev`. Production
+    /// (`Cloak.app`, `sh.regents.cloak`) is always false.
+    public static let isDev: Bool = {
+        if Bundle.main.bundleIdentifier == "sh.regents.cloak.dev" { return true }
+        if ProcessInfo.processInfo.environment["CLOAK_DEV"] == "1" { return true }
+        return Bundle.main.bundleURL.path.contains("/Cloak Dev.app")
+    }()
+
+    public static let support = URL.applicationSupportDirectory.appending(path: isDev ? "Regents Cloak Dev" : "Regents Cloak")
     public static let control = support.appending(path: "control")
     public static let socket = control.appending(path: "cloak.sock")
     public static let lock = control.appending(path: "app.lock")

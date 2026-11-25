@@ -1,4 +1,5 @@
 import AppKit
+import CloakControl
 import Contacts
 import Darwin
 import EventKit
@@ -24,8 +25,7 @@ public struct LocalMemoryStore: Sendable {
     }
 
     public static var defaultFolder: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appending(path: "Regents Cloak/memories", directoryHint: .isDirectory)
+        Places.support.appending(path: "memories", directoryHint: .isDirectory)
     }
 
     public static var defaultHermesFolder: URL {

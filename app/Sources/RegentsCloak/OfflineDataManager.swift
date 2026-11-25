@@ -1,5 +1,6 @@
 import AppKit
 import CloakChat
+import CloakControl
 import Foundation
 import Observation
 
@@ -51,8 +52,7 @@ final class OfflineDataManager {
     }
 
     static var defaultRootFolder: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appending(path: "Regents Cloak/OfflineData", directoryHint: .isDirectory)
+        Places.support.appending(path: "OfflineData", directoryHint: .isDirectory)
     }
 
     func folder(for id: OfflineDatasetID) -> URL {

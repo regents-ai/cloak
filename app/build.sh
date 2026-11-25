@@ -18,19 +18,27 @@
 # (decision 8a, 20 November 2026). Needs rustup, and guest/build.sh,
 # host/build.sh and llama-worker/install.sh to have run first.
 #
-#     app/build.sh             builds Cloak.app (includes Inference Serving / Darkbloom)
-#     app/build.sh no-darkbloom  builds without Darkbloom's window
+#     app/build.sh                  builds Cloak.app (includes Inference Serving / Darkbloom)
+#     app/build.sh no-darkbloom     builds without Darkbloom's window
+#     app/build.sh dev              builds isolated Cloak Dev.app (sh.regents.cloak.dev,
+#                                   separate Application Support, Keychain, port 8743, no Sparkle)
+#     app/build.sh dev no-darkbloom builds isolated Cloak Dev.app without Darkbloom
 set -eu
 cd "$(dirname "$0")/.."
 
-case "${1:-}" in
-""|darkbloom) darkbloom="-Xswiftc -DDARKBLOOM" ;;
-no-darkbloom) darkbloom="" ;;
-*)
-	echo "usage: app/build.sh [no-darkbloom]" >&2
-	exit 2
-	;;
-esac
+dev=""
+darkbloom="-Xswiftc -DDARKBLOOM"
+for arg in "$@"; do
+	case "$arg" in
+	""|darkbloom) darkbloom="-Xswiftc -DDARKBLOOM" ;;
+	no-darkbloom) darkbloom="" ;;
+	dev) dev="1" ;;
+	*)
+		echo "usage: app/build.sh [dev] [no-darkbloom]" >&2
+		exit 2
+		;;
+	esac
+done
 
 identity=$(plutil -extract identity raw app/release.json)
 sign() {
@@ -49,7 +57,11 @@ ls guest/build/Image guest/build/initrd.gz host/.build/tor/tor host/.build/tor/l
 lockf /tmp/cloak-build.lock nice -n 10 swift build --package-path app -c release -j 2 $darkbloom
 bin=$(swift build --package-path app -c release --show-bin-path)
 
-app="app/build/Cloak.app"
+if [ -n "$dev" ]; then
+	app="app/build/Cloak Dev.app"
+else
+	app="app/build/Cloak.app"
+fi
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/PlugIns" "$app/Contents/Resources/guest" \
 	"$app/Contents/Resources/tor" "$app/Contents/Resources/near" "$app/Contents/Resources/worker"
@@ -93,11 +105,20 @@ build=$(git describe --always --dirty)
 version=$(git rev-list --count HEAD)
 release=$(plutil -extract release raw app/release.json)
 sed -e "s/RELEASE/$release/" -e "s/BUILD/$version/" app/Info.plist > "$app/Contents/Info.plist"
-plutil -insert SUFeedURL -string "$(plutil -extract update_feed raw app/release.json)" "$app/Contents/Info.plist"
-plutil -insert SUPublicEDKey -string "$(plutil -extract update_key raw app/release.json)" "$app/Contents/Info.plist"
+if [ -n "$dev" ]; then
+	plutil -replace CFBundleIdentifier -string "sh.regents.cloak.dev" "$app/Contents/Info.plist"
+	plutil -replace CFBundleDisplayName -string "Cloak Dev" "$app/Contents/Info.plist"
+	plutil -replace CFBundleName -string "Cloak Dev" "$app/Contents/Info.plist"
+	plutil -replace CFBundleURLTypes.0.CFBundleURLName -string "sh.regents.cloak.dev.action" "$app/Contents/Info.plist"
+	plutil -replace CFBundleURLTypes.0.CFBundleURLSchemes.0 -string "cloak-dev" "$app/Contents/Info.plist"
+else
+	plutil -insert SUFeedURL -string "$(plutil -extract update_feed raw app/release.json)" "$app/Contents/Info.plist"
+	plutil -insert SUPublicEDKey -string "$(plutil -extract update_key raw app/release.json)" "$app/Contents/Info.plist"
+fi
 
-# Embed Control Center & Desktop WidgetKit extension (CloakWidgets.appex).
-if [ -f "$bin/CloakWidgets" ]; then
+# Embed Control Center & Desktop WidgetKit extension (CloakWidgets.appex) in
+# production builds only so Cloak Dev never registers duplicate system widgets.
+if [ -z "$dev" ] && [ -f "$bin/CloakWidgets" ]; then
 	appex="$app/Contents/PlugIns/CloakWidgets.appex"
 	mkdir -p "$appex/Contents/MacOS"
 	cp "$bin/CloakWidgets" "$appex/Contents/MacOS/CloakWidgets"
@@ -167,10 +188,14 @@ if [ -d "$app/Contents/PlugIns/CloakWidgets.appex" ]; then
 	sign --entitlements app/CloakWidgets.entitlements "$app/Contents/PlugIns/CloakWidgets.appex"
 fi
 sign "$app/Contents/MacOS/cloak"
-# Embed the Developer ID provisioning profile when present so macOS authorizes
-# the Data Protection Keychain (`keychain-access-groups`) with zero password prompts.
+# Embed the Developer ID provisioning profile in production builds when present
+# so macOS authorizes the Data Protection Keychain with zero password prompts.
+# Dev builds use a separate bundle ID (`sh.regents.cloak.dev`) and minimal
+# virtualization-only entitlements so they stay completely isolated from production.
 profile="${CLOAK_PROVISION_PROFILE:-app/RegentsCloak.provisionprofile}"
-if [ -f "$profile" ]; then
+if [ -n "$dev" ]; then
+	sign --entitlements app/RegentsCloak.dev.entitlements "$app"
+elif [ -f "$profile" ]; then
 	cp "$profile" "$app/Contents/embedded.provisionprofile"
 	sign --entitlements app/RegentsCloak.profiled.entitlements "$app"
 else

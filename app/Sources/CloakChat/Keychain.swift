@@ -8,7 +8,7 @@ import Security
 /// password prompts) with transparent read/mirror fallback to the legacy login
 /// keychain for existing installs. Never syncs (`ThisDeviceOnly`).
 public enum Keychain {
-    static let service = "sh.regents.cloak.conversations"
+    static let service = KeychainStore.service("sh.regents.cloak.conversations")
 
     public struct Failure: Error, CustomStringConvertible {
         public let status: OSStatus
@@ -51,9 +51,11 @@ public struct ProviderKeychain: Sendable {
     let label: String
 
     /// NEAR mode's key from NEAR AI Cloud.
-    public static let near = ProviderKeychain(service: "sh.regents.cloak.near", account: "near", label: "Regents Cloak NEAR key")
+    public static let near = ProviderKeychain(
+        service: KeychainStore.service("sh.regents.cloak.near"), account: "near", label: "Regents Cloak NEAR key")
     /// Venice's optional Inference Only API key.
-    public static let venice = ProviderKeychain(service: "sh.regents.cloak.venice", account: "venice", label: "Regents Cloak Venice key")
+    public static let venice = ProviderKeychain(
+        service: KeychainStore.service("sh.regents.cloak.venice"), account: "venice", label: "Regents Cloak Venice key")
 
     private var item: [String: Any] {
         [

@@ -132,6 +132,7 @@ public enum WidgetBridge {
     }
 
     public static func writeSnapshot(_ snapshot: WidgetSnapshot) {
+        guard !Places.isDev else { return }
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         defaults.set(data, forKey: snapshotKey)
     }

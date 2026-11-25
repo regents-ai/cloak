@@ -242,8 +242,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             activeMode: { [unowned self] in
                 madeChat?.kind ?? .llama
             })
-        startWidgetSync()
-        registerWidgetCommandObserver()
+        if !Places.isDev {
+            startWidgetSync()
+            registerWidgetCommandObserver()
+        }
         // Made now, so the shortcut chosen works from launch.
         _ = prompt
         // The agent's model requests from the guest come in at the door.

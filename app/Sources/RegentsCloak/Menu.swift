@@ -85,8 +85,13 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
         menu.autoenablesItems = false
         menu.delegate = self
-        item.autosaveName = "sh.regents.cloak.statusItem"
+        item.autosaveName = Places.isDev ? "sh.regents.cloak.dev.statusItem" : "sh.regents.cloak.statusItem"
         item.button?.image = MenuBarIcon.image(supervisor.phase)
+        if Places.isDev {
+            item.button?.title = " DEV"
+            item.button?.imagePosition = .imageLeading
+            item.button?.toolTip = "Cloak Dev (isolated local test build)"
+        }
         if #available(macOS 27.0, *) {
             #if DARKBLOOM
             let actions = MenuPanelController.Actions(

@@ -74,7 +74,7 @@ enum PaymentDisk {
 /// Each call can wait on the keychain's question to its owner, so none is
 /// made on the main thread.
 enum PaymentDiskKey {
-    static let service = "sh.regents.cloak.paydisk"
+    static let service = KeychainStore.service("sh.regents.cloak.paydisk")
 
     struct Failure: Error, CustomStringConvertible {
         let status: OSStatus
