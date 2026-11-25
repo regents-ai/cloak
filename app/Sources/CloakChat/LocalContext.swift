@@ -482,10 +482,12 @@ public enum ApprovedFolderSearch {
         var scanned = 0
         let maxFilesToScan = 600
         let maxFileBytes = 512 * 1024
+        let maxDevDocsBytes = 100 * 1024 * 1024
 
         for folderPath in folders {
             let rootURL = URL(filePath: folderPath).resolvingSymlinksInPath().standardizedFileURL
             guard fm.fileExists(atPath: rootURL.path) else { continue }
+            let isDevDocsRoot = rootURL.lastPathComponent.lowercased() == "devdocs"
             let rootPrefix = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
             let rootComponents = rootURL.pathComponents.count
 
@@ -523,15 +525,32 @@ public enum ApprovedFolderSearch {
                 guard values?.isRegularFile == true else { continue }
                 let ext = resolvedFileURL.pathExtension.lowercased()
                 guard !secretExtensions.contains(ext), allowedExtensions.contains(ext) else { continue }
-                if let size = values?.fileSize, size == 0 || size > maxFileBytes { continue }
-
-                scanned += 1
-                guard let content = try? String(contentsOf: resolvedFileURL, encoding: .utf8), !content.isEmpty else { continue }
+                let fileSize = values?.fileSize ?? 0
+                guard fileSize > 0 else { continue }
 
                 let fullPath = resolvedFileURL.path
                 let relative = fullPath.hasPrefix(rootPrefix) ? String(fullPath.dropFirst(rootPrefix.count)) : name
                 let displayPath = "\(rootURL.lastPathComponent)/\(relative)"
                 let lowerPath = displayPath.lowercased()
+
+                if fileSize > maxFileBytes {
+                    // Stream-scan large DevDocs JSON bundles in bounded chunks so
+                    // multi-megabyte packs (rust.json, python, js, etc.) work in Local Mode.
+                    guard isDevDocsRoot, ext == "json", fileSize <= maxDevDocsBytes else { continue }
+                    scanned += 1
+                    if let match = scanLargeFile(
+                        at: resolvedFileURL,
+                        displayPath: displayPath,
+                        lowerPath: lowerPath,
+                        terms: terms
+                    ) {
+                        candidates.append(match)
+                    }
+                    continue
+                }
+
+                scanned += 1
+                guard let content = try? String(contentsOf: resolvedFileURL, encoding: .utf8), !content.isEmpty else { continue }
                 let lowerContent = content.lowercased()
 
                 var score = 0
@@ -564,6 +583,52 @@ public enum ApprovedFolderSearch {
             usedChars += cost
         }
         return selected
+    }
+
+    /// Streams a large DevDocs JSON file in bounded 256 KB UTF-8 chunks without
+    /// loading the entire multi-megabyte archive into memory.
+    private static func scanLargeFile(
+        at url: URL,
+        displayPath: String,
+        lowerPath: String,
+        terms: [String]
+    ) -> Match? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+
+        let chunkSize = 256 * 1024
+        var matchedTerms: Set<String> = []
+        var bestSnippet: String?
+        var bestChunkMatches = 0
+        var pathScore = 0
+        for term in terms where lowerPath.contains(term) {
+            pathScore += 5
+        }
+
+        while true {
+            guard let data = try? handle.read(upToCount: chunkSize), !data.isEmpty else { break }
+            let chunk = String(decoding: data, as: UTF8.self)
+            let lowerChunk = chunk.lowercased()
+            var chunkMatches = 0
+            var firstRange: Range<String.Index>?
+            for term in terms {
+                if let range = lowerChunk.range(of: term) {
+                    matchedTerms.insert(term)
+                    chunkMatches += 1
+                    if firstRange == nil { firstRange = range }
+                }
+            }
+            if chunkMatches > bestChunkMatches, let firstRange {
+                bestChunkMatches = chunkMatches
+                bestSnippet = makeSnippet(from: chunk, lowerContent: lowerChunk, around: firstRange, maxLength: 900)
+            }
+            // Stop early once a chunk matches every query term.
+            if bestChunkMatches == terms.count { break }
+        }
+
+        let score = pathScore + matchedTerms.count * 3
+        guard score > 0, let snippet = bestSnippet else { return nil }
+        return Match(relativePath: displayPath, snippet: snippet, score: score)
     }
 
     private static func extractTerms(from query: String) -> [String] {

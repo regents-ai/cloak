@@ -45,7 +45,8 @@ final class ExpiryGuard {
                 Snapshot(
                     expiry: self.settings.depositExpires,
                     autoWithdraw: self.settings.autoWithdrawBeforeExpiry,
-                    state: self.payer.state)
+                    state: self.payer.state,
+                    paused: self.payer.withdrawBlock == .paused)
             }) {
                 self.handle(snapshot)
             }
@@ -62,6 +63,7 @@ final class ExpiryGuard {
         var expiry: Date?
         var autoWithdraw: Bool
         var state: Payer.State
+        var paused: Bool
     }
 
     private func handle(_ snapshot: Snapshot) {
@@ -159,9 +161,29 @@ final class ExpiryGuard {
             guard let self, !Task.isCancelled else { return }
             guard self.settings.autoWithdrawBeforeExpiry,
                 self.payer.state == .ready,
-                self.settings.depositExpires == expiry,
-                self.payer.withdrawBlock == nil
+                self.settings.depositExpires == expiry
             else {
+                return
+            }
+            if self.payer.withdrawBlock == .paused {
+                self.logger.notice("auto-withdraw deferred: vault paused by operator")
+                self.notifyAutoWithdrawNeedsAttention(
+                    body: "zkAPI withdrawals are temporarily paused by the operator. Check Cloak Funds before your deposit expires.")
+                return
+            }
+            guard self.payer.withdrawBlock == nil else { return }
+            // Check local ETH wallet balance BEFORE calling `quoteWithdrawal()` —
+            // quoting irreversibly enters `withdrawal_pending` and freezes chat spending.
+            // If the wallet has ~0 ETH for gas, notify the user without locking their deposit.
+            let minGasFloorWei = Decimal(string: "100000000000000", locale: Locale(identifier: "en_US_POSIX"))! // 0.0001 ETH
+            if let balanceText = self.payer.view?.chain?.balanceWei ?? self.payer.funding?.ethBalance,
+                let balance = Decimal(string: balanceText, locale: Locale(identifier: "en_US_POSIX")),
+                balance < minGasFloorWei
+            {
+                self.attemptedExpiry = expiry
+                self.logger.notice("auto-withdraw skipped before quoting: wallet balance below gas floor")
+                self.notifyAutoWithdrawNeedsAttention(
+                    body: "Add a small amount of ETH for Ethereum gas in Cloak Funds, then withdraw your expiring zkAPI deposit.")
                 return
             }
             self.attemptedExpiry = expiry

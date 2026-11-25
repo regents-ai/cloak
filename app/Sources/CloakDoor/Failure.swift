@@ -51,8 +51,9 @@ struct Failure: Error, Sendable, Equatable {
         case .noFunds: self.init(402, "insufficient_funds", "The wallet has no funds for this request. Add USDC.e on Tempo in Chat, under Wallet.")
         case .walletRefused: self.init(402, "wallet_refused", "The provider turned the wallet away.")
         case .modelUnavailable: self.init(404, "model_not_found", "The provider can't use this model now. Pick another.")
-        case .torDown: self.init(503, "tor_down", "Cloak couldn't reach the provider through Tor. Try again.")
-        case .answerRefused, .failed: self.init(502, "failed", "The request did not go through. Try again.")
+        case .torDown: self.init(503, "tor_down", "Tor couldn't reach the provider (slow or blocked exit). Try again for a fresh Tor circuit.")
+        case .torExitBlocked: self.init(503, "tor_exit_blocked", "The provider's firewall blocked this Tor exit node. Try again for a fresh Tor circuit.")
+        case .answerRefused, .failed: self.init(502, "failed", "No response came back over Tor. Try again for a fresh Tor circuit.")
         case .unreachable: self = .stopped
         }
     }
@@ -63,11 +64,12 @@ struct Failure: Error, Sendable, Equatable {
         case .withdrawing: self.init(409, "withdrawal_pending", "Your zkAPI deposit is being withdrawn, so it can't pay for requests now.")
         case .busy: self.init(429, "busy", "zkAPI Anon Inference is busy with another request. Try again in a moment.")
         case .modelUnavailable: self.init(404, "model_not_found", "The provider can't use this model now. Pick another.")
-        case .torDown: self.init(503, "tor_down", "Cloak couldn't reach the provider through Tor. Try again.")
+        case .depositTooLow: self.init(402, "deposit_too_low", "Your active zkAPI deposit is below this model's temporary hold. Pick a lower-tier model or deposit more ETH.")
+        case .torDown: self.init(503, "tor_down", "Tor couldn't reach the zkAPI service (slow or blocked exit). Try again for a fresh Tor circuit.")
         case .refused: self.init(400, "invalid_request_error", "The provider turned the request away as it was.")
-        case .providerFailed, .answerRefused, .failed: self.init(502, "failed", "The request did not go through. Try again.")
+        case .providerFailed, .answerRefused, .failed: self.init(502, "failed", "The provider or Tor exit failed. Try again for a fresh Tor circuit.")
         case .heldTooLong: self.init(504, "settling", "The last request is still settling, so nothing was sent. Try again in a minute.")
-        case .timedOut, .ended: self.init(504, "timed_out", "No answer came in time. The request may have been paid for.")
+        case .timedOut, .ended: self.init(504, "timed_out", "The Tor circuit timed out or dropped before the answer finished. The request may have been paid for.")
         case .unreachable: self.init(503, "wallet_unreachable", "Couldn't reach the zkAPI payment service. Pause and start Cloak, then try again.")
         case .cancelled: self = .stopped
         }

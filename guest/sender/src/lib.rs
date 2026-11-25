@@ -42,7 +42,7 @@ use mpp::client::channel_ops::{
     encode_precompile_request_close_call, encode_precompile_withdraw_call,
 };
 use mpp::client::tempo::charge::tx_builder::{build_tempo_tx, estimate_gas, TempoTxOptions};
-use mpp::client::tempo::session::recovery::read_on_chain_channel_state;
+use mpp::client::tempo::session::recovery::{read_on_chain_channel_state, OnChainChannelState};
 use mpp::client::tempo::session::store::{
     ChannelStore, ChannelStoreError, ChannelStoreResult, StoredChannelEntry,
 };
@@ -79,6 +79,11 @@ const MAX_FRAME: usize = 16 << 20;
 const CLOSE_GRACE: u64 = 900;
 /// Each request through Tor, from connecting to the last byte.
 const REQUEST_LIMIT: Duration = Duration::from_secs(180);
+/// Maximum time to establish a SOCKS5 + TLS connection over Tor so a dead exit
+/// fails fast instead of stalling for 3 minutes.
+const CONNECT_LIMIT: Duration = Duration::from_secs(20);
+/// Per-attempt timeout for short JSON-RPC calls over Tor (balance / channel state).
+const RPC_LIMIT: Duration = Duration::from_secs(25);
 /// The least balance a first deposit needs, checked before anything reaches
 /// the provider: its suggested deposit, 1 USDC.e on 14 November 2026. The
 /// toolkit opens and tops up each deposit at the size the provider's
@@ -151,7 +156,21 @@ impl Network {
             .no_proxy()
             .proxy(proxy)
             .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_LIMIT)
             .timeout(REQUEST_LIMIT)
+            .build()?)
+    }
+
+    /// Shorter-timeout Tor client for JSON-RPC reads so fallback RPCs can all
+    /// be tried quickly if one Tor exit stalls.
+    fn rpc_client(&self, identity: &str) -> Result<reqwest::Client, Stop> {
+        let proxy = reqwest::Proxy::all(format!("socks5h://{identity}:cloak@{}", self.tor))?;
+        Ok(reqwest::Client::builder()
+            .no_proxy()
+            .proxy(proxy)
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_LIMIT)
+            .timeout(RPC_LIMIT)
             .build()?)
     }
 
@@ -436,6 +455,7 @@ pub enum Code {
     WalletRefused,
     ModelUnavailable,
     TorDown,
+    TorExitBlocked,
     Failed,
 }
 
@@ -456,14 +476,14 @@ impl Stop {
     }
 }
 
-/// Whether a connection could not be made, through the error's sources: a
-/// Tor port that refuses or a circuit that cannot be built.
+/// Whether a connection could not be made or timed out over Tor: a Tor port
+/// that refuses, a circuit that cannot be built, or a stalled Tor exit.
 fn unreachable(error: &(dyn std::error::Error + 'static)) -> bool {
     let mut next = Some(error);
     while let Some(error) = next {
         if error
             .downcast_ref::<reqwest::Error>()
-            .is_some_and(reqwest::Error::is_connect)
+            .is_some_and(|e| e.is_connect() || e.is_timeout())
         {
             return true;
         }
@@ -630,6 +650,7 @@ fn code_name(code: Code) -> &'static str {
         Code::WalletRefused => "wallet_refused",
         Code::ModelUnavailable => "model_unavailable",
         Code::TorDown => "tor_down",
+        Code::TorExitBlocked => "tor_exit_blocked",
         Code::Failed => "failed",
     }
 }
@@ -743,8 +764,9 @@ async fn funds(network: &Network, address: Address) -> Result<Value, Stop> {
         let url = raw_url
             .parse()
             .map_err(|e| Stop::failed(format!("Base RPC address: {e}")))?;
-        let base: RootProvider = ProviderBuilder::default()
-            .connect_client(ClientBuilder::default().http_with_client(network.client(&fresh())?, url));
+        let base: RootProvider = ProviderBuilder::default().connect_client(
+            ClientBuilder::default().http_with_client(network.rpc_client(&fresh())?, url),
+        );
         match IERC20::new(BASE_USDC, &base).balanceOf(address).call().await {
             Ok(balance) => return Ok(json!({ "balance": Amount(balance.to::<u128>()) })),
             Err(error) => last_err = Some(Stop::from(error)),
@@ -852,10 +874,32 @@ async fn balance_live(network: &Network, rpc: &RootProvider<TempoNetwork>, owner
         Err(first_err) if network.rpc == TEMPO_RPC_URL => {
             let mut fallback = network.clone();
             fallback.rpc = TEMPO_RPC_FALLBACK.into();
-            let retry_rpc = fallback.rpc(&fallback.client(&fresh())?)?;
+            let retry_rpc = fallback.rpc(&fallback.rpc_client(&fresh())?)?;
             balance(&retry_rpc, owner).await.or(Err(first_err))
         }
         Err(err) => Err(err),
+    }
+}
+
+/// Reads on-chain channel state, retrying once on a fresh Tor circuit and
+/// fallback hostname when using the default live Tempo RPC.
+async fn channel_state_live(
+    network: &Network,
+    rpc: &RootProvider<TempoNetwork>,
+    channel_id: B256,
+) -> Result<OnChainChannelState, Stop> {
+    match read_on_chain_channel_state(rpc, channel_id).await {
+        Ok(state) => Ok(state),
+        Err(first_err) if network.rpc == TEMPO_RPC_URL => {
+            let mut fallback = network.clone();
+            fallback.rpc = TEMPO_RPC_FALLBACK.into();
+            let retry_rpc = fallback.rpc(&fallback.rpc_client(&fresh())?)?;
+            read_on_chain_channel_state(&retry_rpc, channel_id)
+                .await
+                .map_err(Stop::from)
+                .or_else(|_| Err(Stop::from(first_err)))
+        }
+        Err(err) => Err(Stop::from(err)),
     }
 }
 
@@ -877,15 +921,20 @@ struct Pricing {
     output: f64,
 }
 
-/// The provider's list of models, as JSON text.
+/// The provider's list of models, as JSON text. Retries once on a fresh Tor
+/// circuit if the first exit fails or is blocked.
 async fn listed(client: &reqwest::Client, network: &Network) -> Result<String, Stop> {
-    Ok(client
-        .get(format!("{}/v1/models", network.provider))
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?)
+    let url = format!("{}/v1/models", network.provider);
+    match client.get(&url).send().await.and_then(reqwest::Response::error_for_status) {
+        Ok(resp) => Ok(resp.text().await?),
+        Err(first_err) => {
+            let retry = network.rpc_client(&fresh())?;
+            match retry.get(&url).send().await.and_then(reqwest::Response::error_for_status) {
+                Ok(resp) => Ok(resp.text().await?),
+                Err(_) => Err(Stop::from(first_err)),
+            }
+        }
+    }
 }
 
 async fn wallet(
@@ -893,8 +942,8 @@ async fn wallet(
     address: Address,
     deposit: Option<Deposit>,
 ) -> Result<Value, Stop> {
-    let client = network.client(&fresh())?;
-    let rpc = network.rpc(&network.client(&fresh())?)?;
+    let client = network.rpc_client(&fresh())?;
+    let rpc = network.rpc(&network.rpc_client(&fresh())?)?;
     let setup = async {
         let text = client
             .get(format!("{}/setup", network.provider))
@@ -919,12 +968,20 @@ async fn wallet(
                 .collect::<Vec<_>>(),
         )
     };
-    let (balance, setup, models) = tokio::try_join!(balance_live(network, &rpc, address), setup, models)?;
+    // Run on-chain Tempo balance independently from Boundless HTTP endpoints so
+    // unilateral on-chain Withdraw stays available even if Boundless is down.
+    let (balance_res, setup_res, models_res) =
+        tokio::join!(balance_live(network, &rpc, address), setup, models);
+    let balance = balance_res?;
+    let (setup, models, provider_unreachable) = match (setup_res, models_res) {
+        (Ok(s), Ok(m)) => (s, m, false),
+        _ => (false, Vec::new(), true),
+    };
     // As the network shows its channel, whether or not its opening was known
     // to have landed when it was kept.
     let deposit = match deposit {
         Some(deposit) => {
-            let state = read_on_chain_channel_state(&rpc, deposit.channel_id).await?;
+            let state = channel_state_live(network, &rpc, deposit.channel_id).await?;
             json!({
                 "deposit": Amount(state.deposit),
                 "spent": deposit.cumulative_amount,
@@ -939,9 +996,17 @@ async fn wallet(
         }
         None => Value::Null,
     };
-    Ok(
-        json!({ "balance": Amount(balance), "least": Amount(DEPOSIT), "setup": setup, "models": models, "deposit": deposit }),
-    )
+    let mut out = json!({
+        "balance": Amount(balance),
+        "least": Amount(DEPOSIT),
+        "setup": setup,
+        "models": models,
+        "deposit": deposit,
+    });
+    if provider_unreachable {
+        out["providerUnreachable"] = json!(true);
+    }
+    Ok(out)
 }
 
 impl Send {
@@ -994,6 +1059,7 @@ struct ProblemDetail {
 async fn answer(response: reqwest::Response) -> Result<Value, Stop> {
     let status = response.status();
     if !status.is_success() {
+        let has_cf_mitigated = response.headers().contains_key("cf-mitigated");
         let body = response.bytes().await.unwrap_or_default();
         let problem = serde_json::from_slice::<Problem>(&body)
             .ok()
@@ -1005,6 +1071,18 @@ async fn answer(response: reqwest::Response) -> Result<Value, Stop> {
             .unwrap_or_default();
         let kind = problem.and_then(|p| p.kind).unwrap_or_default();
         let detail = format!("the provider answered {status} {code} {kind}");
+        let raw_prefix = String::from_utf8_lossy(&body[..body.len().min(512)]).to_lowercase();
+        let looks_like_waf = has_cf_mitigated
+            || (520..=526).contains(&status.as_u16())
+            || (status.as_u16() == 403
+                && code.is_empty()
+                && (raw_prefix.trim_start().starts_with("<!doctype")
+                    || raw_prefix.trim_start().starts_with("<html")
+                    || raw_prefix.contains("cloudflare")
+                    || raw_prefix.contains("just a moment")));
+        if looks_like_waf {
+            return Err(Stop::new(Code::TorExitBlocked, detail));
+        }
         return Err(match status.as_u16() {
             403 if code.contains("model_access_required") => {
                 Stop::new(Code::ModelUnavailable, detail)
@@ -1039,25 +1117,43 @@ async fn close<S: Read + Write + std::marker::Send + 'static>(
         &rpc,
         Arc::new(Keep::new(Some(deposit), frames)),
     )?;
-    let probe = client
-        .post(network.chat())
-        .header("Accept-Payment", "tempo/session")
-        .json(&json!({ "model": model, "messages": [{ "role": "user", "content": "Hello" }], "stream": false }))
-        .send()
-        .await?;
-    let challenge = parse_www_authenticate_all_bytes(
-        probe
-            .headers()
-            .get_all(reqwest::header::WWW_AUTHENTICATE)
-            .iter()
-            .map(|value| value.as_bytes()),
-    )
-    .into_iter()
-    .filter_map(Result::ok)
-    .find(|challenge| {
-        challenge.method.as_str() == "tempo" && challenge.intent.as_str() == "session"
-    })
-    .ok_or_else(|| {
+    let probe_model = |m: &str| {
+        client
+            .post(network.chat())
+            .header("Accept-Payment", "tempo/session")
+            .json(&json!({ "model": m, "messages": [{ "role": "user", "content": "Hello" }], "stream": false }))
+            .send()
+    };
+    let extract_challenge = |resp: &reqwest::Response| {
+        parse_www_authenticate_all_bytes(
+            resp.headers()
+                .get_all(reqwest::header::WWW_AUTHENTICATE)
+                .iter()
+                .map(|value| value.as_bytes()),
+        )
+        .into_iter()
+        .filter_map(Result::ok)
+        .find(|challenge| {
+            challenge.method.as_str() == "tempo" && challenge.intent.as_str() == "session"
+        })
+    };
+    let mut probe = probe_model(model).await?;
+    let mut challenge = extract_challenge(&probe);
+    // If the user's selected model was delisted/unavailable, fall back to the
+    // first currently listed model so cooperative Close still succeeds.
+    if challenge.is_none() {
+        if let Ok(raw) = listed(&client, network).await {
+            if let Ok(models) = serde_json::from_str::<Models>(&raw) {
+                if let Some(alt) = models.data.iter().find(|m| m.id != model) {
+                    if let Ok(retry_probe) = probe_model(&alt.id).await {
+                        probe = retry_probe;
+                        challenge = extract_challenge(&probe);
+                    }
+                }
+            }
+        }
+    }
+    let challenge = challenge.ok_or_else(|| {
         Stop::failed(format!(
             "the provider answered {} with no session challenge",
             probe.status()
@@ -1091,8 +1187,8 @@ async fn close<S: Read + Write + std::marker::Send + 'static>(
 /// network refuses a withdrawal before it ends.
 async fn withdraw(network: &Network, key: B256, deposit: Deposit) -> Result<Value, Stop> {
     let signer = signer(key)?;
-    let rpc = network.rpc(&network.client(&fresh())?)?;
-    let state = read_on_chain_channel_state(&rpc, deposit.channel_id).await?;
+    let rpc = network.rpc(&network.rpc_client(&fresh())?)?;
+    let state = channel_state_live(network, &rpc, deposit.channel_id).await?;
     let (step, input) = if state.close_requested_at == 0 {
         (
             "requested",
@@ -1121,7 +1217,7 @@ async fn submit(
         value: U256::ZERO,
         input,
     }];
-    let nonce = rpc.get_transaction_count(from).await?;
+    let nonce = rpc.get_transaction_count(from).pending().await?;
     let price = rpc.get_gas_price().await?;
     let mut options = TempoTxOptions {
         calls,

@@ -207,6 +207,10 @@ public final class Door {
     /// Coalesced background flush of request counts so `admit` never blocks
     /// the main actor with `fsync` on every HTTP call.
     @ObservationIgnored private var appFlush: Task<Void, Never>?
+    /// Short-lived cache for `/v1/models` per payment rail so Connected Apps and
+    /// Pi Agent turns don't pay an extra Tor round-trip on every single request.
+    @ObservationIgnored private var modelsCache: [Payment: (data: Data, at: Date)] = [:]
+    private static let modelsCacheTTL: TimeInterval = 60
     /// The box passes, by the agent's conversation, and how each
     /// conversation pays, until the door closes.
     @ObservationIgnored private var boxes: [UUID: (pass: String, fingerprint: Data, payment: Payment)] = [:]
@@ -728,20 +732,26 @@ public final class Door {
     /// through the payer, or the Tempo wallet's provider's through the
     /// sender.
     private func models(paying payment: Payment) async throws(Failure) -> Data {
+        if let cached = modelsCache[payment], Date.now.timeIntervalSince(cached.at) < Self.modelsCacheTTL {
+            return cached.data
+        }
+        let fresh: Data
         switch payment {
         case .zkapi:
             do {
-                return try await parts.queue.call("GET", "/v1/models")
+                fresh = try await parts.queue.call("GET", "/v1/models")
             } catch {
                 throw Failure(error)
             }
         case .tempo:
             do {
-                return try await Remote.models(exchange: parts.exchange)
+                fresh = try await Remote.models(exchange: parts.exchange)
             } catch {
                 throw Failure(error)
             }
         }
+        modelsCache[payment] = (fresh, .now)
+        return fresh
     }
 
     /// Checks the request, then the model against the provider's list, then

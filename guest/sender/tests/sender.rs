@@ -832,16 +832,24 @@ fn venice_requests_leave_for_venices_api_alone_with_its_header_names() {
     stage.exchange(good);
     stage.exchange(json!({ "op": "venice_funds", "address": TEST_ADDRESS }));
     let connections = stage.connections();
-    let [venice, base] = connections.as_slice() else {
-        panic!("{connections:?}")
-    };
+    assert_eq!(connections.len(), 5, "{connections:?}");
+    let venice = &connections[0];
     assert!(venice.named && venice.host == "api.venice.ai" && venice.user == "ab".repeat(32));
-    assert!(
-        base.named
-            && base.host == "mainnet.base.org"
-            && is_identity(&base.user)
-            && base.user != venice.user
-    );
+    let expected_base_hosts = [
+        "base.drpc.org",
+        "base.public.blockpi.network",
+        "1rpc.io",
+        "mainnet.base.org",
+    ];
+    for (base, expected_host) in connections[1..].iter().zip(expected_base_hosts) {
+        assert!(
+            base.named
+                && base.host == expected_host
+                && is_identity(&base.user)
+                && base.user != venice.user,
+            "{base:?}"
+        );
+    }
 
     stage.network = stood_in;
     let exchanged = stage.exchange(venice_chat(&format!(

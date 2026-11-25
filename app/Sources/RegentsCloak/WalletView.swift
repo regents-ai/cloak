@@ -379,7 +379,8 @@ struct VeniceFundsSections: View {
     let running: Bool
     @State private var onRampTarget: CardOnRamp.Target?
     @State private var topUpText = "5"
-    @State private var topUpInvalid = false
+    @State private var topUpError: String?
+    @State private var pendingTopUp: Amount?
     @State private var apiKeyInput = ""
     @State private var keyBusy = false
     @State private var keyError: String?
@@ -475,7 +476,7 @@ struct VeniceFundsSections: View {
                             .monospacedDigit()
                     } else if venice.fundsFailed {
                         HStack(spacing: 6) {
-                            Text("Couldn't read")
+                            Text("Couldn't read over Tor")
                                 .foregroundStyle(.secondary)
                             if running {
                                 Button("Try Again") { Task { await venice.refreshBalances() } }
@@ -504,7 +505,7 @@ struct VeniceFundsSections: View {
             } header: {
                 Text("Venice Base Wallet")
             } footer: {
-                Text("Beta: keep working balances small. Stored in this Mac's Keychain (not synced to iCloud) — without a private-key backup, wiping or losing this Mac permanently loses funds. [Wallet security & recovery](https://regents.sh/docs/cloak/wallets).")
+                Text("Beta: keep working balances small. Venice x402 top-ups are gasless; moving unspent Base USDC out via an external wallet requires a small amount of Base ETH for gas. Stored in this Mac's Keychain (not synced to iCloud). [Wallet security & recovery](https://regents.sh/docs/cloak/wallets).")
                     .foregroundStyle(.secondary)
             }
 
@@ -527,7 +528,7 @@ struct VeniceFundsSections: View {
                             ForEach(["5", "10", "20"], id: \.self) { preset in
                                 Button("$\(preset)") {
                                     topUpText = preset
-                                    topUpInvalid = false
+                                    topUpError = nil
                                 }
                                 .controlSize(.small)
                                 .buttonStyle(.bordered)
@@ -538,9 +539,27 @@ struct VeniceFundsSections: View {
                                 .labelsHidden()
                                 .accessibilityLabel("Top-up amount in US dollars")
                                 .frame(width: 52)
-                                .onChange(of: topUpText) { topUpInvalid = false }
-                            Button("Top Up") { runTopUp() }
+                                .onChange(of: topUpText) { topUpError = nil }
+                            Button(venice.adding ? "Topping Up…" : "Top Up") { prepareTopUp() }
                                 .disabled(venice.adding)
+                                .confirmationDialog(
+                                    pendingTopUp.map { "Top Up \($0.dollars.formatted(.currency(code: "USD"))) to Venice Credit?" } ?? "Top Up Venice Credit?",
+                                    isPresented: Binding(
+                                        get: { pendingTopUp != nil },
+                                        set: { if !$0 { pendingTopUp = nil } }
+                                    ),
+                                    titleVisibility: .visible
+                                ) {
+                                    if let amount = pendingTopUp {
+                                        Button("Top Up \(amount.dollars.formatted(.currency(code: "USD")))") {
+                                            pendingTopUp = nil
+                                            Task { await venice.topUp(amount) }
+                                        }
+                                    }
+                                    Button("Cancel", role: .cancel) { pendingTopUp = nil }
+                                } message: {
+                                    Text("Signs a gasless Base USDC transfer to Venice AI Credit. Top-ups are irreversible and non-refundable.")
+                                }
                         }
                     }
                     if let least = venice.terms?.least {
@@ -552,8 +571,8 @@ struct VeniceFundsSections: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if topUpInvalid {
-                        Text("Enter a valid dollar amount (e.g. 5).")
+                    if let topUpError {
+                        Text(topUpError)
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
@@ -562,7 +581,7 @@ struct VeniceFundsSections: View {
                             .foregroundStyle(.green)
                     }
                     if let stop = venice.topUpStop {
-                        let message = stop.sent
+                        let message = (stop.sent && stop.kind != .paymentRefused)
                             ? "Top-up was submitted over Tor and may have moved Base USDC. Refresh and verify your balances above before trying again."
                             : "\(stop.kind.title): \(stop.kind.words)"
                         Label(message, systemImage: "exclamationmark.triangle.fill")
@@ -597,6 +616,9 @@ struct VeniceFundsSections: View {
                 }
                 if let usd = venice.keyAccount?.usd {
                     LabeledContent("USD Balance", value: usd.formatted(.currency(code: "USD")))
+                }
+                if let diem = venice.keyAccount?.diem, diem > 0 {
+                    LabeledContent("DIEM Balance", value: "\(diem.formatted(.number.precision(.fractionLength(2...4)))) DIEM")
                 }
                 if let stop = venice.keyAccountStop {
                     Label("\(stop.kind.title): \(stop.kind.words)", systemImage: "exclamationmark.triangle.fill")
@@ -694,13 +716,21 @@ struct VeniceFundsSections: View {
         }
     }
 
-    private func runTopUp() {
+    private func prepareTopUp() {
         guard let amount = Amount(dollars: topUpText) else {
-            topUpInvalid = true
+            topUpError = "Enter a valid dollar amount (e.g. 5)."
             return
         }
-        topUpInvalid = false
-        Task { await venice.topUp(amount) }
+        if let least = venice.terms?.least, amount < least {
+            topUpError = "Minimum top-up is \(least.dollars.formatted(.currency(code: "USD"))) USDC on Base."
+            return
+        }
+        if let funds = venice.funds, amount > funds {
+            topUpError = "Not enough Base USDC in this wallet (\(funds.dollars.formatted(.currency(code: "USD"))) available)."
+            return
+        }
+        topUpError = nil
+        pendingTopUp = amount
     }
 }
 
@@ -882,14 +912,19 @@ private struct Account: View {
             }
             Only(words: Self.only)
             if let look = wallet.look {
-                if !look.setup {
+                if look.providerUnreachable == true {
+                    Label("Boundless API is unreachable over Tor. On-chain Tempo balance and emergency Withdraw are still available below.", systemImage: "exclamationmark.triangle.fill")
+                        .symbolRenderingMode(.multicolor)
+                        .font(.caption)
+                } else if !look.setup {
                     Label("The provider no longer names USDC.e on Tempo. Don't add funds.", systemImage: "exclamationmark.triangle.fill")
                         .symbolRenderingMode(.multicolor)
                 }
                 LabeledContent("Balance", value: look.balance.text)
                 if wallet.lacksFunds {
-                    Text("Add at least \(look.least.text) to send.")
+                    Text("Add at least \(look.least.text) plus a small buffer (e.g. 1.05 USDC.e) — Tempo uses USDC.e for gas fees.")
                         .foregroundStyle(.secondary)
+                        .font(.caption)
                 }
             } else {
                 LabeledContent("Balance") { Unread(running: running, what: "wallet balance") }
@@ -904,7 +939,7 @@ private struct Account: View {
         } header: {
             Text("Wallet")
         } footer: {
-            Text("Beta: keep working balances small. Stored in this Mac's Keychain (not synced to iCloud) — without a private-key backup, wiping or losing this Mac permanently loses funds. [Wallet security & recovery](https://regents.sh/docs/cloak/wallets).")
+            Text("Beta: keep working balances small. Private-key backup recovers wallet USDC.e only — close or withdraw any active channel before wiping or switching Macs (keys never sync to iCloud). [Wallet security & recovery](https://regents.sh/docs/cloak/wallets).")
                 .foregroundStyle(.secondary)
         }
     }
@@ -1017,12 +1052,24 @@ private struct ExportPrivateKeyButton: View {
                 HStack {
                     Button {
                         if let hex = revealedHex {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(hex, forType: .string)
+                            let pasteboard = NSPasteboard.general
+                            pasteboard.clearContents()
+                            let item = NSPasteboardItem()
+                            item.setString(hex, forType: .string)
+                            item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+                            item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
+                            pasteboard.writeObjects([item])
+                            let copiedChangeCount = pasteboard.changeCount
                             copied = true
+                            Task {
+                                try? await Task.sleep(for: .seconds(60))
+                                if NSPasteboard.general.changeCount == copiedChangeCount {
+                                    NSPasteboard.general.clearContents()
+                                }
+                            }
                         }
                     } label: {
-                        Label(copied ? "Copied" : "Copy Private Key", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        Label(copied ? "Copied (clears in 60s)" : "Copy Private Key", systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -1215,11 +1262,12 @@ private struct Holding: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button(wallet.mutating ? "Closing…" : "Close") { Task { await wallet.close() } }
-                    .disabled(unread || none || wallet.mutating)
-                    .tip("Refunds what's unspent.")
+                let providerDown = wallet.look?.providerUnreachable == true
+                Button(wallet.mutation == .closing ? "Closing…" : "Close") { Task { await wallet.close() } }
+                    .disabled(unread || none || providerDown || wallet.mutating)
+                    .tip(providerDown ? "Boundless API is unreachable over Tor. Use Withdraw instead." : "Refunds what's unspent.")
                     .accessibilityHint("Refunds what's unspent.")
-                Button(wallet.mutating ? "Submitting…" : "Withdraw") { Task { await wallet.withdraw() } }
+                Button(wallet.mutation == .withdrawing ? "Submitting…" : "Withdraw") { Task { await wallet.withdraw() } }
                     .disabled(unread || none || waiting || wallet.mutating)
                     .tip(withdraw)
                     .accessibilityHint(withdraw)
@@ -1296,9 +1344,10 @@ extension RemoteStop {
         case .noFunds: "Insufficient funds"
         case .walletRefused: "Wallet declined"
         case .modelUnavailable: "Model unavailable"
-        case .torDown: "Tor down"
+        case .torDown: "Tor connection failed"
+        case .torExitBlocked: "Tor exit blocked"
         case .answerRefused: "No answer"
-        case .failed: "Failed"
+        case .failed: "Failed over Tor"
         case .unreachable: "Not running"
         }
     }
@@ -1308,9 +1357,10 @@ extension RemoteStop {
         case .noFunds: "Add USDC.e on Tempo to the wallet, then try again."
         case .walletRefused: "The provider declined this wallet."
         case .modelUnavailable: "This model can't be used now. Pick another in Funds."
-        case .torDown: "Cloak couldn't reach the network through Tor. Try again."
+        case .torDown: "Tor couldn't reach the network (slow or dropped Tor circuit). Try again for a fresh Tor exit."
+        case .torExitBlocked: "The provider's firewall blocked this Tor exit node. Try again to switch to a fresh Tor circuit."
         case .answerRefused: "The model declined to answer."
-        case .failed: "The request did not go through. Try again."
+        case .failed: "No complete response came back over Tor. Try again for a fresh Tor circuit."
         case .unreachable: "Start Cloak, then try again."
         }
     }

@@ -232,6 +232,7 @@ public struct RemoteStop: Error, Equatable, Sendable {
         case walletRefused = "wallet_refused"
         case modelUnavailable = "model_unavailable"
         case torDown = "tor_down"
+        case torExitBlocked = "tor_exit_blocked"
         /// The completion has no answer Chat can show; found here, never by
         /// the sender.
         case answerRefused = "answer_refused"
@@ -300,6 +301,9 @@ public struct Look: Sendable, Equatable, Decodable {
     public let setup: Bool
     public let models: [Model]
     public let deposit: Deposit?
+    /// True when the provider HTTP API was unreachable over Tor, while on-chain
+    /// Tempo balance and channel state were still readable for emergency Withdraw.
+    public let providerUnreachable: Bool?
 
     public struct Model: Sendable, Equatable, Decodable, Identifiable {
         public let id: String

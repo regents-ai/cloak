@@ -26,7 +26,21 @@ type ModelPrice struct {
 // reads for their names, for what each costs. As there, neither the chosen
 // model nor any credential is sent.
 func (c *Client) ModelPrices(ctx context.Context) ([]ModelPrice, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	// Retry once on a fresh Tor circuit (relay.patch assigns a fresh SOCKS
+	// identity per dial when no conversation identity is in ctx).
+	for attempt := 0; attempt < 2; attempt++ {
+		if prices, err := c.fetchModelPricesOnce(ctx); err == nil {
+			return prices, nil
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, &Error{http.StatusBadGateway, "models_unavailable"}
+}
+
+func (c *Client) fetchModelPricesOnce(ctx context.Context) ([]ModelPrice, error) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.config.InferenceBaseURL+"/models", nil)
 	if err != nil {

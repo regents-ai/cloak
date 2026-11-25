@@ -187,13 +187,8 @@ final class OfflineDataManager {
         tasks[id]?.cancel()
         tasks[id] = nil
         activeDownloads[id] = nil
-        // Clean up any partial `.part` files on cancel.
-        let dir = folder(for: id)
-        if let entries = try? FileManager.default.contentsOfDirectory(atPath: dir.path) {
-            for entry in entries where entry.hasSuffix(".part") {
-                try? FileManager.default.removeItem(at: dir.appending(path: entry))
-            }
-        }
+        // Keep any `.part` file intact so clicking Download again resumes via HTTP Range.
+        // (`remove(_:)` deletes the entire dataset folder including partial files.)
         refreshFromDisk()
     }
 
@@ -231,6 +226,31 @@ final class OfflineDataManager {
     }
 
     nonisolated private static func extractTarGz(archive: URL, into directory: URL) throws {
+        // Inspect archive entries first to reject path traversal (`..`) or absolute paths.
+        let list = Process()
+        list.executableURL = URL(filePath: "/usr/bin/tar")
+        list.arguments = ["-tzf", archive.path]
+        let listOut = Pipe()
+        list.standardOutput = listOut
+        try list.run()
+        let listed = String(data: listOut.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        list.waitUntilExit()
+        guard list.terminationStatus == 0 else {
+            throw NSError(
+                domain: "sh.regents.cloak.offline",
+                code: Int(list.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "Couldn't inspect \(archive.lastPathComponent)."])
+        }
+        for entry in listed.split(whereSeparator: \.isNewline) {
+            let path = String(entry)
+            if path.hasPrefix("/") || path.split(separator: "/").contains("..") {
+                throw NSError(
+                    domain: "sh.regents.cloak.offline",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Refused unsafe archive path in \(archive.lastPathComponent)."])
+            }
+        }
+
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/tar")
         process.arguments = ["-xzf", archive.path, "-C", directory.path]
@@ -253,17 +273,26 @@ final class OfflineDataManager {
         destination: URL,
         onBytes: @escaping @Sendable (Int64) -> Void
     ) async throws {
+        let existingBytes = Int64((try? FileManager.default.attributesOfItem(atPath: partURL.path)[.size] as? NSNumber)?.int64Value ?? 0)
         var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Cloak/0.2", forHTTPHeaderField: "User-Agent")
+        request.setValue("curl/8.7.1", forHTTPHeaderField: "User-Agent")
+        if existingBytes > 0 {
+            request.setValue("bytes=\(existingBytes)-", forHTTPHeaderField: "Range")
+        }
 
-        let delegate = StreamingDownloadDelegate(destination: destination, partURL: partURL, onBytes: onBytes)
+        let delegate = ResumableDownloadDelegate(
+            destination: destination,
+            partURL: partURL,
+            existingBytes: existingBytes,
+            onBytes: onBytes
+        )
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
 
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 delegate.setContinuation(continuation)
-                let task = session.downloadTask(with: request)
+                let task = session.dataTask(with: request)
                 delegate.setTask(task)
                 task.resume()
             }
@@ -273,19 +302,26 @@ final class OfflineDataManager {
     }
 }
 
-private final class StreamingDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+/// Streams HTTP downloads directly into `partURL` with `Range` resume support so
+/// multi-gigabyte offline packs continue where they left off after a drop or restart.
+private final class ResumableDownloadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let destination: URL
     private let partURL: URL
+    private let existingBytes: Int64
     private let onBytes: @Sendable (Int64) -> Void
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Void, any Error>?
-    private var task: URLSessionDownloadTask?
-    private var cancelled = false
+    private var task: URLSessionDataTask?
+    private var handle: FileHandle?
+    private var written: Int64 = 0
     private var lastReported: Int64 = 0
+    private var cancelled = false
+    private var failed = false
 
-    init(destination: URL, partURL: URL, onBytes: @escaping @Sendable (Int64) -> Void) {
+    init(destination: URL, partURL: URL, existingBytes: Int64, onBytes: @escaping @Sendable (Int64) -> Void) {
         self.destination = destination
         self.partURL = partURL
+        self.existingBytes = existingBytes
         self.onBytes = onBytes
     }
 
@@ -300,7 +336,7 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDownloadDeleg
         }
     }
 
-    func setTask(_ t: URLSessionDownloadTask) {
+    func setTask(_ t: URLSessionDataTask) {
         let shouldCancel = lock.withLock { () -> Bool in
             task = t
             return cancelled
@@ -311,8 +347,10 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDownloadDeleg
     }
 
     func cancel() {
-        let active = lock.withLock { () -> URLSessionDownloadTask? in
+        let active = lock.withLock { () -> URLSessionDataTask? in
             cancelled = true
+            try? handle?.close()
+            handle = nil
             return task
         }
         active?.cancel()
@@ -321,6 +359,8 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDownloadDeleg
 
     private func finish(_ result: Result<Void, any Error>) {
         let cont = lock.withLock { () -> CheckedContinuation<Void, any Error>? in
+            try? handle?.close()
+            handle = nil
             defer { continuation = nil }
             return continuation
         }
@@ -329,25 +369,27 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDownloadDeleg
 
     func urlSession(
         _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
-        let shouldReport = lock.withLock { () -> Bool in
-            if totalBytesWritten - lastReported >= 128 * 1024 || totalBytesWritten == totalBytesExpectedToWrite {
-                lastReported = totalBytesWritten
-                return true
-            }
-            return false
+        guard let http = response as? HTTPURLResponse else {
+            completionHandler(.cancel)
+            finish(.failure(NSError(domain: "sh.regents.cloak.offline", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response."])))
+            return
         }
-        if shouldReport {
-            onBytes(totalBytesWritten)
+        // HTTP 416 with an existing .part means the file is already complete or stale.
+        if http.statusCode == 416 && existingBytes > 0 {
+            try? FileManager.default.removeItem(at: partURL)
+            completionHandler(.cancel)
+            finish(.failure(NSError(
+                domain: "sh.regents.cloak.offline",
+                code: 416,
+                userInfo: [NSLocalizedDescriptionKey: "Partial file out of range — click Download again to retry cleanly."])))
+            return
         }
-    }
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        if let http = downloadTask.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+        guard http.statusCode == 200 || http.statusCode == 206 else {
+            completionHandler(.cancel)
             finish(.failure(NSError(
                 domain: "sh.regents.cloak.offline",
                 code: http.statusCode,
@@ -356,22 +398,72 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDownloadDeleg
         }
         do {
             let fm = FileManager.default
-            if fm.fileExists(atPath: partURL.path) { try? fm.removeItem(at: partURL) }
-            try fm.moveItem(at: location, to: partURL)
-            if fm.fileExists(atPath: destination.path) { try? fm.removeItem(at: destination) }
-            try fm.moveItem(at: partURL, to: destination)
-            finish(.success(()))
+            let resuming = http.statusCode == 206 && existingBytes > 0 && fm.fileExists(atPath: partURL.path)
+            if !resuming {
+                if fm.fileExists(atPath: partURL.path) { try fm.removeItem(at: partURL) }
+                fm.createFile(atPath: partURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            }
+            let fileHandle = try FileHandle(forWritingTo: partURL)
+            if resuming {
+                try fileHandle.seekToEnd()
+            }
+            lock.withLock {
+                handle = fileHandle
+                written = resuming ? existingBytes : 0
+                lastReported = written
+            }
+            if resuming { onBytes(existingBytes) }
+            completionHandler(.allow)
         } catch {
-            try? FileManager.default.removeItem(at: partURL)
+            completionHandler(.cancel)
             finish(.failure(error))
         }
     }
 
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let report: Int64? = lock.withLock {
+            guard !cancelled, !failed, let handle else { return nil }
+            do {
+                try handle.write(contentsOf: data)
+                written += Int64(data.count)
+                if written - lastReported >= 128 * 1024 {
+                    lastReported = written
+                    return written
+                }
+                return nil
+            } catch {
+                failed = true
+                task?.cancel()
+                return nil
+            }
+        }
+        if let report {
+            onBytes(report)
+        }
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        guard let error else { return }
-        if (error as NSError).code == NSURLErrorCancelled {
-            finish(.failure(CancellationError()))
-        } else {
+        if let error {
+            // Keep `.part` intact on network drops so the next attempt resumes via HTTP Range.
+            if (error as NSError).code == NSURLErrorCancelled {
+                finish(.failure(CancellationError()))
+            } else {
+                finish(.failure(error))
+            }
+            return
+        }
+        let total = lock.withLock { () -> Int64 in
+            try? handle?.close()
+            handle = nil
+            return written
+        }
+        onBytes(total)
+        do {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: destination.path) { try? fm.removeItem(at: destination) }
+            try fm.moveItem(at: partURL, to: destination)
+            finish(.success(()))
+        } catch {
             finish(.failure(error))
         }
     }

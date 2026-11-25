@@ -47,7 +47,8 @@ struct NearGatewayTabBar: View {
             return refused ? .orange : .secondary
         }
         if let proof = mode.proof {
-            let fresh = Date.now.timeIntervalSince(proof.passedAt) < Double(chat.settings.proofFreshness.rawValue)
+            let fresh = chat.settings.proofFreshness == .everyMessage
+                || Date.now.timeIntervalSince(proof.passedAt) < Double(chat.settings.proofFreshness.rawValue)
             return fresh ? .green : .secondary
         }
         return nil

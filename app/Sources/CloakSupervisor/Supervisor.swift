@@ -606,11 +606,8 @@ public final class Supervisor {
             lines.append("Running: tor is up, the worker is up or resting, the guest opened its payment disk for V's payer, the startup check sent a rewrite through the guest, the daemon and the worker, and the sender is ready for Token Inference.")
             lines.append(
                 cover == false
-                    ? "Cover traffic is off in this run: the guest's daemon started no cover worker."
-                    : "Cover traffic runs in the guest while Cloak is running: the reference's own background noise, about three page fetches a minute through Tor.")
-            if coverChanged {
-                lines.append("The Cover setting has changed since this run started: Cloak restarts to switch it once nothing under way would be cut.")
-            }
+                    ? "Cover traffic is off: toggles live on the host without restarting Cloak."
+                    : "Cover traffic runs live on the host over Tor (about three fetches a minute, each on a fresh Tor circuit) and toggles without restarting Cloak.")
         case .ready:
             lines.append(
                 localWorker == .none

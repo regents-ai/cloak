@@ -305,7 +305,7 @@ public final class Payer {
             break
         case "approval_pending", "deposit_pending", "confirming":
             let stage = funding.depositStage ?? "pending"
-            guard ["pending", "fee_wait", "finalizing", "activating"].contains(stage) else { return .failed(stage) }
+            guard ["pending", "fee_wait", "finalizing", "activating", "failed_finalizing"].contains(stage) else { return .failed(stage) }
             return .depositing(stage)
         default:
             return .failed(funding.phase)
@@ -316,7 +316,7 @@ public final class Payer {
         case "waiting_settlement":
             // Without a saved destination it is only the last request settling.
             if withdrawal.destination != nil { return .withdrawing(withdrawal.phase) }
-        case "quoted", "waiting_funds", "withdrawal_pending", "confirming":
+        case "quoted", "waiting_funds", "withdrawal_pending", "confirming", "reverted":
             return .withdrawing(withdrawal.phase)
         default:
             return .failed(withdrawal.phase)
@@ -467,9 +467,13 @@ public final class Payer {
             stopTarget = .withdrawal
             return
         }
+        var payload: [String: Any] = ["destination": address, "note_id": note]
+        if withdrawal?.phase == "reverted", let txHash = withdrawal?.transactionHash, !txHash.isEmpty {
+            payload["retry_transaction_hash"] = txHash
+        }
         await quote(.quotingWithdrawal, target: .withdrawal) { () throws(PayStop) in
             .withdrawal(try decode(await queue.call(
-                "POST", "/admin/withdrawal/quote", body: json(["destination": address, "note_id": note]))))
+                "POST", "/admin/withdrawal/quote", body: json(payload))))
         }
     }
 
@@ -627,7 +631,7 @@ public final class Payer {
         if case .depositing = state { return .pendingTransaction }
         if case .withdrawing = state { return .pendingTransaction }
         if case .settling = state { return .pendingTransaction }
-        if view?.wallet.hasNote == true || view?.wallet.pendingRequest == true || state == .ready {
+        if state != .taken && (view?.wallet.hasNote == true || view?.wallet.pendingRequest == true || state == .ready) {
             return .activeDeposit
         }
         guard let balance = view?.chain.flatMap({ Decimal(string: $0.balanceWei, locale: Self.posix) }) else { return nil }

@@ -185,7 +185,7 @@ struct DarkbloomView: View {
     }
 
     private static let runtimeBullets = [
-        "Installs Darkbloom into ~/.darkbloom from api.darkbloom.dev (verifies developer team SLDQ2GJ6TL first).",
+        "Runs Darkbloom's installer script from api.darkbloom.dev into ~/.darkbloom, then verifies the installed binary is signed by developer team SLDQ2GJ6TL before Cloak talks to it.",
         "Starts Darkbloom's local control service, but serves nothing until you choose Local Only or Network + Local.",
         "Closing this window cancels an install or update in progress.",
     ]

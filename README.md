@@ -30,7 +30,7 @@ Requires Apple Silicon and macOS 26 or later (macOS 27+ for optional Darkbloom i
 
 Cloak lives in your menu bar and starts paused. **Local** (`⌘1`) and **NEAR AI Gateway** (`⌘2`, with Tor off) work immediately without starting the VM.
 
-When you press **Start** (`⌘S`), Cloak launches bundled Tor (`0.4.9.16`), a sandboxed local prompt rewriter (`Qwen 3.5 9B`), and an ephemeral, NIC-less Linux arm64 microVM (`Virtualization.framework`). Outbound traffic from the VM can only exit through Tor over `vsock:9050`. Models load on demand and unload automatically when idle so they do not hold unified memory when not in use.
+When you press **Start**, Cloak launches bundled Tor (`0.4.9.16`), a sandboxed local prompt rewriter (`Qwen 3.5 9B`), and an ephemeral, NIC-less Linux arm64 microVM (`Virtualization.framework`). Outbound traffic from the VM can only exit through Tor over `vsock:9050`. Models load on demand and unload automatically when idle so they do not hold unified memory when not in use.
 
 You can chat directly in Cloak, toggle the built-in sandboxed **Pi** coding agent (`hammer` icon), or connect external coding tools and scripts to Cloak's local OpenAI-compatible gateway at `http://127.0.0.1:8742/v1`.
 
@@ -50,14 +50,14 @@ Each conversation locks its mode on turn 1. The **Active Guarantees** rail in th
 
 ## Features
 
-- **Fast local Apple Silicon inference** — pure-Swift MLX (`Inkling 2 Mini`, 10.21 GB, ~56–64 tok/s on M4 Max, fits 16 GB+ Macs) plus Metal `llama.cpp` GGUF tiers and an optional 44 MB uncensored LoRA
+- **Fast local Apple Silicon inference** — pure-Swift MLX (`Inkling 2 Mini`, 10.21 GB, ~56–64 tok/s on M4 Max, fits 16 GB+ Macs) plus Metal `llama.cpp` GGUF tiers (24 GB+ Macs) with an optional 44 MB uncensored LoRA
 - **Zero telemetry** — no analytics, no crash reports, no Regents account, and Sparkle system profiling disabled
 - **Hardware-attested enclaves** — native Rust verifier (`cloak-near`) checks Intel TDX quotes (`dcap-qvl`), pinned `app_compose` measurements, and Intel Trust Authority NVIDIA GPU verdicts before E2EE v2 encryption
 - **Local prompt rephrasing** — sandboxed `Qwen 3.5 9B` strips writing style and filler before cloud turns, keeping code, paths, URLs, and identifiers intact, and fails closed on error
 - **Per-conversation Tor + instant Cover Traffic** — isolated SOCKS5 circuits per thread, plus host-side Cover Traffic that toggles live with zero restart and logs every fetch locally
 - **Accountless crypto rails** — separate local Keychain wallets per rail (Venice Base `USDC`, Boundless Tempo `USDC.e`, and zkAPI Ethereum Mainnet `ETH`), all inspectable together under **Settings → Wallets**
 - **Sandboxed Pi coding agent** — runs shell and file tools inside the throwaway NIC-less Linux VM over `torsocks` without touching macOS files
-- **Native macOS shell** — ChaCha20-Poly1305 encrypted chats, pure-Swift Markdown + LaTeX math, Liquid Glass menu bar panel, global Quick Prompt hotkey, Control Center & Desktop widgets, and a bundled `cloak` CLI
+- **Native macOS shell** — ChaCha20-Poly1305 encrypted chats, pure-Swift Markdown + LaTeX math, Liquid Glass menu bar panel (macOS 27+; classic menu on macOS 26), global Quick Prompt hotkey, Control Center & Desktop widgets, and a bundled `cloak` CLI
 
 ## Example requests
 

@@ -35,8 +35,13 @@ final class NearMode {
     /// Monotonic token so an older or cancelled check never overwrites a newer
     /// proof when the route changes (e.g. toggling Tor).
     @ObservationIgnored private var checkGeneration = 0
-    private let nearIdentity = Chat.newIdentity()
-    private let intelIdentity = Chat.newIdentity()
+    private var nearIdentity = Chat.newIdentity()
+    private var intelIdentity = Chat.newIdentity()
+
+    private func rotateTorIdentities() {
+        nearIdentity = Chat.newIdentity()
+        intelIdentity = Chat.newIdentity()
+    }
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "near")
 
     init(near: Near, supervisor: Supervisor, settings: AppSettings) {
@@ -86,6 +91,9 @@ final class NearMode {
         } catch {
             guard generation == checkGeneration, !Task.isCancelled else { return }
             logger.error("a NEAR check stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .private)")
+            if settings.nearTor, [.fetch, .connect, .send, .status].contains(error.kind) {
+                rotateTorIdentities()
+            }
             proof = nil
             checkStop = error
         }
@@ -109,6 +117,9 @@ final class NearMode {
             // failures; a model content refusal (`.reply`) is NOT a TEE failure,
             // and stale sends from a prior route must not clobber the active route.
             if self.route == route && checkGeneration == generation {
+                if settings.nearTor, [.fetch, .connect, .send, .status].contains(error.kind) {
+                    rotateTorIdentities()
+                }
                 switch error.kind {
                 case .fetch, .refused, .pin, .helper, .ended:
                     proof = nil

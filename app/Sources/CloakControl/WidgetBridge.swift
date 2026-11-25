@@ -55,7 +55,7 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
 
     public var modeLabel: String {
         switch activeMode {
-        case "near": "Private Cloud (NEAR)"
+        case "near": "NEAR AI Gateway"
         case "token": "Token Inference"
         case "v": "zkAPI Anon Inference"
         default: "Local"

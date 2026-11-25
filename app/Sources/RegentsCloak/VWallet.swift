@@ -319,8 +319,8 @@ private struct DepositSection: View {
                     }
                 }
                 // Signed again only from a new quote.
-                if ["quoted", "waiting_settlement", "waiting_funds"].contains(phase) {
-                    WithdrawRow(payer: payer, prominent: true)
+                if ["quoted", "waiting_settlement", "waiting_funds", "reverted"].contains(phase) {
+                    WithdrawRow(payer: payer, prominent: true, confirmBeforeQuote: false)
                 }
             case .taken:
                 Text("This deposit was closed on the chain. Any ETH still in the wallet above can still be transferred out.")
@@ -345,6 +345,7 @@ private struct DepositSection: View {
         case "fee_wait": "Waiting for ETH for the fee."
         case "finalizing": "Waiting for final confirmation."
         case "activating": "Activating the deposit."
+        case "failed_finalizing": "Deposit reverted on-chain — waiting for finality."
         default: "Submitted. Waiting for confirmation."
         }
     }
@@ -355,6 +356,7 @@ private struct DepositSection: View {
         case "waiting_funds": "Waiting for ETH for the fee."
         case "confirming": "Confirming with the service."
         case "withdrawal_pending": "Submitted. Waiting for confirmation."
+        case "reverted": "Last withdrawal reverted on-chain. Request a new quote to try again."
         default: "Quoted. Review it to withdraw."
         }
     }
@@ -436,7 +438,7 @@ private struct Held: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            WithdrawRow(payer: payer, prominent: band == .near || band == .due)
+            WithdrawRow(payer: payer, prominent: band == .near || band == .due, confirmBeforeQuote: true)
         }
     }
 }
@@ -446,6 +448,8 @@ private struct Held: View {
 private struct WithdrawRow: View {
     let payer: Payer
     let prominent: Bool
+    let confirmBeforeQuote: Bool
+    @State private var confirmWithdraw = false
 
     var body: some View {
         if let review = payer.review, case .withdrawal = review {
@@ -465,9 +469,27 @@ private struct WithdrawRow: View {
                     Text(block.words)
                         .foregroundStyle(.secondary)
                 }
-                let withdraw = Button(quoting ? "Quoting…" : "Withdraw") { Task { await payer.quoteWithdrawal() } }
-                    .tip("Returns the whole deposit to this wallet.")
-                    .disabled(payer.withdrawBlock != nil || payer.activity != nil)
+                let withdraw = Button(quoting ? "Quoting…" : "Withdraw") {
+                    if confirmBeforeQuote {
+                        confirmWithdraw = true
+                    } else {
+                        Task { await payer.quoteWithdrawal() }
+                    }
+                }
+                .tip("Returns the whole deposit to this wallet.")
+                .disabled(payer.withdrawBlock != nil || payer.activity != nil)
+                .confirmationDialog(
+                    "Start zkAPI Withdrawal?",
+                    isPresented: $confirmWithdraw,
+                    titleVisibility: .visible
+                ) {
+                    Button("Quote Withdrawal") {
+                        Task { await payer.quoteWithdrawal() }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Quoting a withdrawal pauses zkAPI chat spending until the withdrawal completes. You'll review the Ethereum gas fee before signing.")
+                }
                 if prominent {
                     withdraw.buttonStyle(.borderedProminent)
                 } else {
@@ -1056,7 +1078,7 @@ struct PayStopRow: View {
     var body: some View {
         let noDeposit = stop.code == .noDeposit
         StopLine(title: noDeposit ? "Deposit to \(verb)." : stop.title, words: noDeposit ? nil : stop.words) {
-            if noDeposit || stop.code == .modelUnavailable, let showWallet {
+            if noDeposit || stop.code == .modelUnavailable || stop.code == .depositTooLow, let showWallet {
                 Button("Funds…", action: showWallet)
             }
             DismissButton(action: dismiss)
@@ -1179,6 +1201,11 @@ extension Payer.Stop {
             || lower.contains("context deadline exceeded")
             || lower.contains("connection refused")
             || lower.contains("eof")
+            || lower.contains("socks5")
+            || lower.contains("tor")
+            || lower.contains("tls handshake timeout")
+            || lower.contains("403")
+            || lower.contains("429")
             || lower.contains("502 bad gateway")
             || lower.contains("503")
             || lower.contains("504")
@@ -1193,13 +1220,14 @@ extension PayStop {
         case .withdrawing: "Withdrawing"
         case .busy: "Busy"
         case .modelUnavailable: "Model unavailable"
-        case .torDown: "Tor down"
+        case .depositTooLow: "Deposit too low"
+        case .torDown: "Tor connection failed"
         case .refused: "Declined"
-        case .providerFailed: "Failed"
+        case .providerFailed: "Provider or Tor error"
         case .answerRefused: "No answer"
         case .heldTooLong: "Settling"
-        case .timedOut: "No answer"
-        case .ended: "Interrupted"
+        case .timedOut: "Timed out over Tor"
+        case .ended: "Dropped over Tor"
         case .cancelled: "Stopped"
         case .failed: "Couldn't complete"
         }
@@ -1210,7 +1238,7 @@ extension PayStop {
     var readWords: String {
         switch code {
         case .timedOut, .ended, .providerFailed:
-            "Couldn't load your zkAPI ETH wallet over Tor. Nothing was sent — try again."
+            "Couldn't load your zkAPI ETH wallet over Tor. Nothing was sent — try again for a fresh Tor circuit."
         case .failed:
             "Couldn't load your zkAPI Ethereum balance or deposit status over Tor. Wait a moment and try again."
         default:
@@ -1235,13 +1263,14 @@ extension PayStop {
         case .withdrawing: "The deposit is being withdrawn, so it can't pay for requests now."
         case .busy: "zkAPI Anon Inference is busy with another request. Try again in a moment."
         case .modelUnavailable: "The service can't use this model now. Pick another in Funds."
-        case .torDown: "Cloak couldn't reach the service through Tor. Try again."
+        case .depositTooLow: "Your active deposit is below this model's temporary hold. Pick a lower-tier model in Funds, or withdraw and deposit more ETH."
+        case .torDown: "Tor couldn't reach the zkAPI service (slow or blocked Tor exit). Try again to switch to a fresh Tor circuit."
         case .refused: "The service declined the request."
-        case .providerFailed: "The provider failed. The request may have been paid for."
+        case .providerFailed: "The provider or Tor exit failed. The request may have been paid for — try again for a fresh Tor circuit."
         case .answerRefused: "The model declined to answer."
         case .heldTooLong: "The last request is still settling, so nothing was sent. Try again in a minute."
-        case .timedOut: "No answer came in time. The request may have been paid for."
-        case .ended: "The connection ended before the answer. The request may have been paid for."
+        case .timedOut: "No answer came back over Tor in time. The request may have been paid for — try again for a fresh Tor circuit."
+        case .ended: "The Tor circuit dropped before the answer finished. The request may have been paid for — try again."
         case .cancelled: "The request was stopped."
         case .failed: "zkAPI Anon Inference couldn't complete this over Tor. Wait a moment and try again."
         }

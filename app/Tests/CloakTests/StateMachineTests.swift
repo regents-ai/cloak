@@ -799,4 +799,43 @@ struct StateMachineTests {
 
         #expect(maxConcurrent.withLock { $0 } == 1)
     }
+
+    @Test func approvedFolderSearchStreamsLargeDevDocsJSON() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cloak-devdocs-\(UUID().uuidString)")
+        let devdocs = root.appending(path: "devdocs")
+        try FileManager.default.createDirectory(at: devdocs, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Create a >600 KB DevDocs JSON bundle (larger than the 512 KB cap for normal files).
+        var payload = String(repeating: "{\"doc\":\"padding text for streaming search\"}\n", count: 14_000)
+        payload += "{\"entry\":\"rust_ownership_borrow_checker\",\"body\":\"Every value in Rust has a single owner.\"}\n"
+        let jsonFile = devdocs.appending(path: "rust.json")
+        try payload.write(to: jsonFile, atomically: true, encoding: .utf8)
+
+        let matches = ApprovedFolderSearch.search(query: "rust_ownership_borrow_checker", folders: [devdocs.path])
+        #expect(matches.count == 1)
+        #expect(matches[0].relativePath == "devdocs/rust.json")
+        #expect(matches[0].snippet.contains("single owner"))
+    }
+
+    @Test func payerHandlesRevertedWithdrawalAndFailedFinalizing() throws {
+        let viewWithNote = try JSONDecoder.pay.decode(
+            DepositView.self,
+            from: Data(#"{"wallet":{"has_note":true,"pending_request":false,"note":{"note_id":7,"expiry_ts":1800000000}},"chain":{"block":1,"time":1700000000,"paused":false,"balance_wei":"1000000000000000","note":{"status":"active","expiry_ts":1800000000}}}"#.utf8))
+        let fundingReady = try JSONDecoder.pay.decode(
+            FundingStatus.self,
+            from: Data(#"{"address":"0x1111111111111111111111111111111111111111","chain_id":1,"eth_balance":"1000000000000000","phase":"ready"}"#.utf8))
+        let fundingFailedFinalizing = try JSONDecoder.pay.decode(
+            FundingStatus.self,
+            from: Data(#"{"address":"0x1111111111111111111111111111111111111111","chain_id":1,"eth_balance":"1000000000000000","phase":"confirming","deposit_stage":"failed_finalizing"}"#.utf8))
+        let withdrawalReverted = try JSONDecoder.pay.decode(
+            WithdrawalStatus.self,
+            from: Data(#"{"eth_balance":"1000000000000000","private_balance":500000,"destination":"0x1111111111111111111111111111111111111111","note_id":7,"phase":"reverted","transaction_hash":"0xabc"}"#.utf8))
+        let withdrawalReady = try JSONDecoder.pay.decode(
+            WithdrawalStatus.self,
+            from: Data(#"{"eth_balance":"1000000000000000","private_balance":500000,"phase":"ready"}"#.utf8))
+
+        #expect(Payer.state(view: viewWithNote, funding: fundingFailedFinalizing, withdrawal: withdrawalReady, sending: false) == .depositing("failed_finalizing"))
+        #expect(Payer.state(view: viewWithNote, funding: fundingReady, withdrawal: withdrawalReverted, sending: false) == .withdrawing("reverted"))
+    }
 }

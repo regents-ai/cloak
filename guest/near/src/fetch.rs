@@ -218,14 +218,34 @@ pub fn fetch_ita_tokens(
     );
     let mut asks = 1;
     loop {
+        let user_buf;
+        let attempt_route = match route {
+            Route::Direct => route.clone(),
+            Route::Tor(proxy) => {
+                user_buf = if asks == 1 {
+                    proxy.user.to_owned()
+                } else {
+                    format!("{}-tok-{asks}", proxy.user)
+                };
+                Route::Tor(Proxy {
+                    user: &user_buf,
+                    ..*proxy
+                })
+            }
+        };
         match get(
-            route,
+            &attempt_route,
             NEAR,
             &path,
             &[("Accept", "application/json"), ("x-no-aliasing", "true")],
             INTEL_LIMIT,
         ) {
-            Err(FetchError::Status { code: 502, .. }) if asks < TOKEN_ASKS => asks += 1,
+            Err(FetchError::Status { code, .. })
+                if matches!(code, 403 | 429 | 502 | 503 | 504) && asks < TOKEN_ASKS =>
+            {
+                asks += 1
+            }
+            Err(FetchError::Malformed(_)) if asks < TOKEN_ASKS => asks += 1,
             answer => return Ok(answer?.body),
         }
     }
@@ -242,7 +262,9 @@ fn intel(route: &Route, host: &'static str, path: &str) -> Result<Answer, FetchE
     get(route, host, path, &[], INTEL_LIMIT)
 }
 
-/// One GET on a connection of its own, which must be answered 200.
+/// One GET on a connection of its own, which must be answered 200. Over Tor,
+/// retries up to `PATHS` fresh circuits when an exit node is blocked (403/429/5xx)
+/// or drops mid-body.
 fn get(
     route: &Route,
     host: &'static str,
@@ -250,15 +272,51 @@ fn get(
     headers: &[(&str, &str)],
     limit: usize,
 ) -> Result<Answer, FetchError> {
-    let (mut tls, _) = connect(route, host, &mozilla())?;
-    let answer = request(&mut tls, "GET", host, path, headers, None, limit)?;
-    match answer.status {
-        200 => Ok(answer),
-        code => Err(FetchError::Status {
-            host,
-            code,
-            detail: answer.detail(),
-        }),
+    let max_attempts = match route {
+        Route::Direct => 1,
+        Route::Tor(_) => PATHS,
+    };
+    let mut attempt = 1;
+    loop {
+        let user_buf;
+        let attempt_route = match route {
+            Route::Direct => route.clone(),
+            Route::Tor(proxy) => {
+                user_buf = if attempt == 1 {
+                    proxy.user.to_owned()
+                } else {
+                    format!("{}-get-{attempt}", proxy.user)
+                };
+                Route::Tor(Proxy {
+                    user: &user_buf,
+                    ..*proxy
+                })
+            }
+        };
+        let result = (|| {
+            let (mut tls, _) = connect(&attempt_route, host, &mozilla())?;
+            let answer = request(&mut tls, "GET", host, path, headers, None, limit)?;
+            match answer.status {
+                200 => Ok(answer),
+                code => Err(FetchError::Status {
+                    host,
+                    code,
+                    detail: answer.detail(),
+                }),
+            }
+        })();
+        match result {
+            Ok(answer) => return Ok(answer),
+            Err(FetchError::Status { code, .. })
+                if attempt < max_attempts && matches!(code, 403 | 429 | 502 | 503 | 504) =>
+            {
+                attempt += 1;
+            }
+            Err(FetchError::Malformed(_)) if attempt < max_attempts => {
+                attempt += 1;
+            }
+            Err(err) => return Err(err),
+        }
     }
 }
 

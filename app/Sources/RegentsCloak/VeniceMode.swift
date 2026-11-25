@@ -69,9 +69,16 @@ final class VeniceMode {
 
     @ObservationIgnored private var tasks: [UUID: [Int: Task<Void, Never>]] = [:]
     @ObservationIgnored private var presses = 0
-    private let listIdentity = Chat.newIdentity()
-    private let keyIdentity = Chat.newIdentity()
-    private let walletIdentity = Chat.newIdentity()
+    private var listIdentity = Chat.newIdentity()
+    private var keyIdentity = Chat.newIdentity()
+    private var walletIdentity = Chat.newIdentity()
+
+    private static func shouldRotateCircuit(for kind: VeniceStop.Kind) -> Bool {
+        switch kind {
+        case .unreachable, .failed, .torExitBlocked: true
+        default: false
+        }
+    }
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "venice")
 
     /// Freshness window for cached model list during chat sends.
@@ -267,6 +274,9 @@ final class VeniceMode {
             }
         } catch {
             guard modelsGeneration == gen, !Task.isCancelled, error.kind != .cancelled, running else { return }
+            if Self.shouldRotateCircuit(for: error.kind) {
+                listIdentity = Chat.newIdentity()
+            }
             listStop = error
         }
     }
@@ -288,6 +298,9 @@ final class VeniceMode {
                 keyAccountStop = nil
             } catch let stop as VeniceStop {
                 guard balancesGeneration == gen, !Task.isCancelled, stop.kind != .cancelled, running else { return }
+                if Self.shouldRotateCircuit(for: stop.kind) {
+                    keyIdentity = Chat.newIdentity()
+                }
                 keyAccountStop = stop
             } catch {
                 guard balancesGeneration == gen, !Task.isCancelled, running else { return }
@@ -316,6 +329,9 @@ final class VeniceMode {
             accountStop = nil
         } catch {
             guard balancesGeneration == gen, !Task.isCancelled, error.kind != .cancelled, running else { return }
+            if Self.shouldRotateCircuit(for: error.kind) {
+                walletIdentity = Chat.newIdentity()
+            }
             accountStop = error
         }
         guard balancesGeneration == gen, !Task.isCancelled, running else { return }
@@ -345,6 +361,9 @@ final class VeniceMode {
             accountStop = nil
             await refreshBalances()
         } catch {
+            if Self.shouldRotateCircuit(for: error.kind) {
+                walletIdentity = Chat.newIdentity()
+            }
             topUpStop = error
             logger.error("Venice top-up stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .public)")
             // If the signed EIP-3009 authorization was already transmitted over Tor,

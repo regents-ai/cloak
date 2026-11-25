@@ -79,6 +79,8 @@ public final class Tor: Sendable {
         process.arguments = [
             "--defaults-torrc", absent, "--ignore-missing-torrc", "-f", absent,
             "--SocksPort", "unix:\(listener) IsolateSOCKSAuth",
+            "--CircuitBuildTimeout", "20",
+            "--SocksTimeout", "30",
             "--DataDirectory", data.path,
             "--Log", "notice stdout",
             "--__OwningControllerProcess", String(getpid()),

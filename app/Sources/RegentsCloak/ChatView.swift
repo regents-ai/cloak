@@ -190,7 +190,9 @@ private struct Sidebar: View {
                     .sidebarHover(selected: chat.selection == conversation.id)
                     .tag(conversation.id)
                     .contextMenu {
-                        if conversation.isNear, conversation.turns.contains(where: { $0.answer != nil }) {
+                        if conversation.isNear, !chat.unsaved.contains(conversation.id),
+                            conversation.turns.contains(where: { $0.answer != nil })
+                        {
                             if chat.nearMode.traces.isExported(conversation.id) {
                                 Button("Remove Exported Trace") { chat.nearMode.traces.remove(conversation.id) }
                             } else {
@@ -350,7 +352,8 @@ private struct ActiveGuaranteesView: View {
             ))
         }
 
-        if mode == .token, (!chat.usesVenice(for: conversation) || settings.venicePays == .wallet) {
+        let venicePays = conversation?.venice?.pays ?? settings.venicePays
+        if mode == .token, (agent || !chat.usesVenice(for: conversation) || venicePays == .wallet) {
             items.append(Item(
                 id: "no-account-wallet",
                 symbol: "creditcard",
@@ -360,7 +363,7 @@ private struct ActiveGuaranteesView: View {
         }
 
         if mode == .near, let proof = chat.nearMode.proof,
-            now.timeIntervalSince(proof.passedAt) < Double(settings.proofFreshness.rawValue)
+            settings.proofFreshness == .everyMessage || now.timeIntervalSince(proof.passedAt) < Double(settings.proofFreshness.rawValue)
         {
             items.append(Item(
                 id: "near-tee",
@@ -379,7 +382,8 @@ private struct ActiveGuaranteesView: View {
             ))
         }
 
-        if settings.savedChats {
+        let isEphemeral = conversation.map { chat.unsaved.contains($0.id) } ?? !settings.savedChats
+        if !isEphemeral {
             items.append(Item(
                 id: "encrypted-disk",
                 symbol: "lock.doc",
@@ -391,7 +395,7 @@ private struct ActiveGuaranteesView: View {
                 id: "no-disk-save",
                 symbol: "eye.slash",
                 title: "Memory only (not saved)",
-                detail: "Save chat history is off — new chats never touch disk and vanish when Cloak quits."
+                detail: "This chat never touches disk and vanishes when Cloak quits."
             ))
         }
 
@@ -914,7 +918,7 @@ private struct TurnCard: View {
                     case .zkapi(let stop):
                         PayStopRow(stop: stop, showWallet: { chat.showingWallet = true }, dismiss: dismiss)
                     case .near(let stop):
-                        NearStopRow(stop: stop, showSettings: showNearSettings, dismiss: dismiss)
+                        NearStopRow(stop: stop, viaTor: chat.settings.nearTor, showSettings: showNearSettings, dismiss: dismiss)
                     }
                 }
                 .padding(12)
@@ -2667,15 +2671,16 @@ private struct NearStatus: View {
             Busy(title: settings.nearTor ? "Checking NEAR's hardware through Tor" : "Checking NEAR's hardware", started: started)
         } else if let stop = nearMode.checkStop {
             let verificationFailed = stop.kind == .refused || stop.kind == .pin || stop.kind == .reply
+            let viaTor = settings.nearTor
             HStack(spacing: 4) {
                 Label {
-                    Text(verificationFailed ? stop.title : "Check failed: \(stop.title)")
+                    Text(verificationFailed ? stop.title(viaTor: viaTor) : "Check failed: \(stop.title(viaTor: viaTor))")
                         .foregroundStyle(verificationFailed ? Color.orange : Color.secondary)
                 } icon: {
                     Image(systemName: verificationFailed ? "exclamationmark.shield.fill" : "shield.slash")
                         .foregroundStyle(verificationFailed ? Color.orange : Color.secondary)
                 }
-                .tip("\(stop.title): \(stop.words)")
+                .tip("\(stop.title(viaTor: viaTor)): \(stop.words(viaTor: viaTor))")
                 SymbolButton("Check Again", symbol: "arrow.clockwise") { Task { await nearMode.check() } }
             }
         } else if let proof = nearMode.proof {
@@ -2683,8 +2688,9 @@ private struct NearStatus: View {
             // passing show as they happen.
             TimelineView(.periodic(from: proof.passedAt, by: 60)) { context in
                 let age = context.date.timeIntervalSince(proof.passedAt)
-                let fresh = age < Double(settings.proofFreshness.rawValue)
-                let words = Self.checked(proof, age: age) + (fresh ? "." : ". Next message checks again.")
+                let everyMessage = settings.proofFreshness == .everyMessage
+                let fresh = everyMessage || age < Double(settings.proofFreshness.rawValue)
+                let words = Self.checked(proof, age: age) + (everyMessage ? ". Next message checks again." : (fresh ? "." : ". Next message checks again."))
                 Label {
                     Text(fresh ? "Verified · \(Self.age(age))" : Self.age(age))
                 } icon: {
@@ -2896,6 +2902,7 @@ private struct VeniceStopRow: View {
 /// reached NEAR. A key NEAR refused comes with the way to replace it.
 private struct NearStopRow: View {
     let stop: NearStop
+    let viaTor: Bool
     let showSettings: () -> Void
     let dismiss: () -> Void
 
@@ -2905,9 +2912,9 @@ private struct NearStopRow: View {
                 .foregroundStyle(.orange)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(stop.title)
+                Text(stop.title(viaTor: viaTor))
                     .fontWeight(.medium)
-                Text(stop.words)
+                Text(stop.words(viaTor: viaTor))
                     .foregroundStyle(.secondary)
                 Text(stop.sent ? "Your message may have reached NEAR. Sending again may be charged twice." : "Nothing was sent.")
                     .foregroundStyle(.secondary)
@@ -3302,7 +3309,12 @@ private struct Waiting: View {
         case .stopping: "Cloak is stopping."
         case .needsAttention(let reason):
             switch fix {
-            case .start?: "\(reason.title(with: fix)) Start Cloak again to \(to)."
+            case .start?:
+                if reason == .torUnavailable || reason == .torStopped {
+                    "\(reason.title(with: fix)) \(reason.remedy)"
+                } else {
+                    "\(reason.title(with: fix)) Start Cloak again to \(to)."
+                }
             case .download?: "\(reason.title) Download it to \(to)."
             case .repair?: "\(reason.title) Repair it to \(to)."
             // No button does it all, so the words say what to do.
@@ -3432,18 +3444,22 @@ extension Chat.Stop {
 }
 
 extension NearStop {
-    var title: String {
+    var title: String { title(viaTor: false) }
+    var words: String { words(viaTor: false) }
+
+    func title(viaTor: Bool) -> String {
         switch kind {
         case .line: "Cloak error"
         case .request: "Can't send"
-        case .fetch: "No proof"
+        case .fetch: viaTor ? "Tor check failed" : "No proof"
         case .refused: "Proof refused"
-        case .connect: "No connection"
+        case .connect: viaTor ? "Tor connection failed" : "No connection"
         case .pin: "Server changed"
-        case .send: "Interrupted"
+        case .send: viaTor ? "Dropped over Tor" : "Interrupted"
         case .status:
             switch code {
-            case 401, 403: "Invalid key"
+            case 401: "Invalid key"
+            case 403: viaTor ? "Blocked over Tor" : "Invalid key"
             case 429: "Rate limited"
             default: "NEAR error"
             }
@@ -3454,18 +3470,31 @@ extension NearStop {
         }
     }
 
-    var words: String {
+    func words(viaTor: Bool) -> String {
         switch kind {
         case .line: "Cloak's request wasn't formed right."
         case .request: "This message can't go as it is."
-        case .fetch: "Cloak couldn't fetch NEAR's proof. Try again."
+        case .fetch:
+            viaTor
+                ? "Tor couldn't reach NEAR or Intel's attestation servers (slow or blocked Tor exit). Try again for a fresh Tor circuit, or turn off Tor for NEAR in Settings."
+                : "Cloak couldn't fetch NEAR's proof. Try again."
         case .refused: "NEAR's servers don't match what this version of Cloak accepts. Update Cloak."
-        case .connect: "The proof passed, but Cloak couldn't connect to NEAR."
+        case .connect:
+            viaTor
+                ? "The proof passed, but the Tor circuit to NEAR failed. Try again for a fresh Tor exit."
+                : "The proof passed, but Cloak couldn't connect to NEAR."
         case .pin: "NEAR answered from a server other than the one checked."
-        case .send: "The connection dropped before NEAR's answer came."
+        case .send:
+            viaTor
+                ? "The Tor circuit dropped before NEAR's answer finished. Try again for a fresh Tor exit."
+                : "The connection dropped before NEAR's answer came."
         case .status:
             switch code {
-            case 401, 403: "NEAR didn't accept your key. Replace it in Settings."
+            case 401: "NEAR didn't accept your key. Replace it in Settings."
+            case 403:
+                viaTor
+                    ? "NEAR or its firewall rejected this Tor exit (403). Try again for a fresh Tor exit, check your key in Settings, or turn off Tor for NEAR."
+                    : "NEAR didn't accept your key. Replace it in Settings."
             case 429: "NEAR is limiting your account. Wait, then send again."
             default: "NEAR answered with error \(code ?? 0)."
             }

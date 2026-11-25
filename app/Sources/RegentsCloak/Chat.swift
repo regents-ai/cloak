@@ -516,18 +516,13 @@ final class Chat {
     }
 
     /// The download of the model chosen to answer Local Llama chats
-    /// (`AppSettings.answerModel`). When no model is explicitly picked yet,
-    /// defaults to `recommendedLocalDownload` unless the rewording model is
-    /// already installed and the recommended model is not. Also migrates away
-    /// cleanly if a saved model name was retired in a newer release.
+    /// (`AppSettings.answerModel`). Never silently falls back to the prompt
+    /// rewriter (`Qwen 3.5 9B`), which Settings marks as not selectable for Local chat.
     var answerDownload: ModelDownload? {
         if let chosen = settings.answerModel {
             return downloads.first { $0.model.name == chosen } ?? recommendedLocalDownload
         }
-        if recommendedLocalDownload.state == .installed || rewordingDownload.state != .installed {
-            return recommendedLocalDownload
-        }
-        return rewordingDownload
+        return recommendedLocalDownload
     }
 
     /// Strips a leading `vendor/` prefix from a model identifier for compact
@@ -537,18 +532,21 @@ final class Chat {
     }
 
     /// Provider label shown beside the model name where a mode routes to a
-    /// named remote provider.
+    /// named remote provider. Built-in Pi Agent in Token Inference always routes
+    /// through Boundless + Tempo (`run()`), never Venice.
     func activeProviderName(for mode: Kind, conversation: Conversation? = nil) -> String? {
-        switch mode {
+        let isAgentThread = conversation.map(isAgent) ?? agentOn
+        return switch mode {
         case .llama, .v: nil
         case .near: "NEAR"
-        case .token: usesVenice(for: conversation) ? "Venice" : "Boundless"
+        case .token: (!isAgentThread && usesVenice(for: conversation)) ? "Venice" : "Boundless"
         }
     }
 
     /// Concise active model label for `mode` and `conversation`, always non-empty
     /// so users can glance at what model will answer in every mode.
     func activeModelName(for mode: Kind, conversation: Conversation? = nil) -> String {
+        let isAgentThread = conversation.map(isAgent) ?? agentOn
         switch mode {
         case .llama:
             guard let label = answerDownload?.model.label else { return "No model" }
@@ -556,7 +554,7 @@ final class Chat {
         case .near:
             return Near.displayModel
         case .token:
-            if usesVenice(for: conversation) {
+            if !isAgentThread && usesVenice(for: conversation) {
                 if let pinnedID = conversation?.venice?.model {
                     if let live = veniceMode.models?.first(where: { $0.id == pinnedID }) {
                         return live.name
@@ -1301,11 +1299,29 @@ final class Chat {
     private func finish(_ turn: UUID, in id: UUID, _ result: Result<String, SendStop.Reason>, tokens: Tokens? = nil) {
         if case .failure(let reason) = result {
             logger.error("a send stopped: \(reason.code, privacy: .public) \(reason.detail, privacy: .public)")
+            if Self.shouldRotateTorIdentity(for: reason) {
+                identities[id] = Self.newIdentity()
+            }
             if conversations.contains(where: { $0.id == id }) {
                 sendStops[turn] = SendStop(reason: reason)
             }
         }
         sent(turn, in: id, answer: try? result.get(), tokens: tokens)
+    }
+
+    /// Rotates a conversation's Tor SOCKS identity after a Tor drop, timeout, or
+    /// Cloudflare/WAF exit block so retrying immediately builds a fresh Tor circuit.
+    private static func shouldRotateTorIdentity(for reason: SendStop.Reason) -> Bool {
+        switch reason {
+        case .venice(let stop):
+            [.unreachable, .failed, .torExitBlocked].contains(stop.kind)
+        case .tempo(let stop):
+            [.torDown, .torExitBlocked, .failed].contains(stop.code)
+        case .zkapi(let stop):
+            [.torDown, .providerFailed, .timedOut, .ended, .failed].contains(stop.code)
+        case .near:
+            false
+        }
     }
 
     /// Moves a turn sent after later ones to the end, counts the press, and

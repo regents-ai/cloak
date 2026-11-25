@@ -38,9 +38,15 @@ final class Wallet {
     private(set) var readStop: RemoteStop?
     /// Requests under way, for their progress.
     private(set) var working = 0
-    /// True while a Close or Withdraw transaction is in flight so double-clicks
-    /// never submit duplicate Tempo transactions or collide on nonces.
-    private(set) var mutating = false
+    enum Mutation: Equatable {
+        case closing
+        case withdrawing
+    }
+
+    /// Active Close or Withdraw transaction so double-clicks never submit
+    /// duplicate Tempo transactions or collide on nonces.
+    private(set) var mutation: Mutation?
+    var mutating: Bool { mutation != nil }
     /// Monotonic generation counter so stale refreshes never overwrite newer state.
     @ObservationIgnored private var refreshGeneration: UInt64 = 0
     @ObservationIgnored private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "wallet")
@@ -139,9 +145,9 @@ final class Wallet {
 
     /// Closes the deposit with the provider, which refunds what is unspent.
     func close() async {
-        guard !mutating, let deposits else { return }
-        mutating = true
-        defer { mutating = false }
+        guard mutation == nil, let deposits else { return }
+        mutation = .closing
+        defer { mutation = nil }
         stop = nil
         stop = await run { [exchange, model] () async throws(RemoteStop) in
             try await Remote.close(model: model, key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange)
@@ -151,14 +157,23 @@ final class Wallet {
 
     /// The network's own close: asks to close, or takes the deposit back.
     func withdraw() async {
-        guard !mutating, let deposits else { return }
-        mutating = true
-        defer { mutating = false }
+        guard mutation == nil, let deposits else { return }
+        mutation = .withdrawing
+        defer { mutation = nil }
         stop = nil
-        stop = await run { [exchange] () async throws(RemoteStop) in
+        let failed = await run { [exchange] () async throws(RemoteStop) in
             try await Remote.withdraw(key: { try WalletKeychain.key() }, deposits: deposits, exchange: exchange)
         }
+        stop = failed
         await refresh()
+        // Tempo blocks confirm within a few seconds; schedule one follow-up read
+        // so the UI transitions automatically to "Ready at …" or refunded balance.
+        if failed == nil {
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                await self?.refresh()
+            }
+        }
     }
 
     /// Forgets what stopped, as its row's close button asks.

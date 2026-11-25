@@ -221,6 +221,8 @@ public struct VeniceStop: Error, Sendable, Equatable {
         case otherModel
         /// Venice refused it (403, or 401 `PRO_ONLY_MODEL`).
         case refused
+        /// A Cloudflare or WAF challenge blocked this Tor exit node (HTML 403 or 520–526).
+        case torExitBlocked
         /// The chat is longer than its model takes (413, or 400 with a
         /// context code).
         case tooLong
@@ -251,10 +253,11 @@ public struct VeniceStop: Error, Sendable, Equatable {
             case .tierChanged: "Tier changed"
             case .otherModel: "Other model"
             case .refused: "Refused"
+            case .torExitBlocked: "Tor exit blocked"
             case .tooLong: "Too long"
             case .busy: "Busy"
-            case .unreachable: "No connection"
-            case .failed: "No answer"
+            case .unreachable: "Tor connection failed"
+            case .failed: "No answer over Tor"
             case .cancelled: "Stopped"
             }
         }
@@ -275,11 +278,12 @@ public struct VeniceStop: Error, Sendable, Equatable {
             case .gone: "Venice no longer offers this chat's model. Start a new chat."
             case .tierChanged: "Venice changed this model's tier since the chat began. Start a new chat."
             case .otherModel: "Venice answered from a different model, so the answer is not shown."
-            case .refused: "Venice refused this request. Check your key's settings at Venice."
+            case .refused: "Venice refused this request. Check your key or model access in Funds."
+            case .torExitBlocked: "Venice's firewall blocked this Tor exit node. Send again to switch to a fresh Tor circuit."
             case .tooLong: "This chat is too long for its model. Start a new chat."
             case .busy: "This model is busy or offline at Venice. Send again in a minute."
-            case .unreachable: "Cloak could not reach Venice. Send again."
-            case .failed: "Venice did not answer. Send again."
+            case .unreachable: "Tor couldn't reach Venice (slow or dropped Tor circuit). Send again for a fresh circuit."
+            case .failed: "No complete answer came back over Tor. Send again for a fresh Tor circuit."
             case .cancelled: "You stopped this message."
             }
         }
@@ -312,21 +316,31 @@ public struct VeniceStop: Error, Sendable, Equatable {
             case .wallet?: .signIn
             case nil: .failed
             }
+        let looksLikeWAFBlock: Bool = {
+            if (520...526).contains(status) { return true }
+            guard status == 403, failure.code == nil, !failure.challenge else { return false }
+            let prefix = String(decoding: body.prefix(512), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return prefix.hasPrefix("<!doctype") || prefix.hasPrefix("<html") || prefix.contains("cloudflare") || prefix.contains("just a moment")
+        }()
         let kind: Kind =
-            switch (status, failure.code) {
-            case (401, .proOnly?): .refused
-            case (401, _): refusedAuth
-            // Venice took no credentials from the request, whatever it sent.
-            case (402, _) where failure.challenge: refusedAuth
-            case (402, .usdLimit?), (402, .diemLimit?): .spendLimit
-            case (402, _): .noBalance
-            case (403, _): .refused
-            case (404, _), (400, .invalidModel?): .gone
-            case (413, _), (400, .tooManyTokens?), (400, .contextLength?): .tooLong
-            case (429, .overloaded?): .busy
-            case (429, _): .rateLimit
-            case (503, _): .busy
-            default: .failed
+            if looksLikeWAFBlock {
+                .torExitBlocked
+            } else {
+                switch (status, failure.code) {
+                case (401, .proOnly?): .refused
+                case (401, _): refusedAuth
+                // Venice took no credentials from the request, whatever it sent.
+                case (402, _) where failure.challenge: refusedAuth
+                case (402, .usdLimit?), (402, .diemLimit?): .spendLimit
+                case (402, _): .noBalance
+                case (403, _): .refused
+                case (404, _), (400, .invalidModel?): .gone
+                case (413, _), (400, .tooManyTokens?), (400, .contextLength?): .tooLong
+                case (429, .overloaded?): .busy
+                case (429, _): .rateLimit
+                case (503, _): .busy
+                default: .failed
+                }
             }
         return VeniceStop(
             kind, sent: true, "status \(status)" + (failure.code.map { " \($0.rawValue)" } ?? "") + (failure.challenge ? " asking for credentials" : ""))

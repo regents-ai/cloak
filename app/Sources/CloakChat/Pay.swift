@@ -85,12 +85,14 @@ public struct PayStop: Error, Sendable, Equatable {
         /// The wallet is busy with another request (429 `busy`, 409
         /// `wallet_conflict`).
         case busy
-        /// The service can't take this model now (`invalid_model`,
-        /// `model_budget_unavailable`, `model_policy_unavailable`), or there
+        /// The service can't take this model now (`invalid_model`), or there
         /// is no model to send to.
         case modelUnavailable
+        /// The active deposit balance is below the temporary hold required
+        /// for the chosen model tier (`model_budget_unavailable`).
+        case depositTooLow
         /// The way to the service through Tor failed
-        /// (`anonymous_access_failed`).
+        /// (`anonymous_access_failed`, `model_policy_unavailable`).
         case torDown
         /// The request was turned away as it was (`invalid_request_error`,
         /// `invalid_body`, `invalid_frame`).
@@ -136,8 +138,9 @@ public struct PayStop: Error, Sendable, Equatable {
             case "funding_required": .noDeposit
             case "withdrawal_pending": .withdrawing
             case "busy", "wallet_conflict": .busy
-            case "invalid_model", "model_budget_unavailable", "model_policy_unavailable": .modelUnavailable
-            case "anonymous_access_failed": .torDown
+            case "invalid_model": .modelUnavailable
+            case "model_budget_unavailable": .depositTooLow
+            case "anonymous_access_failed", "model_policy_unavailable": .torDown
             case "invalid_request_error", "invalid_body", "invalid_frame": .refused
             case "upstream_error", "invalid_upstream_response", "stream_unavailable": .providerFailed
             case "request_cancelled": .cancelled
