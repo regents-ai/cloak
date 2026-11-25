@@ -51,11 +51,14 @@ public struct VeniceTopUp: Sendable, Equatable {
 
 /// Tracks an ambiguously submitted Venice x402 EIP-3009 top-up whose on-chain
 /// settlement is not yet confirmed. Blocks signing a second nonce until either
-/// a live balance refresh proves the transfer landed (Base USDC decreased or
-/// Venice credit increased) or the signed EIP-3009 `validBefore` window has
+/// a live balance refresh proves a balance movement matching at least the
+/// signed top-up `amount` (Base USDC decreased by >= `amount` or Venice credit
+/// increased by >= `amount`) or the signed EIP-3009 `validBefore` window has
 /// cryptographically expired (plus a clock-skew margin) and a fresh balance
-/// check succeeds.
-public struct VeniceTopUpGuard: Equatable, Sendable {
+/// check succeeds. Persisted across app restarts so quitting Cloak never
+/// unlocks a duplicate top-up while the earlier authorization can still settle.
+public struct VeniceTopUpGuard: Codable, Equatable, Sendable {
+    public let address: String?
     public let amount: Amount
     public let beforeUsdc: Amount?
     public let beforeCredit: Decimal?
@@ -69,12 +72,14 @@ public struct VeniceTopUpGuard: Equatable, Sendable {
     public static let defaultTimeoutSeconds: Int = 600
 
     public init(
+        address: String? = nil,
         amount: Amount,
         beforeUsdc: Amount?,
         beforeCredit: Decimal?,
         submittedAt: Date,
         timeoutSeconds: Int?
     ) {
+        self.address = address
         self.amount = amount
         self.beforeUsdc = beforeUsdc
         self.beforeCredit = beforeCredit
@@ -84,22 +89,27 @@ public struct VeniceTopUpGuard: Equatable, Sendable {
     }
 
     public enum Resolution: Equatable, Sendable {
-        /// Base USDC decreased or Venice credit increased — earlier top-up settled.
+        /// Base USDC decreased by >= `amount` or Venice credit increased by >= `amount`.
         case settled
-        /// Signed EIP-3009 authorization expired with unchanged balances — safe to retry.
+        /// Signed EIP-3009 authorization expired without settling — safe to retry.
         case expiredUnchanged
-        /// Balances are unchanged and the earlier authorization can still settle.
+        /// Earlier authorization has not been proven settled and can still land.
         case stillPending
     }
 
     /// Evaluates a successful refresh of both Base USDC and Venice credit.
+    /// Small unrelated balance wiggles (e.g. $0.01) do NOT unlock a duplicate
+    /// top-up while the signed EIP-3009 authorization can still settle.
     public func evaluate(usdc: Amount, credit: Decimal?, now: Date) -> Resolution {
-        let usdcDropped = beforeUsdc.map { usdc.units < $0.units } ?? false
-        let creditIncreased: Bool = {
-            guard let current = credit, let before = beforeCredit else { return false }
-            return current > before
+        let usdcDroppedByTopUp: Bool = {
+            guard let before = beforeUsdc, before.units >= usdc.units else { return false }
+            return (before.units - usdc.units) >= amount.units
         }()
-        if usdcDropped || creditIncreased {
+        let creditIncreasedByTopUp: Bool = {
+            guard let current = credit, let before = beforeCredit else { return false }
+            return (current - before) >= amount.dollars
+        }()
+        if usdcDroppedByTopUp || creditIncreasedByTopUp {
             return .settled
         }
         if now >= expiresAt {

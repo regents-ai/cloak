@@ -158,12 +158,18 @@ public enum WidgetBridge {
         return pending.command
     }
 
+    /// Active URL scheme for this bundle: `cloak-dev` in isolated Dev builds so
+    /// Cloak Dev never intercepts production `cloak://` links, and `cloak` otherwise.
+    public static var urlScheme: String {
+        Bundle.main.bundleIdentifier == "sh.regents.cloak.dev" ? "cloak-dev" : "cloak"
+    }
+
     public static func actionURL(for command: WidgetCommand) -> URL {
-        URL(string: "cloak://action/\(command.rawValue)")!
+        URL(string: "\(urlScheme)://action/\(command.rawValue)")!
     }
 
     public static func command(from url: URL) -> WidgetCommand? {
-        guard url.scheme?.lowercased() == "cloak", url.host?.lowercased() == "action" else { return nil }
+        guard url.scheme?.lowercased() == urlScheme, url.host?.lowercased() == "action" else { return nil }
         let raw = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return WidgetCommand(rawValue: raw)
     }

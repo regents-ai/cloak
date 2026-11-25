@@ -213,16 +213,22 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     func menuDidClose(_ menu: NSMenu) {
         open = false
+        if #available(macOS 27.0, *), panelController != nil {
+            item.menu = nil
+            item.expandedInterfaceDelegate = self
+        }
     }
 
     func showContextMenu(below button: NSStatusBarButton) {
         if #available(macOS 27.0, *) {
             item.expandedInterfaceSession?.cancel()
+            item.expandedInterfaceDelegate = nil
         }
-        download.refresh()
-        rebuild()
-        let y = button.isFlipped ? button.bounds.height + 4 : -4
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: y), in: button)
+        // Attach natively to the status item and trigger a click so AppKit
+        // anchors the NSMenu directly below the menu bar without the top
+        // scroll-chevron clipping bug caused by `NSMenu.popUp(positioning:at:in:)`.
+        item.menu = menu
+        button.performClick(nil)
     }
 
     private func rebuild() {
@@ -254,16 +260,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             if case .needsAttention(let reason) = phase { start.isEnabled = !Fix.startStops(for: reason, download: download) }
             menu.addItem(start)
         }
-        let nearTorItem = Action("Route NEAR through Tor", symbol: torSymbol) { [settings, supervisor, download] in
-            let next = !settings.nearTor
-            settings.nearTor = next
-            if next, supervisor.phase != .running, supervisor.phase.state != .preparing, download.state == .installed {
-                supervisor.send(.start)
-            }
-        }
-        nearTorItem.state = settings.nearTor ? NSControl.StateValue.on : NSControl.StateValue.off
-        menu.addItem(nearTorItem)
         menu.addItem(Action("Chat", symbol: "bubble.left", run: showChat))
+        menu.addItem(Action("Funds", symbol: "creditcard", run: showFunds))
         #if DARKBLOOM
         menu.addItem(Action("Inference Serving", symbol: "server.rack") { AppDelegate.current.showDarkbloom() })
         #endif

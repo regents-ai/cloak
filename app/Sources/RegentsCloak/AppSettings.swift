@@ -337,6 +337,29 @@ final class AppSettings {
         }
     }
 
+    /// Persisted guard for an ambiguously submitted Venice x402 EIP-3009 top-up.
+    /// Stored outside `Key.allCases` so Restore Defaults never clears an
+    /// active in-flight payment guard across app launches.
+    private static let veniceUncertainTopUpKey = "veniceUncertainTopUp"
+
+    var veniceUncertainTopUp: VeniceTopUpGuard? {
+        get {
+            access(keyPath: \.veniceUncertainTopUp)
+            return defaults.data(forKey: Self.veniceUncertainTopUpKey).flatMap {
+                try? JSONDecoder().decode(VeniceTopUpGuard.self, from: $0)
+            }
+        }
+        set {
+            withMutation(keyPath: \.veniceUncertainTopUp) {
+                if let newValue, let data = try? JSONEncoder().encode(newValue) {
+                    defaults.set(data, forKey: Self.veniceUncertainTopUpKey)
+                } else {
+                    defaults.removeObject(forKey: Self.veniceUncertainTopUpKey)
+                }
+            }
+        }
+    }
+
     // MARK: - Local Access (strictly opt-in, Local Mode only)
 
     /// Shares basic non-identifying Mac info (date/time, chip, RAM, macOS version,

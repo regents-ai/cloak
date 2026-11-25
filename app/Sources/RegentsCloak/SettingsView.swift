@@ -220,6 +220,7 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
             .contentMargins(.top, 8, for: .scrollContent)
+            .textSelection(.enabled)
             .navigationTitle(shown.pageTitle)
         }
         .frame(minWidth: 620, minHeight: 460)

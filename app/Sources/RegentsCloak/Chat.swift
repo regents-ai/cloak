@@ -255,6 +255,12 @@ final class Chat {
     private var attachingLocalFileCount = 0
     var attachingLocalFiles: Bool { attachingLocalFileCount > 0 }
     @ObservationIgnored private var turnLocalAttachments: [UUID: [LocalAttachment]] = [:]
+
+    /// True while extracted attachment text for `turn` is still in memory
+    /// (cleared when Cloak quits so file contents are not persisted on disk).
+    func hasLocalAttachments(for turn: UUID) -> Bool {
+        !(turnLocalAttachments[turn] ?? []).isEmpty
+    }
     /// The details of the message being written, from the model on this Mac
     /// (decision 13), and what is picked for them. Cleared when the draft is
     /// emptied or another conversation is shown; given back with the draft

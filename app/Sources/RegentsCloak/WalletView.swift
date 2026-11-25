@@ -213,6 +213,7 @@ struct WalletView: View {
         }
         // As tall as what it shows, up to 660 points; past that, the form scrolls.
         .frame(width: 600)
+        .textSelection(.enabled)
         .onChange(of: kind) { _, newKind in
             tab = FundsTab(kind: newKind)
         }
@@ -242,7 +243,7 @@ private struct WhyCryptoButton: View {
         case .payPerPrompt:
             "Credit cards tie prompts to your name. A local USDC wallet pays per prompt over Tor with no account."
         case .paranoid:
-            "zkAPI Anon Inference uses zero-knowledge proofs (zkAPI) so every prompt is paid with a fresh one-time key — unlinkable even to your own earlier prompts."
+            "zkAPI Anon Inference uses zero-knowledge proofs (zkAPI) so each request is paid with a fresh one-time key — unlinkable to your ETH deposit or other threads. Within a thread, prompt content, history, and timing can still correlate turns."
         case .privateCloud:
             "Runs in hardware-verified remote enclaves using a standard NEAR API key — no crypto required."
         }

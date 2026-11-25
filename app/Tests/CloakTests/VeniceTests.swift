@@ -387,9 +387,10 @@ struct VeniceTests {
     }
 
     @Test
-    func topUpGuardStaysPendingWhenBalancesUnchangedBeforeExpiry() {
+    func topUpGuardStaysPendingWhenBalancesUnchangedBeforeExpiry() throws {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let guardState = VeniceTopUpGuard(
+            address: "0x1111111111111111111111111111111111111111",
             amount: Amount(units: 5_000_000),
             beforeUsdc: Amount(units: 20_000_000),
             beforeCredit: 1.50,
@@ -401,12 +402,21 @@ struct VeniceTests {
         // Still within the EIP-3009 validBefore + skew window.
         #expect(guardState.evaluate(usdc: Amount(units: 20_000_000), credit: 1.50, now: start.addingTimeInterval(320)) == .stillPending)
 
-        // Base USDC decrease resolves immediately as settled.
+        // A small unrelated 1-cent wiggle in either balance MUST NOT unlock a duplicate $5 top-up.
+        #expect(guardState.evaluate(usdc: Amount(units: 19_990_000), credit: 1.50, now: start.addingTimeInterval(20)) == .stillPending)
+        #expect(guardState.evaluate(usdc: Amount(units: 20_000_000), credit: 1.51, now: start.addingTimeInterval(20)) == .stillPending)
+
+        // Full $5 Base USDC decrease resolves immediately as settled.
         #expect(guardState.evaluate(usdc: Amount(units: 15_000_000), credit: 1.50, now: start.addingTimeInterval(20)) == .settled)
-        // Venice credit increase resolves immediately as settled even if Base RPC lags.
+        // Full $5 Venice credit increase resolves immediately as settled even if Base RPC lags.
         #expect(guardState.evaluate(usdc: Amount(units: 20_000_000), credit: 6.50, now: start.addingTimeInterval(20)) == .settled)
 
-        // Once validBefore + expiryMargin (330s) elapses with unchanged balances, it safely unlocks.
+        // Once validBefore + expiryMargin (330s) elapses without settling, it safely unlocks.
         #expect(guardState.evaluate(usdc: Amount(units: 20_000_000), credit: 1.50, now: start.addingTimeInterval(330)) == .expiredUnchanged)
+
+        // Guard survives Codable persistence across app restarts.
+        let encoded = try JSONEncoder().encode(guardState)
+        let decoded = try JSONDecoder().decode(VeniceTopUpGuard.self, from: encoded)
+        #expect(decoded == guardState)
     }
 }

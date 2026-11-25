@@ -80,9 +80,15 @@ final class MenuPanelController: NSObject {
             dismiss: { [weak self] in self?.requestDismiss() }
         )
         hosting.sizingOptions = [.preferredContentSize]
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
 
         let glass = NSGlassEffectView()
         glass.cornerRadius = 18
+        glass.wantsLayer = true
+        glass.layer?.cornerRadius = 18
+        glass.layer?.cornerCurve = .continuous
+        glass.layer?.masksToBounds = true
         glass.contentView = hosting.view
         panel.contentView = glass
         panel.onResignKey = { [weak self] in
@@ -263,7 +269,10 @@ private final class MenuBarPanel: NSPanel {
         isReleasedWhenClosed = false
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        // NSGlassEffectView provides its own native Liquid Glass rim and elevation;
+        // enabling NSWindow.hasShadow on a borderless glass panel causes WindowServer
+        // to draw rectangular dark shadow artifacts outside the 18pt rounded corners.
+        hasShadow = false
     }
 
     override var canBecomeKey: Bool { true }
@@ -397,6 +406,8 @@ private struct MenuPanelView: View {
         .padding(14)
         .frame(width: 336)
         .background(reduceTransparency ? Color(nsColor: .windowBackgroundColor) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .textSelection(.enabled)
     }
 
     private var headerSection: some View {

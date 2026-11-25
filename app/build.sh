@@ -110,7 +110,7 @@ if [ -n "$dev" ]; then
 	plutil -replace CFBundleDisplayName -string "Cloak Dev" "$app/Contents/Info.plist"
 	plutil -replace CFBundleName -string "Cloak Dev" "$app/Contents/Info.plist"
 	plutil -replace CFBundleURLTypes.0.CFBundleURLName -string "sh.regents.cloak.dev.action" "$app/Contents/Info.plist"
-	plutil -replace CFBundleURLTypes.0.CFBundleURLSchemes.0 -string "cloak-dev" "$app/Contents/Info.plist"
+	plutil -replace CFBundleURLTypes.0.CFBundleURLSchemes -json '["cloak-dev"]' "$app/Contents/Info.plist"
 else
 	plutil -insert SUFeedURL -string "$(plutil -extract update_feed raw app/release.json)" "$app/Contents/Info.plist"
 	plutil -insert SUPublicEDKey -string "$(plutil -extract update_key raw app/release.json)" "$app/Contents/Info.plist"

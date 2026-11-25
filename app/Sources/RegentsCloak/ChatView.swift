@@ -124,6 +124,13 @@ private struct Sidebar: View {
     @State private var hoveringNewChat = false
 
     var body: some View {
+        let selected = chat.conversations.first { $0.id == chat.selection }
+        let isNewChatActive = selected.map {
+            $0.turns.isEmpty && $0.id != chat.rewording?.conversation && $0.id != chat.autoStarting?.conversation
+        } ?? true
+        let visibleConversations = chat.conversations.filter {
+            !$0.turns.isEmpty || $0.id == chat.rewording?.conversation || $0.id == chat.autoStarting?.conversation
+        }
         VStack(spacing: 0) {
             Button {
                 chat.newConversation()
@@ -152,16 +159,18 @@ private struct Sidebar: View {
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
+            .textSelection(.disabled)
             .disabled(!chat.isOpen)
             .onHover { hoveringNewChat = $0 }
             .tip("Start a new chat (⌘N)")
             .accessibilityLabel("New Chat")
+            .accessibilityAddTraits(isNewChatActive ? .isSelected : [])
             .padding(.horizontal, 10)
             .padding(.top, 8)
             .padding(.bottom, 6)
 
             List(selection: $chat.selection) {
-                ForEach(chat.conversations) { conversation in
+                ForEach(visibleConversations) { conversation in
                     let isEmpty = conversation.turns.isEmpty
                     let agent = chat.isAgent(conversation)
                     let mode = chat.kind(of: conversation)
@@ -370,7 +379,7 @@ private struct ActiveGuaranteesView: View {
                 id: "zkapi",
                 symbol: "ticket",
                 title: "Unlinkable keys (zkAPI)",
-                detail: "Every prompt is paid with a fresh one-time zero-knowledge key — impossible to link across prompts."
+                detail: "Each request is paid with a fresh one-time ZK key — payment is unlinkable to your ETH deposit or other threads. Prompt content, thread history, and timing can still correlate turns."
             ))
         }
 
@@ -1251,6 +1260,7 @@ private struct LlamaCard: View {
             Pane(title: "Message", count: nil, mark: .removed) {
                 VStack(alignment: .leading, spacing: 8) {
                     if let attachments = turn.attachments, !attachments.isEmpty {
+                        let hasText = chat.hasLocalAttachments(for: turn.id)
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
                                 ForEach(attachments) { item in
@@ -1271,10 +1281,19 @@ private struct LlamaCard: View {
                                                 .font(.caption2)
                                                 .foregroundStyle(.secondary)
                                         }
+                                        if !hasText {
+                                            Text("· Reattach to use")
+                                                .font(.caption2.weight(.medium))
+                                                .foregroundStyle(.orange)
+                                        }
                                     }
                                     .padding(.horizontal, 9)
                                     .padding(.vertical, 4)
                                     .background(.quaternary.opacity(0.65), in: Capsule())
+                                    .help(
+                                        hasText
+                                            ? item.name
+                                            : "Extracted file text is cleared when Cloak quits for privacy. Reattach this file if you want follow-up turns to reference it.")
                                 }
                             }
                         }
@@ -2398,32 +2417,49 @@ private struct AgentPill: View {
     private static let docsURL = URL(string: "https://regents.sh/cloak#agent")!
 
     var body: some View {
-        Button {
-            isOn.toggle()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: isOn ? "circle.fill" : "circle")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(isOn ? Color.green : Color.secondary)
-                    .contentTransition(.symbolEffect(.replace))
-                Image(systemName: Chat.Kind.agentSymbol)
-                    .foregroundStyle(HierarchicalShapeStyle.primary)
-                Text(Chat.Kind.agentName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(HierarchicalShapeStyle.primary)
+        HStack(spacing: 2) {
+            Button {
+                isOn.toggle()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: isOn ? "circle.fill" : "circle")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(isOn ? Color.green : Color.secondary)
+                        .contentTransition(.symbolEffect(.replace))
+                    Image(systemName: Chat.Kind.agentSymbol)
+                        .foregroundStyle(HierarchicalShapeStyle.primary)
+                    Text(Chat.Kind.agentName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(HierarchicalShapeStyle.primary)
+                }
+                .padding(.horizontal, 10)
+                .frame(minHeight: 28)
+                .hover(Capsule())
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .contentShape(.capsule)
             }
-            .padding(.horizontal, 10)
-            .frame(minHeight: 28)
-            .hover(Capsule())
-            .glassEffect(.regular.interactive(), in: .capsule)
+            .buttonStyle(.plain)
+            .textSelection(.disabled)
             .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .contentShape(.capsule)
-        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: isOn)
-        .onHover { inside in
-            hoveringPill = inside
-            schedulePopover()
+            .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: isOn)
+            .onHover { inside in
+                hoveringPill = inside
+                schedulePopover()
+            }
+
+            Button {
+                hoverTask?.cancel()
+                showingInfo.toggle()
+            } label: {
+                Image(systemName: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("About Local Agent Box")
+            .help("About Local Agent Box")
         }
         .hoverPopover(isPresented: $showingInfo, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 0) {

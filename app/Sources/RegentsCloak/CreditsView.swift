@@ -220,6 +220,7 @@ struct CreditsView: View {
             .padding(.vertical, 12)
         }
         .frame(minWidth: 580, minHeight: 480)
+        .textSelection(.enabled)
         .sheet(isPresented: $showingNotices) {
             LicenseNoticesSheet()
         }

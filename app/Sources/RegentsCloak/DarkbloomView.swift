@@ -2,6 +2,7 @@
 // release until its makers allow it (decision 36 in docs/plan.md).
 #if DARKBLOOM
 import AppKit
+import CloakControl
 import CloakSupervisor
 import SwiftUI
 
@@ -46,6 +47,16 @@ struct DarkbloomView: View {
                     description: Text("Darkbloom runs on macOS 27 or later."))
             } else {
                 Form {
+                    if Places.isDev {
+                        Section {
+                            Label(
+                                "Cloak Dev shares your Mac's live Darkbloom service (~/.darkbloom). Starting, stopping, or switching models here affects the live daemon.",
+                                systemImage: "exclamationmark.triangle.fill"
+                            )
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                        }
+                    }
                     DarkbloomBrandHeader()
                     if mode.connected {
                         network
@@ -63,6 +74,7 @@ struct DarkbloomView: View {
             }
         }
         .frame(minWidth: embedded ? nil : 500, minHeight: embedded ? nil : 520)
+        .textSelection(.enabled)
         .onAppear {
             if embedded { mode.open() }
         }

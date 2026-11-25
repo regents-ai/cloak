@@ -247,7 +247,7 @@ public struct RemoteStop: Error, Equatable, Sendable {
 }
 
 /// A token amount in its smallest units; USDC.e has six decimals.
-public struct Amount: Sendable, Equatable, Comparable, Decodable {
+public struct Amount: Sendable, Equatable, Comparable, Codable {
     public let units: UInt64
 
     public init(units: UInt64) {
@@ -260,6 +260,11 @@ public struct Amount: Sendable, Equatable, Comparable, Decodable {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "not an amount"))
         }
         self.units = units
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(String(units))
     }
 
     /// Dollars as typed, with or without a dollar sign: whole units of a

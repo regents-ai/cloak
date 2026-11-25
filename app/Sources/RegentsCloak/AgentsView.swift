@@ -45,8 +45,9 @@ struct AgentsView: View {
                                 "OpenAI-Compatible Endpoint",
                                 bullets: [
                                     "Serves /v1/chat/completions and /v1/models on localhost only.",
-                                    "Your prompts are rewritten locally before leaving over Tor.",
-                                    "Paid from your zkAPI deposit with a fresh key per request.",
+                                    "Rewrites user messages only (system, assistant, and tool payloads pass unchanged); up to 4,096 messages / 8 MiB rewritten.",
+                                    "Accepts stream: true, waits for the complete answer over Tor, and returns it as a single SSE chunk + [DONE].",
+                                    "Paid from your zkAPI deposit with a fresh one-time key per request.",
                                 ])
                         }
                     }
@@ -147,6 +148,7 @@ struct AgentsView: View {
             }
         }
         .task { await door.load() }
+        .textSelection(.enabled)
         .sheet(item: $adding) { stage in
             AddApp(door: door, adding: stage) { adding = $0 }
         }

@@ -95,10 +95,20 @@ final class VeniceMode {
     init(supervisor: Supervisor, settings: AppSettings) {
         self.supervisor = supervisor
         self.settings = settings
+        if let saved = settings.veniceUncertainTopUp, saved.expiresAt > .now {
+            self.uncertainTopUp = saved
+        } else if settings.veniceUncertainTopUp != nil {
+            settings.veniceUncertainTopUp = nil
+        }
         Task {
             await findWallet()
             await findKey()
         }
+    }
+
+    private func setUncertainTopUp(_ value: VeniceTopUpGuard?) {
+        uncertainTopUp = value
+        settings.veniceUncertainTopUp = value
     }
 
     var running: Bool {
@@ -336,18 +346,22 @@ final class VeniceMode {
             credit = nextCredit
             accountStop = nil
             if !fundsFailed, let liveFunds = funds, var pending = uncertainTopUp {
-                switch pending.evaluate(usdc: liveFunds, credit: nextCredit.usd, now: .now) {
-                case .settled:
-                    uncertainTopUp = nil
-                    topUpStop = nil
-                    topUpSettledNotice = "Earlier \(pending.amount.dollars.formatted(.currency(code: "USD"))) top-up settled — balances updated."
-                case .expiredUnchanged:
-                    uncertainTopUp = nil
-                    topUpStop = nil
-                    topUpSettledNotice = nil
-                case .stillPending:
-                    pending.checkedUnchanged = true
-                    uncertainTopUp = pending
+                if let savedAddr = pending.address, savedAddr.lowercased() != address.lowercased() {
+                    setUncertainTopUp(nil)
+                } else {
+                    switch pending.evaluate(usdc: liveFunds, credit: nextCredit.usd, now: .now) {
+                    case .settled:
+                        setUncertainTopUp(nil)
+                        topUpStop = nil
+                        topUpSettledNotice = "Earlier \(pending.amount.dollars.formatted(.currency(code: "USD"))) top-up settled — balances updated."
+                    case .expiredUnchanged:
+                        setUncertainTopUp(nil)
+                        topUpStop = nil
+                        topUpSettledNotice = nil
+                    case .stillPending:
+                        pending.checkedUnchanged = true
+                        setUncertainTopUp(pending)
+                    }
                 }
             }
         } catch {
@@ -395,7 +409,7 @@ final class VeniceMode {
         do throws(VeniceStop) {
             let result = try await venice.topUp(amount, on: liveTerms, by: walletSigner)
             added = result
-            uncertainTopUp = nil
+            setUncertainTopUp(nil)
             // Immediately reflect the server-confirmed post-top-up balance even
             // if the follow-up balance refresh over Tor hiccups.
             credit = VeniceAccount(usd: result.balance, diem: credit?.diem, canSpend: true)
@@ -407,12 +421,14 @@ final class VeniceMode {
             }
             topUpStop = error
             if error.sent && error.kind != .paymentRefused {
-                uncertainTopUp = VeniceTopUpGuard(
-                    amount: amount,
-                    beforeUsdc: beforeUsdc,
-                    beforeCredit: beforeCredit,
-                    submittedAt: submittedAt,
-                    timeoutSeconds: liveTerms.timeout)
+                setUncertainTopUp(
+                    VeniceTopUpGuard(
+                        address: address,
+                        amount: amount,
+                        beforeUsdc: beforeUsdc,
+                        beforeCredit: beforeCredit,
+                        submittedAt: submittedAt,
+                        timeoutSeconds: liveTerms.timeout))
             }
             logger.error("Venice top-up stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .public)")
             // If the signed EIP-3009 authorization was already transmitted over Tor,

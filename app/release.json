@@ -1,5 +1,5 @@
 {
-  "release": "0.2.1",
+  "release": "0.2.2",
   "identity": "Developer ID Application: Sean Brennan (367G3Z7G3J)",
   "model": "small-lead-gguf-grammar",
   "cloak_memory_gib": 10,
