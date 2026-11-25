@@ -51,7 +51,12 @@ final class AppSettings {
         case localUseCalendar
         case localUseReminders
         case localUseContacts
+        case walletTermsVersion
+        case walletTermsAcceptedAt
     }
+
+    /// Current version of the Beta Wallet Terms of Service & Privacy Policy.
+    nonisolated static let currentWalletTermsVersion = 1
 
     /// Each setting until it is chosen, and again after Restore Defaults.
     /// The quick prompt's shortcut has none; Never reword is off; Cover,
@@ -556,6 +561,48 @@ final class AppSettings {
         }
     }
 
+    /// Version of the Beta Wallet Terms of Service & Privacy Policy signed
+    /// locally on this Mac (0 when never accepted).
+    var walletTermsVersion: Int {
+        get {
+            access(keyPath: \.walletTermsVersion)
+            return defaults.integer(forKey: Key.walletTermsVersion.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.walletTermsVersion) {
+                defaults.set(newValue, forKey: Key.walletTermsVersion.rawValue)
+            }
+        }
+    }
+
+    /// Timestamp when the current Beta Wallet Terms & Privacy Policy were signed locally.
+    var walletTermsAcceptedAt: Date? {
+        get {
+            access(keyPath: \.walletTermsAcceptedAt)
+            return defaults.object(forKey: Key.walletTermsAcceptedAt.rawValue) as? Date
+        }
+        set {
+            withMutation(keyPath: \.walletTermsAcceptedAt) {
+                if let newValue {
+                    defaults.set(newValue, forKey: Key.walletTermsAcceptedAt.rawValue)
+                } else {
+                    defaults.removeObject(forKey: Key.walletTermsAcceptedAt.rawValue)
+                }
+            }
+        }
+    }
+
+    /// Whether the user has signed the current Beta Wallet Terms & Privacy Policy.
+    var walletTermsAccepted: Bool {
+        walletTermsVersion >= Self.currentWalletTermsVersion
+    }
+
+    /// Records local acceptance of the current Beta Wallet Terms & Privacy Policy.
+    func acceptWalletTerms() {
+        walletTermsVersion = Self.currentWalletTermsVersion
+        walletTermsAcceptedAt = .now
+    }
+
     /// Puts every setting the Settings window shows back to its default,
     /// each change told to whatever watches that setting. V's model, chosen
     /// in V's wallet, stays, and so does the deposit's expiry, which is not
@@ -586,7 +633,8 @@ final class AppSettings {
             case .localUseCalendar: withMutation(keyPath: \.localUseCalendar, remove)
             case .localUseReminders: withMutation(keyPath: \.localUseReminders, remove)
             case .localUseContacts: withMutation(keyPath: \.localUseContacts, remove)
-            case .vModel, .depositExpires, .payProvider, .veniceModel, .venicePays: break
+            case .vModel, .depositExpires, .payProvider, .veniceModel, .venicePays,
+                .walletTermsVersion, .walletTermsAcceptedAt: break
             }
         }
     }

@@ -60,6 +60,7 @@ struct WalletView: View {
     let showNearSettings: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var tab: FundsTab
+    @State private var showingTerms = false
 
     init(
         wallet: Wallet, veniceMode: VeniceMode, payer: Payer, settings: AppSettings, nearMode: NearMode,
@@ -82,7 +83,12 @@ struct WalletView: View {
     var body: some View {
         let running = wallet.supervisor.phase == .running
         let tokenReady = !settings.tokenTor || running
-        VStack(spacing: 0) {
+        Group {
+            if !settings.walletTermsAccepted {
+                WalletTermsGateView(settings: settings, onCancel: { dismiss() })
+                    .frame(width: 680, height: 620)
+            } else {
+                VStack(spacing: 0) {
             HStack(spacing: 14) {
                 HStack(spacing: 6) {
                     Text("Funds")
@@ -209,6 +215,11 @@ struct WalletView: View {
                         .controlSize(.small)
                 }
                 Spacer()
+                Button("Terms & Privacy") {
+                    showingTerms = true
+                }
+                .buttonStyle(.link)
+                .font(.callout)
                 // Only while there is something to read again.
                 switch tab {
                 case .paranoid where running:
@@ -235,7 +246,8 @@ struct WalletView: View {
         }
         .frame(maxHeight: 660)
         // As it opens, when tabs or provider switch, and when Cloak or Tor changes under it.
-        .task(id: "\(tab.rawValue)-\(settings.payProvider.rawValue)-\(running)-\(tokenReady)") {
+        .task(id: "\(settings.walletTermsAccepted)-\(tab.rawValue)-\(settings.payProvider.rawValue)-\(running)-\(tokenReady)") {
+            guard settings.walletTermsAccepted else { return }
             switch tab {
             case .paranoid: payer.follow()
             case .payPerPrompt:
@@ -246,6 +258,14 @@ struct WalletView: View {
                 }
             case .privateCloud: break
             }
+        }
+            }
+        }
+        .sheet(isPresented: $showingTerms) {
+            WalletTermsGateView(settings: settings, readOnly: true) {
+                showingTerms = false
+            }
+            .frame(width: 640, height: 580)
         }
     }
 }

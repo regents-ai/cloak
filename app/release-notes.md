@@ -1,8 +1,8 @@
-Cloak v0.2.5 (Beta) adds an optional direct (no-Tor) toggle for Token Inference (Boundless & Venice) and streamlines the Welcome Tour with a new Quickstart guide and clear Tor vs. speed guidance.
+Cloak v0.2.6 (Beta) adds a first-time Terms of Service & Privacy Policy signing gate before any wallet or funding screen is displayed.
 
-What's new in v0.2.5:
-- Optional Direct (No-Tor) Mode for Boundless & Venice: Toggle Tor off in Token Inference (directly below Chat, in the menu bar panel, in Funds, or in Settings → Wallets) to connect over direct HTTPS using the pinned macOS cloak-sender helper with no Linux VM or Tor startup delay (works on 8 GB+ Macs too, while still rewriting prompts locally on 16 GB+ Macs when the rewriter is installed). Tor stays on by default to protect your IP, and Local Agent Box (Pi) continues to run inside the sealed Linux microVM over Tor.
-- Redesigned 3-Step Welcome Tour & Quickstart: Starts directly on "Welcome to Cloak" with an upfront explanation of when Tor is used and its latency tradeoff, moves Agent Mode & Power Tools to Step 2, and adds a new Step 3 "Quickstart" showing exactly how to begin each mode (Local model download, NEAR API key, Tempo USDC.e / Base USDC / Venice API key, and Ethereum Mainnet ETH for zkAPI).
+What's new in v0.2.6:
+- First-Time Wallet Terms of Service & Privacy Policy Gate: Before opening the Funds sheet or Settings → Wallets for the first time, users review and sign (locally on their Mac only — never transmitted) a clear summary of Cloak's Beta Terms of Service (no guarantee of funds, blockchain/smart contract/bridge risks, unaudited contracts & bridging, small beta balances) and Privacy Policy (zero data stored by Regents Labs or Cloak, independent third-party integration boundaries, Tor vs. direct IP visibility, and opt-in NEAR AI Traces sharing).
+- Always-Accessible Terms & Privacy Review: After signing, a "Terms & Privacy" link stays available in both Funds and Settings → Wallets to re-read the signed notice anytime.
 
 Beta & Wallet Security Notice: Cloak v0.2 is beta software and has not yet been independently audited. Keep wallet balances small, back up or withdraw funds before wiping or switching Macs (keys never sync to iCloud), and note the 30-day protocol limit on untouched zkAPI deposits. Read the full Wallet Security & Recovery guide at regents.sh/docs/cloak/wallets.
 

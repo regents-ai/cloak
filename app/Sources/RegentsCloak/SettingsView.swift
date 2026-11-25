@@ -244,11 +244,16 @@ private struct WalletsPane: View {
     let showFunds: () -> Void
     let showStatus: () -> Void
     let showNearSettings: () -> Void
+    @State private var showingTerms = false
 
     var body: some View {
         let running = supervisor.phase == .running
         let tokenReady = !settings.tokenTor || running
-        ScrollViewReader { proxy in
+        Group {
+            if !settings.walletTermsAccepted {
+                WalletTermsGateView(settings: settings)
+            } else {
+                ScrollViewReader { proxy in
             Form {
                 Section {
                     HStack(spacing: 10) {
@@ -272,6 +277,10 @@ private struct WalletsPane: View {
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                             Spacer()
+                            Button("Terms & Privacy") {
+                                showingTerms = true
+                            }
+                            .controlSize(.small)
                             Button {
                                 refreshAll()
                             } label: {
@@ -360,22 +369,32 @@ private struct WalletsPane: View {
                     }
                 }
             }
-            .onChange(of: payer.stop) { _, stop in
-                guard stop != nil else { return }
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("v-stop-banner", anchor: .center)
+                    .onChange(of: payer.stop) { _, stop in
+                        guard stop != nil else { return }
+                        DispatchQueue.main.async {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo("v-stop-banner", anchor: .center)
+                            }
+                        }
                     }
                 }
             }
         }
-        .task(id: "\(settings.payProvider.rawValue)-\(running)-\(tokenReady)") {
+        .sheet(isPresented: $showingTerms) {
+            WalletTermsGateView(settings: settings, readOnly: true) {
+                showingTerms = false
+            }
+            .frame(width: 640, height: 580)
+        }
+        .task(id: "\(settings.walletTermsAccepted)-\(settings.payProvider.rawValue)-\(running)-\(tokenReady)") {
+            guard settings.walletTermsAccepted else { return }
             await wallet.ensureLoaded()
             if running || tokenReady {
                 refreshAll()
             }
         }
         .onReturn {
+            guard settings.walletTermsAccepted else { return }
             Task { await wallet.ensureLoaded() }
             if running || tokenReady {
                 refreshAll()
