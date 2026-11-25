@@ -6,15 +6,15 @@
 
 Cloak is a macOS menu bar app for private AI — local on Apple Silicon, or routed to remote models with explicit, inspectable privacy boundaries.
 
-[Watch the 60s walkthrough](https://regents.sh/images/cloak/demos/cloak-walkthrough-60s.mp4) 📽️ · [Website](https://regents.sh/cloak) · [Docs](https://regents.sh/docs/cloak/reference) · [Releases](https://github.com/regents-ai/cloak-releases/releases)
+[Watch the 60s walkthrough](https://regents.sh/images/cloak/demos/cloak-walkthrough-60s.mp4) 📽️ · [Website](https://regents.sh/cloak) · [Docs](https://regents.sh/docs/cloak/reference) · [Releases](https://github.com/regents-ai/cloak/releases)
 
 ![Cloak](docs/media/cloak-hero.png)
 
-> **Status (`v0.2.0 Beta`):** Signed, notarized `.dmg` builds are published at [regents-ai/cloak-releases](https://github.com/regents-ai/cloak-releases/releases). Cloak is **beta software** and its privacy protections have not yet undergone an independent security audit — keep wallet balances small, back up or withdraw funds before wiping your Mac, and read the [Wallet Security, Recovery & 30-Day zkAPI Limit](docs/wallet-security.md) guide ([web copy](https://regents.sh/docs/cloak/wallets)).
+> **Status (`v0.2.0 Beta`):** Signed, notarized `.dmg` builds are published directly on [GitHub Releases](https://github.com/regents-ai/cloak/releases). Cloak is **beta software** and its privacy protections have not yet undergone an independent security audit — keep wallet balances small, back up or withdraw funds before wiping your Mac, and read the [Wallet Security, Recovery & 30-Day zkAPI Limit](docs/wallet-security.md) guide ([web copy](https://regents.sh/docs/cloak/wallets)).
 
 ## Install
 
-Download `Regents-Cloak.dmg` from [Releases](https://github.com/regents-ai/cloak-releases/releases), drag **Cloak** into `/Applications`, and open it.
+Download `Regents-Cloak.dmg` from [Releases](https://github.com/regents-ai/cloak/releases), drag **Cloak** into `/Applications`, and open it.
 
 Verify any download independently using macOS's built-in Terminal tools and compare against `SHA256SUMS.txt` on GitHub Releases, [regents.sh/cloak/install#verify](https://regents.sh/cloak/install#verify), and **Settings → Status** inside the app:
 

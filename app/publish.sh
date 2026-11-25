@@ -1,22 +1,20 @@
 #!/bin/sh
-# Publishes what app/release.sh left in app/build/release/; the chief alone
-# runs it. Creates the GitHub release <tag> in regents-ai/cloak-releases
-# with the disk image and app/release-notes.md, then puts appcast.xml on
-# that repository's main branch through the GitHub API, with no local
-# clone: the release first, so the feed never names a missing file. Then
-# waits until the public feed names the new release. The image is in the
-# release twice: under its own name, which the feed gives, and as
-# Regents-Cloak.dmg, so that one address always downloads the newest
-# (releases/latest/download/Regents-Cloak.dmg, the page's Download button).
+# Publishes what app/release.sh left in app/build/release/ directly to
+# regents-ai/cloak Releases, tagging the exact source commit (`HEAD`) that
+# produced the build. Attaches the signed/notarized disk images (versioned and
+# unversioned Regents-Cloak.dmg for /releases/latest/download/), the Sparkle
+# appcast.xml, SHA256SUMS.txt, and checksums.json atomically to the release
+# with no auto-commits to main.
 #
-# Needs `gh` signed in with the right to write to regents-ai/cloak-releases,
-# which must already hold a commit for the release's tag to point at.
+# Needs `gh` signed in with write access to regents-ai/cloak and HEAD already
+# pushed to origin/main.
 set -eu
 cd "$(dirname "$0")/.."
 
-repo=regents-ai/cloak-releases
+repo=regents-ai/cloak
 out=app/build/release
 tag=$(cat "$out/tag")
+commit=$(git rev-parse HEAD)
 # The tag is <release>-<build>, and the build is a number with no hyphen.
 release=${tag%-*}
 build=${tag##*-}
@@ -66,36 +64,21 @@ EOF
 gh release create "$tag" \
 	"$out/Regents-Cloak-$tag.dmg" \
 	"$out/Regents-Cloak.dmg" \
+	"$out/appcast.xml" \
 	"$out/SHA256SUMS.txt" \
 	"$out/checksums.json" \
 	--repo "$repo" \
+	--target "$commit" \
 	--title "Regents Cloak $release Beta ($build)" --notes-file "$notes_out"
 
-# Update appcast.xml, SHA256SUMS.txt, and checksums.json on main branch.
-upload_main_file() {
-	local_path="$1"
-	remote_name="$2"
-	sha=$(gh api "repos/$repo/contents?ref=main" --jq ".[] | select(.name == \"$remote_name\") | .sha")
-	gh api -X PUT "repos/$repo/contents/$remote_name" --silent \
-		-f message="Regents Cloak $release ($build)" \
-		-f branch=main \
-		-f content="$(base64 -i "$local_path")" \
-		${sha:+-f "sha=$sha"}
-}
-upload_main_file "$out/appcast.xml" "appcast.xml"
-upload_main_file "$out/SHA256SUMS.txt" "SHA256SUMS.txt"
-upload_main_file "$out/checksums.json" "checksums.json"
-
-# raw.githubusercontent.com may serve its earlier copy for up to five
-# minutes.
 feed=$(plutil -extract update_feed raw app/release.json)
 tries=0
-until curl --silent --fail "$feed" | grep -qF "/releases/download/$tag/"; do
+until curl --silent --fail --location "$feed" | grep -qF "/releases/download/$tag/"; do
 	tries=$((tries + 1))
 	if [ "$tries" -ge 20 ]; then
 		echo "$feed still does not name $tag after ten minutes." >&2
 		exit 1
 	fi
-	sleep 30
+	sleep 10
 done
-echo "Published $tag; $feed names it."
+echo "Published $tag on $repo (commit ${commit}); $feed names it."

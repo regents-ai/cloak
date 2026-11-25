@@ -28,7 +28,7 @@ no-darkbloom) darkbloom="no-darkbloom" ;;
 esac
 
 identity=$(plutil -extract identity raw app/release.json)
-downloads=https://github.com/regents-ai/cloak-releases/releases/download
+downloads=https://github.com/regents-ai/cloak/releases/download
 
 if git status --porcelain | grep -qvx '?? app/.DS_Store'; then
 	echo "A release is built from a clean tree. Commit or remove these first:" >&2

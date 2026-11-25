@@ -155,7 +155,7 @@ sh guest/pay/check.sh
 
 ## Release & Publish
 
-Requires a clean tree, Developer ID signing identity, Sparkle EdDSA update key (`cloak` in Keychain), Apple notary profile (`cloak-notary`), and authenticated `gh` CLI for `regents-ai/cloak-releases`. See [docs/release.md](docs/release.md).
+Requires a clean tree, Developer ID signing identity, Sparkle EdDSA update key (`cloak` in Keychain), Apple notary profile (`cloak-notary`), and authenticated `gh` CLI for `regents-ai/cloak`. See [docs/release.md](docs/release.md).
 
 ```bash
 app/release.sh

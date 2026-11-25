@@ -9,7 +9,7 @@ import Security
 /// `codesign`, `spctl`) rather than trusting the app to attest to itself.
 struct ReleaseVerification: Equatable, Sendable {
     static let expectedTeamID = "367G3Z7G3J"
-    static let githubReleasesURL = URL(string: "https://github.com/regents-ai/cloak-releases/releases")!
+    static let githubReleasesURL = URL(string: "https://github.com/regents-ai/cloak/releases")!
     static let websiteInstallURL = URL(string: "https://regents.sh/cloak/install")!
 
     let releaseVersion: String
