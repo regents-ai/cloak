@@ -57,7 +57,7 @@ struct ReleaseVerification: Equatable, Sendable {
     /// Inspects the running `Bundle.main` off the main actor.
     @concurrent static func inspectCurrentBundle() async -> ReleaseVerification {
         let info = Bundle.main.infoDictionary
-        let release = (info?["CFBundleShortVersionString"] as? String) ?? "0.2.0"
+        let release = (info?["CFBundleShortVersionString"] as? String) ?? "0.2.1"
         let build = (info?["CFBundleVersion"] as? String) ?? "0"
         let appPath = Bundle.main.bundlePath
         let binarySHA256 = Bundle.main.executableURL.flatMap { sha256Hex(of: $0) }

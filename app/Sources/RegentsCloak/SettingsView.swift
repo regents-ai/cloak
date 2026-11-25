@@ -787,7 +787,7 @@ private struct LocalAccessPane: View {
 /// feature requests, and questions.
 private struct FeedbackPane: View {
     /// The release, which `build.sh` writes into the app.
-    private static let release = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.2.0"
+    private static let release = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.2.1"
     private static let email = "build@regents.sh"
     private static let emailURL = URL(string: "mailto:build@regents.sh?subject=Cloak%20\(release)%20Feedback")!
     private static let patchbayURL = URL(string: "https://regents.sh/patchbay/cloak")!
