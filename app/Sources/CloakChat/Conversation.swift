@@ -21,6 +21,10 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     /// Set once its first message went to Venice inside Pay-Per-Prompt: its
     /// model, tier and way to pay, never changed after. Absent otherwise.
     public var venice: VeniceChat?
+    /// The Token Inference provider (`"venice"` or `"boundless"`) that last
+    /// received a turn in this conversation. Absent on legacy conversations
+    /// (inferred from `isVenice` when answered turns exist).
+    public var tokenProvider: String?
     /// True once its first message went to NEAR (NEAR Private AI); absent
     /// otherwise. Every later message goes to NEAR too.
     public var near: Bool?
@@ -54,6 +58,15 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     /// A Token Inference conversation whose first message went to Venice.
     public var isVenice: Bool {
         venice != nil
+    }
+
+    /// The Token Inference provider (`"venice"` or `"boundless"`) that last
+    /// sent answered turns in this conversation, or `nil` when the thread has
+    /// no answered Token Inference history yet.
+    public var lastTokenProvider: String? {
+        guard isToken, !isAgent, turns.contains(where: { $0.answer != nil }) else { return nil }
+        if let tokenProvider, !tokenProvider.isEmpty { return tokenProvider }
+        return isVenice ? "venice" : "boundless"
     }
 
     /// A NEAR Private AI conversation: its first message went to NEAR.

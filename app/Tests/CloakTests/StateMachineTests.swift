@@ -838,4 +838,41 @@ struct StateMachineTests {
         #expect(Payer.state(view: viewWithNote, funding: fundingFailedFinalizing, withdrawal: withdrawalReady, sending: false) == .depositing("failed_finalizing"))
         #expect(Payer.state(view: viewWithNote, funding: fundingReady, withdrawal: withdrawalReverted, sending: false) == .withdrawing("reverted"))
     }
+
+    @Test func conversationLastTokenProviderDetectsHistoryAndLegacyChats() throws {
+        // Empty or draft-only Token Inference thread has no prior provider history.
+        var empty = Conversation()
+        empty.token = true
+        #expect(empty.lastTokenProvider == nil)
+
+        var draftOnly = Conversation(turns: [Turn(original: "Hello", reworded: "Hi")])
+        draftOnly.token = true
+        #expect(draftOnly.lastTokenProvider == nil)
+
+        // Legacy Boundless thread (tokenProvider nil, venice nil, answered turn).
+        var legacyBoundless = Conversation(turns: [Turn(original: "Hello", reworded: "Hi", answer: "World")])
+        legacyBoundless.token = true
+        #expect(legacyBoundless.lastTokenProvider == "boundless")
+
+        // Legacy Venice thread (tokenProvider nil, venice set, answered turn).
+        var legacyVenice = Conversation(turns: [Turn(original: "Hello", reworded: "Hi", answer: "World")])
+        legacyVenice.token = true
+        legacyVenice.venice = VeniceChat(model: "zai-org-glm-5", tier: .private, pays: .wallet)
+        #expect(legacyVenice.lastTokenProvider == "venice")
+
+        // Explicit tokenProvider overrides legacy venice metadata after a confirmed switch to Boundless.
+        legacyVenice.tokenProvider = "boundless"
+        #expect(legacyVenice.lastTokenProvider == "boundless")
+
+        // Round-trips cleanly through Codable.
+        let encoded = try JSONEncoder().encode(legacyVenice)
+        let decoded = try JSONDecoder().decode(Conversation.self, from: encoded)
+        #expect(decoded.tokenProvider == "boundless")
+        #expect(decoded.lastTokenProvider == "boundless")
+
+        // Agent threads always route to Boundless and never trigger provider-switch history checks.
+        var agentThread = Conversation(turns: [Turn(original: "List files", reworded: nil, answer: "Done", steps: [])])
+        agentThread.token = true
+        #expect(agentThread.lastTokenProvider == nil)
+    }
 }

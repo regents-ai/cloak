@@ -168,6 +168,22 @@ final class Chat {
         let task: Task<Void, Never>
     }
 
+    /// Confirmation shown before sending an existing Token Inference thread's
+    /// history to a newly selected provider (`Venice` ↔ `Boundless`).
+    struct PendingProviderSwitch: Equatable {
+        enum Action: Equatable {
+            case submit(draft: String, picks: DetailPicks)
+            case send(turn: UUID)
+            case sendOriginal(turn: UUID)
+        }
+
+        let conversation: UUID
+        let from: PayProvider
+        let to: PayProvider
+        let priorTurnCount: Int
+        let action: Action
+    }
+
     /// A conversation's mode, fixed by its first message.
     enum Kind: Hashable {
         case v
@@ -212,6 +228,7 @@ final class Chat {
     var selection: UUID? {
         didSet {
             guard selection != oldValue else { return }
+            pendingProviderSwitch = nil
             picks = DetailPicks()
             localAttachments = []
             localAttachmentError = nil
@@ -301,6 +318,12 @@ final class Chat {
     /// Why each Local Llama message last asked has no answer, by turn. In
     /// memory only.
     private(set) var answerStops: [UUID: AnswerStop] = [:]
+    /// Confirmation sheet/alert when sending in an existing Token Inference
+    /// thread after switching between Venice and Boundless.
+    var pendingProviderSwitch: PendingProviderSwitch?
+    /// Tracks explicit user approval to send an existing thread's context to a
+    /// newly chosen provider (cleared once a turn actually dispatches there).
+    @ObservationIgnored private var confirmedProvider: [UUID: PayProvider] = [:]
     /// The last change to disk that failed.
     var problem: Problem?
     /// Each conversation's own Tor identity, so each has circuits of its
@@ -689,6 +712,7 @@ final class Chat {
     func selectPayProvider(_ provider: PayProvider) {
         guard settings.payProvider != provider else { return }
         settings.payProvider = provider
+        pendingProviderSwitch = nil
         guard supervisor.phase == .running else { return }
         Task {
             switch provider {
@@ -699,6 +723,83 @@ final class Chat {
                     await veniceMode.refresh()
                 }
             }
+        }
+    }
+
+    /// Returns the prior provider and answered-turn count when sending in
+    /// `conversation` would share existing Token Inference history with a
+    /// different provider than the one that last answered it.
+    func providerSwitchNeeded(
+        for conversation: Conversation, excluding turn: UUID? = nil
+    ) -> (from: PayProvider, to: PayProvider, priorTurns: Int)? {
+        guard kind(of: conversation) == .token, !isAgent(conversation) else { return nil }
+        let target = settings.payProvider
+        if confirmedProvider[conversation.id] == target { return nil }
+        guard let raw = conversation.lastTokenProvider, let prior = PayProvider(rawValue: raw), prior != target else {
+            return nil
+        }
+        let priorTurns = conversation.turns.filter { $0.id != turn && $0.answer != nil }.count
+        guard priorTurns > 0 else { return nil }
+        return (prior, target, priorTurns)
+    }
+
+    func cancelProviderSwitch() {
+        pendingProviderSwitch = nil
+    }
+
+    /// User confirmed sending the existing thread's full history to the newly
+    /// selected Token Inference provider. Rotates the thread's Tor identity so
+    /// the new provider gets a fresh circuit, then resumes the pending send.
+    func confirmProviderSwitchSendContext() {
+        guard let pending = pendingProviderSwitch else { return }
+        pendingProviderSwitch = nil
+        confirmedProvider[pending.conversation] = pending.to
+        identities[pending.conversation] = Self.newIdentity()
+        switch pending.action {
+        case .submit:
+            submit()
+        case .send(let turn):
+            send(turn, in: pending.conversation)
+        case .sendOriginal(let turn):
+            sendOriginal(turn, in: pending.conversation)
+        }
+    }
+
+    /// User chose to start a fresh Token Inference thread on the newly selected
+    /// provider with only the new message (no prior thread context shared).
+    func confirmProviderSwitchNewThread() {
+        guard let pending = pendingProviderSwitch else { return }
+        pendingProviderSwitch = nil
+        switch pending.action {
+        case .submit(let written, let picked):
+            agentOn = false
+            kind = .token
+            newConversation()
+            picks = picked
+            draft = written
+            submit()
+        case .send(let turn), .sendOriginal(let turn):
+            let asOriginal: Bool
+            if case .sendOriginal = pending.action { asOriginal = true } else { asOriginal = false }
+            guard var oldConversation = conversations.first(where: { $0.id == pending.conversation }),
+                let oldIndex = oldConversation.turns.firstIndex(where: { $0.id == turn })
+            else { return }
+            let oldTurn = oldConversation.turns[oldIndex]
+            let newTurn = Turn(original: oldTurn.original, reworded: asOriginal ? nil : oldTurn.reworded)
+            if oldTurn.answer == nil {
+                oldConversation.turns.remove(at: oldIndex)
+                sendStops[turn] = nil
+                update(oldConversation)
+            }
+            agentOn = false
+            kind = .token
+            newConversation()
+            guard var fresh = selected else { return }
+            mark(&fresh, as: .token)
+            fresh.turns.append(newTurn)
+            opened = newTurn.id
+            update(fresh)
+            send(newTurn.id, in: fresh.id)
         }
     }
 
@@ -861,6 +962,8 @@ final class Chat {
     func delete(_ id: UUID) {
         guard case .open(let store) = access, let removedIndex = conversations.firstIndex(where: { $0.id == id }) else { return }
         let conversation = conversations[removedIndex]
+        if pendingProviderSwitch?.conversation == id { pendingProviderSwitch = nil }
+        confirmedProvider[id] = nil
         if autoStarting?.conversation == id { stopAutoStart() }
         if rewording?.conversation == id { rewording?.task.cancel() }
         stops[id] = nil
@@ -1009,6 +1112,15 @@ final class Chat {
         let (written, picked) = (draft, picks)
         let original = picked.message(written.trimmingCharacters(in: .whitespacesAndNewlines))
         guard canSubmit, var conversation = selected else { return }
+        if let mismatch = providerSwitchNeeded(for: conversation) {
+            pendingProviderSwitch = PendingProviderSwitch(
+                conversation: conversation.id,
+                from: mismatch.from,
+                to: mismatch.to,
+                priorTurnCount: mismatch.priorTurns,
+                action: .submit(draft: written, picks: picked))
+            return
+        }
         draft = ""
         let id = conversation.id
         let mode = kind(of: conversation)
@@ -1162,6 +1274,15 @@ final class Chat {
             originalBlock(in: kind(of: conversation)) == nil,
             let index = conversation.turns.firstIndex(where: { $0.id == turn }), conversation.turns[index].answer == nil
         else { return }
+        if let mismatch = providerSwitchNeeded(for: conversation, excluding: turn) {
+            pendingProviderSwitch = PendingProviderSwitch(
+                conversation: id,
+                from: mismatch.from,
+                to: mismatch.to,
+                priorTurnCount: mismatch.priorTurns,
+                action: .sendOriginal(turn: turn))
+            return
+        }
         conversation.turns[index].reworded = nil
         update(conversation)
         send(turn, in: id)
@@ -1205,6 +1326,15 @@ final class Chat {
             && conversation.venice == nil && veniceMode.newChat == nil
             && blockReason == "Loading Venice models…"
         guard blockReason == nil || awaitingVeniceModels else { return }
+        if let mismatch = providerSwitchNeeded(for: conversation, excluding: turn) {
+            pendingProviderSwitch = PendingProviderSwitch(
+                conversation: id,
+                from: mismatch.from,
+                to: mismatch.to,
+                priorTurnCount: mismatch.priorTurns,
+                action: .send(turn: turn))
+            return
+        }
         if supervisor.phase != .running, canAutoStart {
             startThen(in: id) { [weak self] in self?.send(turn, in: id) }
             return
@@ -1212,7 +1342,7 @@ final class Chat {
         guard supervisor.phase == .running else { return }
         if mode == .token {
             // Route according to the active Token Inference provider toggle
-            // so switching between Venice and Boundless works seamlessly mid-chat.
+            // (after explicit user confirmation if switching mid-thread).
             let shouldUseVenice = settings.payProvider == .venice
             if shouldUseVenice {
                 if conversation.venice == nil {
@@ -1233,8 +1363,10 @@ final class Chat {
                         return
                     }
                     conversation.venice = chatConfig
-                    update(conversation)
                 }
+                conversation.tokenProvider = PayProvider.venice.rawValue
+                confirmedProvider[id] = nil
+                update(conversation)
                 press(turn, at: index, in: &conversation)
                 let identity = identity(of: id)
                 veniceMode.send(turn, in: conversation, identity: identity) { [weak self] result in
@@ -1253,6 +1385,9 @@ final class Chat {
                 return
             }
             guard let deposits = wallet.deposits else { return }
+            conversation.tokenProvider = PayProvider.boundless.rawValue
+            confirmedProvider[id] = nil
+            update(conversation)
             press(turn, at: index, in: &conversation)
             let identity = identity(of: id)
             let (model, exchange) = (wallet.model, wallet.exchange)

@@ -93,6 +93,26 @@ struct ChatView: View {
         }
         .frame(minWidth: 640, minHeight: 460)
         .task { await chat.open() }
+        .alert(
+            "Switch provider to \(chat.pendingProviderSwitch?.to.shortTitle ?? "")?",
+            isPresented: Binding(
+                get: { chat.pendingProviderSwitch != nil },
+                set: { if !$0 { chat.cancelProviderSwitch() } }),
+            presenting: chat.pendingProviderSwitch
+        ) { _ in
+            Button("Start New Thread") {
+                chat.confirmProviderSwitchNewThread()
+            }
+            Button("Send All Thread Context") {
+                chat.confirmProviderSwitchSendContext()
+            }
+            Button("Cancel", role: .cancel) {
+                chat.cancelProviderSwitch()
+            }
+        } message: { pending in
+            let turns = pending.priorTurnCount == 1 ? "1 earlier message" : "\(pending.priorTurnCount) earlier messages"
+            Text("This thread has \(turns) from \(pending.from.shortTitle). Sending here shares the full conversation context with \(pending.to.shortTitle), or you can start a new thread on \(pending.to.shortTitle) with only this message.")
+        }
     }
 }
 
