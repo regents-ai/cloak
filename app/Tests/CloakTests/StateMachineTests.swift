@@ -875,4 +875,60 @@ struct StateMachineTests {
         agentThread.token = true
         #expect(agentThread.lastTokenProvider == nil)
     }
+
+    @Test @MainActor func payerWithdrawalFeePreviewCancelsWithoutLockingDeposit() async throws {
+        let calledPaths = Mutex<[String]>([])
+        let line: PayLine = { ask, data in
+            AsyncThrowingStream { continuation in
+                switch ask {
+                case .view:
+                    let body = #"{"wallet":{"has_note":true,"pending_request":false,"note":{"note_id":7,"expiry_ts":1800000000}},"chain":{"block":1,"time":1700000000,"paused":false,"balance_wei":"150000000000000","note":{"status":"active","expiry_ts":1800000000}}}"#
+                    let answer = try! JSONEncoder().encode(PayFrame.Answer(status: 200, body: body))
+                    continuation.yield(.answer(answer))
+                case .call:
+                    let call = try! JSONDecoder().decode(PayFrame.Call.self, from: data)
+                    calledPaths.withLock { $0.append("\(call.method) \(call.path)") }
+                    let body: String
+                    switch "\(call.method) \(call.path)" {
+                    case "GET /admin/funding/address":
+                        body = #"{"address":"0x1111111111111111111111111111111111111111","chain_id":1,"eth_balance":"150000000000000","phase":"active"}"#
+                    case "GET /admin/withdrawal":
+                        body = #"{"eth_balance":"150000000000000","private_balance":5000000,"phase":"ready"}"#
+                    case "GET /admin/return":
+                        body = #"{"eth_balance":"150000000000000","phase":"ready"}"#
+                    case "GET /cloak/withdrawal/fee":
+                        // Wallet holds 0.00015 ETH (passes old 0.0001 ETH floor) while live gas needs 0.0006 ETH.
+                        body = #"{"balance_wei":"150000000000000","gas_limit":600000,"expected_fee_wei":"500000000000000","required_fee_wei":"550000000000000","fee_reserve_wei":"600000000000000","shortfall_wei":"450000000000000"}"#
+                    default:
+                        body = #"{"error":"unexpected route"}"#
+                    }
+                    let answer = try! JSONEncoder().encode(PayFrame.Answer(status: 200, body: body))
+                    continuation.yield(.answer(answer))
+                case .request:
+                    break
+                }
+                continuation.finish()
+            }
+        }
+        let payer = Payer(queue: PayQueue(line: line), running: { true }, expiry: nil, keep: { _ in }, chosen: { nil })
+        await payer.refresh()
+        #expect(payer.state == .ready)
+
+        // Manual non-locking preview detects gas shortfall and cancels cleanly.
+        await payer.previewWithdrawal()
+        let preview = try #require(payer.withdrawalPreview)
+        #expect(payer.previewBlock(preview) == .needs(Decimal(string: "450000000000000")!))
+        #expect(payer.review == nil)
+        #expect(payer.state == .ready)
+
+        payer.cancelReview()
+        #expect(payer.withdrawalPreview == nil)
+        #expect(payer.state == .ready)
+
+        // Quiet estimate for auto-withdraw returns shortfall without calling /admin/withdrawal/quote.
+        let estimate = try #require(await payer.estimateWithdrawalFee())
+        #expect(estimate.shortfallWei == "450000000000000")
+        let paths = calledPaths.withLock { $0 }
+        #expect(!paths.contains("POST /admin/withdrawal/quote"))
+    }
 }

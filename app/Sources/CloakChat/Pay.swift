@@ -217,6 +217,18 @@ public struct WithdrawalStatus: Decodable, Sendable, Equatable {
     public let transactionHash: String?
 }
 
+/// `GET /cloak/withdrawal/fee`: a read-only, non-locking estimate of the
+/// Ethereum gas fee needed to withdraw, without reserving clearance or
+/// pausing chat spending.
+public struct WithdrawalFeeEstimate: Decodable, Sendable, Equatable {
+    public let balanceWei: String
+    public let gasLimit: UInt64
+    public let expectedFeeWei: String
+    public let requiredFeeWei: String
+    public let feeReserveWei: String
+    public let shortfallWei: String
+}
+
 /// `GET /admin/return`, and the answers of Transfer's approve and follow
 /// call: the funding address's ETH and where a send of it is.
 public struct ReturnStatus: Decodable, Sendable, Equatable {

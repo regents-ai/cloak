@@ -444,58 +444,117 @@ private struct Held: View {
 }
 
 /// Withdraw: the whole deposit, to the payer's own address. Prominent when
-/// the expiry is near or past. Its quote under review takes its place.
+/// the expiry is near or past. Before locking clearance, shows a non-locking
+/// live Ethereum gas preview (`withdrawalPreview`) so canceling leaves chat
+/// spending completely active; once quoted, shows the 30-second approval quote.
 private struct WithdrawRow: View {
     let payer: Payer
     let prominent: Bool
     let confirmBeforeQuote: Bool
-    @State private var confirmWithdraw = false
 
     var body: some View {
         if let review = payer.review, case .withdrawal = review {
             ReviewRows(payer: payer, review: review)
+        } else if confirmBeforeQuote, let preview = payer.withdrawalPreview {
+            WithdrawalPreviewRows(payer: payer, preview: preview)
         } else {
+            let previewing = payer.activity == .previewingWithdrawal
             let quoting = payer.activity == .quotingWithdrawal
+            let busy = previewing || quoting
             HStack(spacing: 8) {
-                if quoting {
+                if busy {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Fetching withdrawal quote over Tor…")
+                    Text(previewing ? "Estimating Ethereum gas fee over Tor…" : "Preparing withdrawal quote over Tor…")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let block = payer.withdrawBlock, !quoting {
+                if let block = payer.withdrawBlock, !busy {
                     Text(block.words)
                         .foregroundStyle(.secondary)
                 }
-                let withdraw = Button(quoting ? "Quoting…" : "Withdraw") {
+                let withdraw = Button(previewing ? "Estimating…" : quoting ? "Quoting…" : "Withdraw") {
                     if confirmBeforeQuote {
-                        confirmWithdraw = true
+                        Task { await payer.previewWithdrawal() }
                     } else {
                         Task { await payer.quoteWithdrawal() }
                     }
                 }
-                .tip("Returns the whole deposit to this wallet.")
+                .tip("Checks live Ethereum gas fees before starting a withdrawal.")
                 .disabled(payer.withdrawBlock != nil || payer.activity != nil)
-                .confirmationDialog(
-                    "Start zkAPI Withdrawal?",
-                    isPresented: $confirmWithdraw,
-                    titleVisibility: .visible
-                ) {
-                    Button("Quote Withdrawal") {
-                        Task { await payer.quoteWithdrawal() }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Quoting a withdrawal pauses zkAPI chat spending until the withdrawal completes. You'll review the Ethereum gas fee before signing.")
-                }
                 if prominent {
                     withdraw.buttonStyle(.borderedProminent)
                 } else {
                     withdraw
                 }
             }
+        }
+    }
+}
+
+/// Non-locking withdrawal fee review shown before reserving clearance on the
+/// companion. Canceling here leaves the zkAPI deposit active for chat spending.
+private struct WithdrawalPreviewRows: View {
+    let payer: Payer
+    let preview: WithdrawalFeeEstimate
+
+    var body: some View {
+        let block = payer.previewBlock(preview)
+        let quoting = payer.activity == .quotingWithdrawal
+        Group {
+            if let balance = payer.withdrawal?.privateBalance {
+                LabeledContent("Amount", value: Ether.text(gwei: balance))
+            }
+            if let destination = payer.funding?.address {
+                LabeledContent("To") {
+                    Text(destination)
+                        .font(.body.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+            LabeledContent("Estimated Fee", value: Ether.text(wei: preview.feeReserveWei).map { "Up to \($0)" } ?? "—")
+            VStack(alignment: .leading, spacing: 8) {
+                if let block, !quoting {
+                    let note: String =
+                        if case .needs(let shortfall) = block,
+                            let eth = Ether.text(wei: NSDecimalNumber(decimal: shortfall).stringValue)
+                        {
+                            "Your wallet needs at least \(eth) more ETH for Ethereum gas before starting a withdrawal. Your deposit is still active for chat."
+                        } else {
+                            "\(block.words) Your deposit is still active for chat."
+                        }
+                    Label(note, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if !quoting {
+                    Text("Starting withdrawal reserves this deposit and pauses zkAPI chat spending until the withdrawal completes. Canceling now keeps your deposit active.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 8) {
+                    if quoting {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Preparing withdrawal proof & quote over Tor…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Cancel", action: payer.cancelReview)
+                        .disabled(quoting)
+                    Button(quoting ? "Preparing…" : "Start Withdrawal") {
+                        Task { await payer.quoteWithdrawal() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(quoting || block != nil || payer.activity != nil)
+                }
+            }
+            .id("v-withdrawal-preview-actions")
         }
     }
 }
@@ -656,7 +715,7 @@ private struct ReviewRows: View {
                                 case .transfer:
                                     return "Beta: irreversible Ethereum Mainnet transfer. Verify the recipient address and fee before confirming."
                                 case .withdrawal:
-                                    return "Beta: returns unspent ETH from your zkAPI deposit to your local ETH wallet on Ethereum Mainnet."
+                                    return "This withdrawal is reserved and zkAPI chat spending is paused until it completes. Click Confirm Withdrawal to sign and submit on Ethereum Mainnet, or Close to finish it later."
                                 }
                             }()
                         )
@@ -701,7 +760,9 @@ private struct ReviewRows: View {
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
-                        Button("Cancel", action: payer.cancelReview)
+                        let dismissLabel: String =
+                            if case .withdrawal = review { "Close" } else { "Cancel" }
+                        Button(dismissLabel, action: payer.cancelReview)
                             .disabled(busyApproving)
                         Button(busyQuoting ? "Quoting…" : busyApproving ? "Submitting…" : (expired ? again : title)) {
                             Task { await payer.confirm() }

@@ -172,18 +172,24 @@ final class ExpiryGuard {
                 return
             }
             guard self.payer.withdrawBlock == nil else { return }
-            // Check local ETH wallet balance BEFORE calling `quoteWithdrawal()` —
+            // Estimate live Ethereum gas fees BEFORE calling `quoteWithdrawal()` —
             // quoting irreversibly enters `withdrawal_pending` and freezes chat spending.
-            // If the wallet has ~0 ETH for gas, notify the user without locking their deposit.
-            let minGasFloorWei = Decimal(string: "100000000000000", locale: Locale(identifier: "en_US_POSIX"))! // 0.0001 ETH
-            if let balanceText = self.payer.view?.chain?.balanceWei ?? self.payer.funding?.ethBalance,
-                let balance = Decimal(string: balanceText, locale: Locale(identifier: "en_US_POSIX")),
-                balance < minGasFloorWei
+            // Only proceed if live wallet ETH covers the conservative gas reserve.
+            guard let estimate = await self.payer.estimateWithdrawalFee() else {
+                self.attemptedExpiry = expiry
+                self.logger.notice("auto-withdraw deferred before quoting: could not estimate live Ethereum gas fee")
+                self.notifyAutoWithdrawNeedsAttention(
+                    body: "Cloak couldn't check Ethereum gas fees for automatic zkAPI withdrawal. Open Funds to withdraw before expiry.")
+                return
+            }
+            if let shortfall = Decimal(string: estimate.shortfallWei, locale: Locale(identifier: "en_US_POSIX")),
+                shortfall > 0
             {
                 self.attemptedExpiry = expiry
-                self.logger.notice("auto-withdraw skipped before quoting: wallet balance below gas floor")
+                self.logger.notice("auto-withdraw skipped before quoting: wallet balance short of live gas reserve by \(estimate.shortfallWei, privacy: .public) wei")
+                let needed = Ether.text(wei: estimate.shortfallWei) ?? "a small amount of ETH"
                 self.notifyAutoWithdrawNeedsAttention(
-                    body: "Add a small amount of ETH for Ethereum gas in Cloak Funds, then withdraw your expiring zkAPI deposit.")
+                    body: "Add at least \(needed) more ETH for Ethereum gas in Cloak Funds, then withdraw your expiring zkAPI deposit.")
                 return
             }
             self.attemptedExpiry = expiry

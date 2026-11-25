@@ -130,3 +130,61 @@ func (h *FundingHandler) isClosedNoteOnChain(ctx context.Context, config funding
 	note, err := chainNote(encoded)
 	return err == nil && note != nil && note.Status == "closed"
 }
+
+// WithdrawalFeeEstimate is a read-only, non-locking estimate of the Ethereum
+// gas fee needed for mutualClose using live block fees and wallet balance,
+// without writing withdrawal_pending or requesting companion clearance.
+type WithdrawalFeeEstimate struct {
+	BalanceWei     string `json:"balance_wei"`
+	GasLimit       uint64 `json:"gas_limit"`
+	ExpectedFeeWei string `json:"expected_fee_wei"`
+	RequiredFeeWei string `json:"required_fee_wei"`
+	FeeReserveWei  string `json:"fee_reserve_wei"`
+	ShortfallWei   string `json:"shortfall_wei"`
+}
+
+// Conservative padded gas ceiling for Groth16 BN254 + 32-level Merkle
+// mutualClose on Ethereum Mainnet (~350k–420k actual gas; paddedAddressGas
+// computes gas*1.2 + 50k ≈ 470k–554k). Using 600,000 keeps prechecks above
+// the real quote's required fee so neither preview nor auto-withdraw locks
+// spending only to hit a gas shortfall.
+const withdrawalPreviewGasLimit uint64 = 600_000
+
+// EstimateWithdrawalFee reads live Ethereum fees and the funding address's ETH
+// balance without mutating disk state or contacting the companion's withdrawal
+// reservation endpoint.
+func (h *FundingHandler) EstimateWithdrawalFee(ctx context.Context) (WithdrawalFeeEstimate, error) {
+	config, err := h.config(ctx)
+	if err != nil {
+		return WithdrawalFeeEstimate{}, err
+	}
+	if err := h.assertAddressChain(ctx, config); err != nil {
+		return WithdrawalFeeEstimate{}, err
+	}
+	h.mu.Lock()
+	record, err := h.loadAddress(config)
+	h.mu.Unlock()
+	if err != nil {
+		return WithdrawalFeeEstimate{}, err
+	}
+	fees, err := h.addressLowFees(ctx, config, withdrawalPreviewGasLimit)
+	if err != nil {
+		return WithdrawalFeeEstimate{}, err
+	}
+	balance, err := h.addressQuantity(ctx, config, "eth_getBalance", []any{record.Address, "pending"})
+	if err != nil {
+		return WithdrawalFeeEstimate{}, err
+	}
+	gasInt := new(big.Int).SetUint64(withdrawalPreviewGasLimit)
+	expected := new(big.Int).Mul(gasInt, fees.Expected)
+	required := new(big.Int).Mul(gasInt, fees.Minimum)
+	reserve := new(big.Int).Mul(gasInt, fees.Max)
+	return WithdrawalFeeEstimate{
+		BalanceWei:     balance.String(),
+		GasLimit:       withdrawalPreviewGasLimit,
+		ExpectedFeeWei: expected.String(),
+		RequiredFeeWei: required.String(),
+		FeeReserveWei:  reserve.String(),
+		ShortfallWei:   positiveDifference(reserve, balance).String(),
+	}, nil
+}

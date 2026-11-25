@@ -314,10 +314,12 @@ var standInNotes = "0x" + hex.EncodeToString(crypto.Keccak256([]byte("notes(uint
 // read, the block asked for ("latest", a number in hex, or none) and the
 // address read.
 type standInChain struct {
-	mu    sync.Mutex
-	head  uint64
-	fail  string // the read it answers with an error
-	calls []chainCall
+	mu             sync.Mutex
+	head           uint64
+	fail           string // the read it answers with an error
+	calls          []chainCall
+	liveFees       bool
+	pendingBalance *big.Int
 }
 
 type chainCall struct{ read, block, of string }
@@ -370,11 +372,43 @@ func (c *standInChain) serve(w http.ResponseWriter, r *http.Request) {
 		result = "0x1"
 	case "eth_getBlockByNumber":
 		block := at(0)
-		result = map[string]string{"number": "0x" + strconv.FormatUint(block, 16), "timestamp": "0x" + strconv.FormatUint(chainAt(block, false).Time, 16)}
+		ts := chainAt(block, false).Time
+		resp := map[string]string{"number": "0x" + strconv.FormatUint(block, 16), "timestamp": "0x" + strconv.FormatUint(ts, 16)}
+		if c.liveFees {
+			resp["timestamp"] = "0x" + strconv.FormatUint(uint64(time.Now().Unix()), 16)
+			resp["baseFeePerGas"] = "0x3b9aca00" // 1 gwei
+		}
+		result = resp
+	case "eth_feeHistory":
+		if c.liveFees {
+			block := at(1)
+			oldest := block - 19
+			baseFees := make([]string, 21)
+			gasUsed := make([]float64, 20)
+			rewards := make([][]string, 20)
+			for i := range baseFees {
+				baseFees[i] = "0x3b9aca00"
+			}
+			for i := range gasUsed {
+				gasUsed[i] = 0.5
+				rewards[i] = []string{"0x3b9aca00"}
+			}
+			result = map[string]any{
+				"oldestBlock":   "0x" + strconv.FormatUint(oldest, 16),
+				"baseFeePerGas": baseFees,
+				"gasUsedRatio":  gasUsed,
+				"reward":        rewards,
+			}
+		}
 	case "eth_getBalance":
 		seen.of = param(0)
-		balance, _ := new(big.Int).SetString(chainAt(at(1), false).BalanceWei, 10)
-		result = "0x" + balance.Text(16)
+		if c.liveFees && param(1) == "pending" && c.pendingBalance != nil {
+			seen.block = "pending"
+			result = "0x" + c.pendingBalance.Text(16)
+		} else {
+			balance, _ := new(big.Int).SetString(chainAt(at(1), false).BalanceWei, 10)
+			result = "0x" + balance.Text(16)
+		}
 	case "eth_call":
 		var tx struct{ To, Data string }
 		_ = json.Unmarshal(call.Params[0], &tx)
@@ -1691,4 +1725,57 @@ func TestCloakPayTurnsInOrder(t *testing.T) {
 		}
 	}
 	waitFor(t, "the queue to empty", func() bool { return queued() == 0 })
+}
+
+// GET /cloak/withdrawal/fee computes a live Ethereum gas fee estimate and
+// shortfall without writing withdrawal_pending or contacting the companion's
+// withdrawal reservation endpoint.
+func TestCloakPayWithdrawalFeePreviewDoesNotLock(t *testing.T) {
+	tor, _, c := standIns(t)
+	chain := tor.serveChain()
+	chain.mu.Lock()
+	chain.liveFees = true
+	// 0.00015 ETH: above a fixed 0.0001 ETH floor, below live 600k * 2.25 gwei reserve.
+	chain.pendingBalance = big.NewInt(150_000_000_000_000)
+	chain.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dir := t.TempDir()
+	p := startPayIn(t, ctx, c, dir)
+	answer := callFrame(t, ctx, p, http.MethodGet, "/cloak/withdrawal/fee", "")
+	if answer.Status != http.StatusOK {
+		t.Fatalf("status %d: %s", answer.Status, answer.Body)
+	}
+	var estimate zkapi.WithdrawalFeeEstimate
+	if err := json.Unmarshal([]byte(answer.Body), &estimate); err != nil {
+		t.Fatalf("decode estimate: %v (%s)", err, answer.Body)
+	}
+	if estimate.GasLimit != 600_000 {
+		t.Fatalf("gas limit %d, want 600000", estimate.GasLimit)
+	}
+	if estimate.BalanceWei != "150000000000000" {
+		t.Fatalf("balance %s, want 150000000000000", estimate.BalanceWei)
+	}
+	// baseFee=1 gwei -> low=1.25 gwei, tip=1 gwei -> max=2.25 gwei; 600k * 2.25 gwei = 1,350,000,000,000,000 wei.
+	if estimate.FeeReserveWei != "1350000000000000" {
+		t.Fatalf("fee reserve %s, want 1350000000000000", estimate.FeeReserveWei)
+	}
+	if estimate.ShortfallWei != "1200000000000000" {
+		t.Fatalf("shortfall %s, want 1200000000000000", estimate.ShortfallWei)
+	}
+	// Confirm address-funding.json was never transitioned to withdrawal_pending.
+	raw, err := os.ReadFile(filepath.Join(dir, "funding", "mainnet", "address-funding.json"))
+	if err != nil {
+		t.Fatalf("read address-funding.json: %v", err)
+	}
+	var saved struct {
+		Phase      string          `json:"phase"`
+		Withdrawal json.RawMessage `json:"withdrawal"`
+	}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("decode address-funding.json: %v", err)
+	}
+	if saved.Phase == "withdrawal_pending" || len(saved.Withdrawal) > 0 && string(saved.Withdrawal) != "null" {
+		t.Fatalf("preview mutated withdrawal state: phase=%q withdrawal=%s", saved.Phase, string(saved.Withdrawal))
+	}
 }

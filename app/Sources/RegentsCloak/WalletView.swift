@@ -579,23 +579,43 @@ struct VeniceFundsSections: View {
                     if let added = venice.added {
                         Label("Added \(added.credited.formatted(.currency(code: "USD"))) credit.", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
+                    } else if let settled = venice.topUpSettledNotice {
+                        Label(settled, systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
                     }
-                    if let stop = venice.topUpStop {
-                        let uncertain = stop.sent && stop.kind != .paymentRefused
-                        let message = uncertain
-                            ? "Top-up was submitted over Tor and may have moved Base USDC. Verify live balances before trying again."
-                            : "\(stop.kind.title): \(stop.kind.words)"
-                        HStack(alignment: .top, spacing: 8) {
-                            Label(message, systemImage: "exclamationmark.triangle.fill")
-                                .symbolRenderingMode(.multicolor)
-                                .font(.callout)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if venice.topUpUncertain, running {
-                                Spacer(minLength: 4)
-                                Button("Verify Balances") { Task { await venice.refreshBalances() } }
-                                    .controlSize(.small)
+                    if let pending = venice.uncertainTopUp {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            let expired = context.date >= pending.expiresAt
+                            let message: String = {
+                                if expired {
+                                    return "The earlier top-up authorization expired without changing balances. Verify live balances to unlock Top Up."
+                                }
+                                if pending.checkedUnchanged {
+                                    let remaining = max(1, Int(pending.expiresAt.timeIntervalSince(context.date).rounded(.up)))
+                                    let mins = remaining / 60
+                                    let secs = remaining % 60
+                                    let countdown = String(format: "%d:%02d", mins, secs)
+                                    return "Balances haven't changed yet — your signed transfer may still settle on Base (authorization expires in \(countdown)). Verify again before retrying."
+                                }
+                                return "Top-up was submitted over Tor and may still settle on Base. Verify live balances before trying again."
+                            }()
+                            HStack(alignment: .top, spacing: 8) {
+                                Label(message, systemImage: "exclamationmark.triangle.fill")
+                                    .symbolRenderingMode(.multicolor)
+                                    .font(.callout)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if running {
+                                    Spacer(minLength: 4)
+                                    Button("Verify Balances") { Task { await venice.refreshBalances() } }
+                                        .controlSize(.small)
+                                }
                             }
                         }
+                    } else if let stop = venice.topUpStop {
+                        Label("\(stop.kind.title): \(stop.kind.words)", systemImage: "exclamationmark.triangle.fill")
+                            .symbolRenderingMode(.multicolor)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             } header: {

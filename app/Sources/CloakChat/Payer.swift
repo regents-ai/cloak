@@ -126,6 +126,9 @@ public final class Payer {
     public private(set) var prices: [String: PayPrice]?
     /// The quote shown for its owner to confirm.
     public private(set) var review: Review?
+    /// Read-only, non-locking withdrawal gas fee preview shown before
+    /// reserving clearance on the companion (canceling leaves chat spending active).
+    public private(set) var withdrawalPreview: WithdrawalFeeEstimate?
     /// Why the last read stopped; nil once one works.
     public private(set) var readStop: PayStop?
     /// Which wallet section triggered `stop`, so the UI displays the error right
@@ -146,6 +149,7 @@ public final class Payer {
     /// beside the button that was clicked instead of only a footer spinner.
     public enum Activity: Equatable, Sendable {
         case quotingDeposit
+        case previewingWithdrawal
         case quotingWithdrawal
         case quotingTransfer
         case approvingDeposit
@@ -209,6 +213,7 @@ public final class Payer {
             // errors from a prior session must not mask fresh reads on restart.
             quoteGeneration &+= 1
             review = nil
+            withdrawalPreview = nil
             stop = nil
             stopTarget = nil
             return
@@ -278,6 +283,9 @@ public final class Payer {
     /// Clears a review quote when live chain/daemon state proves it is already
     /// superseded (e.g. a timed-out approve actually broadcast on-chain).
     private func pruneStaleReview() {
+        if withdrawalPreview != nil, state != .ready && state != .settling {
+            withdrawalPreview = nil
+        }
         guard let review else { return }
         switch review {
         case .deposit:
@@ -457,6 +465,51 @@ public final class Payer {
         }
     }
 
+    /// Reads a live, non-locking Ethereum gas fee estimate for withdrawing
+    /// without reserving clearance or pausing chat spending. Shows the estimate
+    /// inline so the user can cancel cleanly before locking the deposit.
+    public func previewWithdrawal() async {
+        guard activity == nil else { return }
+        guard funding?.address != nil, (view?.wallet.note != nil || withdrawal?.noteId != nil) else {
+            stop = .unread
+            stopTarget = .withdrawal
+            return
+        }
+        quoteGeneration &+= 1
+        let gen = quoteGeneration
+        withdrawalPreview = nil
+        stop = nil
+        stopTarget = nil
+        working += 1
+        activity = .previewingWithdrawal
+        defer {
+            working -= 1
+            if activity == .previewingWithdrawal { activity = nil }
+        }
+        do throws(PayStop) {
+            let estimate: WithdrawalFeeEstimate = try decode(await queue.call("GET", "/cloak/withdrawal/fee"))
+            guard quoteGeneration == gen, running() else { return }
+            withdrawalPreview = estimate
+        } catch {
+            guard quoteGeneration == gen else { return }
+            logger.error("zkapi withdrawal fee preview stopped: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
+            stop = .quote(error)
+            stopTarget = .withdrawal
+        }
+    }
+
+    /// Quiet, read-only Ethereum gas fee check for background auto-withdraw,
+    /// leaving UI review and stop state untouched and never locking spending.
+    public func estimateWithdrawalFee() async -> WithdrawalFeeEstimate? {
+        guard running() else { return nil }
+        do throws(PayStop) {
+            return try decode(await queue.call("GET", "/cloak/withdrawal/fee"))
+        } catch {
+            logger.error("zkapi withdrawal fee estimate failed: \(error.code.rawValue, privacy: .public) — \(error.detail, privacy: .public)")
+            return nil
+        }
+    }
+
     /// Quotes the withdrawal of the whole deposit to the payer's own funding
     /// address (decision 23), and shows it for review. With no deposit read,
     /// nothing is asked, and the stop says so.
@@ -495,6 +548,7 @@ public final class Payer {
         guard activity == nil else { return }
         quoteGeneration &+= 1
         let gen = quoteGeneration
+        withdrawalPreview = nil
         stop = nil
         stopTarget = nil
         working += 1
@@ -589,10 +643,11 @@ public final class Payer {
         follow()
     }
 
-    /// Closes the review; nothing is approved.
+    /// Closes the review or non-locking withdrawal preview; nothing is approved.
     public func cancelReview() {
         quoteGeneration &+= 1
         review = nil
+        withdrawalPreview = nil
         if stopTarget != nil {
             stop = nil
             stopTarget = nil
@@ -636,6 +691,16 @@ public final class Payer {
         }
         guard let balance = view?.chain.flatMap({ Decimal(string: $0.balanceWei, locale: Self.posix) }) else { return nil }
         return balance == 0 ? .nothingToTransfer : nil
+    }
+
+    /// Why starting a withdrawal from a non-locking fee preview is certain to
+    /// fail now: vault paused or wallet ETH below the conservative gas reserve.
+    public func previewBlock(_ estimate: WithdrawalFeeEstimate) -> Block? {
+        if view?.chain?.paused == true { return .paused }
+        if let shortfall = Decimal(string: estimate.shortfallWei, locale: Self.posix), shortfall > 0 {
+            return .needs(shortfall)
+        }
+        return nil
     }
 
     /// Why the review's button is certain to fail now: the address holds

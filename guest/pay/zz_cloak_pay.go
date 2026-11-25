@@ -297,9 +297,12 @@ var payRoutes = map[payRoute]bool{
 	{http.MethodGet, "/v1/models"}:                 true,
 }
 
-// payPrices is the one call cloak-pay answers itself, without the API: what
-// the service's models cost.
-var payPrices = payRoute{http.MethodGet, "/cloak/prices"}
+// payPrices and payWithdrawalFee are read-only calls cloak-pay answers itself,
+// without mutating daemon or companion state.
+var (
+	payPrices        = payRoute{http.MethodGet, "/cloak/prices"}
+	payWithdrawalFee = payRoute{http.MethodGet, "/cloak/withdrawal/fee"}
+)
 
 // prices answers payPrices with {"data": [{"id", "prompt", "completion"}]}:
 // each model of the provider's public list with its price in US dollars a
@@ -311,6 +314,20 @@ func (p *pay) prices(ctx context.Context) (payAnswerFrame, error) {
 		return payError(http.StatusBadGateway, err.Error()), nil
 	}
 	data, err := json.Marshal(map[string]any{"data": prices})
+	if err != nil {
+		return payAnswerFrame{}, err
+	}
+	return payAnswerFrame{Status: http.StatusOK, Body: string(data)}, nil
+}
+
+// withdrawalFee answers payWithdrawalFee with a read-only, non-locking
+// Ethereum gas fee estimate for mutualClose.
+func (p *pay) withdrawalFee(ctx context.Context) (payAnswerFrame, error) {
+	estimate, err := p.funding.EstimateWithdrawalFee(ctx)
+	if err != nil {
+		return payError(http.StatusBadGateway, err.Error()), nil
+	}
+	data, err := json.Marshal(estimate)
 	if err != nil {
 		return payAnswerFrame{}, err
 	}
@@ -404,6 +421,9 @@ func (p *pay) call(ctx context.Context, payload []byte) (payAnswerFrame, error) 
 	}
 	if (payRoute{call.Method, call.Path}) == payPrices {
 		return p.prices(ctx)
+	}
+	if (payRoute{call.Method, call.Path}) == payWithdrawalFee {
+		return p.withdrawalFee(ctx)
 	}
 	if !payRoutes[payRoute{call.Method, call.Path}] {
 		return payError(http.StatusNotFound, "unknown route"), nil

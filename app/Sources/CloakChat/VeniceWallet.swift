@@ -49,6 +49,66 @@ public struct VeniceTopUp: Sendable, Equatable {
     public let balance: Decimal
 }
 
+/// Tracks an ambiguously submitted Venice x402 EIP-3009 top-up whose on-chain
+/// settlement is not yet confirmed. Blocks signing a second nonce until either
+/// a live balance refresh proves the transfer landed (Base USDC decreased or
+/// Venice credit increased) or the signed EIP-3009 `validBefore` window has
+/// cryptographically expired (plus a clock-skew margin) and a fresh balance
+/// check succeeds.
+public struct VeniceTopUpGuard: Equatable, Sendable {
+    public let amount: Amount
+    public let beforeUsdc: Amount?
+    public let beforeCredit: Decimal?
+    public let expiresAt: Date
+    public var checkedUnchanged: Bool
+
+    /// Extra margin beyond EIP-3009 `validBefore` to account for Base block
+    /// timestamp and local clock skew before treating an authorization as expired.
+    public static let expiryMargin: TimeInterval = 30
+    /// Conservative fallback timeout if Venice's terms were unavailable.
+    public static let defaultTimeoutSeconds: Int = 600
+
+    public init(
+        amount: Amount,
+        beforeUsdc: Amount?,
+        beforeCredit: Decimal?,
+        submittedAt: Date,
+        timeoutSeconds: Int?
+    ) {
+        self.amount = amount
+        self.beforeUsdc = beforeUsdc
+        self.beforeCredit = beforeCredit
+        let window = TimeInterval(max(timeoutSeconds ?? Self.defaultTimeoutSeconds, 60)) + Self.expiryMargin
+        self.expiresAt = submittedAt.addingTimeInterval(window)
+        self.checkedUnchanged = false
+    }
+
+    public enum Resolution: Equatable, Sendable {
+        /// Base USDC decreased or Venice credit increased — earlier top-up settled.
+        case settled
+        /// Signed EIP-3009 authorization expired with unchanged balances — safe to retry.
+        case expiredUnchanged
+        /// Balances are unchanged and the earlier authorization can still settle.
+        case stillPending
+    }
+
+    /// Evaluates a successful refresh of both Base USDC and Venice credit.
+    public func evaluate(usdc: Amount, credit: Decimal?, now: Date) -> Resolution {
+        let usdcDropped = beforeUsdc.map { usdc.units < $0.units } ?? false
+        let creditIncreased: Bool = {
+            guard let current = credit, let before = beforeCredit else { return false }
+            return current > before
+        }()
+        if usdcDropped || creditIncreased {
+            return .settled
+        }
+        if now >= expiresAt {
+            return .expiredUnchanged
+        }
+        return .stillPending
+    }
+}
+
 /// One USDC transfer a top-up signs for (EIP-3009's
 /// TransferWithAuthorization), with its times in seconds since 1970.
 struct VeniceTransfer: Sendable, Equatable {

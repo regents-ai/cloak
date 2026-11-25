@@ -385,4 +385,28 @@ struct VeniceTests {
         #expect(stop?.kind == .unreachable)
         #expect(stop?.sent == true)
     }
+
+    @Test
+    func topUpGuardStaysPendingWhenBalancesUnchangedBeforeExpiry() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let guardState = VeniceTopUpGuard(
+            amount: Amount(units: 5_000_000),
+            beforeUsdc: Amount(units: 20_000_000),
+            beforeCredit: 1.50,
+            submittedAt: start,
+            timeoutSeconds: 300)
+
+        // Immediately after a Tor drop, unchanged balances MUST keep Top Up locked.
+        #expect(guardState.evaluate(usdc: Amount(units: 20_000_000), credit: 1.50, now: start.addingTimeInterval(15)) == .stillPending)
+        // Still within the EIP-3009 validBefore + skew window.
+        #expect(guardState.evaluate(usdc: Amount(units: 20_000_000), credit: 1.50, now: start.addingTimeInterval(320)) == .stillPending)
+
+        // Base USDC decrease resolves immediately as settled.
+        #expect(guardState.evaluate(usdc: Amount(units: 15_000_000), credit: 1.50, now: start.addingTimeInterval(20)) == .settled)
+        // Venice credit increase resolves immediately as settled even if Base RPC lags.
+        #expect(guardState.evaluate(usdc: Amount(units: 20_000_000), credit: 6.50, now: start.addingTimeInterval(20)) == .settled)
+
+        // Once validBefore + expiryMargin (330s) elapses with unchanged balances, it safely unlocks.
+        #expect(guardState.evaluate(usdc: Amount(units: 20_000_000), credit: 1.50, now: start.addingTimeInterval(330)) == .expiredUnchanged)
+    }
 }

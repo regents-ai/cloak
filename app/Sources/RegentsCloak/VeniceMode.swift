@@ -48,9 +48,14 @@ final class VeniceMode {
     private(set) var terms: VeniceTopUpTerms?
     /// In-flight x402 top-up guard (prevents double-click duplicate nonces).
     private(set) var adding = false
-    /// True after a signed x402 top-up failed ambiguously over Tor (status != 400/401/402);
-    /// blocks signing a second nonce until live balances are successfully re-read.
-    private(set) var topUpUncertain = false
+    /// Non-nil after a signed x402 top-up failed ambiguously over Tor (status != 400/401/402);
+    /// blocks signing a second nonce until live balances prove settlement or the
+    /// signed EIP-3009 authorization expires with unchanged balances.
+    private(set) var uncertainTopUp: VeniceTopUpGuard?
+    /// True while an ambiguously submitted top-up may still settle on Base.
+    var topUpUncertain: Bool { uncertainTopUp != nil }
+    /// Shown when a follow-up balance check confirms an earlier uncertain top-up settled.
+    private(set) var topUpSettledNotice: String?
     /// Last top-up error, cleared on next press.
     private(set) var topUpStop: VeniceStop?
     /// Last completed top-up, cleared on next press.
@@ -330,8 +335,20 @@ final class VeniceMode {
             guard balancesGeneration == gen, !Task.isCancelled else { return }
             credit = nextCredit
             accountStop = nil
-            if !fundsFailed {
-                topUpUncertain = false
+            if !fundsFailed, let liveFunds = funds, var pending = uncertainTopUp {
+                switch pending.evaluate(usdc: liveFunds, credit: nextCredit.usd, now: .now) {
+                case .settled:
+                    uncertainTopUp = nil
+                    topUpStop = nil
+                    topUpSettledNotice = "Earlier \(pending.amount.dollars.formatted(.currency(code: "USD"))) top-up settled — balances updated."
+                case .expiredUnchanged:
+                    uncertainTopUp = nil
+                    topUpStop = nil
+                    topUpSettledNotice = nil
+                case .stillPending:
+                    pending.checkedUnchanged = true
+                    uncertainTopUp = pending
+                }
             }
         } catch {
             guard balancesGeneration == gen, !Task.isCancelled, error.kind != .cancelled, running else { return }
@@ -355,13 +372,30 @@ final class VeniceMode {
         guard running, !adding, !topUpUncertain, let address = presence.address else { return }
         adding = true
         topUpStop = nil
+        topUpSettledNotice = nil
         added = nil
         defer { adding = false }
-        let venice = Venice(auth: .wallet(signer(address)), transport: transport(walletIdentity))
+        let beforeUsdc = funds
+        let beforeCredit = credit?.usd
+        let walletSigner = signer(address)
+        let venice = Venice(auth: .wallet(walletSigner), transport: transport(walletIdentity))
+        let liveTerms: VeniceTopUpTerms
         do throws(VeniceStop) {
-            let result = try await venice.add(amount, by: signer(address))
+            liveTerms = try await venice.topUpTerms()
+            terms = liveTerms
+        } catch {
+            if Self.shouldRotateCircuit(for: error.kind) {
+                walletIdentity = Chat.newIdentity()
+            }
+            topUpStop = VeniceStop(error.kind, sent: false, "the terms stopped: \(error.text)")
+            logger.error("Venice top-up terms stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .public)")
+            return
+        }
+        let submittedAt = Date.now
+        do throws(VeniceStop) {
+            let result = try await venice.topUp(amount, on: liveTerms, by: walletSigner)
             added = result
-            topUpUncertain = false
+            uncertainTopUp = nil
             // Immediately reflect the server-confirmed post-top-up balance even
             // if the follow-up balance refresh over Tor hiccups.
             credit = VeniceAccount(usd: result.balance, diem: credit?.diem, canSpend: true)
@@ -373,7 +407,12 @@ final class VeniceMode {
             }
             topUpStop = error
             if error.sent && error.kind != .paymentRefused {
-                topUpUncertain = true
+                uncertainTopUp = VeniceTopUpGuard(
+                    amount: amount,
+                    beforeUsdc: beforeUsdc,
+                    beforeCredit: beforeCredit,
+                    submittedAt: submittedAt,
+                    timeoutSeconds: liveTerms.timeout)
             }
             logger.error("Venice top-up stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .public)")
             // If the signed EIP-3009 authorization was already transmitted over Tor,

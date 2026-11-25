@@ -64,8 +64,10 @@ final class Chat {
         /// A new message, with the box as it was written, picks and all, to
         /// give back if the rewording stops; the mode it was written in; and
         /// whether it is sent once reworded, as its press said: the box's
-        /// Send, with Review off, rather than its Reword.
-        case new(draft: String, picks: DetailPicks, mode: Kind, sends: Bool)
+        /// Send, with Review off, rather than its Reword. `approvedProvider`
+        /// carries a single-send provider-switch confirmation and is discarded
+        /// automatically if rewording is cancelled or fails.
+        case new(draft: String, picks: DetailPicks, mode: Kind, sends: Bool, approvedProvider: PayProvider? = nil)
         /// A turn asked again.
         case again(UUID)
     }
@@ -321,9 +323,6 @@ final class Chat {
     /// Confirmation sheet/alert when sending in an existing Token Inference
     /// thread after switching between Venice and Boundless.
     var pendingProviderSwitch: PendingProviderSwitch?
-    /// Tracks explicit user approval to send an existing thread's context to a
-    /// newly chosen provider (cleared once a turn actually dispatches there).
-    @ObservationIgnored private var confirmedProvider: [UUID: PayProvider] = [:]
     /// The last change to disk that failed.
     var problem: Problem?
     /// Each conversation's own Tor identity, so each has circuits of its
@@ -517,7 +516,7 @@ final class Chat {
     /// was written in: chosen at its press, whatever is chosen since for
     /// another new chat.
     private func firstMode(of id: UUID) -> Kind? {
-        guard let rewording, rewording.conversation == id, case .new(_, _, let mode, _) = rewording.asked else { return nil }
+        guard let rewording, rewording.conversation == id, case .new(_, _, let mode, _, _) = rewording.asked else { return nil }
         return mode
     }
 
@@ -728,13 +727,15 @@ final class Chat {
 
     /// Returns the prior provider and answered-turn count when sending in
     /// `conversation` would share existing Token Inference history with a
-    /// different provider than the one that last answered it.
+    /// different provider than the one that last answered it. `approved` is
+    /// scoped to the single in-flight send that the user explicitly confirmed
+    /// and is never persisted across cancelled or abandoned sends.
     func providerSwitchNeeded(
-        for conversation: Conversation, excluding turn: UUID? = nil
+        for conversation: Conversation, excluding turn: UUID? = nil, approved: PayProvider? = nil
     ) -> (from: PayProvider, to: PayProvider, priorTurns: Int)? {
         guard kind(of: conversation) == .token, !isAgent(conversation) else { return nil }
         let target = settings.payProvider
-        if confirmedProvider[conversation.id] == target { return nil }
+        if approved == target { return nil }
         guard let raw = conversation.lastTokenProvider, let prior = PayProvider(rawValue: raw), prior != target else {
             return nil
         }
@@ -748,20 +749,18 @@ final class Chat {
     }
 
     /// User confirmed sending the existing thread's full history to the newly
-    /// selected Token Inference provider. Rotates the thread's Tor identity so
-    /// the new provider gets a fresh circuit, then resumes the pending send.
+    /// selected Token Inference provider for this single send. Approval is
+    /// bound to this send only and discarded automatically if it cancels or stops.
     func confirmProviderSwitchSendContext() {
         guard let pending = pendingProviderSwitch else { return }
         pendingProviderSwitch = nil
-        confirmedProvider[pending.conversation] = pending.to
-        identities[pending.conversation] = Self.newIdentity()
         switch pending.action {
         case .submit:
-            submit()
+            submit(approvedProvider: pending.to)
         case .send(let turn):
-            send(turn, in: pending.conversation)
+            send(turn, in: pending.conversation, approvedProvider: pending.to)
         case .sendOriginal(let turn):
-            sendOriginal(turn, in: pending.conversation)
+            sendOriginal(turn, in: pending.conversation, approvedProvider: pending.to)
         }
     }
 
@@ -963,7 +962,6 @@ final class Chat {
         guard case .open(let store) = access, let removedIndex = conversations.firstIndex(where: { $0.id == id }) else { return }
         let conversation = conversations[removedIndex]
         if pendingProviderSwitch?.conversation == id { pendingProviderSwitch = nil }
-        confirmedProvider[id] = nil
         if autoStarting?.conversation == id { stopAutoStart() }
         if rewording?.conversation == id { rewording?.task.cancel() }
         stops[id] = nil
@@ -1109,10 +1107,16 @@ final class Chat {
     /// asks the model on this Mac. If Cloak is paused and a Tor/V/Pay-Per-Prompt
     /// mode needs it, automatically starts Cloak inline first (Decision R3b).
     func submit() {
+        submit(approvedProvider: nil)
+    }
+
+    private func submit(approvedProvider: PayProvider?) {
         let (written, picked) = (draft, picks)
         let original = picked.message(written.trimmingCharacters(in: .whitespacesAndNewlines))
         guard canSubmit, var conversation = selected else { return }
-        if let mismatch = providerSwitchNeeded(for: conversation) {
+        let mode = kind(of: conversation)
+        let willSendNow = isAgent(conversation) || mode != .token || settings.neverReword || !settings.review
+        if willSendNow, let mismatch = providerSwitchNeeded(for: conversation, approved: approvedProvider) {
             pendingProviderSwitch = PendingProviderSwitch(
                 conversation: conversation.id,
                 from: mismatch.from,
@@ -1123,7 +1127,6 @@ final class Chat {
         }
         draft = ""
         let id = conversation.id
-        let mode = kind(of: conversation)
         let restoreDraft: @MainActor () -> Void = { [weak self] in
             guard let self, self.selection == id, self.conversations.contains(where: { $0.id == id }) else { return }
             if Self.isBlank(self.draft) {
@@ -1171,11 +1174,15 @@ final class Chat {
             conversation.turns.append(turn)
             opened = turn.id
             update(conversation)
-            send(turn.id, in: id)
+            send(turn.id, in: id, approvedProvider: approvedProvider)
         } else {
             let sends = !settings.review
             startThen(in: id, onAbort: restoreDraft) { [weak self] in
-                self?.start(id, original, .new(draft: written, picks: picked, mode: mode, sends: sends))
+                self?.start(
+                    id, original,
+                    .new(
+                        draft: written, picks: picked, mode: mode, sends: sends,
+                        approvedProvider: sends ? approvedProvider : nil))
             }
         }
     }
@@ -1269,12 +1276,12 @@ final class Chat {
     /// dropped: from then on it is a turn that goes as written, shown with
     /// its Original alone, and sent so again after it is answered (decision
     /// 11). Each press is sent, as for Send.
-    func sendOriginal(_ turn: UUID, in id: UUID) {
+    func sendOriginal(_ turn: UUID, in id: UUID, approvedProvider: PayProvider? = nil) {
         guard sending[turn] == nil, var conversation = conversations.first(where: { $0.id == id }),
             originalBlock(in: kind(of: conversation)) == nil,
             let index = conversation.turns.firstIndex(where: { $0.id == turn }), conversation.turns[index].answer == nil
         else { return }
-        if let mismatch = providerSwitchNeeded(for: conversation, excluding: turn) {
+        if let mismatch = providerSwitchNeeded(for: conversation, excluding: turn, approved: approvedProvider) {
             pendingProviderSwitch = PendingProviderSwitch(
                 conversation: id,
                 from: mismatch.from,
@@ -1285,7 +1292,7 @@ final class Chat {
         }
         conversation.turns[index].reworded = nil
         update(conversation)
-        send(turn, in: id)
+        send(turn, in: id, approvedProvider: approvedProvider)
     }
 
     /// Sends the turn, reworded or as written, after the conversation's
@@ -1297,7 +1304,7 @@ final class Chat {
     /// conversation's turn goes to NEAR only; a V conversation's through the
     /// payer only, in the owner's turn; a Token Inference conversation's to
     /// the Tempo wallet's provider only.
-    func send(_ turn: UUID, in id: UUID) {
+    func send(_ turn: UUID, in id: UUID, approvedProvider: PayProvider? = nil) {
         guard sending[turn] == nil, var conversation = conversations.first(where: { $0.id == id }),
             let index = conversation.turns.firstIndex(where: { $0.id == turn })
         else { return }
@@ -1326,7 +1333,7 @@ final class Chat {
             && conversation.venice == nil && veniceMode.newChat == nil
             && blockReason == "Loading Venice models…"
         guard blockReason == nil || awaitingVeniceModels else { return }
-        if let mismatch = providerSwitchNeeded(for: conversation, excluding: turn) {
+        if let mismatch = providerSwitchNeeded(for: conversation, excluding: turn, approved: approvedProvider) {
             pendingProviderSwitch = PendingProviderSwitch(
                 conversation: id,
                 from: mismatch.from,
@@ -1336,7 +1343,7 @@ final class Chat {
             return
         }
         if supervisor.phase != .running, canAutoStart {
-            startThen(in: id) { [weak self] in self?.send(turn, in: id) }
+            startThen(in: id) { [weak self] in self?.send(turn, in: id, approvedProvider: approvedProvider) }
             return
         }
         guard supervisor.phase == .running else { return }
@@ -1355,7 +1362,7 @@ final class Chat {
                             self.sendTasks[turn] = nil
                             guard !Task.isCancelled, self.settings.payProvider == .venice else { return }
                             if self.veniceMode.newChat != nil {
-                                self.send(turn, in: id)
+                                self.send(turn, in: id, approvedProvider: approvedProvider)
                             } else if let stop = self.veniceMode.listStop {
                                 self.veniceMode.recordStop(stop, for: turn)
                             }
@@ -1364,8 +1371,10 @@ final class Chat {
                     }
                     conversation.venice = chatConfig
                 }
+                if let prior = conversation.lastTokenProvider, prior != PayProvider.venice.rawValue {
+                    identities[id] = Self.newIdentity()
+                }
                 conversation.tokenProvider = PayProvider.venice.rawValue
-                confirmedProvider[id] = nil
                 update(conversation)
                 press(turn, at: index, in: &conversation)
                 let identity = identity(of: id)
@@ -1385,8 +1394,10 @@ final class Chat {
                 return
             }
             guard let deposits = wallet.deposits else { return }
+            if let prior = conversation.lastTokenProvider, prior != PayProvider.boundless.rawValue {
+                identities[id] = Self.newIdentity()
+            }
             conversation.tokenProvider = PayProvider.boundless.rawValue
-            confirmedProvider[id] = nil
             update(conversation)
             press(turn, at: index, in: &conversation)
             let identity = identity(of: id)
@@ -1640,7 +1651,7 @@ final class Chat {
                 conversation.turns[index].reworded = reworded
                 turn = again
             } else {
-                if case .new(_, _, let mode, _) = asked { mark(&conversation, as: mode) }
+                if case .new(_, _, let mode, _, _) = asked { mark(&conversation, as: mode) }
                 let new = Turn(original: original, reworded: reworded)
                 conversation.turns.append(new)
                 opened = new.id
@@ -1651,12 +1662,14 @@ final class Chat {
             // as if Send were pressed: through the same checks, so one
             // certain to stop stays open, saying why. A card's Reword only
             // rewords.
-            if case .new(_, _, _, true) = asked { send(turn, in: id) }
+            if case .new(_, _, _, true, let approvedProvider) = asked {
+                send(turn, in: id, approvedProvider: approvedProvider)
+            }
         case .failure(let reason):
             switch asked {
             case .again(let turn):
                 stops[id] = Stop(reason: reason, turn: turn)
-            case .new(let written, let picked, _, _):
+            case .new(let written, let picked, _, _, _):
                 stops[id] = Stop(reason: reason, turn: nil, back: Back(draft: written, picks: picked))
                 giveBack()
             }
