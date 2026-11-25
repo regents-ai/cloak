@@ -132,6 +132,19 @@ cp app/release-notes.md "$work/appcast/Regents-Cloak-$tag.txt"
 "$generate_appcast" --account cloak --embed-release-notes --maximum-versions 0 \
 	--maximum-deltas 3 --delta-compression lzma --versions "$build" \
 	--download-url-prefix "$downloads/$tag/" "$work/appcast"
+# Keep every older DMG item pointing at its own release tag (not $tag), while
+# leaving the new $tag item and its delta files pointing at $downloads/$tag/.
+python3 - "$work/appcast/appcast.xml" "$downloads" <<'PY'
+import re, sys
+path, base = sys.argv[1], sys.argv[2]
+text = open(path, "r", encoding="utf-8").read()
+fixed = re.sub(
+    re.escape(base) + r"/[^/]+/(Regents-Cloak-([0-9][^\"/]+)\.dmg)",
+    lambda m: f"{base}/{m.group(2)}/{m.group(1)}",
+    text,
+)
+open(path, "w", encoding="utf-8").write(fixed)
+PY
 cp "$work/appcast/appcast.xml" "$out/appcast.xml"
 for delta in "$work/appcast"/*.delta; do
 	[ -f "$delta" ] && cp "$delta" "$out/"
