@@ -8,7 +8,7 @@ Cloak is a macOS menu bar app for private AI — local on Apple Silicon, or rout
 
 [Watch the 60s walkthrough](https://regents.sh/images/cloak/demos/cloak-walkthrough-60s.mp4) 📽️ · [Website](https://regents.sh/cloak) · [Docs](https://regents.sh/docs/cloak/reference) · [Releases](https://github.com/regents-ai/cloak/releases)
 
-![Cloak](docs/media/cloak-hero.png)
+![Cloak](docs/media/cloak-hero.jpg)
 
 > **Status (`v0.2.0 Beta`):** Signed, notarized `.dmg` builds are published directly on [GitHub Releases](https://github.com/regents-ai/cloak/releases). Cloak is **beta software** and its privacy protections have not yet undergone an independent security audit — keep wallet balances small, back up or withdraw funds before wiping your Mac, and read the [Wallet Security, Recovery & 30-Day zkAPI Limit](docs/wallet-security.md) guide ([web copy](https://regents.sh/docs/cloak/wallets)).
 
