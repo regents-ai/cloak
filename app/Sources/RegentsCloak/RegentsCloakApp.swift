@@ -124,11 +124,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private lazy var chat: AppWindow = {
         let window = AppWindow { [unowned self] in
-            ChatView.window(
+            #if DARKBLOOM
+            let showServing: (() -> Void)? = { self.showDarkbloom() }
+            #else
+            let showServing: (() -> Void)? = nil
+            #endif
+            return ChatView.window(
                 conversations, showDetails: { self.showDetails() }, showAgents: { self.showAgents() },
                 showNearSettings: { self.showSettings(on: .near) }, showLlamaSettings: { self.showSettings(on: .llama) },
                 showLocalAccessSettings: { self.showSettings(on: .localAccess) },
-                showAdvancedSettings: { self.showSettings(on: .advanced) })
+                showAdvancedSettings: { self.showSettings(on: .advanced) },
+                showServingSettings: showServing)
         }
         window.onBecomeKey = { [weak self] in
             self?.menuBarIndicator.hasUnreadAnswer = false

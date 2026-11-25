@@ -70,7 +70,7 @@ struct SettingsView: View {
                 openDoor: openDoor, showChat: showChat, showFunds: showFunds, showTour: showTour, darkbloom: darkbloom, selection: selection))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
-        window.setContentSize(NSSize(width: 680, height: 520))
+        window.setContentSize(NSSize(width: 720, height: 520))
         window.setFrameAutosaveName("sh.regents.cloak.window.settings")
         // ClosingWindow hides instead of destroying the SwiftUI view hierarchy,
         // so explicitly close Darkbloom's stream/key on window close and refresh
@@ -105,7 +105,7 @@ struct SettingsView: View {
                 openDoor: openDoor, showChat: showChat, showFunds: showFunds, showTour: showTour, selection: selection))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
-        window.setContentSize(NSSize(width: 680, height: 520))
+        window.setContentSize(NSSize(width: 720, height: 520))
         window.setFrameAutosaveName("sh.regents.cloak.window.settings")
         return window
     }
@@ -170,7 +170,7 @@ struct SettingsView: View {
                     .sidebarHover(selected: row == selection.pane)
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 170, ideal: 185, max: 220)
+            .navigationSplitViewColumnWidth(min: 205, ideal: 215, max: 250)
             .toolbar(removing: .sidebarToggle)
             .toolbar {
                 ToolbarItem {

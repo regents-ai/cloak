@@ -12,6 +12,7 @@ struct TourView: View {
     let showLlamaSettings: () -> Void
     let showAdvancedSettings: () -> Void
     let showConnectedApps: () -> Void
+    let showServingSettings: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @State private var step: Int
 
@@ -21,13 +22,15 @@ struct TourView: View {
         showNearSettings: @escaping () -> Void,
         showLlamaSettings: @escaping () -> Void,
         showAdvancedSettings: @escaping () -> Void,
-        showConnectedApps: @escaping () -> Void
+        showConnectedApps: @escaping () -> Void,
+        showServingSettings: (() -> Void)? = nil
     ) {
         self.chat = chat
         self.showNearSettings = showNearSettings
         self.showLlamaSettings = showLlamaSettings
         self.showAdvancedSettings = showAdvancedSettings
         self.showConnectedApps = showConnectedApps
+        self.showServingSettings = showServingSettings
         _step = State(initialValue: min(max(initialStep, 0), 2))
     }
 
@@ -89,7 +92,7 @@ struct TourView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
-        .frame(width: 620, height: 500)
+        .frame(width: 620, height: 530)
     }
 
     // MARK: Step 1 — What Cloak Does Differently
@@ -213,6 +216,20 @@ struct TourView: View {
                         DispatchQueue.main.async {
                             chat.showingWallet = true
                         }
+                    }
+                }
+
+                if let showServingSettings {
+                    PathCard(
+                        symbol: "server.rack",
+                        title: "Serve Inference to Earn",
+                        badge: "Darkbloom",
+                        badgeTint: .purple,
+                        detail: "Idle Macs can join EigenLayer's Darkbloom network and serve inference.",
+                        actionTitle: "Settings…"
+                    ) {
+                        dismiss()
+                        showServingSettings()
                     }
                 }
             }

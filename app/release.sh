@@ -81,6 +81,8 @@ ditto "$app" "$work/volume/Cloak.app"
 ln -s /Applications "$work/volume/Applications"
 mkdir "$work/volume/.background"
 cp app/install-window.tiff "$work/volume/.background/"
+cp app/AppIcon.icns "$work/volume/.VolumeIcon.icns"
+xcrun SetFile -a C "$work/volume"
 PYTHONDONTWRITEBYTECODE=1 uv run app/install-window.py "$work/volume"
 trap - EXIT
 diskutil eject "$work/volume"

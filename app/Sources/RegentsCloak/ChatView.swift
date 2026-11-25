@@ -22,12 +22,14 @@ struct ChatView: View {
     let showLlamaSettings: () -> Void
     let showLocalAccessSettings: () -> Void
     let showAdvancedSettings: () -> Void
+    let showServingSettings: (() -> Void)?
 
     static func window(
         _ chat: Chat, showDetails: @escaping () -> Void, showAgents: @escaping () -> Void,
         showNearSettings: @escaping () -> Void, showLlamaSettings: @escaping () -> Void,
         showLocalAccessSettings: @escaping () -> Void = {},
-        showAdvancedSettings: @escaping () -> Void = {}
+        showAdvancedSettings: @escaping () -> Void = {},
+        showServingSettings: (() -> Void)? = nil
     ) -> NSWindow {
         let window = ClosingWindow(
             contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -72,7 +74,7 @@ struct ChatView: View {
             rootView: ChatView(
                 chat: chat, showDetails: showDetails, showAgents: showAgents, showNearSettings: showNearSettings,
                 showLlamaSettings: showLlamaSettings, showLocalAccessSettings: showLocalAccessSettings,
-                showAdvancedSettings: showAdvancedSettings))
+                showAdvancedSettings: showAdvancedSettings, showServingSettings: showServingSettings))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
         window.contentMinSize = NSSize(width: 640, height: 460)
@@ -89,7 +91,7 @@ struct ChatView: View {
             Detail(
                 chat: chat, showDetails: showDetails, showAgents: showAgents, showNearSettings: showNearSettings,
                 showLlamaSettings: showLlamaSettings, showLocalAccessSettings: showLocalAccessSettings,
-                showAdvancedSettings: showAdvancedSettings)
+                showAdvancedSettings: showAdvancedSettings, showServingSettings: showServingSettings)
         }
         .frame(minWidth: 640, minHeight: 460)
         .task { await chat.open() }
@@ -499,6 +501,7 @@ private struct Detail: View {
     let showLlamaSettings: () -> Void
     let showLocalAccessSettings: () -> Void
     let showAdvancedSettings: () -> Void
+    let showServingSettings: (() -> Void)?
     @State private var deletingUnreadable: UUID?
     @State private var nearTab: NearGatewayTab = .chat
 
@@ -571,7 +574,8 @@ private struct Detail: View {
             .sheet(isPresented: $chat.showingTour, onDismiss: { chat.tourStep = 0 }) {
                 TourView(
                     chat: chat, initialStep: chat.tourStep, showNearSettings: showNearSettings, showLlamaSettings: showLlamaSettings,
-                    showAdvancedSettings: showAdvancedSettings, showConnectedApps: showAgents)
+                    showAdvancedSettings: showAdvancedSettings, showConnectedApps: showAgents,
+                    showServingSettings: showServingSettings)
             }
             .task(id: chat.supervisor.phase == .running) {
                 if chat.settings.payProvider == .boundless {
