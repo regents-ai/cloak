@@ -50,8 +50,9 @@ mainnet=$repo/reference/src/zkapi-mainnet/zkapi-clientd
 patch -s -o "$out/pay-relay.go" "$mainnet/internal/relay/relay.go" guest/pay/relay.patch
 patch -s -o "$out/pay-socks5.go" "$mainnet/internal/relay/socks5.go" guest/pay/socks5.patch
 patch -s -o "$out/pay-client.go" "$mainnet/internal/zkapi/client.go" guest/pay/client.patch
-printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_pay.go":"%s/guest/pay/zz_cloak_pay.go","%s/cmd/zkapi-clientd/zz_cloak_pay_linux.go":"%s/guest/pay/zz_cloak_pay_linux.go","%s/internal/relay/relay.go":"%s/pay-relay.go","%s/internal/relay/socks5.go":"%s/pay-socks5.go","%s/internal/zkapi/client.go":"%s/pay-client.go","%s/internal/zkapi/zz_cloak_chain.go":"%s/guest/pay/zz_cloak_chain.go","%s/internal/zkapi/zz_cloak_prices.go":"%s/guest/pay/zz_cloak_prices.go"}}' \
-	"$mainnet" "$repo" "$mainnet" "$repo" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$repo" "$mainnet" "$repo" > "$out/pay-overlay.json"
+patch -s -o "$out/pay-return.go" "$mainnet/internal/zkapi/address_return.go" guest/pay/return.patch
+printf '{"Replace":{"%s/cmd/zkapi-clientd/zz_cloak_pay.go":"%s/guest/pay/zz_cloak_pay.go","%s/cmd/zkapi-clientd/zz_cloak_pay_linux.go":"%s/guest/pay/zz_cloak_pay_linux.go","%s/internal/relay/relay.go":"%s/pay-relay.go","%s/internal/relay/socks5.go":"%s/pay-socks5.go","%s/internal/zkapi/client.go":"%s/pay-client.go","%s/internal/zkapi/address_return.go":"%s/pay-return.go","%s/internal/zkapi/zz_cloak_chain.go":"%s/guest/pay/zz_cloak_chain.go","%s/internal/zkapi/zz_cloak_prices.go":"%s/guest/pay/zz_cloak_prices.go"}}' \
+	"$mainnet" "$repo" "$mainnet" "$repo" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$out" "$mainnet" "$repo" "$mainnet" "$repo" > "$out/pay-overlay.json"
 (cd "$mainnet" && nice -n 10 go build -p 2 -trimpath -buildvcs=false -overlay "$out/pay-overlay.json" -o "$out/cloak-pay" ./cmd/zkapi-clientd)
 
 # The sender (Development mode, decision 10 in docs/plan.md): Rust, built

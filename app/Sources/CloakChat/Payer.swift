@@ -284,7 +284,7 @@ public final class Payer {
             if case .depositing = state { self.review = nil }
             else if state == .ready || state == .settling { self.review = nil }
         case .withdrawal:
-            if case .withdrawing(let phase) = state, phase != "quoted" { self.review = nil }
+            if case .withdrawing(let phase) = state, phase != "quoted" && phase != "reverted" { self.review = nil }
             else if state == .none || state == .taken { self.review = nil }
         case .transfer:
             if returning?.phase == "return_pending" { self.review = nil }

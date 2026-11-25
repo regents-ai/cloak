@@ -46,8 +46,10 @@ struct RegentsCloakApp: App {
                         .keyboardShortcut("4")
                 }
                 CommandMenu("Cloak") {
-                    Button("Start Cloak") { app.handleWidgetCommand(.start) }
-                    Button("Pause Cloak") { app.handleWidgetCommand(.pause) }
+                    Button(app.supervisor.phase == .running ? "Pause Cloak" : "Start Cloak") {
+                        app.handleWidgetCommand(app.supervisor.phase == .running ? .pause : .start)
+                    }
+                    .keyboardShortcut("s")
                     Button("Toggle Cover Traffic") { app.handleWidgetCommand(.toggleCover) }
                     Divider()
                     Button("Funds…") { app.showFunds() }

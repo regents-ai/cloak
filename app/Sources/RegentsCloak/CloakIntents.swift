@@ -39,12 +39,19 @@ struct StartCloakIntent: AppIntent {
         "Starts Cloak's Tor connection, local prompt rewriter, and isolated VM.",
         categoryName: "Privacy Controls"
     )
-    static let openAppWhenRun: Bool = false
+    static let supportedModes: IntentModes = .background
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         AppDelegate.current?.handleWidgetCommand(.start)
-        return .result(dialog: "Starting Cloak.")
+        let phase = AppDelegate.current?.supervisor.phase
+        let dialog: String = switch phase {
+        case .running: "Cloak is running."
+        case .preparing: "Cloak is starting."
+        case .needsAttention(let reason): "Cloak needs attention: \(reason.title)."
+        default: "Requested Cloak start."
+        }
+        return .result(dialog: "\(dialog)")
     }
 }
 
@@ -54,12 +61,18 @@ struct PauseCloakIntent: AppIntent {
         "Pauses Cloak's Tor connection and isolated VM to save memory and battery.",
         categoryName: "Privacy Controls"
     )
-    static let openAppWhenRun: Bool = false
+    static let supportedModes: IntentModes = .background
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         AppDelegate.current?.handleWidgetCommand(.pause)
-        return .result(dialog: "Paused Cloak.")
+        let phase = AppDelegate.current?.supervisor.phase
+        let dialog: String = switch phase {
+        case .paused, .ready: "Cloak is paused."
+        case .stopping: "Pausing Cloak."
+        default: "Requested Cloak pause."
+        }
+        return .result(dialog: "\(dialog)")
     }
 }
 
@@ -69,7 +82,7 @@ struct ToggleCoverTrafficIntent: AppIntent {
         "Turns Cloak's background Tor cover traffic on or off.",
         categoryName: "Privacy Controls"
     )
-    static let openAppWhenRun: Bool = false
+    static let supportedModes: IntentModes = .background
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
@@ -85,7 +98,7 @@ struct NewPrivateChatIntent: AppIntent {
         "Opens a new private chat in Cloak without sharing any prompt text with Spotlight or Siri.",
         categoryName: "Chat"
     )
-    static let openAppWhenRun: Bool = true
+    static let supportedModes: IntentModes = .foreground
 
     @Parameter(title: "Mode")
     var mode: CloakModeOption?
@@ -107,7 +120,7 @@ struct OpenCloakFundsIntent: AppIntent {
         "Opens Cloak's Funds sheet for Token Inference, zkAPI Anon Inference, and NEAR AI Gateway.",
         categoryName: "Navigation"
     )
-    static let openAppWhenRun: Bool = true
+    static let supportedModes: IntentModes = .foreground
 
     @MainActor
     func perform() async throws -> some IntentResult {
@@ -122,7 +135,7 @@ struct TakeCloakTourIntent: AppIntent {
         "Opens Cloak's 3-step Welcome Tour.",
         categoryName: "Navigation"
     )
-    static let openAppWhenRun: Bool = true
+    static let supportedModes: IntentModes = .foreground
 
     @MainActor
     func perform() async throws -> some IntentResult {
@@ -137,7 +150,7 @@ struct OpenCloakSettingsIntent: AppIntent {
         "Opens Cloak's Settings window.",
         categoryName: "Navigation"
     )
-    static let openAppWhenRun: Bool = true
+    static let supportedModes: IntentModes = .foreground
 
     @MainActor
     func perform() async throws -> some IntentResult {
@@ -152,7 +165,7 @@ struct GetCloakStatusIntent: AppIntent {
         "Returns Cloak's current operational status (Running, Starting, or Paused) for Shortcuts automations. Never accesses chats or keys.",
         categoryName: "Privacy Controls"
     )
-    static let openAppWhenRun: Bool = false
+    static let supportedModes: IntentModes = .background
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
@@ -175,7 +188,7 @@ struct IsCloakRunningIntent: AppIntent {
         "Returns true when Cloak's Tor connection and isolated VM are running, for conditional Shortcuts automations.",
         categoryName: "Privacy Controls"
     )
-    static let openAppWhenRun: Bool = false
+    static let supportedModes: IntentModes = .background
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {

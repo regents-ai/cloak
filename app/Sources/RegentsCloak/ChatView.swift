@@ -362,15 +362,20 @@ private struct ActiveGuaranteesView: View {
             ))
         }
 
-        if mode == .near, let proof = chat.nearMode.proof,
-            settings.proofFreshness == .everyMessage || now.timeIntervalSince(proof.passedAt) < Double(settings.proofFreshness.rawValue)
-        {
-            items.append(Item(
-                id: "near-tee",
-                symbol: "checkmark.shield",
-                title: "Hardware TEE verified",
-                detail: "Intel TDX and NVIDIA GPU enclave attestation passed and is fresh."
-            ))
+        if mode == .near, let proof = chat.nearMode.proof {
+            let everyMessage = settings.proofFreshness == .everyMessage
+            let age = now.timeIntervalSince(proof.passedAt)
+            let isFresh = everyMessage ? age < 300 : age < Double(settings.proofFreshness.rawValue)
+            if isFresh {
+                items.append(Item(
+                    id: "near-tee",
+                    symbol: "checkmark.shield",
+                    title: everyMessage ? "Hardware TEE (every message)" : "Hardware TEE verified",
+                    detail: everyMessage
+                        ? "Last enclave check passed; Cloak re-verifies Intel TDX and NVIDIA GPU attestation before every message."
+                        : "Intel TDX and NVIDIA GPU enclave attestation passed and is fresh."
+                ))
+            }
         }
 
         if agent {
@@ -2689,10 +2694,14 @@ private struct NearStatus: View {
             TimelineView(.periodic(from: proof.passedAt, by: 60)) { context in
                 let age = context.date.timeIntervalSince(proof.passedAt)
                 let everyMessage = settings.proofFreshness == .everyMessage
-                let fresh = everyMessage || age < Double(settings.proofFreshness.rawValue)
+                let fresh = everyMessage ? age < 300 : age < Double(settings.proofFreshness.rawValue)
                 let words = Self.checked(proof, age: age) + (everyMessage ? ". Next message checks again." : (fresh ? "." : ". Next message checks again."))
                 Label {
-                    Text(fresh ? "Verified · \(Self.age(age))" : Self.age(age))
+                    if everyMessage {
+                        Text(fresh ? "Verified · re-checks next send" : "\(Self.age(age)) · re-checks next send")
+                    } else {
+                        Text(fresh ? "Verified · \(Self.age(age))" : Self.age(age))
+                    }
                 } icon: {
                     Image(systemName: "checkmark.shield")
                         .foregroundStyle(fresh ? .green : .secondary)

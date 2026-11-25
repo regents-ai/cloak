@@ -274,16 +274,20 @@ final class OfflineDataManager {
         onBytes: @escaping @Sendable (Int64) -> Void
     ) async throws {
         let existingBytes = Int64((try? FileManager.default.attributesOfItem(atPath: partURL.path)[.size] as? NSNumber)?.int64Value ?? 0)
+        let validatorURL = partURL.appendingPathExtension("etag")
+        let savedValidator = (try? String(contentsOf: validatorURL, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
         var request = URLRequest(url: url)
         request.setValue("curl/8.7.1", forHTTPHeaderField: "User-Agent")
-        if existingBytes > 0 {
+        if existingBytes > 0, let savedValidator, !savedValidator.isEmpty {
             request.setValue("bytes=\(existingBytes)-", forHTTPHeaderField: "Range")
+            request.setValue(savedValidator, forHTTPHeaderField: "If-Range")
         }
 
         let delegate = ResumableDownloadDelegate(
             destination: destination,
             partURL: partURL,
-            existingBytes: existingBytes,
+            validatorURL: validatorURL,
+            existingBytes: (savedValidator?.isEmpty == false) ? existingBytes : 0,
             onBytes: onBytes
         )
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
@@ -307,6 +311,7 @@ final class OfflineDataManager {
 private final class ResumableDownloadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let destination: URL
     private let partURL: URL
+    private let validatorURL: URL
     private let existingBytes: Int64
     private let onBytes: @Sendable (Int64) -> Void
     private let lock = NSLock()
@@ -318,9 +323,16 @@ private final class ResumableDownloadDelegate: NSObject, URLSessionDataDelegate,
     private var cancelled = false
     private var failed = false
 
-    init(destination: URL, partURL: URL, existingBytes: Int64, onBytes: @escaping @Sendable (Int64) -> Void) {
+    init(
+        destination: URL,
+        partURL: URL,
+        validatorURL: URL,
+        existingBytes: Int64,
+        onBytes: @escaping @Sendable (Int64) -> Void
+    ) {
         self.destination = destination
         self.partURL = partURL
+        self.validatorURL = validatorURL
         self.existingBytes = existingBytes
         self.onBytes = onBytes
     }
@@ -381,6 +393,7 @@ private final class ResumableDownloadDelegate: NSObject, URLSessionDataDelegate,
         // HTTP 416 with an existing .part means the file is already complete or stale.
         if http.statusCode == 416 && existingBytes > 0 {
             try? FileManager.default.removeItem(at: partURL)
+            try? FileManager.default.removeItem(at: validatorURL)
             completionHandler(.cancel)
             finish(.failure(NSError(
                 domain: "sh.regents.cloak.offline",
@@ -398,10 +411,34 @@ private final class ResumableDownloadDelegate: NSObject, URLSessionDataDelegate,
         }
         do {
             let fm = FileManager.default
-            let resuming = http.statusCode == 206 && existingBytes > 0 && fm.fileExists(atPath: partURL.path)
+            var resuming = false
+            if http.statusCode == 206 && existingBytes > 0 && fm.fileExists(atPath: partURL.path) {
+                let contentRange = (http.value(forHTTPHeaderField: "Content-Range") ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                guard contentRange.hasPrefix("bytes \(existingBytes)-") else {
+                    try? fm.removeItem(at: partURL)
+                    try? fm.removeItem(at: validatorURL)
+                    completionHandler(.cancel)
+                    finish(.failure(NSError(
+                        domain: "sh.regents.cloak.offline",
+                        code: 206,
+                        userInfo: [NSLocalizedDescriptionKey: "Server returned an unexpected byte range — click Download again to restart cleanly."])))
+                    return
+                }
+                resuming = true
+            }
             if !resuming {
                 if fm.fileExists(atPath: partURL.path) { try fm.removeItem(at: partURL) }
                 fm.createFile(atPath: partURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+                // Record ETag / Last-Modified validator for safe If-Range resume.
+                if let validator = http.value(forHTTPHeaderField: "ETag") ?? http.value(forHTTPHeaderField: "Last-Modified"),
+                    !validator.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    try? validator.write(to: validatorURL, atomically: true, encoding: .utf8)
+                } else {
+                    try? fm.removeItem(at: validatorURL)
+                }
             }
             let fileHandle = try FileHandle(forWritingTo: partURL)
             if resuming {
@@ -462,6 +499,7 @@ private final class ResumableDownloadDelegate: NSObject, URLSessionDataDelegate,
             let fm = FileManager.default
             if fm.fileExists(atPath: destination.path) { try? fm.removeItem(at: destination) }
             try fm.moveItem(at: partURL, to: destination)
+            try? fm.removeItem(at: validatorURL)
             finish(.success(()))
         } catch {
             finish(.failure(error))

@@ -48,6 +48,9 @@ final class VeniceMode {
     private(set) var terms: VeniceTopUpTerms?
     /// In-flight x402 top-up guard (prevents double-click duplicate nonces).
     private(set) var adding = false
+    /// True after a signed x402 top-up failed ambiguously over Tor (status != 400/401/402);
+    /// blocks signing a second nonce until live balances are successfully re-read.
+    private(set) var topUpUncertain = false
     /// Last top-up error, cleared on next press.
     private(set) var topUpStop: VeniceStop?
     /// Last completed top-up, cleared on next press.
@@ -327,6 +330,9 @@ final class VeniceMode {
             guard balancesGeneration == gen, !Task.isCancelled else { return }
             credit = nextCredit
             accountStop = nil
+            if !fundsFailed {
+                topUpUncertain = false
+            }
         } catch {
             guard balancesGeneration == gen, !Task.isCancelled, error.kind != .cancelled, running else { return }
             if Self.shouldRotateCircuit(for: error.kind) {
@@ -346,7 +352,7 @@ final class VeniceMode {
     /// credit via x402 EIP-3009 transfer. Guarded against double-clicks so one
     /// press never signs two nonces.
     func topUp(_ amount: Amount) async {
-        guard running, !adding, let address = presence.address else { return }
+        guard running, !adding, !topUpUncertain, let address = presence.address else { return }
         adding = true
         topUpStop = nil
         added = nil
@@ -355,6 +361,7 @@ final class VeniceMode {
         do throws(VeniceStop) {
             let result = try await venice.add(amount, by: signer(address))
             added = result
+            topUpUncertain = false
             // Immediately reflect the server-confirmed post-top-up balance even
             // if the follow-up balance refresh over Tor hiccups.
             credit = VeniceAccount(usd: result.balance, diem: credit?.diem, canSpend: true)
@@ -365,6 +372,9 @@ final class VeniceMode {
                 walletIdentity = Chat.newIdentity()
             }
             topUpStop = error
+            if error.sent && error.kind != .paymentRefused {
+                topUpUncertain = true
+            }
             logger.error("Venice top-up stopped: \(error.kind.rawValue, privacy: .public) \(error.text, privacy: .public)")
             // If the signed EIP-3009 authorization was already transmitted over Tor,
             // refresh Base USDC + Venice Credit immediately so the user can see

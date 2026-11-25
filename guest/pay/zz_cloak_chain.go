@@ -116,3 +116,17 @@ func chainNote(encoded string) (*ChainNote, error) {
 	}
 	return &ChainNote{Status: chainNoteStatuses[status.Int64()], ExpiryTs: expiry.Uint64()}, nil
 }
+
+// isClosedNoteOnChain checks notes(noteId) on-chain at "latest" without
+// acquiring h.mu, so QuoteAddressReturn can safely allow public ETH transfers
+// after an expired note was closed on-chain while the local companion still
+// reports has_note=true.
+func (h *FundingHandler) isClosedNoteOnChain(ctx context.Context, config fundingConfig, noteID uint32) bool {
+	var encoded string
+	data := chainNotes + addressABIWord(strconv.FormatUint(uint64(noteID), 16))
+	if err := h.addressRPC(ctx, config, "eth_call", []any{map[string]string{"to": config.Contract, "data": data}, "latest"}, &encoded); err != nil {
+		return false
+	}
+	note, err := chainNote(encoded)
+	return err == nil && note != nil && note.Status == "closed"
+}

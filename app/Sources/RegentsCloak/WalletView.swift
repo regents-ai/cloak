@@ -541,7 +541,7 @@ struct VeniceFundsSections: View {
                                 .frame(width: 52)
                                 .onChange(of: topUpText) { topUpError = nil }
                             Button(venice.adding ? "Topping Up…" : "Top Up") { prepareTopUp() }
-                                .disabled(venice.adding)
+                                .disabled(venice.adding || venice.topUpUncertain)
                                 .confirmationDialog(
                                     pendingTopUp.map { "Top Up \($0.dollars.formatted(.currency(code: "USD"))) to Venice Credit?" } ?? "Top Up Venice Credit?",
                                     isPresented: Binding(
@@ -581,13 +581,21 @@ struct VeniceFundsSections: View {
                             .foregroundStyle(.green)
                     }
                     if let stop = venice.topUpStop {
-                        let message = (stop.sent && stop.kind != .paymentRefused)
-                            ? "Top-up was submitted over Tor and may have moved Base USDC. Refresh and verify your balances above before trying again."
+                        let uncertain = stop.sent && stop.kind != .paymentRefused
+                        let message = uncertain
+                            ? "Top-up was submitted over Tor and may have moved Base USDC. Verify live balances before trying again."
                             : "\(stop.kind.title): \(stop.kind.words)"
-                        Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .symbolRenderingMode(.multicolor)
-                            .font(.callout)
-                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .top, spacing: 8) {
+                            Label(message, systemImage: "exclamationmark.triangle.fill")
+                                .symbolRenderingMode(.multicolor)
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if venice.topUpUncertain, running {
+                                Spacer(minLength: 4)
+                                Button("Verify Balances") { Task { await venice.refreshBalances() } }
+                                    .controlSize(.small)
+                            }
+                        }
                     }
                 }
             } header: {
@@ -1053,7 +1061,7 @@ private struct ExportPrivateKeyButton: View {
                     Button {
                         if let hex = revealedHex {
                             let pasteboard = NSPasteboard.general
-                            pasteboard.clearContents()
+                            pasteboard.prepareForNewContents(with: .currentHostOnly)
                             let item = NSPasteboardItem()
                             item.setString(hex, forType: .string)
                             item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))

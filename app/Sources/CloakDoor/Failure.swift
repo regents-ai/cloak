@@ -64,7 +64,7 @@ struct Failure: Error, Sendable, Equatable {
         case .withdrawing: self.init(409, "withdrawal_pending", "Your zkAPI deposit is being withdrawn, so it can't pay for requests now.")
         case .busy: self.init(429, "busy", "zkAPI Anon Inference is busy with another request. Try again in a moment.")
         case .modelUnavailable: self.init(404, "model_not_found", "The provider can't use this model now. Pick another.")
-        case .depositTooLow: self.init(402, "deposit_too_low", "Your active zkAPI deposit is below this model's temporary hold. Pick a lower-tier model or deposit more ETH.")
+        case .depositTooLow: self.init(402, "model_budget_unavailable", "This model isn't available for your active zkAPI deposit (balance may be below its temporary hold, or the model is no longer priced).")
         case .torDown: self.init(503, "tor_down", "Tor couldn't reach the zkAPI service (slow or blocked exit). Try again for a fresh Tor circuit.")
         case .refused: self.init(400, "invalid_request_error", "The provider turned the request away as it was.")
         case .providerFailed, .answerRefused, .failed: self.init(502, "failed", "The provider or Tor exit failed. Try again for a fresh Tor circuit.")

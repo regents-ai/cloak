@@ -599,6 +599,7 @@ public final class Door {
             case wallet(DepositStore)
         }
 
+        let app: UUID
         let listed: AgentRequest.ID
         let body: Data
         let identity: String
@@ -659,6 +660,9 @@ public final class Door {
                     note(listed) { $0.end(stage == .unread ? .left(paid: true) : .answered) }
                     await finish(response, at: &stage)
                 case .sent(let listed, .failure(let failure)):
+                    if ["tor_down", "tor_exit_blocked", "failed", "timed_out"].contains(failure.code) {
+                        memories[app]?.rotateIdentity()
+                    }
                     note(listed) { $0.end(.stopped(failure.message)) }
                     await finish(failure.response, at: &stage)
                 }
@@ -797,7 +801,7 @@ public final class Door {
             way = .wallet(DepositStore(folder: walletFolder, key: key))
         }
         guard !Task.isCancelled else { throw .stopped }
-        return Ready(listed: listed, body: asked.body(messages), identity: identity, streaming: asked.streaming, way: way)
+        return Ready(app: app, listed: listed, body: asked.body(messages), identity: identity, streaming: asked.streaming, way: way)
     }
 
     /// Sends a ready request, which pays for it: through the payer, in its

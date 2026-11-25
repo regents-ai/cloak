@@ -84,6 +84,9 @@ const REQUEST_LIMIT: Duration = Duration::from_secs(180);
 const CONNECT_LIMIT: Duration = Duration::from_secs(20);
 /// Per-attempt timeout for short JSON-RPC calls over Tor (balance / channel state).
 const RPC_LIMIT: Duration = Duration::from_secs(25);
+/// Fast probe timeout for Boundless HTTP `/setup` and `/v1/models` during wallet
+/// reads so emergency on-chain Withdraw stays responsive if Boundless is down.
+const PROVIDER_PROBE_LIMIT: Duration = Duration::from_secs(10);
 /// The least balance a first deposit needs, checked before anything reaches
 /// the provider: its suggested deposit, 1 USDC.e on 14 November 2026. The
 /// toolkit opens and tops up each deposit at the size the provider's
@@ -171,6 +174,17 @@ impl Network {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_LIMIT)
             .timeout(RPC_LIMIT)
+            .build()?)
+    }
+
+    fn probe_client(&self, identity: &str) -> Result<reqwest::Client, Stop> {
+        let proxy = reqwest::Proxy::all(format!("socks5h://{identity}:cloak@{}", self.tor))?;
+        Ok(reqwest::Client::builder()
+            .no_proxy()
+            .proxy(proxy)
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(PROVIDER_PROBE_LIMIT)
+            .timeout(PROVIDER_PROBE_LIMIT)
             .build()?)
     }
 
@@ -942,10 +956,10 @@ async fn wallet(
     address: Address,
     deposit: Option<Deposit>,
 ) -> Result<Value, Stop> {
-    let client = network.rpc_client(&fresh())?;
+    let probe = network.probe_client(&fresh())?;
     let rpc = network.rpc(&network.rpc_client(&fresh())?)?;
     let setup = async {
-        let text = client
+        let text = probe
             .get(format!("{}/setup", network.provider))
             .send()
             .await?
@@ -958,7 +972,14 @@ async fn wallet(
         )
     };
     let models = async {
-        let models: Models = serde_json::from_str(&listed(&client, network).await?)
+        let text = probe
+            .get(format!("{}/v1/models", network.provider))
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        let models: Models = serde_json::from_str(&text)
             .map_err(|e| Stop::failed(format!("the provider's models: {e}")))?;
         Ok::<_, Stop>(
             models

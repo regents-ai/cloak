@@ -227,6 +227,12 @@ struct Memory: Sendable {
         return identity!
     }
 
+    /// Drops the sticky Tor SOCKS identity after a Tor or WAF exit failure so
+    /// the next request builds a fresh Tor circuit while keeping rewritten turns.
+    mutating func rotateIdentity() {
+        identity = nil
+    }
+
     /// `Transcript.Rewrite`: each user message replayed as reworded before
     /// when the earlier request's messages begin this one, else reworded,
     /// one call per message, through `reword`; every other message as

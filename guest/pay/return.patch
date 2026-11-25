@@ -1,0 +1,64 @@
+--- a/internal/zkapi/address_return.go
++++ b/internal/zkapi/address_return.go
+@@ -7,6 +7,7 @@
+ 	"math/big"
+ 	"os"
+ 	"strings"
++	"time"
+ )
+ 
+ type addressReturnRecord struct {
+@@ -71,7 +72,7 @@
+ 	_, _, status, err := h.returnSnapshot(ctx)
+ 	return status, err
+ }
+-func (h *FundingHandler) ensureAddressReturnAllowed(ctx context.Context, record *addressFundingRecord) error {
++func (h *FundingHandler) ensureAddressReturnAllowed(ctx context.Context, config fundingConfig, record *addressFundingRecord) error {
+ 	if record.Pending != nil {
+ 		return errors.New("recover the saved transaction before returning public ETH")
+ 	}
+@@ -85,13 +86,25 @@
+ 	var wallet struct {
+ 		HasNote *bool `json:"has_note"`
+ 		Pending bool  `json:"pending_request"`
++		Note    *struct {
++			NoteID   uint32 `json:"note_id"`
++			ExpiryTs uint64 `json:"expiry_ts"`
++		} `json:"note"`
+ 	}
+ 	if json.Unmarshal(raw, &wallet) != nil || wallet.HasNote == nil {
+ 		return errors.New("invalid private wallet status")
+ 	}
+-	if *wallet.HasNote || wallet.Pending {
++	if wallet.Pending {
+ 		return errors.New("withdraw the private balance and finish settlement before returning public ETH")
+ 	}
++	if *wallet.HasNote {
++		// Only query on-chain note status when the note has reached its 30-day
++		// expiry so closed/expired notes never strand remaining public ETH.
++		expired := wallet.Note != nil && wallet.Note.ExpiryTs > 0 && time.Now().Unix() >= int64(wallet.Note.ExpiryTs)
++		if !expired || !h.isClosedNoteOnChain(ctx, config, wallet.Note.NoteID) {
++			return errors.New("withdraw the private balance and finish settlement before returning public ETH")
++		}
++	}
+ 	return nil
+ }
+ func (h *FundingHandler) QuoteAddressReturn(ctx context.Context, destination, amountWei string) (AddressPaymentQuote, error) {
+@@ -112,7 +125,7 @@
+ 	if strings.EqualFold(destination, record.Address) {
+ 		return quote, errors.New("return destination must differ from the funding address")
+ 	}
+-	if err = h.ensureAddressReturnAllowed(ctx, record); err != nil {
++	if err = h.ensureAddressReturnAllowed(ctx, config, record); err != nil {
+ 		return quote, err
+ 	}
+ 	sweep := amountWei == ""
+@@ -141,7 +154,7 @@
+ 	if err != nil {
+ 		return status, err
+ 	}
+-	if err = h.ensureAddressReturnAllowed(ctx, record); err != nil {
++	if err = h.ensureAddressReturnAllowed(ctx, config, record); err != nil {
+ 		return status, err
+ 	}
+ 	if record.Return == nil || record.Return.AmountWei != quote.PrincipalWei || !strings.EqualFold(record.Return.Destination, quote.Destination) {
