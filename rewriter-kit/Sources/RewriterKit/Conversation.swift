@@ -44,11 +44,22 @@ public struct Conversation: Decodable, Sendable {
     }
 
     public let messages: [Message]
+    /// Optional reasoning effort hint for reasoning-capable local models such as Inkling 2 Mini
+    /// (`"low"`, `"medium"`, `"high"`). Omitted or ignored by models without effort controls.
+    public let reasoningEffort: String?
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case messages }
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case messages
+        case reasoningEffort = "reasoning_effort"
+    }
 
     public init(from decoder: any Decoder) throws {
-        try requireExactKeys(CodingKeys.self, in: decoder)
+        let raw = try decoder.container(keyedBy: AnyKey.self)
+        let allowed: Set<String> = ["messages", "reasoning_effort"]
+        let present = Set(raw.allKeys.map(\.stringValue))
+        guard present.isSubset(of: allowed), present.contains("messages") else {
+            throw WorkerError("unexpected fields in conversation")
+        }
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let messages = try container.decode([Message].self, forKey: .messages)
         guard messages.count % 2 == 1,
@@ -57,5 +68,12 @@ public struct Conversation: Decodable, Sendable {
             throw WorkerError("request is not a Local Llama conversation")
         }
         self.messages = messages
+        if let effort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort) {
+            let trimmed = effort.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let valid: Set<String> = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+            self.reasoningEffort = valid.contains(trimmed) ? trimmed : nil
+        } else {
+            self.reasoningEffort = nil
+        }
     }
 }

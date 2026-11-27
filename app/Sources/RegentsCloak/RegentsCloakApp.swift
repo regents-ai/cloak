@@ -3,6 +3,7 @@ import CloakChat
 import CloakControl
 #if DARKBLOOM
 import CloakDarkbloom
+import IOKit.ps
 #endif
 import CloakDoor
 import CloakSupervisor
@@ -43,19 +44,25 @@ struct RegentsCloakApp: App {
                         .keyboardShortcut("1")
                     Button("NEAR AI Gateway") { app.openNewChat(mode: .near) }
                         .keyboardShortcut("2")
+                        .disabled(!AppSettings.standard.securityProfile.allowsNear)
                     Button("Token Inference") { app.openNewChat(mode: .token) }
                         .keyboardShortcut("3")
+                        .disabled(!AppSettings.standard.securityProfile.allowsTokenInference)
                     Button("zkAPI Anon Inference") { app.openNewChat(mode: .v) }
                         .keyboardShortcut("4")
+                        .disabled(!AppSettings.standard.securityProfile.allowsZkAPI)
                 }
                 CommandMenu("Cloak") {
                     Button(app.supervisor.phase == .running ? "Pause Cloak" : "Start Cloak") {
                         app.handleWidgetCommand(app.supervisor.phase == .running ? .pause : .start)
                     }
                     .keyboardShortcut("s")
+                    .disabled(!AppSettings.standard.securityProfile.allowsAnyCloud && app.supervisor.phase != .running)
                     Button("Toggle Cover Traffic") { app.handleWidgetCommand(.toggleCover) }
+                        .disabled(!AppSettings.standard.securityProfile.allowsAnyCloud || AppSettings.standard.securityProfile.enforcesTorAndCover)
                     Divider()
                     Button("Funds…") { app.showFunds() }
+                        .disabled(!AppSettings.standard.securityProfile.allowsAnyCloud)
                     Button("Take a Tour…") { app.showTour() }
                         .keyboardShortcut("/")
                 }
@@ -162,10 +169,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             openURL: { url in
                 NSWorkspace.shared.open(url)
-            }
+            },
+            qosPolicy: { AppSettings.servingQoSPolicy(in: .standard) },
+            hostCondition: { AppDelegate.liveServingHostCondition() }
         ))
         madeDarkbloomMode = mode
         return mode
+    }
+
+    private nonisolated static func liveServingHostCondition() -> ServingHostCondition {
+        var onBattery = false
+        if let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+            let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef]
+        {
+            for source in sources {
+                if let desc = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any],
+                    let state = desc[kIOPSPowerSourceStateKey as String] as? String,
+                    state == (kIOPSBatteryPowerValue as String)
+                {
+                    onBattery = true
+                    break
+                }
+            }
+        }
+        let thermal = ServingHostCondition.ThermalLevel(ProcessInfo.processInfo.thermalState)
+        let hour = Calendar.current.component(.hour, from: .now)
+        return ServingHostCondition(onBattery: onBattery, thermal: thermal, hour: hour)
     }
 
     func showDarkbloom() {
@@ -213,8 +242,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menu: StatusMenu?
     /// Made at launch, with the menu.
     private lazy var updates = Updates()
-    let door: Door = {
-        let supervisor = Launch.supervisor, conversations = Launch.layout.conversations
+    lazy var door: Door = {
+        let supervisor = Launch.supervisor, conversations = Launch.layout.conversations, manifest = Launch.manifest, near = self.near
         return Door(
             file: Launch.layout.agents, wallet: Launch.layout.wallet,
             parts: Door.Parts(
@@ -230,6 +259,148 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         find: Keychain.find, make: Keychain.make)
                 },
                 macPayment: { AppSettings.doorPayment(in: .standard).payment },
+                macRoute: { AppSettings.doorPayment(in: .standard).macRoute },
+                routeAllowed: { route in AppSettings.doorRouteRefusal(for: route, in: .standard) },
+                localModels: {
+                    if let ext = AppSettings.externalLocalSelection(in: .standard) {
+                        let payload: [String: Any] = [
+                            "object": "list",
+                            "data": [["id": ext.modelID, "object": "model", "owned_by": ext.serverName]],
+                        ]
+                        return try JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])
+                    }
+                    let chatModels = manifest.answerModels.filter { $0.name != manifest.model }
+                    let chosenName = UserDefaults.standard.string(forKey: AppSettings.Key.answerModel.rawValue)
+                    let ordered: [Manifest.Model] = {
+                        if let chosenName, let match = chatModels.first(where: { $0.name == chosenName }) {
+                            return [match] + chatModels.filter { $0.name != chosenName }
+                        }
+                        let vmlx = chatModels.filter { $0.engine == .vmlx }
+                        let rest = chatModels.filter { $0.engine != .vmlx }
+                        return vmlx.reversed() + rest.reversed()
+                    }()
+                    let items: [[String: Any]] = ordered.map { model in
+                        ["id": model.name, "object": "model", "owned_by": "cloak-local"]
+                    }
+                    let payload: [String: Any] = ["object": "list", "data": items]
+                    return try JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])
+                },
+                localComplete: { body in
+                    if let ext = AppSettings.externalLocalSelection(in: .standard) {
+                        return try await LocalServerDiscovery.complete(baseURL: ext.baseURL, modelID: ext.modelID, body: body)
+                    }
+                    let (requestedModel, messages) = AppDelegate.parseOpenAILocalMessages(from: body)
+                    let chatModels = manifest.answerModels.filter { $0.name != manifest.model }
+                    let chosenName = UserDefaults.standard.string(forKey: AppSettings.Key.answerModel.rawValue)
+                    guard let model = (requestedModel.flatMap { id in chatModels.first(where: { $0.name == id }) })
+                        ?? (chosenName.flatMap { id in chatModels.first(where: { $0.name == id }) })
+                        ?? chatModels.last(where: { $0.engine == .vmlx })
+                        ?? chatModels.last
+                    else {
+                        throw LocalServerDiscovery.DiscoveryError.unreachable("No local model is configured in Settings → Local Models.")
+                    }
+                    let useUnfiltered = UserDefaults.standard.bool(forKey: AppSettings.Key.unfilteredLocal.rawValue)
+                    let lora = useUnfiltered ? model.unfilteredLora : nil
+                    let effort = AppSettings.localReasoningEffort(in: .standard)
+                    let reply = try await supervisor.answer(messages, with: model, lora: lora, reasoningEffort: effort)
+                    let payload: [String: Any] = [
+                        "id": "chatcmpl-\(UUID().uuidString.prefix(12).lowercased())",
+                        "object": "chat.completion",
+                        "created": Int(Date.now.timeIntervalSince1970),
+                        "model": model.name,
+                        "choices": [[
+                            "index": 0,
+                            "message": ["role": "assistant", "content": reply.text],
+                            "finish_reason": "stop",
+                        ]],
+                    ]
+                    return try JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])
+                },
+                nearModels: {
+                    let payload: [String: Any] = [
+                        "object": "list",
+                        "data": [["id": Near.model, "object": "model", "owned_by": "near-ai"]],
+                    ]
+                    return try JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])
+                },
+                nearComplete: { body in
+                    let (route, proofAge): (NearRoute?, ProofFreshness) = await MainActor.run {
+                        let settings = AppSettings.standard
+                        let resolved: NearRoute?
+                        if settings.nearTor {
+                            resolved = supervisor.torSocket.map {
+                                .tor(socket: $0, near: Chat.newIdentity(), intel: Chat.newIdentity())
+                            }
+                        } else {
+                            resolved = .direct
+                        }
+                        return (resolved, settings.proofFreshness)
+                    }
+                    guard let route else {
+                        throw LocalServerDiscovery.DiscoveryError.unreachable("Start Cloak to route NEAR AI Gateway through Tor, or turn off Tor for NEAR in Settings.")
+                    }
+                    return try await near.complete(route: route, proofAge: proofAge, key: { try NearKeychain.key() }, body: body)
+                },
+                veniceModels: {
+                    let (useTor, allTiers, identity) = await MainActor.run {
+                        (AppSettings.standard.tokenTor, AppSettings.standard.veniceAllTiers, Chat.newIdentity())
+                    }
+                    let transport = Remote.veniceTransport(identity: identity) {
+                        if useTor {
+                            try await supervisor.venice($0)
+                        } else {
+                            try await supervisor.veniceDirect($0)
+                        }
+                    }
+                    let models = try await Venice.models(transport: transport)
+                        .filter { !$0.remapped && !$0.offline && ($0.tier.isVenicePrivate || allTiers) }
+                    let items: [[String: Any]] = models.map { model in
+                        [
+                            "id": model.id,
+                            "object": "model",
+                            "owned_by": "venice-ai",
+                            "pricing": ["input": model.input, "output": model.output],
+                        ]
+                    }
+                    let payload: [String: Any] = ["object": "list", "data": items]
+                    return try JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])
+                },
+                veniceComplete: { body, identity in
+                    let (useTor, pays) = await MainActor.run {
+                        (AppSettings.standard.tokenTor, AppSettings.standard.venicePays)
+                    }
+                    let exchange: Exchange = { request, keep in
+                        if useTor {
+                            try await supervisor.exchange(request: request, keep: keep)
+                        } else {
+                            try await supervisor.exchangeDirect(request: request, keep: keep)
+                        }
+                    }
+                    let transport = Remote.veniceTransport(identity: identity) {
+                        if useTor {
+                            try await supervisor.venice($0)
+                        } else {
+                            try await supervisor.veniceDirect($0)
+                        }
+                    }
+                    let auth: VeniceAuth
+                    switch pays {
+                    case .key:
+                        auth = .key(try ProviderKeychain.venice.key())
+                    case .wallet:
+                        guard let address = try await VeniceWalletKeychain.address() else {
+                            throw LocalServerDiscovery.DiscoveryError.unreachable("Create and fund your Venice Base USDC wallet in Funds first.")
+                        }
+                        auth = .wallet(Remote.veniceSigner(address: address, key: { try VeniceWalletKeychain.key() }, exchange: exchange))
+                    }
+                    return try await Venice(auth: auth, transport: transport).complete(body: body)
+                },
+                preferredVeniceModel: {
+                    guard let data = UserDefaults.standard.data(forKey: AppSettings.Key.veniceModel.rawValue),
+                        let choice = try? JSONDecoder().decode(VeniceChoice.self, from: data)
+                    else { return nil }
+                    return choice.id
+                },
                 preferredModel: { payment in
                     switch payment {
                     case .zkapi:
@@ -299,10 +470,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             logger.error("cannot serve the control channel: \(String(describing: error), privacy: .public)")
             Launch.stop("Cloak can't open.", "Quit Cloak, then open it again.")
         }
-        // The door is open only while Cloak is Running, and on the port
-        // chosen: a new port moves it at once.
+        // The door is open while Cloak is Running, or immediately when Connected
+        // Apps uses a non-VM rail (Local, direct NEAR, or direct Venice); a new port moves it at once.
         Task { [unowned self, supervisor] in
-            for await _ in Observations({ (supervisor.phase == .running, AppSettings.standard.doorPort) }) {
+            for await _ in Observations({
+                (
+                    supervisor.phase == .running,
+                    supervisor.phase.state == .stopping,
+                    AppSettings.standard.doorPayment,
+                    AppSettings.standard.nearTor,
+                    AppSettings.standard.tokenTor,
+                    AppSettings.standard.securityProfile,
+                    AppSettings.standard.doorPort
+                )
+            }) {
                 turnDoor()
             }
         }
@@ -310,6 +491,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [supervisor] in
             for await _ in Observations({ (supervisor.phase == .running, AppSettings.standard.cover) }) {
                 supervisor.syncCover()
+            }
+        }
+        // Enforcing a stricter Security Profile immediately stops disallowed
+        // outbound services (Tor/VM in Local Only, network serving outside Private Cloud).
+        Task { [unowned self, supervisor] in
+            for await profile in Observations({ AppSettings.standard.securityProfile }) {
+                if !profile.allowsAnyCloud,
+                    supervisor.phase == .running || supervisor.phase.state == .preparing
+                {
+                    _ = supervisor.send(.pause)
+                }
+                #if DARKBLOOM
+                if !profile.allowsNetworkServing,
+                    let dm = self.madeDarkbloomMode,
+                    dm.servingMode == .network
+                {
+                    dm.setServingMode(.localOnly)
+                }
+                #endif
             }
         }
         // Sleep pauses a run, so a wake finds none running and starts
@@ -374,13 +574,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Opens a fresh private chat, optionally switching to `mode`.
+    /// Opens a fresh private chat, optionally switching to `mode` if permitted by Security Profile.
     func openNewChat(mode: Chat.Kind?) {
         if let mode {
+            let resolved: Chat.Kind = conversations.isModeAllowed(mode) ? mode : .llama
             if conversations.isOpen {
-                conversations.selectMode(mode)
+                conversations.selectMode(resolved)
             } else {
-                conversations.kind = mode
+                conversations.kind = resolved
             }
         } else if conversations.isOpen {
             conversations.newConversation()
@@ -392,22 +593,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Executes a privacy-safe control command from Control Center, Desktop
     /// Widgets, Spotlight App Intents, or the menu bar.
     func handleWidgetCommand(_ command: WidgetCommand) {
+        let profile = AppSettings.standard.securityProfile
         switch command {
         case .start:
+            guard profile.allowsAnyCloud else { return }
             supervisor.send(.start)
         case .pause:
             supervisor.send(.pause)
         case .toggleTor:
             if supervisor.phase == .running || supervisor.phase.state == .preparing {
                 supervisor.send(.pause)
-            } else {
+            } else if profile.allowsAnyCloud {
                 supervisor.send(.start)
             }
         case .enableCover:
+            guard profile.allowsAnyCloud else { return }
             AppSettings.standard.cover = true
         case .disableCover:
+            guard !profile.enforcesTorAndCover else { return }
             AppSettings.standard.cover = false
         case .toggleCover:
+            guard profile.allowsAnyCloud, !profile.enforcesTorAndCover else { return }
             AppSettings.standard.cover.toggle()
         case .newChat:
             openNewChat(mode: nil)
@@ -420,6 +626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .newAnonChat:
             openNewChat(mode: .v)
         case .openFunds:
+            guard profile.allowsAnyCloud else { showSettings(on: .general); return }
             showFunds()
         case .openTour:
             showTour()
@@ -568,14 +775,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showSettings(on: .connectedApps)
     }
 
-    /// Opens the door while Cloak is Running, or moves it to a new port,
-    /// and closes it otherwise, once its last open or close has ended.
+    /// Opens the door while Cloak is Running (or while a no-VM rail is active),
+    /// or moves it to a new port, and closes it otherwise.
     private func turnDoor() {
-        let running = supervisor.phase == .running
+        let settings = AppSettings.standard
+        let rail = settings.doorPayment
+        let noVMRailReady = rail.isAllowed(in: settings.securityProfile) && (
+            rail == .local
+                || (rail == .near && !settings.nearTor)
+                || (rail == .venice && !settings.tokenTor)
+        )
+        let shouldOpen = supervisor.phase.state != .stopping
+            && (supervisor.phase == .running || noVMRailReady)
         doorTurn = Task { [door, last = doorTurn] in
             await last?.value
-            if running { await door.open() } else { await door.close() }
+            if shouldOpen { await door.open() } else { await door.close() }
         }
+    }
+
+    /// Converts an OpenAI Chat Completions JSON request into alternating `LocalMessage`s
+    /// for Cloak's sandboxed local workers.
+    private nonisolated static func parseOpenAILocalMessages(from body: Data) -> (model: String?, messages: [LocalMessage]) {
+        guard let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            return (nil, [.user("")])
+        }
+        let model = root["model"] as? String
+        let rawMessages = root["messages"] as? [[String: Any]] ?? []
+        var systemParts: [String] = []
+        var normalized: [(role: String, text: String)] = []
+
+        for item in rawMessages {
+            let role = (item["role"] as? String ?? "user").lowercased()
+            let text: String
+            if let s = item["content"] as? String {
+                text = s
+            } else if let parts = item["content"] as? [[String: Any]] {
+                text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+            } else {
+                text = ""
+            }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if role == "system" || role == "developer" {
+                systemParts.append(trimmed)
+                continue
+            }
+            let mappedRole = (role == "assistant") ? "assistant" : "user"
+            if let last = normalized.last, last.role == mappedRole {
+                normalized[normalized.count - 1].text += "\n\n" + trimmed
+            } else {
+                normalized.append((mappedRole, trimmed))
+            }
+        }
+
+        if !systemParts.isEmpty {
+            let prefix = systemParts.joined(separator: "\n\n")
+            if let firstUser = normalized.firstIndex(where: { $0.role == "user" }) {
+                normalized[firstUser].text = prefix + "\n\n" + normalized[firstUser].text
+            } else {
+                normalized.append(("user", prefix))
+            }
+        }
+        if normalized.isEmpty {
+            normalized.append(("user", "Hello"))
+        } else if normalized.last?.role != "user" {
+            normalized.append(("user", "Continue."))
+        }
+        let localMessages: [LocalMessage] = normalized.map { entry in
+            entry.role == "assistant" ? .assistant(entry.text) : .user(entry.text)
+        }
+        return (model, localMessages)
     }
 
     func showDetails() {

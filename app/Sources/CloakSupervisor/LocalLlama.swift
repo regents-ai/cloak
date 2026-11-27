@@ -42,6 +42,31 @@ public enum LocalAnswerStage: Sendable, Equatable {
     case answering
 }
 
+/// User-selectable thinking effort for reasoning-capable local models (e.g. Inkling 2 Mini).
+public enum LocalReasoningEffort: String, CaseIterable, Identifiable, Codable, Sendable {
+    case fast = "low"
+    case balanced = "medium"
+    case deep = "high"
+
+    public var id: Self { self }
+
+    public var title: String {
+        switch self {
+        case .fast: "Fast"
+        case .balanced: "Balanced"
+        case .deep: "Deep"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .fast: "Brief thinking (~7× faster replies on Inkling 2 Mini)"
+        case .balanced: "Moderate thinking for everyday coding & writing"
+        case .deep: "Maximum thinking depth for hard math & architecture"
+        }
+    }
+}
+
 /// One completed Local Llama reply: visible answer text plus optional parsed
 /// reasoning/thinking text to send back on subsequent turns.
 public struct LocalAnswer: Sendable, Equatable {
@@ -75,6 +100,7 @@ package enum LocalLlama {
         }
 
         let messages: [Message]
+        let reasoning_effort: String?
     }
 
     private struct Reply: Decodable {
@@ -92,12 +118,14 @@ package enum LocalLlama {
 
     /// The request for `messages`, which alternate user and assistant,
     /// starting and ending with user; nil when it is larger than a frame carries.
-    package static func request(_ messages: [LocalMessage]) -> Data? {
-        let request = Request(messages: messages.map { message in
-            .init(
-                role: message.role, content: message.content,
-                reasoning_content: message.role == "assistant" ? message.thinking.flatMap { $0.isEmpty ? nil : $0 } : nil)
-        })
+    package static func request(_ messages: [LocalMessage], reasoningEffort: LocalReasoningEffort? = nil) -> Data? {
+        let request = Request(
+            messages: messages.map { message in
+                .init(
+                    role: message.role, content: message.content,
+                    reasoning_content: message.role == "assistant" ? message.thinking.flatMap { $0.isEmpty ? nil : $0 } : nil)
+            },
+            reasoning_effort: reasoningEffort?.rawValue)
         let data = try! JSONEncoder().encode(request)
         return data.count <= maxRequest ? data : nil
     }

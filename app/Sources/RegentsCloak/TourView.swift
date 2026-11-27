@@ -1,3 +1,4 @@
+import CloakChat
 import CloakSupervisor
 import SwiftUI
 
@@ -103,8 +104,9 @@ struct TourView: View {
         let download = chat.recommendedLocalDownload
         let size = DownloadSection.text(download.total)
         let installed = download.state == .installed
+        let profile = chat.settings.securityProfile
 
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 11) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Welcome to Cloak")
                     .font(.title2.weight(.semibold))
@@ -117,26 +119,38 @@ struct TourView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: torSymbol)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.orange)
-                    .frame(width: 22)
-                    .padding(.top, 1)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("**When Tor is used — and why it's slower**")
-                        .font(.callout)
-                    Text("Tor hides your IP address across 3 relays, which adds noticeable latency. **No Tor (fast):** Local (offline), NEAR (direct by default, hardware-encrypted), and Token Inference if you toggle Tor off. **Tor ON:** zkAPI (always) and Token Inference by default — toggle Tor below Chat anytime.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: profile.symbol)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(profile == .localOnly ? .green : (profile == .anonCloud ? .purple : .accentColor))
+                    Text("Security Profile")
+                        .font(.callout.weight(.semibold))
+                    Spacer(minLength: 8)
+                    Picker(
+                        "Security Profile",
+                        selection: Binding(
+                            get: { chat.settings.securityProfile },
+                            set: { chat.settings.securityProfile = $0 }
+                        )
+                    ) {
+                        ForEach(SecurityProfile.allCases) { option in
+                            Text(option.shortTitle).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
                 }
+                Text(profile.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
-            .background(Color.orange.opacity(0.08), in: ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true))
-            .overlay(ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true).stroke(Color.orange.opacity(0.24), lineWidth: 1))
+            .background(Color.accentColor.opacity(0.07), in: ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true))
+            .overlay(ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true).stroke(Color.accentColor.opacity(0.22), lineWidth: 1))
 
             VStack(spacing: 8) {
                 if localFits {
@@ -146,7 +160,7 @@ struct TourView: View {
                         badge: installed ? "Ready · No Tor" : download.isUnderWay ? "Downloading" : "Free · Offline",
                         badgeTint: .green,
                         detail: installed
-                            ? "\(download.model.label) is ready for instant offline chat."
+                            ? "\(download.model.label) is ready for instant offline chat — or reuse Splash, LM Studio, mlx-serve & Ollama on 127.0.0.1."
                             : download.isUnderWay
                                 ? "Downloading \(download.model.label) (\(DownloadSection.text(download.done)) of \(size))…"
                                 : "Download \(download.model.label) (\(size)) once. Fast, offline, no account or crypto.",
@@ -163,10 +177,11 @@ struct TourView: View {
                 PathCard(
                     symbol: "cpu",
                     title: "NEAR AI Gateway",
-                    badge: localFits ? "Fast Direct · Optional Tor" : "Recommended · Fast",
-                    badgeTint: .accentColor,
+                    badge: profile.allowsNear ? (localFits ? "Fast Direct · Optional Tor" : "Recommended · Fast") : "Private Cloud Only",
+                    badgeTint: profile.allowsNear ? .accentColor : .secondary,
                     detail: "Hardware-verified Intel TDX + NVIDIA enclaves using a NEAR API key. Direct by default; toggle Tor on to hide your IP.",
-                    actionTitle: "Set Up…"
+                    actionTitle: "Set Up…",
+                    disabled: !profile.allowsNear
                 ) {
                     chat.selectMode(.near)
                     dismiss()
@@ -175,13 +190,16 @@ struct TourView: View {
 
                 PathCard(
                     symbol: "theatermasks",
-                    title: "Token Inference & zkAPI Anon Inference",
-                    badge: "Tor Optional / Always",
-                    badgeTint: .orange,
-                    detail: "Pay per prompt with Boundless (Tempo USDC.e) or Venice (Base USDC) — Tor optional for speed — or unlinkable zkAPI ETH (always Tor).",
-                    actionTitle: "Funds…"
+                    title: profile == .anonCloud ? "zkAPI Anon Inference" : "Token Inference & zkAPI Anon Inference",
+                    badge: profile.allowsAnyCloud ? (profile == .anonCloud ? "Tor + Cover Locked ON" : "Tor Optional / Always") : "Cloud Disabled",
+                    badgeTint: profile.allowsAnyCloud ? .orange : .secondary,
+                    detail: profile == .anonCloud
+                        ? "Unlinkable one-time zkAPI credentials over Tor with Cover Traffic and Local Prompt Rewriting locked ON."
+                        : "Pay per prompt with Venice (Base USDC / Stripe Link) or Boundless (Tempo USDC.e) — or unlinkable zkAPI ETH (always Tor).",
+                    actionTitle: "Funds…",
+                    disabled: !profile.allowsAnyCloud
                 ) {
-                    chat.selectMode(.token)
+                    chat.selectMode(profile == .anonCloud ? .v : .token)
                     dismiss()
                     DispatchQueue.main.async {
                         chat.showingWallet = true
@@ -192,9 +210,9 @@ struct TourView: View {
                     PathCard(
                         symbol: "server.rack",
                         title: "Serve Inference to Earn",
-                        badge: "Darkbloom",
+                        badge: profile.allowsNetworkServing ? "Darkbloom · Guardrails" : "Local Only",
                         badgeTint: .purple,
-                        detail: "Idle Macs can join EigenLayer's Darkbloom network and serve inference.",
+                        detail: "Idle Macs can serve local apps or earn payouts on Darkbloom with battery, thermal, and Quiet Hours guardrails.",
                         actionTitle: "Settings…"
                     ) {
                         dismiss()
@@ -205,39 +223,36 @@ struct TourView: View {
         }
     }
 
-    // MARK: Step 2 — Agent Mode & Power Tools
+    // MARK: Step 2 — Connected Apps, Projects & Agent Box
 
     private var superpowersStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Agent mode & power tools")
+                Text("Connected Apps, Projects & Agent Box")
                     .font(.title2.weight(.semibold))
-                Text("Run sandboxed coding agents, connect your Mac apps, and summon Cloak anywhere.")
+                Text("Route your coding agents through Privacy Shield, isolate client workspaces, and run sandboxed tasks.")
                     .foregroundStyle(.secondary)
             }
 
             VStack(spacing: 10) {
                 HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: Chat.Kind.agentSymbol)
+                    Image(systemName: "cable.connector")
                         .font(.title3)
                         .foregroundStyle(.tint)
                         .frame(width: 26)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Local Agent Box (Pi)")
+                        Text("Connected Apps + Privacy Shield")
                             .font(.headline)
-                        Text("Toggle the hammer in Token Inference or zkAPI Anon Inference to run shell & coding tasks inside a sealed Linux microVM over Tor — never touching your Mac files.")
+                        Text("Connect Claude Code, OpenCode, Goose, Cursor, or Cline at 127.0.0.1:8742 across all 5 rails (including Local $0) with pre-send secret blocking, reversible aliases, and Spend Guardrails.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 8)
-                    Link(destination: Self.agentDocsURL) {
-                        HStack(spacing: 3) {
-                            Text("Docs")
-                            Image(systemName: "arrow.up.right")
-                                .font(.caption2)
-                        }
+                    Button("Apps…") {
+                        dismiss()
+                        showConnectedApps()
                     }
                     .controlSize(.small)
                 }
@@ -246,39 +261,42 @@ struct TourView: View {
                 .overlay(ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
 
                 SuperpowerRow(
-                    symbol: "command",
-                    title: "Menu bar & Quick Prompt",
-                    detail: "Draft from the menu bar, toggle live Cover Traffic, or set a global hotkey (zero Accessibility permission required).",
-                    actionTitle: "Shortcut…"
+                    symbol: "folder.badge.gearshape",
+                    title: "Saved Project Profiles & Local Voice",
+                    detail: "Switch projects in Chat's sidebar to swap approved Local folders, Privacy Shield terms, and preferred routes. Dictate privately with on-device macOS 26 Local Voice.",
+                    actionTitle: "Models…"
                 ) {
                     dismiss()
-                    showAdvancedSettings()
+                    showLlamaSettings()
                 }
 
                 HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: "slider.horizontal.3")
+                    Image(systemName: Chat.Kind.agentSymbol)
                         .font(.title3)
                         .foregroundStyle(.tint)
                         .frame(width: 26)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Models & Connected Apps")
+                        Text("Local Agent Box (Pi) & Quick Prompt")
                             .font(.headline)
-                        Text("Switch local MLX/GGUF models or route Cursor, Cline, and Aider through Cloak at 127.0.0.1:8742.")
+                        Text("Toggle the hammer in Token or zkAPI mode to run shell & coding tasks in a sealed Linux microVM over Tor, or summon Quick Prompt from any app.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 8)
                     HStack(spacing: 6) {
-                        Button("Models…") {
+                        Button("Shortcut…") {
                             dismiss()
-                            showLlamaSettings()
+                            showAdvancedSettings()
                         }
                         .controlSize(.small)
-                        Button("Apps…") {
-                            dismiss()
-                            showConnectedApps()
+                        Link(destination: Self.agentDocsURL) {
+                            HStack(spacing: 3) {
+                                Text("Docs")
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption2)
+                            }
                         }
                         .controlSize(.small)
                     }
@@ -310,8 +328,8 @@ struct TourView: View {
                     title: "Local",
                     badge: "16 GB+ Macs",
                     detail: localFits
-                        ? "Download \(modelLabel) once — free, offline, no account or crypto."
-                        : "Requires 16 GB+ Apple Silicon. Download \(modelLabel) once for free, offline chat."
+                        ? "Download \(modelLabel) once, or connect to running Splash, TensorFold, mlx-serve, LM Studio, or Ollama servers on 127.0.0.1 — free and offline."
+                        : "Requires 16 GB+ Apple Silicon for built-in weights, or connect to a running local server on 127.0.0.1."
                 ) {
                     Button("Models…") {
                         dismiss()
@@ -349,8 +367,8 @@ struct TourView: View {
                     symbol: "dollarsign.circle",
                     tint: .orange,
                     title: "Token Inference",
-                    badge: "Tempo · Base",
-                    detail: "Open Funds to create a local wallet, then send a little USDC.e on Tempo (Boundless) or USDC on Base (Venice, or a Venice API key). Toggle Tor off below Chat for faster direct replies."
+                    badge: "Base · Tempo",
+                    detail: "Open Funds to create a local wallet and fund Base USDC (Venice, including Stripe Link / Apple Pay) or Tempo USDC.e (Boundless), or save a Venice API key."
                 ) {
                     Button("Funds…") {
                         chat.selectMode(.token)
@@ -447,13 +465,14 @@ private struct PathCard: View {
     let badgeTint: Color
     let detail: String
     let actionTitle: String
+    var disabled = false
     let action: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: symbol)
                 .font(.title3)
-                .foregroundStyle(.tint)
+                .foregroundStyle(disabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                 .frame(width: 26)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
@@ -475,8 +494,10 @@ private struct PathCard: View {
             Spacer(minLength: 8)
             Button(actionTitle, action: action)
                 .controlSize(.small)
+                .disabled(disabled)
         }
         .padding(12)
+        .opacity(disabled ? 0.62 : 1)
         .background(Color(nsColor: .controlBackgroundColor), in: ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true))
         .overlay(ConcentricRectangle(corners: .concentric(minimum: .fixed(10)), isUniform: true).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
     }

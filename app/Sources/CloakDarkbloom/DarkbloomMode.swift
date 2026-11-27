@@ -24,6 +24,8 @@ public final class DarkbloomMode {
         public var openURL: @MainActor @Sendable (URL) -> Void
         public var loadChosenModel: @MainActor @Sendable () -> String?
         public var saveChosenModel: @MainActor @Sendable (String?) -> Void
+        public var qosPolicy: @MainActor @Sendable () -> ServingQoSPolicy
+        public var hostCondition: @Sendable () -> ServingHostCondition
         public var pollInterval: Duration
         public var reconnectDelay: Duration
 
@@ -61,6 +63,10 @@ public final class DarkbloomMode {
                     UserDefaults.standard.removeObject(forKey: DarkbloomMode.modelKey)
                 }
             },
+            qosPolicy: @escaping @MainActor @Sendable () -> ServingQoSPolicy = { .default },
+            hostCondition: @escaping @Sendable () -> ServingHostCondition = {
+                ServingHostCondition(onBattery: false, thermal: .nominal, hour: 12)
+            },
             pollInterval: Duration = .seconds(5),
             reconnectDelay: Duration = .seconds(3)
         ) {
@@ -79,6 +85,8 @@ public final class DarkbloomMode {
             self.openURL = openURL
             self.loadChosenModel = loadChosenModel
             self.saveChosenModel = saveChosenModel
+            self.qosPolicy = qosPolicy
+            self.hostCondition = hostCondition
             self.pollInterval = pollInterval
             self.reconnectDelay = reconnectDelay
         }
@@ -167,6 +175,11 @@ public final class DarkbloomMode {
     public private(set) var runningDiagnostic = false
     /// The key while the person has it shown; hidden again when the window closes.
     public private(set) var shownKey: String?
+    /// Latest Smart Mac QoS guardrail evaluation (battery, thermal, quiet hours).
+    public private(set) var qosDecision: ServingQoSDecision = .allow
+    /// True when Cloak automatically paused network serving due to a Mac QoS guardrail
+    /// and will resume automatically once the guardrail clears.
+    public private(set) var pausedByQoS = false
 
     @ObservationIgnored private var isWindowOpen = false
     @ObservationIgnored private var lastSetupState: String?
@@ -600,6 +613,7 @@ public final class DarkbloomMode {
     public func setServingMode(_ target: ServingMode) {
         failure = nil
         needsModelNotice = false
+        pausedByQoS = false
         lastCloakActionAt = .now
         lastChangeFromCLI = false
         switch target {
@@ -675,6 +689,28 @@ public final class DarkbloomMode {
     public func clearDiagnostic() {
         diagnosticTitle = nil
         diagnosticOutput = nil
+    }
+
+    /// Evaluates Mac QoS guardrails (battery, thermal safety, quiet hours).
+    /// Auto-pauses network serving when a guardrail triggers and auto-resumes
+    /// once host conditions return to `.allow`.
+    public func evaluateQoS() {
+        let decision = ServingQoS.evaluate(policy: parts.qosPolicy(), condition: parts.hostCondition())
+        qosDecision = decision
+        switch decision {
+        case .pause:
+            if alsoServe, isOn, !pausedByQoS {
+                pausedByQoS = true
+                stop()
+            }
+        case .allow:
+            if pausedByQoS {
+                pausedByQoS = false
+                if alsoServe, !isOn, startBlock == nil {
+                    start()
+                }
+            }
+        }
     }
 
     // MARK: Following
@@ -849,7 +885,7 @@ public final class DarkbloomMode {
         }
         observedServingSignature = signature
         refreshEarnings()
-        if !starting, !linkInFlight, !linkJustSucceeded {
+        if !starting, !linkInFlight, !linkJustSucceeded, !pausedByQoS {
             let daemonActive = ["starting", "running", "draining"].contains(snapshot.state) || setup.job?.running == true
             let networkMode = setup.job?.mode == .both || setup.job?.mode == .network
             let liveAlsoServe = daemonActive && networkMode
@@ -860,6 +896,7 @@ public final class DarkbloomMode {
                 failure = nil
             }
         }
+        evaluateQoS()
         for (opID, failingWords) in asked {
             guard let operation = snapshot.operations.first(where: { $0.id == opID }), operation.state != "running"
             else { continue }

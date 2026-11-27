@@ -1,4 +1,5 @@
 import AppKit
+import CloakChat
 import CloakControl
 import CloakSupervisor
 import Observation
@@ -345,13 +346,16 @@ private struct MenuPanelView: View {
     }
 
     private var statusSubtitle: String {
+        if !settings.securityProfile.allowsAnyCloud {
+            return "\(settings.securityProfile.shortTitle) · offline"
+        }
         if supervisor.phase.state == .preparing {
             return supervisor.startStep?.menuTitle ?? supervisor.phase.title
         }
         if supervisor.phase == .running, supervisor.resting {
             return "Running · rewriter resting"
         }
-        return supervisor.phase.title
+        return "\(supervisor.phase.title) · \(settings.securityProfile.shortTitle)"
     }
 
     var body: some View {
@@ -440,6 +444,7 @@ private struct MenuPanelView: View {
                     .controlSize(.small)
             case .paused, .ready, .needsAttention:
                 let disabled: Bool = {
+                    if !settings.securityProfile.allowsAnyCloud { return true }
                     if download.state != .installed { return true }
                     if case .needsAttention(let reason) = supervisor.phase {
                         return Fix.startStops(for: reason, download: download)
@@ -455,6 +460,7 @@ private struct MenuPanelView: View {
                 .buttonStyle(.glassProminent)
                 .controlSize(.small)
                 .disabled(disabled)
+                .tip(settings.securityProfile.allowsAnyCloud ? "" : "Cloud VM and Tor are blocked in Local Only + Downloads profile.")
             }
         }
     }
@@ -570,16 +576,20 @@ private struct MenuPanelView: View {
                 }
             }
             if state.selectedMode == .v || tokenTorActive || nearTorActive {
+                let lockedCover = settings.securityProfile.enforcesTorAndCover
                 CompactPrivacyToggleButton(
                     symbol: "waveform.path",
                     label: "Cover Traffic",
                     isOn: settings.cover,
                     isActive: settings.cover && supervisor.phase == .running,
                     isBusy: false,
-                    tip: settings.cover
-                        ? "Cover Traffic is ON (\(coverStatusText)) — click to turn off."
-                        : "Cover Traffic is OFF — click to send random public Tor fetches (~3/min) to blur prompt timing."
+                    tip: lockedCover
+                        ? "Cover Traffic is locked ON by your Anon Private Cloud security profile."
+                        : (settings.cover
+                            ? "Cover Traffic is ON (\(coverStatusText)) — click to turn off."
+                            : "Cover Traffic is OFF — click to send random public Tor fetches (~3/min) to blur prompt timing.")
                 ) {
+                    guard !lockedCover else { return }
                     settings.cover.toggle()
                 }
             }
@@ -587,17 +597,31 @@ private struct MenuPanelView: View {
         }
     }
 
+    private func isModeAllowed(_ kind: Chat.Kind) -> Bool {
+        let profile = settings.securityProfile
+        return switch kind {
+        case .llama: true
+        case .near: profile.allowsNear
+        case .token: profile.allowsTokenInference
+        case .v: profile.allowsZkAPI
+        }
+    }
+
     private var controlsSection: some View {
         HStack(spacing: 3) {
             ForEach([Chat.Kind.llama, .near, .token, .v], id: \.self) { kind in
+                let allowed = isModeAllowed(kind)
                 ModePillButton(
                     title: shortModeName(kind),
                     symbol: kind.symbol,
-                    active: state.selectedMode == kind
+                    active: state.selectedMode == kind,
+                    disabled: !allowed
                 ) {
+                    guard allowed else { return }
                     state.selectedMode = kind
                     actions.selectMode(kind)
                 }
+                .tip(allowed ? "" : settings.securityProfile.refusalMessage(for: kind.name))
             }
         }
         .padding(3)
@@ -634,6 +658,9 @@ private struct MenuPanelView: View {
                 dismiss()
                 actions.showFunds()
             }
+            .disabled(!settings.securityProfile.allowsAnyCloud)
+            .opacity(settings.securityProfile.allowsAnyCloud ? 1 : 0.45)
+            .tip(settings.securityProfile.allowsAnyCloud ? "" : "Cloud wallets are disabled in Local Only + Downloads profile.")
             PanelTileButton(title: "Settings", symbol: "gearshape", fill: surfaceFill, stroke: surfaceStroke) {
                 dismiss()
                 actions.showSettings()
@@ -739,6 +766,7 @@ private struct ModePillButton: View {
     let title: String
     let symbol: String
     let active: Bool
+    var disabled = false
     let action: () -> Void
     @State private var hovering = false
 
@@ -758,13 +786,18 @@ private struct ModePillButton: View {
             .background(
                 active
                     ? Color.accentColor
-                    : (hovering ? Color.primary.opacity(0.08) : Color.clear),
+                    : (hovering && !disabled ? Color.primary.opacity(0.08) : Color.clear),
                 in: pillShape
             )
-            .foregroundStyle(active ? Color.white : (hovering ? Color.primary : Color.secondary))
+            .foregroundStyle(
+                disabled
+                    ? Color.secondary.opacity(0.45)
+                    : (active ? Color.white : (hovering ? Color.primary : Color.secondary))
+            )
             .contentShape(pillShape)
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
         .onHover { hovering = $0 }
     }
 }

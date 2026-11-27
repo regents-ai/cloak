@@ -18,7 +18,7 @@ Package versions and transitive dependencies belong in manifests and lockfiles. 
 
 ## Baseline and evidence
 
-This registry was initialized on `2026-11-26` against the current repository checkout (latest published release: `0.2.7-305`, commit `30f4de4`, with `v0.3` Claude Code compatibility, native macOS 26 Local Voice, 4-network payment manifest, and deterministic local Spend Guardrails implemented and tested in the working tree prior to tagging `0.3.0`).
+This registry was initialized on `2026-11-26` and updated on `2026-11-27` against the `v0.3.0` working tree (built atop `0.2.7-305`, commit `30f4de4`, adding the 3-tier `SecurityProfile`, Saved Project Profiles, full 5-rail `CloakDoor` with Anthropic Messages API + Privacy Shield + Spend Guardrails, `LocalServerDiscovery`, native macOS 26 Local Voice, 4-network payment manifest, Smart Private Router, Stripe Link / Apple Pay onramp, and Darkbloom Mac Guardrails).
 
 Repository references: [README.md](README.md), [docs/tech-stack.md](docs/tech-stack.md), [docs/plan.md](docs/plan.md), [AGENTS.md](AGENTS.md). Existing repository instructions and approved product decisions remain authoritative.
 
@@ -39,7 +39,7 @@ Repository references: [README.md](README.md), [docs/tech-stack.md](docs/tech-st
 - **ID:** `near-ai`
 - **Status:** Active
 - **User benefit:** Provide fast cloud inference with client-side hardware TEE attestation verification and end-to-end encryption, plus optional user-reviewed trace export.
-- **Cloak baseline:** Shipped with native NEAR helper (`guest/near/`, `app/Sources/CloakChat/Near.swift`, `reference/near-pins.json`), API-key authentication, Intel TDX + NVIDIA GPU attestation verification, optional Tor routing, and opt-in local Letta Trajectory v1 trace export (`NearTraces.swift`, RFC 3339 `Z` timestamps unit-tested in `StateMachineTests.swift`).
+- **Cloak baseline:** Shipped with native NEAR helper (`guest/near/`, `app/Sources/CloakChat/Near.swift`, `reference/near-pins.json`), API-key authentication, Intel TDX + NVIDIA GPU attestation verification, optional Tor routing, and opt-in local Letta Trajectory v1 trace export (`NearTraces.swift`, RFC 3339 `Z` timestamps unit-tested in `StateMachineTests.swift`). `CloakDoor` routing (`Door.MacRoute.near`, `Near.complete`) is implemented and unit-tested in the `v0.3.0` working tree (available under the `Private Cloud AI` security profile).
 - **Primary sources:** [Cloud documentation](https://docs.near.ai), [Gateway](https://gateway.near.ai/), [inference SDK](https://github.com/nearai/inference-sdk).
 - **Watch for:** Verifier/encryption changes; attestation measurement rotations; model availability; endpoint compatibility; local trace formats; changes that simplify setup or reduce cost.
 - **Boundary:** Distinguish gateway verification from model-execution verification. Identify what the account key and operational metadata reveal. Trace sharing stays an explicit user decision; never auto-approve changed measurements.
@@ -48,7 +48,7 @@ Repository references: [README.md](README.md), [docs/tech-stack.md](docs/tech-st
 - **ID:** `venice`
 - **Status:** Active
 - **User benefit:** Offer another private model route with clear per-model privacy tiers and convenient Base USDC funding.
-- **Cloak baseline:** Shipped in Token Inference using Base USDC/x402 or a user-supplied Venice API key, with Tor-routed or optional direct HTTPS transport. See `app/Sources/CloakChat/Venice.swift`, `VeniceWallet.swift`, and `docs/venice.md`.
+- **Cloak baseline:** Shipped in Token Inference using Base USDC/x402 or a user-supplied Venice API key, with Tor-routed or optional direct HTTPS transport. `CloakDoor` routing (`Door.MacRoute.venice`, `Venice.complete`, Base USDC spend-ledger receipts) is implemented and unit-tested in the `v0.3.0` working tree (available under the `Private Cloud AI` security profile). See `app/Sources/CloakChat/Venice.swift`, `VeniceWallet.swift`, and `docs/venice.md`.
 - **Primary sources:** [API documentation](https://docs.venice.ai), [privacy overview](https://docs.venice.ai/overview/privacy).
 - **Watch for:** Per-model privacy/availability changes; deprecations; TEE/E2EE support; x402 requirements; streaming and tool compatibility; significant pricing changes.
 - **Boundary:** Evaluate the selected model and request path. Do not generalize one route's privacy properties to all Venice models or assume a referral header earns cash.
@@ -65,11 +65,13 @@ Repository references: [README.md](README.md), [docs/tech-stack.md](docs/tech-st
 ### Tinfoil
 - **ID:** `tinfoil`
 - **Status:** Planned
-- **User benefit:** Add a second hardware-attested, end-to-end encrypted cloud inference provider alongside NEAR AI Gateway using Tinfoil's official native Swift macOS SDK.
-- **Cloak baseline:** Not yet implemented. Candidate priority #2 after Connected Apps (`OpenCode` / `Goose` / Privacy Shield).
-- **Primary sources:** [tinfoil-swift SDK](https://github.com/tinfoilsh/tinfoil-swift), [Tinfoil documentation](https://docs.tinfoil.sh).
-- **Watch for:** `tinfoil-swift` macOS 26/Swift 6 compatibility, attestation verification APIs, Tor/proxy transport support, available models, and API-key / payment model changes.
-- **Boundary:** Must integrate via `tinfoil-swift`'s attested transport (verifying enclave measurements and binding requests to attested keys); a plain OpenAI-compatible URL substitution would defeat Tinfoil's verification guarantee.
+- **User benefit:** Add a second hardware-attested, end-to-end encrypted cloud inference provider with a broader frontier model catalog alongside NEAR AI Gateway using Tinfoil's official native Swift macOS SDK.
+- **Cloak baseline:** Evaluated from primary sources on `2026-11-27` (`documented`, not yet integrated into `Cloak.app`). Candidate next verified-TEE cloud rail under the `Private Cloud AI` security profile after `v0.3.0` ships.
+  - **Primary-source SDK verdict (`tinfoilsh/tinfoil-swift`):** Apache-2.0, Swift 5.9, macOS 14+ (clean SwiftPM fit). Wraps a pinned binary `TinfoilGo.xcframework` (`v0.17.0-rc.13`, pinned SHA-256 checksum in `Package.swift`) + `EHBP` (`0.6.0`, Encrypted HTTP Body Protocol) + `openai-swift-fork` (`0.0.15`). Verifies enclave attestation measurements and binds requests to attested enclave keys inside the transport layer.
+  - **Pre-integration verification required:** Confirm macOS notarization / hardened-runtime signing of `TinfoilGo.xcframework`, Swift 6 strict-concurrency compatibility, and whether `TinfoilGo` / `URLSession` supports optional Tor SOCKS5 proxy transport.
+- **Primary sources:** [tinfoil-swift SDK](https://github.com/tinfoilsh/tinfoil-swift), [`Package.swift`](https://github.com/tinfoilsh/tinfoil-swift/blob/main/Package.swift), [Tinfoil documentation](https://docs.tinfoil.sh).
+- **Watch for:** `tinfoil-swift` stable `TinfoilGo.xcframework` releases, Swift 6 concurrency updates, Tor/proxy transport support, available TEE models, and API-key / payment model changes.
+- **Boundary:** Must integrate via `tinfoil-swift`'s attested EHBP transport (verifying enclave measurements and binding requests to attested keys); a plain OpenAI-compatible URL substitution would defeat Tinfoil's verification guarantee. Account-keyed Tinfoil requests stay restricted to the `Private Cloud AI` security profile.
 
 ### Darkbloom *(deepened reference contract — audited `2026-11-26` at Cloak `30f4de4`)*
 - **ID:** `darkbloom`
@@ -88,14 +90,40 @@ Repository references: [README.md](README.md), [docs/tech-stack.md](docs/tech-st
   - *Ignore by default:* Two-Mac cluster/pair internals, upstream CI sharding, and model-internal kernel tweaks unless they change CLI flags, capability tags, or local API compatibility.
 - **Boundary:** Separate `--local` (loopback-only, no coordinator contact) from `--me-first` (account-linked browser flow, not anonymous). Activity-aware pausing is Darkbloom's `--me-first` behavior, not a Cloak-managed pause hook. Never run `install.sh`, `darkbloom start`, or account linking during a review. Do not ship Darkbloom publicly without explicit permission per Decision 36.
 
-### Local inference runtimes (vmlx-swift, llama.cpp, oMLX)
+### Antseed
+- **ID:** `antseed`
+- **Status:** Watch
+- **User benefit:** Offer a second Mac inference-serving network alongside Darkbloom that settles directly in USDC on Base (matching Cloak's existing Venice Base USDC wallet) and supports Apple Silicon workload pooling via Mac Colony.
+- **Cloak baseline:** Listed in Cloak's pluggable `ServingNetworkDescriptor.catalog` (`app/Sources/CloakDarkbloom/ServingQoS.swift`) as `Researching`. No Antseed daemon, payment-channel contract, or node enrollment is implemented yet.
+- **Primary sources:** [Antseed](https://antseed.com), [Antseed docs / verification layer](https://antseed.com).
+- **Watch for:** Signed/notarized macOS node releases; Mac Colony pooling contracts and revenue-split verification; Base USDC payment-channel settlement reliability; `$ANTS` incentive mechanics vs. pure USDC payouts; loopback-only local control APIs compatible with Cloak's `ServingQoS` guardrails.
+- **Boundary:** Verify actual payout settlement, open-source Verification Layer claims, and whether workload traffic leaves a Mac sandboxed before adding an active provider integration.
+
+### Gonka
+- **ID:** `gonka`
+- **Status:** Watch
+- **User benefit:** Potential decentralized verifiable AI compute serving target if native Apple Silicon / MLX Mac node support matures.
+- **Cloak baseline:** Listed in `ServingNetworkDescriptor.catalog` (`app/Sources/CloakDarkbloom/ServingQoS.swift`) as `Researching`. Not yet implemented.
+- **Primary sources:** Gonka network documentation and release channels (under active evaluation).
+- **Watch for:** Native macOS Apple Silicon serving support, verifiable proof-of-compute overhead on consumer Macs, payout liquidity, and signed binary distribution.
+- **Boundary:** Do not bundle unverified node binaries or expose non-loopback ports without explicit user opt-in and hardware QoS guardrails.
+
+### Local inference runtimes (vmlx-swift, llama.cpp, Splash, TensorFold, mlx-serve, llmd, oMLX)
 - **ID:** `local-inference-engines`
 - **Status:** Active
-- **User benefit:** Deliver faster, higher-accuracy, lower-RAM offline inference (especially Inkling 2 Mini on Apple Silicon) inside a lean, zero-Python macOS app bundle.
-- **Cloak baseline:** Cloak ships two native zero-Python workers: `llama-worker/` (`llama.cpp`, GGUF + GBNF grammars for prompt rewriting and optional LoRA adapters) and `vmlx-worker/` (`osaurus-ai/vmlx-swift`, pure Swift + Metal, running Inkling 2 Mini `JANGH2` with DSpark MTP on ≥24 GB Macs). `oMLX` (`jundot/omlx`, Python + MLX, Apache-2.0) is watched as a feature reference (e.g., fused Metal loop kernels, LoopCD decoding, SSD MoE expert offload) or optional external local-server integration rather than embedded in `Cloak.app`.
-- **Primary sources:** [vmlx-swift commits](https://github.com/osaurus-ai/vmlx-swift/commits/main), [oMLX releases](https://github.com/jundot/omlx/releases), [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases).
-- **Watch for:** Faster Inkling 2 Mini fused loop/MoE Metal kernels; `JANGHT` / 4-bit mixed-bank quants; LoopCD decoding support; SSD MoE expert offloading for 16–24 GB Macs; persistent KV prefix caching for multi-turn coding loops; native ViT vision input.
-- **Boundary:** Keep Cloak's built-in workers zero-Python, notarizable, sandbox-compatible, and pinned by SHA-256 in `reference/models.json`. Prompt rewriting stays strictly on `llama-worker/` under Cloak's pinned GBNF contract (`AGENTS.md`).
+- **User benefit:** Deliver faster, higher-accuracy, lower-RAM offline inference (especially Inkling 2 Mini on Apple Silicon) inside a lean, zero-Python macOS app bundle, plus zero-duplicate discovery of already-running local servers (`Splash`, `TensorFold`, `LM Studio`/`llmster`, `mlx-serve`, `Ollama`, `Darkbloom Local`).
+- **Cloak baseline:**
+  - Cloak ships two native zero-Python workers: `llama-worker/` (`llama.cpp`, GGUF + GBNF grammars for prompt rewriting and optional LoRA adapters) and `vmlx-worker/` (`osaurus-ai/vmlx-swift`, pure Swift + Metal, pinned at `52fdb628` with RAM-only paged KV prefix caching and `reasoning_effort` `Fast`/`Balanced`/`Deep` support).
+  - **M4 Max (48 GB, macOS 27.2.1) benchmark findings (`2026-11-27`):**
+    - `incoai/splash 1.7.3` (Apache-2.0, M3+ / macOS 26.4+, paired DFlash2 speculative decoding): **fastest overall Apple Silicon engine tested**. On Cloak's own `Inkling-2-Mini-IQ4_NL.gguf` (16 GB): **86.0–86.3 tok/s** (`BS=1`), **226.3 tok/s** (`BS=4`), and **37.6× warm prefix-cache TTFT speedup** (`3,653 ms → 97.1 ms`, RAM-only `--max-cache-disk 0`) — beating `vmlx-swift` `JANGH2` (`74.1 tok/s`) and DGX Spark (`64–74 tok/s`). On `Qwen3.6-35B-A3B`: **261.0 tok/s** code / **204.1 tok/s** prose (`BS=1`, `44–54 ms` TTFT), **519.2 tok/s** (`BS=4`), **37.0× warm prefix cache** (`2,129 ms → 57.6 ms`). *Primary-source protocol evaluation (`2026-11-27`, `documented`):* its native C++/Metal core (`engine/splash` + `splash.metallib`, `76 MB`, zero Python) exposes `engine/splash serve-native`, driven over stdin/stdout via a clean, golden-tested binary framing protocol (`SPLH` magic, 16-byte header, `PROTOCOL_VERSION = 16`, defined in `server/protocol.py` + `dev/tests/engine/protocol_golden.txt`). A ~400-line pure-Swift driver in Cloak can run `engine/splash serve-native` on M3+ Macs with **zero Python** while keeping `vmlx-swift`/`llama.cpp` for M1/M2 and prompt rewriting. Auto-discovered on `127.0.0.1:8000`.
+    - `ashhart/TensorFold v1.3.6` (Apache-2.0, pure Zig + Metal, **20 MB standalone binary**, zero Python, supports `--unix-socket`): On `Qwen3.6-35B-A3B` (no drafter): **126.2 tok/s** code / **127.6 tok/s** prose (`BS=1`), **306.4 tok/s** (`BS=4`), `5.84 s` warm boot; `--prompt-cache-gib 4` did not accelerate the Qwen3.5/3.6 recurrent-hybrid prefix repeat (`1.04×`, `5,717 ms → 5,478 ms`), and it rejected Cloak's `Inkling-2-Mini-JANGH2` (`MissingTensor`) and `Nemotron-3-Nano-4B` (`BadConfig`). Strong watch item as Metal Inkling 2 affine/EXL3 PRs (`#5208`, `#4471`) land. Auto-discovered on `127.0.0.1:8080`.
+    - `vmlx-swift` pinned `52fdb628` on `Inkling-2-Mini-JANGH2`: **74.1 tok/s**, **5.59 GB RSS** (cold TTFT `231 ms`). Upgrading to `31b5201d` regressed throughput to **64.4 / 57.3 tok/s** (`-13%` to `-18%`) and nearly doubled RSS to **10.21 GB** — **keep pin at `52fdb628`** until upstream resolves the regression.
+    - `ddalcu/mlx-serve v26.11.4` (pure Swift/MLX server): `Qwen3.6-35B-A3B` reached **180 tok/s** (`BS=1`) and **367.5 tok/s** (`BS=16`); `Ternary-Bonsai-2-27B` reached **67.5 tok/s** in **5.84 GB RSS**; auto-discovered on `127.0.0.1:11234`.
+    - `zml/llmd 2026.11.3`: **451.4 tok/s** at `BS=16` on `Qwen3-4B` (`1.80×` faster than `mlx-serve`), making it a strong multi-request serving engine watch item, but `1.47×` slower at `BS=1`, `13.8×` slower boot, and rejects `Inkling-2-Mini`, `Nemotron-3`, `Ternary-Bonsai`, `GGUF`, and MLX affine `Qwen3.6` — not suitable as Cloak's desktop single-user worker.
+    - `oMLX` (`jundot/omlx`, Python + MLX, Apache-2.0) remains a feature reference rather than embedded in `Cloak.app`.
+- **Primary sources:** [Splash releases](https://github.com/incoai/splash/releases), [TensorFold releases](https://github.com/ashhart/TensorFold/releases), [vmlx-swift commits](https://github.com/osaurus-ai/vmlx-swift/commits/main), [mlx-serve releases](https://github.com/ddalcu/mlx-serve/releases), [zml/llmd releases](https://github.com/zml/llmd/releases), [oMLX releases](https://github.com/jundot/omlx/releases), [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases).
+- **Watch for:** Calling `Splash`'s zero-Python `engine/splash serve-native` directly on M3+ Macs for Inkling 2 Mini + DFlash2 (`86+ tok/s`, `37×` prefix cache); `TensorFold` Metal Inkling 2 affine/EXL3 PRs (`#5208`, `#4471`); upstream fix for `vmlx-swift` `31b5201d` JANGH2 regression; `mlx-serve` DFlash2 Metal kernels; `JANGHT` / 4-bit mixed-bank quants; `llmd` support for quantized MLX/MoE models for Serving mode.
+- **Boundary:** Keep Cloak's built-in workers zero-Python, notarizable, sandbox-compatible, and pinned by SHA-256 in `reference/models.json`. Keep KV prefix caching strictly RAM-only (`enableDiskCache: false` / `--max-cache-disk 0`) and `LocalServerDiscovery` strictly loopback-only (`127.0.0.1` / `localhost` / `::1`). Prompt rewriting stays strictly on `llama-worker/` under Cloak's pinned GBNF contract (`AGENTS.md`).
 
 ---
 
@@ -207,7 +235,8 @@ Repository references: [README.md](README.md), [docs/tech-stack.md](docs/tech-st
   - Anthropic Messages API (`POST /v1/messages`, `POST /v1/messages/count_tokens`, `?beta=true`, `x-api-key`, `Transfer-Encoding: chunked`, `<system-reminder>` routing, SSE streaming, Claude alias remapping — verified end-to-end against real `claude` CLI `2.1.330`).
   - Token Inference (Boundless) billing, deterministic Spend Guardrails, 1-click **Test Connection** loopback probe (`Door.verifyConnection()`), and tailored quickstart presets for **Claude Code**, **OpenCode** (`opencode.json`), and **Goose**.
   - **Privacy Shield (`PrivacyShield.swift`)**: deterministic `< 1 ms` pre-send Secret Tripwire (hard-blocks PEM keys, AWS/OpenAI/Anthropic/GitHub/Stripe/Slack tokens, JWTs, wallet private keys, and `.env` secrets across prompts and `tool_result` blocks before paying) + in-memory Reversible Alias Map (`RedactionMap` + chunk-boundary-safe `StreamingUnscrubber`) for custom Private Terms, ETH addresses (including low-entropy `0x000...001`), ENS names, `/Users/...` paths, emails, and non-loopback IPs, restoring assistant prose only (never rehydrating model-generated `tool_calls` arguments).
-  - OpenAI Responses API (`/v1/responses`), `cloak acp` (exposing Cloak's own agent over ACP for Zed), and Local AI routing through `CloakDoor` are not yet implemented.
+  - **All 5 rails through `CloakDoor` (`Door.MacRoute` + `SecurityProfile`):** Connected Apps supports `Local ($0)` (built-in worker or detected loopback local server — Splash, TensorFold, LM Studio, mlx-serve, Ollama, Darkbloom Local — with no Tor/VM required), `NEAR TEE` (hardware-attested E2EE v2 via `cloak-near`), `Venice · Base` (Base USDC x402 or Venice API key + `SpendLedger` receipts), `Boundless · Tempo` (Tempo USDC.e MPP), and `zkAPI Anon` (one-time ZK keys over Tor). Every request enforces the active 3-tier `SecurityProfile` fail-closed at `Door.route(...)` (returning HTTP `403 security_profile_blocked` before any rewriter or upstream call) alongside `< 2 ms` `PrivacyShield` protection and deterministic Spend Guardrails.
+  - OpenAI Responses API (`/v1/responses`) and `cloak acp` (exposing Cloak's own agent over ACP for Zed) are deferred until post-`v0.3.0` user pull.
 - **Primary sources:** [Cloak API reference](https://regents.sh/docs/cloak/reference), [Claude Code changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md), [OpenCode providers](https://opencode.ai/docs/providers/), [Goose releases](https://github.com/block/goose/releases), [Zed ACP docs](https://zed.dev/docs/ai/external-agents), [Cursor changelog](https://cursor.com/changelog), [Cline releases](https://github.com/cline/cline/releases).
 - **Watch for:** Base-URL configuration; API format changes (Anthropic Messages betas, OpenAI Responses, ACP); streaming/tool-call/thinking-block requirements; authentication and telemetry-disable env vars.
 - **Boundary:** Do not assume all OpenAI- or Anthropic-compatible applications accept the same subset. ACP connects an editor to an agent runtime — it does not make model APIs compatible. Deterministic rules + user Private Terms do not detect unknown person/organization names in free prose (see `privacy-detectors` below).
@@ -216,8 +245,9 @@ Repository references: [README.md](README.md), [docs/tech-stack.md](docs/tech-st
 - **ID:** `privacy-detectors`
 - **Status:** Planned
 - **User benefit:** Complement CloakDoor's deterministic Secret Tripwire and Private Terms dictionary with an optional on-device neural NER model that catches unfamiliar person and company names without downloading Python runtimes.
-- **Cloak baseline:** Deterministic secret tripwire, developer/crypto regexes, custom Private Terms dictionary, reversible `RedactionMap`, and chunk-boundary-safe `StreamingUnscrubber` are implemented and unit-tested in `app/Sources/CloakDoor/PrivacyShield.swift` and `PrivacyShieldTests.swift`. On-device neural NER (e.g., `NewmeanPII` Swift SDK or ONNX model) is not yet bundled.
-- **Primary sources:** [Osaurus Privacy Filter](https://github.com/osaurus-ai/osaurus/blob/main/docs/FEATURES.md), [Dataiku Kiji Privacy Proxy](https://www.dataiku.com/tech-blog/teaching-the-kiji-privacy-proxy-to-speak-sse), [cloakrs releases](https://github.com/kadir/cloakrs/releases), [ApartePrivacy Swift](https://github.com/apartejs/aparte-privacy-swift).
+- **Cloak baseline:** Deterministic secret tripwire, developer/crypto regexes, custom Private Terms dictionary (merged with active Saved Project Profile terms), reversible `RedactionMap`, and chunk-boundary-safe `StreamingUnscrubber` are implemented and unit-tested in `app/Sources/CloakDoor/PrivacyShield.swift` and `PrivacyShieldTests.swift`. On-device neural NER is not yet bundled.
+  - **Primary-source evaluation (`2026-11-27`, `documented`) — `newmean-ai/pii` (`NewmeanPII` v1.7.2):** Apache-2.0, Swift 5.9, macOS 12+. Compiles a **pure self-contained C core (`native/core/src/*.c`) wrapped directly in SwiftPM** — **zero Python, zero ONNX Runtime, zero external dependencies**, with compact quantized models (`2.6–15.5 MB`) covering 54 languages. Strongest drop-in candidate for an optional neural person/org NER layer behind `PrivacyShield` post-`v0.3.0` (benchmark false-positive rates on code/crypto terms before enabling by default).
+- **Primary sources:** [NewmeanPII (`newmean-ai/pii`)](https://github.com/newmean-ai/pii), [Osaurus Privacy Filter](https://github.com/osaurus-ai/osaurus/blob/main/docs/FEATURES.md), [Dataiku Kiji Privacy Proxy](https://www.dataiku.com/tech-blog/teaching-the-kiji-privacy-proxy-to-speak-sse), [cloakrs releases](https://github.com/kadir/cloakrs/releases), [ApartePrivacy Swift](https://github.com/apartejs/aparte-privacy-swift).
 - **Watch for:** Pure-Swift / CoreML / MLX on-device NER models with Apache-2.0 or MIT licenses, offline bundled weights, and low false-positive rates on code/crypto terms; Kiji SSE / Claude Code / Codex bypass lessons.
 - **Boundary:** Never rehydrate credentials/secrets or model-generated tool-call arguments. Always place the shield at the last point before transport on the final assembled request body so no auxiliary path (e.g., session-title generation or `tool_result` blocks) bypasses inspection.
 

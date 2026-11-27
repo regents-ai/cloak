@@ -32,7 +32,9 @@ struct AgentsView: View {
     @State private var connectionCheck: Door.ConnectionCheck?
 
     var body: some View {
-        let line = DoorLine(door.state, running: supervisor.phase == .running)
+        let rail = settings.doorPayment
+        let noVMRail = rail == .local || (rail == .near && !settings.nearTor) || (rail == .venice && !settings.tokenTor)
+        let line = DoorLine(door.state, running: supervisor.phase == .running || noVMRail)
         Form {
             connectionSection(line: line)
             privacyShieldSection
@@ -158,16 +160,45 @@ struct AgentsView: View {
                     }
                 }
             }
-            LabeledContent("Billing") {
-                Picker("Billing", selection: $settings.doorPayment) {
-                    ForEach(DoorPayment.allCases) { rail in
-                        Text(rail.shortTitle).tag(rail)
+            LabeledContent("Billing / Rail") {
+                let allowedRails = DoorPayment.allCases.filter { $0.isAllowed(in: settings.securityProfile) }
+                Picker("Billing / Rail", selection: $settings.doorPayment) {
+                    ForEach(allowedRails) { rail in
+                        Text(rail.title).tag(rail)
                     }
                 }
-                .pickerStyle(.segmented)
                 .labelsHidden()
-                .fixedSize()
+                .frame(maxWidth: 240)
             }
+            if settings.securityProfile != .privateCloud {
+                Label(
+                    "Security Profile (\(settings.securityProfile.shortTitle)) restricts Connected Apps to \(DoorPayment.allCases.filter { $0.isAllowed(in: settings.securityProfile) }.map(\.shortTitle).joined(separator: " & ")).",
+                    systemImage: settings.securityProfile.symbol
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            let railCaption: (String, String) = switch settings.doorPayment {
+            case .local:
+                if let ext = settings.externalLocalSelection {
+                    ("laptopcomputer", "Routing to \(ext.displayName) via \(ext.serverName) on 127.0.0.1 ($0/token, no Tor/VM). Privacy Shield still scans prompts & tool outputs.")
+                } else {
+                    ("laptopcomputer", "Running 100% on this Mac via Cloak's local worker ($0/token, no Tor/VM). Privacy Shield still scans prompts & tool outputs.")
+                }
+            case .near:
+                ("cpu", "Routes through hardware-attested NEAR AI Gateway (Intel TDX + NVIDIA GPU, E2EE v2) with your NEAR API key and Privacy Shield.")
+            case .venice:
+                ("dollarsign.circle", "Routes through Venice AI (\(settings.venicePays == .key ? "API key" : "Base USDC wallet"), \(settings.tokenTor ? "Tor" : "direct HTTPS")) with Local Rewrite + Privacy Shield + Spend Guardrails.")
+            case .tempo:
+                ("dollarsign.circle", "Routes through Boundless (Tempo USDC.e over Tor) with Local Rewrite + Privacy Shield + Spend Guardrails.")
+            case .zkapi:
+                ("theatermasks", "Routes through zkAPI Anon Inference (fresh one-time ZK keys over Tor) with Local Rewrite + Privacy Shield + Spend Guardrails.")
+            }
+            Label(railCaption.1, systemImage: railCaption.0)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             LabeledContent {
                 TextField("Model override", text: $settings.doorModel, prompt: Text("Auto"))
                     .labelsHidden()
@@ -274,7 +305,7 @@ struct AgentsView: View {
                         BulletNote(
                             "Pre-Send Secret Tripwire",
                             bullets: [
-                                "Checks user messages, system prompts, and tool results in under 1 ms before sending or paying.",
+                                "Checks messages, system prompts, tool definitions, and tool results in under 1 ms before sending or paying.",
                                 "Blocks PEM private keys, AWS/OpenAI/Anthropic/GitHub/Stripe/Slack tokens, JWTs, wallet private keys, and .env secrets with HTTP 400.",
                                 "Secrets are never logged, persisted, or rehydrated.",
                             ])
@@ -321,6 +352,15 @@ struct AgentsView: View {
                         )
                     }
                 }
+                if let project = settings.activeProjectProfile, !project.parsedPrivateTerms.isEmpty {
+                    let count = project.parsedPrivateTerms.count
+                    Label(
+                        "Active project “\(project.name)” adds \(count) shielded \(count == 1 ? "term" : "terms") automatically.",
+                        systemImage: "folder.badge.gearshape"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
         } header: {
             Text("Privacy Shield")
@@ -348,9 +388,10 @@ struct AgentsView: View {
                         BulletNote(
                             "Deterministic Local Spend Guardrails",
                             bullets: [
-                                "Checks chain ID, allowed networks, per-call cap, and daily budget before any payment is signed.",
-                                "Reserves budget atomically across parallel agent calls and releases unused funds on settlement or failure.",
-                                "Receipts store settlement metadata only — never prompts, prompt hashes, or repository paths.",
+                                "Checks chain ID, allowed networks, model pricing (plus zkAPI protocol request caps), prompt length, and max_tokens before sending.",
+                                "When max_tokens is omitted, injects an output token cap bounded to your remaining budget; records full uncapped token usage from replies.",
+                                "Post-payment parse failures or timeouts stay conservatively counted as ambiguous spend — never silently refunded to the daily cap.",
+                                "Note: Token-bounded caps estimate provider billing locally; keep wallet balances small for hard on-chain bounds.",
                             ])
                     }
                 }

@@ -86,7 +86,7 @@ public enum DiagnosticReport {
         #endif
 
         let rawLogs = fetchUnifiedLogs(minutes: minutes)
-        let redactedLogs = rawLogs.map(redact)
+        let redactedLogs = redactAndTruncateLogLines(rawLogs)
         let crash = latestCrash()
 
         var lines: [String] = []
@@ -235,42 +235,105 @@ public enum DiagnosticReport {
         return (fallbackProcess, head)
     }
 
-    private static func fetchUnifiedLogs(minutes: Int) -> [String] {
+    /// Redacts every complete log line FIRST before capping length, so sensitive
+    /// tokens (emails, keys, addresses, usernames) straddling the 240-char cutoff
+    /// are fully scrubbed rather than clipped into unredacted fragments.
+    public static func redactAndTruncateLogLines(
+        _ lines: [String], maxLines: Int = 120, maxLineLength: Int = 240
+    ) -> [String] {
+        Array(lines.suffix(maxLines)).map { raw in
+            let scrubbed = redact(raw)
+            return scrubbed.count > maxLineLength ? String(scrubbed.prefix(maxLineLength)) + "…" : scrubbed
+        }
+    }
+
+    /// Runs a child process collecting stdout with a real wall-clock deadline that
+    /// terminates a hung child even if stdout never reaches EOF.
+    public static func runProcessWithTimeout(
+        executableURL: URL,
+        arguments: [String],
+        timeoutSeconds: Double = 5.0
+    ) -> (data: Data, timedOut: Bool, launchError: String?) {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-        process.arguments = [
-            "show",
-            "--last", "\(max(1, minutes))m",
-            "--info",
-            "--style", "compact",
-            "--predicate", #"subsystem == "sh.regents.cloak.app""#,
-        ]
+        process.executableURL = executableURL
+        process.arguments = arguments
         let out = Pipe()
         process.standardOutput = out
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
-            return ["(unable to read macOS unified log: \(error.localizedDescription))"]
+            return (Data(), false, error.localizedDescription)
         }
 
-        let deadline = DispatchTime.now() + .seconds(5)
-        let semaphore = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in semaphore.signal() }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        if semaphore.wait(timeout: deadline) == .timedOut {
-            process.terminate()
+        final class Collector: @unchecked Sendable {
+            let lock = NSLock()
+            var data = Data()
+        }
+        let collector = Collector()
+        let readDone = DispatchSemaphore(value: 0)
+        let readHandle = out.fileHandleForReading
+
+        DispatchQueue.global(qos: .utility).async {
+            while true {
+                let chunk = readHandle.availableData
+                if chunk.isEmpty { break }
+                collector.lock.withLock {
+                    collector.data.append(chunk)
+                }
+            }
+            readDone.signal()
         }
 
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
-        let allLines = text
+        let deadline = DispatchTime.now() + .milliseconds(max(50, Int(timeoutSeconds * 1000)))
+        var timedOut = false
+        if readDone.wait(timeout: deadline) == .timedOut {
+            timedOut = true
+            if process.isRunning {
+                process.terminate()
+            }
+            if readDone.wait(timeout: .now() + .milliseconds(250)) == .timedOut {
+                if process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                }
+                _ = readDone.wait(timeout: .now() + .milliseconds(250))
+            }
+        } else {
+            process.waitUntilExit()
+        }
+        try? readHandle.close()
+
+        let captured = collector.lock.withLock { collector.data }
+        return (captured, timedOut, nil)
+    }
+
+    private static func fetchUnifiedLogs(minutes: Int) -> [String] {
+        let result = runProcessWithTimeout(
+            executableURL: URL(fileURLWithPath: "/usr/bin/log"),
+            arguments: [
+                "show",
+                "--last", "\(max(1, minutes))m",
+                "--info",
+                "--style", "compact",
+                "--predicate", #"subsystem == "sh.regents.cloak.app""#,
+            ],
+            timeoutSeconds: 5.0
+        )
+        if let err = result.launchError {
+            return ["(unable to read macOS unified log: \(err))"]
+        }
+        guard let text = String(data: result.data, encoding: .utf8) else {
+            return result.timedOut ? ["(macOS unified log collection timed out after 5s)"] : []
+        }
+        var allLines = text
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map(String.init)
             .filter { !$0.hasPrefix("Filtering the log data") && !$0.hasPrefix("Timestamp") }
-        return Array(allLines.suffix(120)).map { line in
-            line.count > 240 ? String(line.prefix(240)) + "…" : line
+        if result.timedOut {
+            allLines.append("(macOS unified log collection timed out after 5s — partial logs shown)")
         }
+        return allLines
     }
 
     private static func replace(_ text: String, pattern: String, with template: String) -> String {

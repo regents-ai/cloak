@@ -377,12 +377,39 @@ final class Chat {
         }
         Task {
             for await useTor in Observations({ settings.tokenTor }) {
-                if !useTor {
+                if !useTor && settings.securityProfile.allowsTokenInference {
                     Task { await walletModel.refresh() }
                     Task { await veniceMode.refresh() }
                 }
             }
         }
+        Task {
+            for await profile in Observations({ settings.securityProfile }) {
+                if !self.isModeAllowed(self.kind) {
+                    self.kind = .llama
+                }
+                if !profile.allowsAnyCloud, self.autoStarting != nil {
+                    self.stopAutoStart()
+                }
+            }
+        }
+    }
+
+    /// Whether `mode` is permitted by the user's active Security Profile.
+    func isModeAllowed(_ mode: Kind) -> Bool {
+        let profile = settings.securityProfile
+        return switch mode {
+        case .llama: true
+        case .near: profile.allowsNear
+        case .token: profile.allowsTokenInference
+        case .v: profile.allowsZkAPI
+        }
+    }
+
+    /// Plain-English refusal reason if `mode` is disabled by the active Security Profile.
+    func modeRefusal(_ mode: Kind) -> String? {
+        guard !isModeAllowed(mode) else { return nil }
+        return settings.securityProfile.refusalMessage(for: mode.name)
     }
 
     var selected: Conversation? {
@@ -460,6 +487,7 @@ final class Chat {
     var canSubmit: Bool {
         guard let selected, autoStarting == nil else { return false }
         let mode = kind(of: selected)
+        guard isModeAllowed(mode) else { return false }
         if mode == .llama {
             let hasContent = !Self.isBlank(draft) || !localAttachments.isEmpty
             return hasContent && !attachingLocalFiles && isOpen && llamaBlock == nil && answering[selected.id] == nil
@@ -470,7 +498,7 @@ final class Chat {
             return isOpen && (nearMode.sendBlock == nil || (nearMode.hasKey == true && nearMode.route == nil && canAutoStart))
         }
         if mode == .token && !settings.tokenTor {
-            return isOpen && rewording == nil
+            return isOpen && rewording == nil && (settings.neverReword || canRewordLocally)
         }
         return settings.neverReword ? isOpen : canReword
     }
@@ -615,6 +643,9 @@ final class Chat {
         let isAgentThread = conversation.map(isAgent) ?? agentOn
         switch mode {
         case .llama:
+            if let ext = settings.externalLocalSelection {
+                return "\(ext.displayName) · \(ext.serverName)"
+            }
             guard let label = answerDownload?.model.label else { return "No model" }
             return activeUnfilteredLora != nil ? "\(label) · Unfiltered" : label
         case .near:
@@ -651,6 +682,9 @@ final class Chat {
     func activeModelFullName(for mode: Kind, conversation: Conversation? = nil) -> String {
         switch mode {
         case .llama:
+            if let ext = settings.externalLocalSelection {
+                return "\(ext.modelID) via \(ext.serverName) (\(ext.baseURL.absoluteString))"
+            }
             guard let model = answerDownload?.model else { return "No local model selected" }
             return activeUnfilteredLora != nil ? "\(model.label) (Unfiltered LoRA)" : model.label
         case .near:
@@ -710,6 +744,7 @@ final class Chat {
     /// only where asking is certain to stop. Another model never answers in
     /// the chosen one's place. Cloak need not be running.
     var llamaBlock: LlamaBlock? {
+        if settings.externalLocalSelection != nil { return nil }
         guard let download = answerDownload else { return .unknown }
         guard download.fits else { return .mac(download) }
         guard download.state == .installed else { return .missing(download) }
@@ -719,6 +754,76 @@ final class Chat {
             return .missing(adapterDownload)
         }
         return nil
+    }
+
+    /// Snapshot of which Private Cloud rails are currently funded or configured.
+    var privateCloudAvailability: PrivateCloudAvailability {
+        let profile = settings.securityProfile
+        let nearReady = profile.allowsNear && nearMode.hasKey == true
+        let veniceFunded: Bool = switch settings.venicePays {
+        case .key:
+            veniceMode.hasKey == true && (veniceMode.keyAccount?.canSpend ?? true)
+        case .wallet:
+            veniceMode.credit?.canSpend == true
+        }
+        let veniceReady = profile.allowsTokenInference && veniceFunded
+        let boundlessReady = profile.allowsTokenInference && wallet.presence.address != nil && !wallet.lacksFunds && wallet.look != nil
+        let zkapiReady = profile.allowsZkAPI && (payer.state == .ready || payer.state == .settling)
+        return PrivateCloudAvailability(
+            nearReady: nearReady,
+            veniceReady: veniceReady,
+            boundlessReady: boundlessReady,
+            zkapiReady: zkapiReady)
+    }
+
+    /// Deterministic routing decision for a plain-English Private Cloud intent preset.
+    func smartPrivateDecision(for preset: SmartPrivatePreset? = nil) -> SmartPrivateDecision {
+        SmartPrivateRouter.resolve(
+            preset: preset ?? settings.smartPrivatePreset,
+            availability: privateCloudAvailability)
+    }
+
+    /// Applies a plain-English Private Cloud intent (`Fast`, `Coding`, `Reasoning`),
+    /// switching transparently to the resolved rail without silent fallback.
+    func applySmartPrivate(_ preset: SmartPrivatePreset) {
+        settings.smartPrivatePreset = preset
+        let decision = smartPrivateDecision(for: preset)
+        agentOn = false
+        switch decision.rail {
+        case .near:
+            selectMode(.near)
+        case .venice:
+            selectMode(.token)
+            selectPayProvider(.venice)
+        case .boundless:
+            selectMode(.token)
+            selectPayProvider(.boundless)
+        case .zkapi:
+            selectMode(.v)
+        }
+    }
+
+    /// Switches the active Saved Project Profile across Chat and Connected Apps,
+    /// applying its preferred route cleanly when set.
+    func selectProjectProfile(_ id: UUID?) {
+        settings.activateProjectProfile(id)
+        guard let profile = settings.activeProjectProfile else { return }
+        switch profile.route {
+        case .keepCurrent:
+            break
+        case .local:
+            selectMode(.llama)
+        case .near:
+            selectMode(.near)
+        case .venice:
+            selectMode(.token)
+            selectPayProvider(.venice)
+        case .boundless:
+            selectMode(.token)
+            selectPayProvider(.boundless)
+        case .zkapi:
+            selectMode(.v)
+        }
     }
 
     /// Whether the agent of `conversation`, which has earlier tasks, starts
@@ -854,6 +959,7 @@ final class Chat {
     /// Why Send Original Text is off now, or nil when it is on: Send's
     /// reasons but a blank reworded text, which it does not send.
     func originalBlock(in mode: Kind, for conversation: Conversation? = nil) -> String? {
+        if let refusal = modeRefusal(mode) { return refusal }
         let target = conversation ?? selected
         if mode == .token, usesVenice(for: target) {
             return veniceMode.sendBlock(for: target, canAutoStart: canAutoStart)
@@ -870,7 +976,8 @@ final class Chat {
     /// Why Run is off now, or nil when it is on: off only where running is
     /// certain to stop, as for Send.
     func runBlock(in mode: Kind) -> String? {
-        switch block(in: mode, forAgent: true) {
+        if let refusal = modeRefusal(mode) { return refusal }
+        return switch block(in: mode, forAgent: true) {
         case .notRunning?: "Start Cloak to run."
         case .noWallet?: "Create a wallet to run."
         case .noFunds?: "Add funds to run."
@@ -982,8 +1089,9 @@ final class Chat {
 
     /// Switches the active mode (bound to Command-1 through Command-4).
     /// If viewing a non-empty thread, opens a fresh empty chat in `mode` first.
+    /// Modes disallowed by the active Security Profile are refused.
     func selectMode(_ mode: Kind) {
-        guard isOpen else { return }
+        guard isOpen, isModeAllowed(mode) else { return }
         if selected?.turns.isEmpty != true {
             newConversation()
         }
@@ -1214,7 +1322,7 @@ final class Chat {
             conversation.turns.append(turn)
             update(conversation)
             ask(turn.id, in: id)
-        } else if settings.neverReword || (mode == .token && !settings.tokenTor && !canRewordLocally) {
+        } else if settings.neverReword {
             let turn = Turn(original: original, reworded: nil)
             mark(&conversation, as: mode)
             conversation.turns.append(turn)
@@ -1222,6 +1330,12 @@ final class Chat {
             update(conversation)
             send(turn.id, in: id, approvedProvider: approvedProvider)
         } else if mode == .token && !settings.tokenTor {
+            // Fail closed: never send the original prompt while rewriting is enabled
+            // if the local rewriter model is missing or does not fit on this Mac.
+            guard canRewordLocally else {
+                restoreDraft()
+                return
+            }
             let sends = !settings.review
             start(
                 id, original,
@@ -1370,6 +1484,7 @@ final class Chat {
         guard sending[turn] == nil, var conversation = conversations.first(where: { $0.id == id }),
             let index = conversation.turns.firstIndex(where: { $0.id == turn })
         else { return }
+        guard isModeAllowed(kind(of: conversation)) else { return }
         if conversation.isNear {
             if nearMode.route == nil, nearMode.hasKey == true, canAutoStart {
                 startThen(in: id) { [weak self] in self?.send(turn, in: id) }
@@ -1602,10 +1717,13 @@ final class Chat {
     /// and keeps the answer with it, or why none came. One at a time in a
     /// conversation.
     func ask(_ turn: UUID, in id: UUID) {
-        guard answering[id] == nil, llamaBlock == nil, let model = answerDownload?.model,
+        guard answering[id] == nil, llamaBlock == nil,
             let conversation = conversations.first(where: { $0.id == id }),
             let index = conversation.turns.firstIndex(where: { $0.id == turn })
         else { return }
+        let external = settings.externalLocalSelection
+        let builtInModel = answerDownload?.model
+        guard external != nil || builtInModel != nil else { return }
         let priorMessages: [LocalMessage] = conversation.turns[..<index].flatMap { earlier -> [LocalMessage] in
             guard let answer = earlier.answer else { return [] }
             let userContent: String
@@ -1620,41 +1738,90 @@ final class Chat {
         }
         let promptText = conversation.turns[index].original
         let contextOptions = settings.localContextOptions
+        let projectNotesBlock = settings.activeProjectProfile?.localContextBlock
         let attachments = turnLocalAttachments[turn] ?? []
+        let reasoningEffort = settings.localReasoningEffort
         answerStops[turn] = nil
         let lora = activeUnfilteredLora
-        let warm = supervisor.isLocalModelWarm(model, lora: lora)
+        let warm = external != nil || builtInModel.map { supervisor.isLocalModelWarm($0, lora: lora) } == true
         let initialStage: LocalAnswerStage = warm ? .answering : .startingModel
         let task = Task { [weak self] in
             guard let self else { return }
-            let localContext = await LocalContextBuilder.build(
+            let builtContext = await LocalContextBuilder.build(
                 query: promptText,
                 options: contextOptions,
                 attachments: attachments)
+            let localContext: String? = switch (projectNotesBlock, builtContext) {
+            case (let notes?, let ctx?): "\(notes)\n\n\(ctx)"
+            case (let notes?, nil): notes
+            case (nil, let ctx?): ctx
+            case (nil, nil): nil
+            }
             let finalPrompt = LocalContextBuilder.inject(localContext, into: promptText)
             let messages = priorMessages + [.user(finalPrompt)]
             let result: Result<LocalAnswer, AnswerStop>
-            do throws(AnswerStop) {
-                result = .success(try await self.supervisor.answer(
-                    messages, with: model, lora: lora,
-                    onStage: { [weak self] stage in
-                        Task { @MainActor [weak self] in
-                            guard let self, var current = self.answering[id], current.turn == turn else { return }
-                            current.stage = stage
-                            if stage == .startingModel { current.didColdStart = true }
-                            self.answering[id] = current
-                        }
-                    },
-                    onPartial: { [weak self] partial in
-                        Task { @MainActor [weak self] in
-                            guard let self, var current = self.answering[id], current.turn == turn else { return }
-                            current.stage = .answering
-                            current.partial = partial
-                            self.answering[id] = current
-                        }
-                    }))
-            } catch {
-                result = .failure(error)
+            if let external {
+                do {
+                    let payload: [String: Any] = [
+                        "model": external.modelID,
+                        "stream": false,
+                        "reasoning_effort": reasoningEffort.rawValue,
+                        "messages": messages.map { msg -> [String: Any] in
+                            var dict: [String: Any] = ["role": msg.role, "content": msg.content]
+                            if let thinking = msg.thinking, !thinking.isEmpty {
+                                dict["reasoning_content"] = thinking
+                            }
+                            return dict
+                        },
+                    ]
+                    let body = try JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])
+                    let raw = try await LocalServerDiscovery.complete(
+                        baseURL: external.baseURL, modelID: external.modelID, body: body)
+                    guard !Task.isCancelled else {
+                        self.answered(turn, in: id, .failure(.stopped))
+                        return
+                    }
+                    if let root = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
+                        let choices = root["choices"] as? [[String: Any]],
+                        let msg = choices.first?["message"] as? [String: Any],
+                        let content = msg["content"] as? String
+                    {
+                        let thinking = msg["reasoning_content"] as? String
+                        result = .success(LocalAnswer(text: content, thinking: thinking))
+                    } else {
+                        result = .failure(.failed(.workerUnavailable))
+                    }
+                } catch is CancellationError {
+                    result = .failure(.stopped)
+                } catch {
+                    self.logger.error("external local server failed: \(String(describing: error), privacy: .public)")
+                    result = .failure(.failed(.workerUnavailable))
+                }
+            } else if let model = builtInModel {
+                do throws(AnswerStop) {
+                    result = .success(try await self.supervisor.answer(
+                        messages, with: model, lora: lora, reasoningEffort: reasoningEffort,
+                        onStage: { [weak self] stage in
+                            Task { @MainActor [weak self] in
+                                guard let self, var current = self.answering[id], current.turn == turn else { return }
+                                current.stage = stage
+                                if stage == .startingModel { current.didColdStart = true }
+                                self.answering[id] = current
+                            }
+                        },
+                        onPartial: { [weak self] partial in
+                            Task { @MainActor [weak self] in
+                                guard let self, var current = self.answering[id], current.turn == turn else { return }
+                                current.stage = .answering
+                                current.partial = partial
+                                self.answering[id] = current
+                            }
+                        }))
+                } catch {
+                    result = .failure(error)
+                }
+            } else {
+                result = .failure(.failed(.modelMissing))
             }
             self.answered(turn, in: id, result)
         }

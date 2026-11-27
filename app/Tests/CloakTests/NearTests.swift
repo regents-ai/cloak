@@ -85,4 +85,65 @@ struct NearTests {
         #expect(proof.isHybridPostQuantumTLS == true)
         #expect(proof.tlsSummary == "TLS 1.3 · X25519MLKEM768")
     }
+
+    @Test func sanitizedChatPayloadStripsUncoveredFieldsForConnectedApps() throws {
+        let raw = Data(#"""
+        {
+          "model": "claude-sonnet-4-6",
+          "stream": true,
+          "temperature": 0.2,
+          "max_tokens": 512,
+          "top_k": 40,
+          "stream_options": {"include_usage": true},
+          "reasoning_effort": "high",
+          "metadata": {"session": "abc"},
+          "user": "dev-1",
+          "messages": [
+            {"role": "system", "content": "Be concise.", "cache_control": {"type": "ephemeral"}},
+            {"role": "user", "content": "Check repo", "extra_field": 123}
+          ],
+          "tools": [
+            {"type": "web_search", "name": "server_search"},
+            {
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "description": "Reads a file",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+                "strict": true
+              }
+            }
+          ],
+          "tool_choice": {"type": "function", "function": {"name": "read_file", "extra": true}}
+        }
+        """#.utf8)
+
+        let clean = try Near.sanitizedChatPayload(from: raw)
+        #expect(clean["model"] as? String == Near.model)
+        #expect(clean["stream"] as? Bool == false)
+        #expect(clean["max_tokens"] as? Int == 512)
+        #expect(clean["temperature"] as? Double == 0.2)
+        // Uncovered client extensions stripped so cloak-near strict E2EE sealing succeeds.
+        #expect(clean["top_k"] == nil)
+        #expect(clean["stream_options"] == nil)
+        #expect(clean["reasoning_effort"] == nil)
+        #expect(clean["metadata"] == nil)
+        #expect(clean["user"] == nil)
+
+        let msgs = try #require(clean["messages"] as? [[String: Any]])
+        #expect(msgs.count == 2)
+        #expect(msgs[0]["cache_control"] == nil)
+        #expect(msgs[1]["extra_field"] == nil)
+
+        let tools = try #require(clean["tools"] as? [[String: Any]])
+        #expect(tools.count == 1)
+        let fn = try #require(tools[0]["function"] as? [String: Any])
+        #expect(fn["name"] as? String == "read_file")
+        #expect(fn["strict"] == nil)
+
+        let choice = try #require(clean["tool_choice"] as? [String: Any])
+        let choiceFn = try #require(choice["function"] as? [String: Any])
+        #expect(choiceFn["name"] as? String == "read_file")
+        #expect(choiceFn["extra"] == nil)
+    }
 }

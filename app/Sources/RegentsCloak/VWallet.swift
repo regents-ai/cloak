@@ -141,7 +141,7 @@ private struct AddressSection: View {
                         Button {
                             onRampTarget = .ethereumETH(address: funding.address)
                         } label: {
-                            Label("Add ETH with Card / Apple Pay", systemImage: "creditcard")
+                            Label("Add ETH (Stripe Link / Apple Pay)", systemImage: "creditcard")
                         }
                         .buttonStyle(.borderedProminent)
                     }

@@ -2,34 +2,44 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// Non-custodial Card / Apple Pay on-ramp (Decision N1a):
-/// Funds Cloak's local wallets directly (`USDC` on Base for Pay-Per-Prompt /
-/// Venice, `ETH` on Ethereum Mainnet for Paranoid (V)) without custodying keys
-/// or exposing prompts.
-///
-/// Configuration (no secret keys are ever embedded in the Mac app binary):
-/// - `CloakOnRampSessionURL` in Info.plist (default:
-///   `https://regents.sh/api/cloak/onramp/session`): POSTs
-///   `{"address","network","asset","amount_usd"}` to obtain a Stripe Crypto
-///   Onramp or Coinbase Onramp `redirect_url` signed server-side.
-/// - Alternatively, `CloakCoinbaseOnRampAppID` in Info.plist builds a direct
-///   Coinbase Onramp checkout URL (`https://pay.coinbase.com/buy/select-asset`).
+/// Non-custodial Stripe Link / Apple Pay / Card crypto on-ramp (Path A, Decision N1a):
+/// Funds Cloak's local self-custodial wallets directly (`USDC` on Base for Venice,
+/// `USDC.e` on Tempo for Boundless, `ETH` on Ethereum Mainnet for zkAPI) without
+/// custodying keys or exposing prompts.
 enum CardOnRamp {
+    enum PaymentMethod: String, CaseIterable, Identifiable, Sendable {
+        case stripeLink = "stripe_link"
+        case applePay = "apple_pay"
+        case card = "card"
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .stripeLink: "Stripe Link"
+            case .applePay: "Apple Pay"
+            case .card: "Debit Card"
+            }
+        }
+    }
+
     enum Target: Equatable, Identifiable {
         case baseUSDC(address: String)
+        case tempoUSDCe(address: String)
         case ethereumETH(address: String)
 
         var id: String { "\(network):\(asset):\(address)" }
 
         var address: String {
             switch self {
-            case .baseUSDC(let address), .ethereumETH(let address): address
+            case .baseUSDC(let address), .tempoUSDCe(let address), .ethereumETH(let address): address
             }
         }
 
         var network: String {
             switch self {
             case .baseUSDC: "base"
+            case .tempoUSDCe: "tempo"
             case .ethereumETH: "ethereum"
             }
         }
@@ -37,6 +47,7 @@ enum CardOnRamp {
         var asset: String {
             switch self {
             case .baseUSDC: "USDC"
+            case .tempoUSDCe: "USDC.e"
             case .ethereumETH: "ETH"
             }
         }
@@ -44,21 +55,22 @@ enum CardOnRamp {
         var title: String {
             switch self {
             case .baseUSDC: "Add USDC on Base"
+            case .tempoUSDCe: "Add USDC.e on Tempo"
             case .ethereumETH: "Add ETH on Ethereum"
             }
         }
 
         var subtitle: String {
             switch self {
-            case .baseUSDC: "Delivered straight to your local Token Inference wallet."
-            case .ethereumETH: "Delivered straight to your local zkAPI ETH wallet."
+            case .baseUSDC: "Delivered straight to your local Venice Base wallet via Stripe Link / Apple Pay."
+            case .tempoUSDCe: "Delivered straight to your local Boundless Tempo wallet via Stripe Link / Apple Pay."
+            case .ethereumETH: "Delivered straight to your local zkAPI ETH wallet via Stripe Link / Apple Pay."
             }
         }
 
         var defaultAmount: Int {
             switch self {
-            case .baseUSDC: 10
-            case .ethereumETH: 10
+            case .baseUSDC, .tempoUSDCe, .ethereumETH: 10
             }
         }
     }
@@ -106,14 +118,18 @@ enum CardOnRamp {
         return id
     }
 
-    /// Requests a checkout URL for `target` and `amountUSD`. Sends ONLY the
-    /// destination address, network, asset, and dollar amount — never chat data,
-    /// prompts, or private keys.
-    static func checkoutURL(for target: Target, amountUSD: Int) async throws(Failure) -> URL {
+    /// Requests a checkout URL for `target`, `amountUSD`, and preferred payment method
+    /// (`Stripe Link`, `Apple Pay`, or `Debit Card`). Sends ONLY the destination address,
+    /// network, asset, and dollar amount — never chat data, prompts, or private keys.
+    static func checkoutURL(
+        for target: Target,
+        amountUSD: Int,
+        preferredMethod: PaymentMethod = .stripeLink
+    ) async throws(Failure) -> URL {
         guard (5...500).contains(amountUSD) else { throw .invalidAmount }
 
-        // Direct Coinbase Onramp URL if a public App ID is configured in Info.plist.
-        if let appID = coinbaseAppID {
+        // Direct Coinbase Onramp URL if a public App ID is configured in Info.plist (Base/Ethereum).
+        if target.network != "tempo", let appID = coinbaseAppID {
             var components = URLComponents(string: "https://pay.coinbase.com/buy/select-asset")!
             let addresses = #"{"\#(target.address)":["\#(target.network)"]}"#
             let assets = #"["\#(target.asset)"]"#
@@ -127,7 +143,7 @@ enum CardOnRamp {
             if let url = components.url { return url }
         }
 
-        // Server-signed Stripe Crypto Onramp / Coinbase session endpoint.
+        // Server-signed Stripe Crypto Onramp (Link + Apple Pay + Card) session endpoint.
         guard let endpoint = sessionEndpoint else { throw .invalidEndpoint }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -138,6 +154,8 @@ enum CardOnRamp {
             "network": target.network,
             "asset": target.asset,
             "amount_usd": amountUSD,
+            "preferred_method": preferredMethod.rawValue,
+            "payment_methods": PaymentMethod.allCases.map(\.rawValue),
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
@@ -172,6 +190,7 @@ struct CardOnRampSheet: View {
     let onRefresh: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var amountText: String
+    @State private var paymentMethod: CardOnRamp.PaymentMethod = .stripeLink
     @State private var loading = false
     @State private var openedBrowser = false
     @State private var errorMessage: String?
@@ -196,6 +215,18 @@ struct CardOnRampSheet: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Pay with")
+                    .font(.subheadline.weight(.semibold))
+                Picker("Payment Method", selection: $paymentMethod) {
+                    ForEach(CardOnRamp.PaymentMethod.allCases) { method in
+                        Text(method.title).tag(method)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -232,7 +263,7 @@ struct CardOnRampSheet: View {
             }
 
             Label {
-                Text("Card & Apple Pay checkout connects directly to the payment provider (not through Tor) to send \(target.asset) straight to this Mac's wallet. Cloak never sees your card details, and your AI prompts stay completely separate.")
+                Text("Stripe Link & Apple Pay checkout connects directly to the on-ramp (not through Tor) to deliver \(target.asset) straight to this Mac's self-custodial wallet. Regents never custodies your keys, and your AI prompts stay completely separate.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -272,7 +303,7 @@ struct CardOnRampSheet: View {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
-                            Label("Continue with Card / Apple Pay", systemImage: "arrow.up.right")
+                            Label("Continue with \(paymentMethod.title)", systemImage: "arrow.up.right")
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -281,7 +312,7 @@ struct CardOnRampSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 460)
+        .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -294,7 +325,7 @@ struct CardOnRampSheet: View {
         errorMessage = nil
         Task {
             do {
-                let url = try await CardOnRamp.checkoutURL(for: target, amountUSD: amount)
+                let url = try await CardOnRamp.checkoutURL(for: target, amountUSD: amount, preferredMethod: paymentMethod)
                 NSWorkspace.shared.open(url)
                 openedBrowser = true
             } catch {

@@ -1,5 +1,40 @@
 # Changelog
 
+All notable changes to Cloak are documented in this file.
+
+## v0.3.0 (Beta) — Unreleased
+
+### Security Profiles (3-Tier Posture Enforcement)
+- Added a master **Security Profile** selector in **Settings → General** enforced across Chat, Connected Apps (`CloakDoor`), Wallets, Tor/VM controls, Menu Bar, Keyboard Shortcuts, Widgets, and Inference Serving:
+  - **Local Only + Downloads** — permits local inference, loopback `127.0.0.1` servers, Local Access, Local Voice, Saved Project Profiles, `CloakDoor` on `Local ($0)`, Darkbloom `Local Only`, and explicit model/offline-data downloads; hard-blocks all cloud chat modes, cloud `CloakDoor` rails (HTTP `403 security_profile_blocked`), cloud wallets/RPCs, Tor/VM startup, and account-linked Network Inference Serving.
+  - **Anon Private Cloud** — allows Local AI + **zkAPI Anon Inference** only, with **Tor**, **Cover Traffic**, and **Local Prompt Rewriting** locked **ON**; blocks account-keyed NEAR, linkable single-wallet Venice & Boundless rails, direct non-Tor cloud sends, and account-linked Network Inference Serving.
+  - **Private Cloud AI** *(default)* — enables all 4 chat modes, Smart Private Router, all 5 `CloakDoor` rails, wallets, and Darkbloom `Network + Local` serving.
+
+### Connected Apps (`CloakDoor`) Expansion
+- **Anthropic Messages API support** — added `POST /v1/messages`, `POST /v1/messages/count_tokens`, `?beta=true`, `x-api-key`, `Transfer-Encoding: chunked`, `<system-reminder>` routing, SSE streaming, tool calls, and Claude alias remapping (verified end-to-end against `claude` CLI `2.1.330`).
+- **All 5 billing/routing rails** — Connected Apps now routes through **Local ($0)**, **NEAR AI Gateway (TEE + E2EE v2)**, **Venice AI (Base USDC / API key)**, **Boundless (Tempo USDC.e MPP)**, and **zkAPI Anon Inference (Tor + one-time ZK keys)**; non-VM rails (`Local`, direct `NEAR`, direct `Venice`) open `CloakDoor` immediately without starting the Linux VM.
+- **Privacy Shield (`PrivacyShield`)** — deterministic `< 2 ms` pre-send Secret Tripwire (hard-blocks leaked API keys, PEM keys, JWTs, wallet private keys, and `.env` secrets before payment or transport) plus an in-memory Reversible Alias Map (`RedactionMap` + chunk-boundary-safe `StreamingUnscrubber`) for custom Private Terms, ETH addresses, ENS names, `/Users/...` paths, emails, and non-loopback IPs (restores assistant prose only; never rehydrates secrets or model-generated `tool_calls` arguments).
+- **Deterministic Spend Guardrails** — local `SpendLedger` with configurable per-request and daily USD caps plus receipt tracking.
+- **1-click setup & diagnostics** — added tailored copyable presets for **Claude Code**, **OpenCode**, and **Goose**, plus a 1-click **Test Connection** loopback probe.
+
+### Saved Project Profiles *(free in beta)*
+- Added **Saved Project Profiles** (`Settings → Projects` + 1-click switcher in Chat's sidebar) to isolate each client or codebase across approved Local folders, Privacy Shield private terms, preferred route, Connected Apps model override, and local-only project notes.
+
+### Local AI & Local Voice
+- **RAM-only paged KV prefix caching** and **`Fast` / `Balanced` / `Deep` reasoning effort** for `vmlx-swift` (`Inkling 2 Mini` pinned at `52fdb628` for ~74 tok/s and ~5.6 GB RSS on M4 Max).
+- **Loopback Local Server Discovery** — strictly `127.0.0.1`-only auto-discovery (ranked by recency + quality) for **Splash** (`:8000`), **TensorFold** (`:8080`), **mlx-serve** (`:11234`), **LM Studio** (`:1234`), **Ollama** (`:11434`), and **Darkbloom Local**, reusable across both Local Chat and Connected Apps with zero duplicate weight downloads.
+- **On-device Local Voice** — native macOS 26 `SpeechAnalyzer` / `SpeechTranscriber` dictation and local speech synthesis.
+
+### Private Cloud UX & Payments
+- **Smart Private Router** — pick `Fast`, `Coding`, or `Deep Reasoning` in Private Cloud AI mode to route cleanly across ready rails without silent fallback.
+- **Self-custodial onramp** — added Stripe Link / Apple Pay funding links alongside direct crypto transfers for Base `USDC` and Ethereum `ETH`.
+- **4-network payment manifest** — documented and unit-tested `Ethereum`, `Base`, `Tempo`, and upcoming `Arc` (`chainID: 5042`, 18/6-decimal USDC conversion & deduplication) inside `PaymentNetworks`.
+
+### Inference Serving (Darkbloom)
+- Added **Mac Guardrails (QoS)** (auto-pause on battery, high thermal pressure, or configurable Quiet Hours), a live unified-memory RAM budget meter, **Earn-to-Spend** prompt offset display, and a pluggable Serving Networks catalog (`Darkbloom` active; `Antseed` and `Gonka` evaluating).
+
+---
+
 ## Unreleased
 
 - **Local negotiated-crypto session log (zero telemetry)**: Capture actual negotiated TLS metadata (`tls_protocol`, `tls_cipher_suite`, `tls_key_exchange`) directly from `rustls::ClientConnection` in `guest/near` (`cloak-near`), emit on `ProofLine`, decode into `NearProof`, display hybrid PQ (`X25519MLKEM768`) vs. classical ECC transport live in NEAR Gateway Insights and chat proof tooltips, and support local-only inclusion in Redacted Diagnostic Reports.

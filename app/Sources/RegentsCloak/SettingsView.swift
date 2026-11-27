@@ -107,7 +107,7 @@ struct SettingsView: View {
     #endif
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general, llama, localAccess, wallets, near, connectedApps
+        case general, llama, localAccess, projects, wallets, near, connectedApps
         #if DARKBLOOM
         case serving
         #endif
@@ -120,6 +120,7 @@ struct SettingsView: View {
             case .general: "General"
             case .llama: "Local Models"
             case .localAccess: "Local Access"
+            case .projects: "Projects"
             case .wallets: "Wallets"
             case .near: "NEAR AI Gateway"
             case .connectedApps: "Connected Apps"
@@ -142,6 +143,7 @@ struct SettingsView: View {
             case .general: "gearshape"
             case .llama: "laptopcomputer"
             case .localAccess: "person.crop.rectangle.stack"
+            case .projects: "folder.badge.gearshape"
             case .wallets: "wallet.bifold"
             case .near: "cpu"
             case .connectedApps: "cable.connector"
@@ -187,21 +189,25 @@ struct SettingsView: View {
                         rewording: supervisor.manifest.rewordingModel)
                 case .localAccess:
                     LocalAccessPane(settings: settings)
+                case .projects:
+                    ProjectsPane(settings: settings)
                 case .wallets:
                     WalletsPane(
                         wallet: wallet, veniceMode: veniceMode, payer: payer, settings: settings,
                         nearMode: near, supervisor: supervisor, download: download,
                         showFunds: showFunds,
+                        showGeneral: { selection.pane = .general },
                         showStatus: { selection.pane = .status },
                         showNearSettings: { selection.pane = .near })
-                case .near: NearPane(settings: settings, mode: near)
+                case .near:
+                    NearPane(settings: settings, mode: near, showGeneral: { selection.pane = .general })
                 case .connectedApps:
                     AgentsView(
                         door: door, supervisor: supervisor, settings: settings, download: download, openDoor: openDoor,
                         showDetails: { selection.pane = .status }, showDoorSettings: { selection.pane = .advanced }, showFunds: showFunds)
                 #if DARKBLOOM
                 case .serving:
-                    DarkbloomView(mode: darkbloom, embedded: true)
+                    DarkbloomView(mode: darkbloom, settings: settings, embedded: true)
                 #endif
                 case .offlineData:
                     OfflineDataPane(settings: settings, manager: OfflineDataManager.shared)
@@ -235,6 +241,7 @@ private struct WalletsPane: View {
     let supervisor: Supervisor
     let download: ModelDownload
     let showFunds: () -> Void
+    let showGeneral: () -> Void
     let showStatus: () -> Void
     let showNearSettings: () -> Void
     @State private var showingTerms = false
@@ -243,7 +250,29 @@ private struct WalletsPane: View {
         let running = supervisor.phase == .running
         let tokenReady = !settings.tokenTor || running
         Group {
-            if !settings.walletTermsAccepted {
+            if !settings.securityProfile.allowsAnyCloud {
+                Form {
+                    Section {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: settings.securityProfile.symbol)
+                                .font(.title2)
+                                .foregroundStyle(.orange)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Wallets disabled in \(settings.securityProfile.title)")
+                                    .font(.headline)
+                                Text("No cloud wallet RPC reads, crypto deposits, or cloud API keys are active in this Security Profile. Switch to Anon Private Cloud (for zkAPI) or Private Cloud AI in General to unlock wallets.")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Button("Open Security Profile…", action: showGeneral)
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            } else if !settings.walletTermsAccepted {
                 WalletTermsGateView(settings: settings)
             } else {
                 ScrollViewReader { proxy in
@@ -313,46 +342,65 @@ private struct WalletsPane: View {
                 VWallet(payer: payer, settings: settings, running: running)
 
                 // 2. Token Inference — Venice (left) / Boundless (right), Boundless selected for new users, last toggle persisted
-                Section {
-                    WalletGroupHeader(
-                        symbol: "dollarsign.circle",
-                        title: "Token Inference",
-                        subtitle: settings.tokenTor
-                            ? "Pay per call over Tor with Venice (Base USDC / API key) or Boundless + Tempo (USDC.e)."
-                            : "Pay per call directly over HTTPS (faster, no Tor/VM) with Venice (Base USDC / API key) or Boundless + Tempo (USDC.e).")
-                    LabeledContent("Provider") {
-                        Picker("Provider", selection: $settings.payProvider) {
-                            Text("Venice (Base)").tag(PayProvider.venice)
-                            Text("Boundless + Tempo").tag(PayProvider.boundless)
+                if settings.securityProfile.allowsTokenInference {
+                    Section {
+                        WalletGroupHeader(
+                            symbol: "dollarsign.circle",
+                            title: "Token Inference",
+                            subtitle: settings.tokenTor
+                                ? "Pay per call over Tor with Venice (Base USDC / API key) or Boundless + Tempo (USDC.e)."
+                                : "Pay per call directly over HTTPS (faster, no Tor/VM) with Venice (Base USDC / API key) or Boundless + Tempo (USDC.e).")
+                        LabeledContent("Provider") {
+                            Picker("Provider", selection: $settings.payProvider) {
+                                Text("Venice (Base)").tag(PayProvider.venice)
+                                Text("Boundless + Tempo").tag(PayProvider.boundless)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .fixedSize()
+                        Row(
+                            "Route through Tor",
+                            note: settings.tokenTor
+                                ? "Hides your IP from Boundless and Venice (slower, requires Cloak running)."
+                                : "Direct HTTPS — faster replies with no Tor/VM needed (provider sees your IP)."
+                        ) {
+                            Switch("Route through Tor", isOn: $settings.tokenTor)
+                        }
                     }
-                    Row(
-                        "Route through Tor",
-                        note: settings.tokenTor
-                            ? "Hides your IP from Boundless and Venice (slower, requires Cloak running)."
-                            : "Direct HTTPS — faster replies with no Tor/VM needed (provider sees your IP)."
-                    ) {
-                        Switch("Route through Tor", isOn: $settings.tokenTor)
+                    switch settings.payProvider {
+                    case .venice:
+                        VeniceFundsSections(venice: veniceMode, settings: settings, running: tokenReady)
+                    case .boundless:
+                        WalletSections(wallet: wallet, running: tokenReady)
                     }
-                }
-                switch settings.payProvider {
-                case .venice:
-                    VeniceFundsSections(venice: veniceMode, settings: settings, running: tokenReady)
-                case .boundless:
-                    WalletSections(wallet: wallet, running: tokenReady)
                 }
 
                 // 3. NEAR AI Gateway (API Key)
-                Section {
-                    WalletGroupHeader(
-                        symbol: "cpu",
-                        title: "NEAR AI Gateway",
-                        subtitle: "Hardware-attested Intel TDX + NVIDIA GPU enclaves paid with your NEAR AI Cloud API key.")
+                if settings.securityProfile.allowsNear {
+                    Section {
+                        WalletGroupHeader(
+                            symbol: "cpu",
+                            title: "NEAR AI Gateway",
+                            subtitle: "Hardware-attested Intel TDX + NVIDIA GPU enclaves paid with your NEAR AI Cloud API key.")
+                    }
+                    NearPayment(mode: nearMode, tokens: nil, openSettings: showNearSettings)
                 }
-                NearPayment(mode: nearMode, tokens: nil, openSettings: showNearSettings)
+
+                if settings.securityProfile == .anonCloud {
+                    Section {
+                        HStack(spacing: 8) {
+                            Image(systemName: "theatermasks")
+                                .foregroundStyle(.secondary)
+                            Text("Token Inference (Venice / Boundless) and NEAR AI Gateway are hidden in Anon Private Cloud profile.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Change Profile…", action: showGeneral)
+                                .controlSize(.small)
+                        }
+                    }
+                }
             }
             .onChange(of: payer.review) { _, review in
                 guard review != nil else { return }
@@ -442,7 +490,42 @@ private struct GeneralPane: View {
     @State private var login = LoginItem.stage
 
     var body: some View {
+        let profile = settings.securityProfile
         Form {
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Security Profile", selection: $settings.securityProfile) {
+                        ForEach(SecurityProfile.allCases) { option in
+                            Text(option.shortTitle).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    Text(profile.summary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(profile.allowedItems, id: \.self) { item in
+                            Label(item, systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                                .symbolRenderingMode(.hierarchical)
+                                .tint(.green)
+                        }
+                        ForEach(profile.blockedItems, id: \.self) { item in
+                            Label(item, systemImage: profile == .privateCloud ? "info.circle" : "slash.circle")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+                .padding(.vertical, 2)
+            } header: {
+                Text("Security Profile")
+            }
+
             Section {
                 Row("Launch at login", note: "Opens Cloak paused in the menu bar — nothing runs until you start.") {
                     VStack(alignment: .trailing, spacing: 4) {
@@ -462,10 +545,14 @@ private struct GeneralPane: View {
             Section {
                 Row(
                     "Prompt rewriting",
-                    note: "Rewrites prompts locally to remove writing style and personal details. Always on for Connected Apps and Agent tasks."
+                    note: profile.enforcesPromptRewriting
+                        ? "Locked ON by Anon Private Cloud profile. Rewrites prompts locally to remove writing style and personal details."
+                        : "Rewrites prompts locally to remove writing style and personal details. Always on for Connected Apps and Agent tasks."
                 ) {
                     Picker("Prompt rewriting", selection: $settings.promptRewriting) {
-                        ForEach(PromptRewriting.allCases) { Text($0.title).tag($0) }
+                        ForEach(PromptRewriting.allCases.filter { !profile.enforcesPromptRewriting || $0 != .off }) {
+                            Text($0.title).tag($0)
+                        }
                     }
                     .labelsHidden()
                     .frame(maxWidth: 220)
@@ -851,6 +938,292 @@ private struct LocalAccessPane: View {
     }
 }
 
+/// Saved Project Profiles (free and unlocked during beta): keeps each client or
+/// codebase isolated across approved Local folders, Privacy Shield private terms,
+/// preferred route, and Connected Apps model override.
+private struct ProjectsPane: View {
+    @Bindable var settings: AppSettings
+    @State private var editingProfile: ProjectProfile?
+    @State private var creatingNew = false
+    @State private var deletingProfile: ProjectProfile?
+
+    var body: some View {
+        Form {
+            Section {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "folder.badge.gearshape")
+                        .font(.title3)
+                        .foregroundStyle(.tint)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Saved Project Profiles")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Keep each client or repository cleanly separated. Switching a project swaps approved Local folders, Privacy Shield terms, and preferred route across Chat and Connected Apps.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+
+            Section {
+                Button {
+                    settings.activateProjectProfile(nil)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: settings.activeProjectProfileID == nil ? "largecircle.fill.circle" : "circle")
+                            .foregroundStyle(settings.activeProjectProfileID == nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Default (No Project)")
+                                .fontWeight(settings.activeProjectProfileID == nil ? .semibold : .regular)
+                            Text("Uses your global Local Access folders and Connected Apps Privacy Shield terms.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+
+                ForEach(settings.projectProfiles) { profile in
+                    let active = settings.activeProjectProfileID == profile.id
+                    HStack(spacing: 8) {
+                        Button {
+                            settings.activateProjectProfile(profile.id)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: active ? "largecircle.fill.circle" : "circle")
+                                    .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(profile.name)
+                                        .fontWeight(active ? .semibold : .regular)
+                                    let summary = profile.summaryParts.isEmpty
+                                        ? "No custom folders or shielded terms yet"
+                                        : profile.summaryParts.joined(separator: " · ")
+                                    Text(summary)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button("Edit") {
+                            editingProfile = profile
+                        }
+                        .controlSize(.small)
+
+                        Button(role: .destructive) {
+                            deletingProfile = profile
+                        } label: {
+                            Image(systemName: "trash")
+                                .foregroundStyle(.red)
+                        }
+                        .buttonStyle(.borderless)
+                        .tip("Delete \(profile.name)")
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("Profiles")
+                    Spacer()
+                    SymbolButton("New Project", symbol: "plus") {
+                        creatingNew = true
+                    }
+                }
+            } footer: {
+                Text("Project folders and notes stay strictly local to this Mac (Local Mode only). Private Terms are merged into CloakDoor's in-memory Privacy Shield whenever a project is active.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .sheet(isPresented: $creatingNew) {
+            ProjectProfileEditorSheet(profile: nil) { saved in
+                settings.saveProjectProfile(saved)
+                settings.activateProjectProfile(saved.id)
+            }
+        }
+        .sheet(item: $editingProfile) { profile in
+            ProjectProfileEditorSheet(profile: profile) { saved in
+                settings.saveProjectProfile(saved)
+            }
+        }
+        .confirmationDialog(
+            "Delete project “\(deletingProfile?.name ?? "")”?",
+            isPresented: Binding(get: { deletingProfile != nil }, set: { if !$0 { deletingProfile = nil } }),
+            presenting: deletingProfile
+        ) { target in
+            Button("Delete Project", role: .destructive) {
+                settings.deleteProjectProfile(target.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Removes this saved profile from Cloak. None of your files or chats are deleted.")
+        }
+    }
+}
+
+private struct ProjectProfileEditorSheet: View {
+    let existing: ProjectProfile?
+    let onSave: (ProjectProfile) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name: String
+    @State private var route: ProjectProfile.RoutePreference
+    @State private var doorModelOverride: String
+    @State private var privateTerms: String
+    @State private var approvedFolders: [String]
+    @State private var localNotes: String
+
+    init(profile: ProjectProfile?, onSave: @escaping (ProjectProfile) -> Void) {
+        self.existing = profile
+        self.onSave = onSave
+        _name = State(initialValue: profile?.name ?? "")
+        _route = State(initialValue: profile?.route ?? .keepCurrent)
+        _doorModelOverride = State(initialValue: profile?.doorModelOverride ?? "")
+        _privateTerms = State(initialValue: profile?.privateTerms ?? "")
+        _approvedFolders = State(initialValue: profile?.approvedFolders ?? [])
+        _localNotes = State(initialValue: profile?.localNotes ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(existing == nil ? "New Project Profile" : "Edit Project Profile")
+                .font(.headline)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+            Divider()
+            Form {
+                Section("Basics") {
+                    TextField("Project name", text: $name, prompt: Text("e.g. Acme Client Audit"))
+                    Picker("Preferred route", selection: $route) {
+                        ForEach(ProjectProfile.RoutePreference.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    TextField("Connected Apps model override", text: $doorModelOverride, prompt: Text("Auto (optional)"))
+                        .font(.callout.monospaced())
+                }
+                Section {
+                    TextField(
+                        "Private terms",
+                        text: $privateTerms,
+                        prompt: Text("e.g. Acme Corp, cedar-relay, alice.eth"),
+                        axis: .vertical
+                    )
+                    .lineLimit(2...4)
+                } header: {
+                    Text("Privacy Shield Terms (Connected Apps)")
+                } footer: {
+                    Text("Comma- or newline-separated names, companies, or repo slugs masked with reversible aliases whenever this project is active.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Section {
+                    if approvedFolders.isEmpty {
+                        Text("No project folders selected yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(approvedFolders, id: \.self) { path in
+                            HStack {
+                                Image(systemName: "folder")
+                                    .foregroundStyle(.secondary)
+                                Text(Self.abbreviateHome(path))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Button("Remove", role: .destructive) {
+                                    approvedFolders.removeAll { $0 == path }
+                                }
+                                .controlSize(.small)
+                            }
+                        }
+                    }
+                    Button("Add Folder…", action: addFolder)
+                } header: {
+                    Text("Approved Local Folders (Local Mode Only)")
+                }
+                Section {
+                    TextEditor(text: Binding(
+                        get: { localNotes },
+                        set: { localNotes = ProjectProfile.clampedNotes($0) }))
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 72, maxHeight: 110)
+                        .padding(4)
+                        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
+                } header: {
+                    HStack {
+                        Text("Local Project Notes (Local Mode Only)")
+                        Spacer()
+                        Text("\(localNotes.count) / \(ProjectProfile.localNotesLimit)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            Divider()
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(existing == nil ? "Create Project" : "Save") {
+                    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    let saved = ProjectProfile(
+                        id: existing?.id ?? UUID(),
+                        name: trimmed,
+                        approvedFolders: approvedFolders,
+                        privateTerms: privateTerms,
+                        route: route,
+                        doorModelOverride: doorModelOverride,
+                        localNotes: localNotes,
+                        createdAt: existing?.createdAt ?? .now,
+                        updatedAt: .now)
+                    onSave(saved)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+        }
+        .frame(width: 520, height: 560)
+    }
+
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Project Folder"
+        panel.message = "Read-only folder scoped strictly to this project in Local Mode."
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                let path = url.standardizedFileURL.path
+                if !approvedFolders.contains(path) {
+                    approvedFolders.append(path)
+                }
+            }
+        }
+    }
+
+    private static func abbreviateHome(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path.hasPrefix(home) {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
+    }
+}
+
 /// Dedicated Feedback pane listing every official channel for bug reports,
 /// feature requests, and questions.
 private struct FeedbackPane: View {
@@ -860,7 +1233,7 @@ private struct FeedbackPane: View {
     @State private var recentCrash: DiagnosticReport.CrashInfo?
 
     /// The release, which `build.sh` writes into the app.
-    private static let release = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.2.1"
+    private static let release = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.3.0"
     private static let email = "build@regents.sh"
     private static let emailURL = URL(string: "mailto:build@regents.sh?subject=Cloak%20\(release)%20Feedback")!
     private static let patchbayURL = URL(string: "https://regents.sh/patchbay/cloak")!
@@ -1229,11 +1602,33 @@ private struct OfflineDatasetSection: View {
 private struct NearPane: View {
     @Bindable var settings: AppSettings
     let mode: NearMode
+    let showGeneral: () -> Void
     @State private var confirmingDisableTraces = false
 
     var body: some View {
         let traces = mode.traces
         Form {
+            if !settings.securityProfile.allowsNear {
+                Section {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: settings.securityProfile.symbol)
+                            .font(.title3)
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("NEAR AI Gateway disabled in \(settings.securityProfile.title)")
+                                .font(.headline)
+                            Text("NEAR AI Gateway uses a personal account API key and is only enabled under the Private Cloud AI security profile.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("Open Security Profile…", action: showGeneral)
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
             Section {
                 Row("Key", note: "Your API key from cloud.near.ai, kept in macOS Keychain. NEAR ties requests to your account.") {
                     KeyRow(mode: mode)
@@ -1243,11 +1638,13 @@ private struct NearPane: View {
                     Text("Get a free or paid API key at [cloud.near.ai](https://cloud.near.ai).")
                 }
             }
+            .disabled(!settings.securityProfile.allowsNear)
             Section {
                 Row("Route through Tor", note: "Hides your IP from NEAR and Intel via Tor (~30s hardware check).") {
                     Switch("Route through Tor", isOn: $settings.nearTor)
                 }
             }
+            .disabled(!settings.securityProfile.allowsNear)
             Section {
                 Row("Share traces", note: "Export selected NEAR AI Gateway chats to Cloak's local Traces folder for handoff to NEAR AI Gateway.") {
                     Switch(
@@ -1281,6 +1678,7 @@ private struct NearPane: View {
             } footer: {
                 Text("Cloak keeps chats end-to-end encrypted and uploads nothing itself. Add the folder as Exported traces in [NEAR AI Gateway](https://gateway.near.ai) ([Trace Commons](https://github.com/TraceCommons/trace-commons)).")
             }
+            .disabled(!settings.securityProfile.allowsNear)
             Section {
                 Row("Model", note: "Hardware attestation verifies the enclave server, not the model weights. More models in next update.") {
                     Text(Near.displayModel)
@@ -1471,6 +1869,8 @@ private struct LlamaPane: View {
     let downloads: [ModelDownload]
     let adapterDownloads: [String: ModelDownload]
     let rewording: Manifest.Model
+    @State private var discovered: [DiscoveredLocalModel] = []
+    @State private var scanningServers = false
 
     /// Whether the pane is in the sidebar: while a model other than the one
     /// that rewords fits this Mac, or one is chosen.
@@ -1478,37 +1878,171 @@ private struct LlamaPane: View {
         settings.answerModel != nil || downloads.contains { !$0.rewords && $0.fits }
     }
 
+    /// Sorts Cloak's curated built-in models by hardware fit, then recency + quality descending.
+    private static func ranked(_ models: [ModelDownload]) -> [ModelDownload] {
+        models.sorted { lhs, rhs in
+            if lhs.fits != rhs.fits { return lhs.fits && !rhs.fits }
+            let lScore = LocalModelRanking.score(
+                identifier: lhs.model.name,
+                label: lhs.model.label,
+                memoryBytes: lhs.model.memory,
+                isMLX: lhs.model.engine == .vmlx)
+            let rScore = LocalModelRanking.score(
+                identifier: rhs.model.name,
+                label: rhs.model.label,
+                memoryBytes: rhs.model.memory,
+                isMLX: rhs.model.engine == .vmlx)
+            if lScore.combined != rScore.combined { return lScore.combined > rScore.combined }
+            return lhs.model.memory > rhs.model.memory
+        }
+    }
+
     var body: some View {
-        let chatDownloads = downloads.filter { !$0.rewords }
+        let chatDownloads = Self.ranked(downloads.filter { !$0.rewords })
         let rewriterDownload = downloads.first(where: \.rewords)
-        let bestDownload = chatDownloads.last(where: { $0.fits && $0.model.engine == .vmlx }) ?? chatDownloads.last(where: \.fits)
-        let chosen = settings.answerModel.flatMap { id in chatDownloads.contains { $0.model.name == id } ? id : nil } ?? bestDownload?.model.name
-        let chosenDownload = chatDownloads.first { $0.model.name == chosen } ?? bestDownload
+        let bestDownload = chatDownloads.first(where: { $0.fits && $0.model.engine == .vmlx }) ?? chatDownloads.first(where: \.fits)
+        let externalSelection = settings.externalLocalSelection
+        let chosenBuiltIn = settings.answerModel.flatMap { id in chatDownloads.contains { $0.model.name == id } ? id : nil } ?? bestDownload?.model.name
+        let chosenDownload = chatDownloads.first { $0.model.name == chosenBuiltIn } ?? bestDownload
         let best = bestDownload?.model.name
         let hosts = downloads.flatMap(\.hosts).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
         let bullets = [
             "Downloads fetch verified weights straight from \(hosts.joined(separator: " and ")), which sees this Mac's IP address.",
-            "MLX models run ~60 tok/s on 16 GB+ Apple Silicon Macs; GGUF models support the optional Unfiltered LoRA.",
+            "Sorted by recency & quality for this Mac. MLX models run ~74 tok/s on M4 Max with RAM-only KV prefix caching.",
             "Prompt rewriting always uses \(rewording.label) separately from your Local chat model.",
         ]
         Form {
             Section {
                 ForEach(chatDownloads, id: \.model.name) { download in
-                    ModelRow(download: download, chosen: download.model.name == chosen, best: download.model.name == best, selectable: true) {
+                    ModelRow(
+                        download: download,
+                        chosen: externalSelection == nil && download.model.name == chosenBuiltIn,
+                        best: download.model.name == best,
+                        selectable: true
+                    ) {
+                        settings.selectExternalLocal(nil)
                         settings.answerModel = download.model.name
                     }
                 }
             } header: {
                 HStack(spacing: 2) {
-                    Text("Model")
+                    Text("Built-in Models (By Recency & Quality)")
                     InfoButton("About Model", hint: bullets.joined(separator: " ")) {
                         BulletNote("Local Models", bullets: bullets)
                     }
                 }
             } footer: {
-                Text("Engines: [vmlx-swift](https://github.com/osaurus-ai/vmlx-swift) (MLX) · [llama.cpp](https://github.com/ggml-org/llama.cpp) (GGUF & prompt rewriter).")
+                Text("Engines: [vmlx-swift](https://github.com/osaurus-ai/vmlx-swift) (MLX · RAM-only KV cache) · [llama.cpp](https://github.com/ggml-org/llama.cpp) (GGUF & prompt rewriter).")
             }
-            if let adapter = chosenDownload?.model.unfilteredLora, let adapterDownload = adapterDownloads[adapter.name] {
+
+            Section {
+                LabeledContent("Thinking Depth") {
+                    Picker("Thinking Depth", selection: $settings.localReasoningEffort) {
+                        ForEach(LocalReasoningEffort.allCases) { effort in
+                            Text(effort.title).tag(effort)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            } header: {
+                Text("Reasoning Effort")
+            } footer: {
+                Text(settings.localReasoningEffort.detail)
+            }
+
+            Section {
+                if let ext = externalSelection,
+                    !discovered.contains(where: { $0.baseURL == ext.baseURL && $0.modelID == ext.modelID })
+                {
+                    HStack(spacing: 8) {
+                        Image(systemName: "largecircle.fill.circle")
+                            .foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(ext.displayName)
+                                .fontWeight(.medium)
+                            Text("\(ext.serverName) · \(ext.baseURL.absoluteString) (not currently running)")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                        Spacer()
+                        Button("Use Built-in") {
+                            settings.selectExternalLocal(nil)
+                        }
+                        .controlSize(.small)
+                    }
+                }
+                if scanningServers && discovered.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Scanning 127.0.0.1 for Splash, TensorFold, LM Studio, mlx-serve, Ollama & Darkbloom…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if discovered.isEmpty {
+                    Text("No running local servers detected on 127.0.0.1 (checked Splash :8000, TensorFold :8080, mlx-serve :11234, LM Studio :1234, Ollama :11434, and Darkbloom Local).")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(discovered) { model in
+                        let selected = externalSelection?.baseURL == model.baseURL && externalSelection?.modelID == model.modelID
+                        Button {
+                            settings.selectExternalLocal(model)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                                    .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(model.displayName)
+                                        .fontWeight(selected ? .semibold : .regular)
+                                    Text("\(model.server.rawValue) · \(model.baseURL.absoluteString)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(model.server.rawValue)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.primary.opacity(0.06), in: Capsule())
+                            }
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("Detected Local Servers")
+                    Spacer()
+                    if externalSelection != nil {
+                        Button("Use Built-in") {
+                            settings.selectExternalLocal(nil)
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                    }
+                    Button {
+                        scanLocalServers()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(scanningServers)
+                    .tip("Scan loopback ports (127.0.0.1) for running local servers.")
+                }
+            } footer: {
+                Text("Strictly loopback-only (127.0.0.1). Reuse models already downloaded in Splash, TensorFold, LM Studio, mlx-serve, Ollama, or Darkbloom Local in both Local Chat and Connected Apps without duplicating multi-GB weights.")
+            }
+
+            if externalSelection == nil,
+                let adapter = chosenDownload?.model.unfilteredLora,
+                let adapterDownload = adapterDownloads[adapter.name]
+            {
                 UnfilteredAdapterSection(settings: settings, adapter: adapter, download: adapterDownload)
             }
             if let rewriterDownload {
@@ -1526,14 +2060,30 @@ private struct LlamaPane: View {
         // window comes back, and as any model's download changes stage,
         // since a download that ends, stops or is removed changes the space
         // the others have. Download reads them again at its press.
-        .onAppear(perform: refresh)
-        .onReturn(perform: refresh)
+        .onAppear {
+            refresh()
+            scanLocalServers()
+        }
+        .onReturn {
+            refresh()
+            scanLocalServers()
+        }
         .onChange(of: downloads.map(\.state), refresh)
     }
 
     private func refresh() {
         downloads.forEach { $0.refresh() }
         adapterDownloads.values.forEach { $0.refresh() }
+    }
+
+    private func scanLocalServers() {
+        guard !scanningServers else { return }
+        scanningServers = true
+        Task {
+            let found = await LocalServerDiscovery.discover()
+            discovered = found
+            scanningServers = false
+        }
     }
 }
 
@@ -1954,6 +2504,16 @@ private struct AdvancedPane: View {
                     note: "Periodically fetches random public web pages over isolated Tor circuits (~3 requests/min) to blur when your real prompts leave this Mac. Toggles live with no restart."
                 ) {
                     Switch("Cover traffic", isOn: $settings.cover)
+                        .disabled(!settings.securityProfile.allowsAnyCloud || settings.securityProfile.enforcesTorAndCover)
+                }
+                if settings.securityProfile.enforcesTorAndCover {
+                    Label("Locked ON by Anon Private Cloud security profile.", systemImage: "lock.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if !settings.securityProfile.allowsAnyCloud {
+                    Label("Disabled in Local Only + Downloads security profile.", systemImage: "laptopcomputer")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Fetches random public pages (Wikipedia, Hacker News, arXiv, BBC, GitHub Trending, and 50+ other public URLs) over isolated Tor circuits. Never sends chat text, keys, or personal data.")
@@ -2013,9 +2573,11 @@ private struct AdvancedPane: View {
                         ForEach(ProofFreshness.allCases) { Text($0.title).tag($0) }
                     }
                     .labelsHidden()
+                    .disabled(!settings.securityProfile.allowsNear)
                 }
                 Row("Show all Venice tiers", note: "Adds Venice Anonymous models (third-party providers) alongside Private and TEE models.") {
                     Switch("Show all Venice tiers", isOn: $settings.veniceAllTiers)
+                        .disabled(!settings.securityProfile.allowsTokenInference)
                 }
             }
             Section("Shortcut") {

@@ -259,4 +259,30 @@ struct ExpiryGuardTests {
         #expect(guarded.isExecutingAutoWithdraw == false)
         #expect(harness.attentionMessages.isEmpty)
     }
+
+    @Test func walletBecomingBusyDuringFeeEstimateRetriesOnceIdleInsteadOfSilentlyExiting() async {
+        let harness = Harness()
+        let expiry = harness.now.addingTimeInterval(2 * Self.day)
+        harness.expiry = expiry
+
+        // Simulate an ordinary periodic wallet refresh overlapping the FIRST fee check:
+        // `isBusy` flips true while `estimateWithdrawalFee()` is in flight, then clears
+        // after one 15s idle poll. Auto-withdraw MUST loop and succeed on attempt 2.
+        harness.estimateHook = {
+            if harness.estimateCount == 1 {
+                harness.busy = true
+                harness.busyPollsRemaining = 1
+            }
+        }
+
+        let guardObj = harness.makeGuard()
+        guardObj.handle(harness.snapshot)
+        await guardObj.waitForAutoWithdraw()
+
+        #expect(harness.estimateCount == 2)
+        #expect(harness.quoteCount == 1)
+        #expect(harness.confirmCount == 1)
+        #expect(guardObj.attemptedExpiry == expiry)
+        #expect(harness.attentionMessages.isEmpty)
+    }
 }

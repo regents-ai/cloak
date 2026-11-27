@@ -324,6 +324,75 @@ struct PrivacyShieldTests {
         await door.close()
     }
 
+    @Test func privacyShieldScansAndMasksToolDefinitionsWhilePreservingSchemaStructure() throws {
+        let secret = "sk-ant-" + "api03-abcdefghijklmnopqrstuvwxyz0123456789"
+        let toolSecretBody = Data(#"""
+        {
+          "model": "qwen/qwen3-coder",
+          "messages": [{"role": "user", "content": "List files."}],
+          "tools": [{
+            "type": "function",
+            "function": {
+              "name": "read_repo",
+              "description": "Reads repo using fallback key \#(secret)",
+              "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+            }
+          }]
+        }
+        """#.utf8)
+        let findings = PrivacyShield.scanRequestJSONForSecrets(toolSecretBody)
+        #expect(findings.map(\.kind).contains("Anthropic API Key"))
+
+        var blockMap = RedactionMap()
+        #expect(throws: CloakDoor.Failure.self) {
+            _ = try PrivacyShield.protectRequestJSON(
+                toolSecretBody,
+                map: &blockMap,
+                policy: PrivacyShieldPolicy(blockSecrets: true, maskEntities: true, privateTerms: ["CedarVault"]))
+        }
+
+        // Private term + home path inside tool description & nested parameter description must be masked
+        // while keeping function name, schema type, property keys, and required array intact.
+        let toolEntityBody = Data(#"""
+        {
+          "model": "qwen/qwen3-coder",
+          "messages": [{"role": "user", "content": "Inspect CedarVault."}],
+          "tools": [{
+            "type": "function",
+            "function": {
+              "name": "inspect_repo",
+              "description": "Inspects CedarVault files under /Users/mira/Work/CedarVault.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "repo_path": {
+                    "type": "string",
+                    "description": "Path inside /Users/mira/Work/CedarVault for CedarVault."
+                  }
+                },
+                "required": ["repo_path"]
+              }
+            }
+          }]
+        }
+        """#.utf8)
+        var map = RedactionMap()
+        let (protected, count) = try PrivacyShield.protectRequestJSON(
+            toolEntityBody,
+            map: &map,
+            policy: PrivacyShieldPolicy(blockSecrets: true, maskEntities: true, privateTerms: ["CedarVault"]))
+        #expect(count >= 4)
+        let out = String(decoding: protected, as: UTF8.self)
+        #expect(!out.contains("CedarVault"))
+        #expect(!out.contains("/Users/mira/Work/CedarVault"))
+        #expect(out.contains("[ENTITY_1]"))
+        #expect(out.contains("[PATH_1]"))
+        // Structural tool schema stays valid for tool calling.
+        #expect(out.contains(#""name":"inspect_repo""#))
+        #expect(out.contains(#""repo_path""#))
+        #expect(out.contains(#""required":["repo_path"]"#))
+    }
+
     // MARK: - HTTP Helper
 
     private static func httpPost(port: UInt16, path: String, apiKeyHeader: String, body: String) async throws -> (status: Int, body: String) {

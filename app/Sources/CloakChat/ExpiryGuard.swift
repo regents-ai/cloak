@@ -33,12 +33,14 @@ public final class ExpiryGuard {
         public var autoWithdraw: Bool
         public var state: Payer.State
         public var paused: Bool
+        public var busy: Bool
 
-        public init(expiry: Date?, autoWithdraw: Bool, state: Payer.State, paused: Bool) {
+        public init(expiry: Date?, autoWithdraw: Bool, state: Payer.State, paused: Bool, busy: Bool = false) {
             self.expiry = expiry
             self.autoWithdraw = autoWithdraw
             self.state = state
             self.paused = paused
+            self.busy = busy
         }
     }
 
@@ -115,6 +117,7 @@ public final class ExpiryGuard {
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "expiry")
     private var watchTask: Task<Void, Never>?
     private var autoWithdrawTask: Task<Void, Never>?
+    private var scheduledKey: (expiry: Date, paused: Bool)?
     /// True while `autoWithdrawTask` is actively executing `quoteWithdrawal()` /
     /// `confirmWithdrawal()`, so the resulting `.ready -> .withdrawing("quoted")` state
     /// transition never self-cancels our own in-flight confirmation.
@@ -176,6 +179,7 @@ public final class ExpiryGuard {
     public func cancelPendingAutoWithdraw() {
         autoWithdrawTask?.cancel()
         autoWithdrawTask = nil
+        scheduledKey = nil
     }
 
     /// Awaits completion of the currently scheduled auto-withdraw task, if any.
@@ -195,14 +199,45 @@ public final class ExpiryGuard {
         // executing (quoteWithdrawal transitions `payer.state` from `.ready`
         // to `.withdrawing("quoted")`).
         if isExecutingAutoWithdraw { return }
+
+        guard snapshot.autoWithdraw, let expiry = snapshot.expiry, snapshot.state == .ready else {
+            autoWithdrawTask?.cancel()
+            autoWithdrawTask = nil
+            scheduledKey = nil
+            return
+        }
+        guard attemptedExpiry != expiry else {
+            autoWithdrawTask?.cancel()
+            autoWithdrawTask = nil
+            scheduledKey = nil
+            return
+        }
+
+        // Keep an already-running watcher alive across transient `busy` flips
+        // (e.g. an ordinary wallet refresh running concurrently with fee estimation).
+        if autoWithdrawTask != nil,
+            let key = scheduledKey,
+            key.expiry == expiry,
+            key.paused == snapshot.paused
+        {
+            return
+        }
+
         autoWithdrawTask?.cancel()
         autoWithdrawTask = nil
-        guard snapshot.autoWithdraw, let expiry = snapshot.expiry, snapshot.state == .ready else { return }
-        guard attemptedExpiry != expiry else { return }
+        scheduledKey = (expiry, snapshot.paused)
 
         let withdrawAt = expiry.addingTimeInterval(-Self.autoWithdrawLead)
+        let token = UUID()
         autoWithdrawTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if self.scheduledKey?.expiry == expiry, !self.isExecutingAutoWithdraw {
+                    self.autoWithdrawTask = nil
+                    self.scheduledKey = nil
+                }
+            }
+            _ = token
             // Sleep in bounded chunks so system sleep/clock jumps wake promptly.
             while self.parts.now() < withdrawAt {
                 guard !Task.isCancelled else { return }
@@ -211,77 +246,92 @@ public final class ExpiryGuard {
                 let step = min(remaining, 3600)
                 guard await self.parts.sleep(step), !Task.isCancelled else { return }
             }
-            // Wait briefly if a chat turn, wallet review, or another press is in flight
-            // rather than clobbering user UI or burning our single attempt.
+
+            // Loop cleanly across transient busy overlaps (e.g. an ordinary wallet
+            // refresh starting while `estimateWithdrawalFee()` is in flight) rather
+            // than silently exiting without attempting or alerting.
             while !Task.isCancelled {
-                guard self.parts.autoWithdrawEnabled(), self.parts.depositExpires() == expiry else { return }
-                guard self.parts.payerState() == .ready else { return }
-                if !self.parts.isBusy() { break }
-                guard await self.parts.sleep(15), !Task.isCancelled else { return }
-            }
-            guard !Task.isCancelled else { return }
-            guard self.parts.autoWithdrawEnabled(),
-                self.parts.payerState() == .ready,
-                self.parts.depositExpires() == expiry
-            else {
-                return
-            }
-            if self.parts.withdrawBlock() == .paused {
-                self.logger.notice("auto-withdraw deferred: vault paused by operator")
-                self.parts.notifyAttention(
-                    "zkAPI withdrawals are temporarily paused by the operator. Check Cloak Funds before your deposit expires.")
-                return
-            }
-            guard self.parts.withdrawBlock() == nil else { return }
-            // Estimate live Ethereum gas fees BEFORE calling `quoteWithdrawal()` —
-            // quoting irreversibly enters `withdrawal_pending` and freezes chat spending.
-            // Only proceed if live wallet ETH covers the conservative gas reserve.
-            let estimate = await self.parts.estimateWithdrawalFee()
-            guard !Task.isCancelled else { return }
-            guard self.parts.autoWithdrawEnabled(),
-                self.parts.payerState() == .ready,
-                self.parts.depositExpires() == expiry,
-                self.parts.withdrawBlock() == nil,
-                !self.parts.isBusy()
-            else {
-                return
-            }
-            guard let estimate else {
+                guard self.parts.autoWithdrawEnabled(),
+                    self.parts.payerState() == .ready,
+                    self.parts.depositExpires() == expiry
+                else {
+                    return
+                }
+                if self.parts.isBusy() {
+                    guard await self.parts.sleep(15), !Task.isCancelled else { return }
+                    continue
+                }
+                if self.parts.withdrawBlock() == .paused {
+                    self.logger.notice("auto-withdraw deferred: vault paused by operator")
+                    self.parts.notifyAttention(
+                        "zkAPI withdrawals are temporarily paused by the operator. Check Cloak Funds before your deposit expires.")
+                    return
+                }
+                if self.parts.withdrawBlock() != nil {
+                    guard await self.parts.sleep(15), !Task.isCancelled else { return }
+                    continue
+                }
+                // Estimate live Ethereum gas fees BEFORE calling `quoteWithdrawal()` —
+                // quoting irreversibly enters `withdrawal_pending` and freezes chat spending.
+                // Only proceed if live wallet ETH covers the conservative gas reserve.
+                let estimate = await self.parts.estimateWithdrawalFee()
+                guard !Task.isCancelled else { return }
+                guard self.parts.autoWithdrawEnabled(),
+                    self.parts.payerState() == .ready,
+                    self.parts.depositExpires() == expiry
+                else {
+                    return
+                }
+                if self.parts.withdrawBlock() == .paused {
+                    self.logger.notice("auto-withdraw deferred after fee check: vault paused by operator")
+                    self.parts.notifyAttention(
+                        "zkAPI withdrawals are temporarily paused by the operator. Check Cloak Funds before your deposit expires.")
+                    return
+                }
+                if self.parts.isBusy() || self.parts.withdrawBlock() != nil {
+                    // Wallet became busy during the fee check (e.g. periodic refresh or
+                    // chat turn): wait until idle and re-check instead of silently exiting.
+                    guard await self.parts.sleep(15), !Task.isCancelled else { return }
+                    continue
+                }
+                guard let estimate else {
+                    self.attemptedExpiry = expiry
+                    self.logger.notice("auto-withdraw deferred before quoting: could not estimate live Ethereum gas fee")
+                    self.parts.notifyAttention(
+                        "Cloak couldn't check Ethereum gas fees for automatic zkAPI withdrawal. Open Funds to withdraw before expiry.")
+                    return
+                }
+                if let shortfall = Decimal(string: estimate.shortfallWei, locale: Locale(identifier: "en_US_POSIX")),
+                    shortfall > 0
+                {
+                    self.attemptedExpiry = expiry
+                    self.logger.notice("auto-withdraw skipped before quoting: wallet balance short of live gas reserve by \(estimate.shortfallWei, privacy: .public) wei")
+                    let needed = self.parts.formatWei(estimate.shortfallWei) ?? "a small amount of ETH"
+                    self.parts.notifyAttention(
+                        "Add at least \(needed) more ETH for Ethereum gas in Cloak Funds, then withdraw your expiring zkAPI deposit.")
+                    return
+                }
                 self.attemptedExpiry = expiry
-                self.logger.notice("auto-withdraw deferred before quoting: could not estimate live Ethereum gas fee")
-                self.parts.notifyAttention(
-                    "Cloak couldn't check Ethereum gas fees for automatic zkAPI withdrawal. Open Funds to withdraw before expiry.")
+                self.isExecutingAutoWithdraw = true
+                defer { self.isExecutingAutoWithdraw = false }
+                self.logger.notice("auto-withdrawing zkAPI deposit approaching expiry")
+                guard await self.parts.quoteWithdrawal() else {
+                    self.parts.notifyAttention(
+                        "Cloak couldn't prepare your automatic zkAPI withdrawal. Open Funds to withdraw before expiry.")
+                    return
+                }
+                if let block = self.parts.withdrawalConfirmBlock() {
+                    self.parts.cancelReview()
+                    self.logger.notice("auto-withdraw blocked: \(String(describing: block), privacy: .public)")
+                    self.parts.notifyAttention(
+                        "Add a small amount of ETH for Ethereum gas in Cloak Funds, then withdraw your expiring zkAPI deposit.")
+                    return
+                }
+                if await self.parts.confirmWithdrawal() {
+                    self.parts.notifyAttention(
+                        "Automatic zkAPI withdrawal needs your attention in Cloak Funds before the 30-day limit.")
+                }
                 return
-            }
-            if let shortfall = Decimal(string: estimate.shortfallWei, locale: Locale(identifier: "en_US_POSIX")),
-                shortfall > 0
-            {
-                self.attemptedExpiry = expiry
-                self.logger.notice("auto-withdraw skipped before quoting: wallet balance short of live gas reserve by \(estimate.shortfallWei, privacy: .public) wei")
-                let needed = self.parts.formatWei(estimate.shortfallWei) ?? "a small amount of ETH"
-                self.parts.notifyAttention(
-                    "Add at least \(needed) more ETH for Ethereum gas in Cloak Funds, then withdraw your expiring zkAPI deposit.")
-                return
-            }
-            self.attemptedExpiry = expiry
-            self.isExecutingAutoWithdraw = true
-            defer { self.isExecutingAutoWithdraw = false }
-            self.logger.notice("auto-withdrawing zkAPI deposit approaching expiry")
-            guard await self.parts.quoteWithdrawal() else {
-                self.parts.notifyAttention(
-                    "Cloak couldn't prepare your automatic zkAPI withdrawal. Open Funds to withdraw before expiry.")
-                return
-            }
-            if let block = self.parts.withdrawalConfirmBlock() {
-                self.parts.cancelReview()
-                self.logger.notice("auto-withdraw blocked: \(String(describing: block), privacy: .public)")
-                self.parts.notifyAttention(
-                    "Add a small amount of ETH for Ethereum gas in Cloak Funds, then withdraw your expiring zkAPI deposit.")
-                return
-            }
-            if await self.parts.confirmWithdrawal() {
-                self.parts.notifyAttention(
-                    "Automatic zkAPI withdrawal needs your attention in Cloak Funds before the 30-day limit.")
             }
         }
     }

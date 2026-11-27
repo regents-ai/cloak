@@ -35,16 +35,27 @@ struct DarkbloomMonitorSection: View {
                     }
                 }
                 if let budget = snapshot.memory.pinBudgetGb {
-                    LabeledContent("Model Memory") {
-                        if snapshot.state == "running", memoryUsed == 0 {
-                            Text("0.0 / \(budget, format: .number.precision(.fractionLength(1))) GB · loads on demand")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("\(memoryUsed, format: .number.precision(.fractionLength(1))) / \(budget, format: .number.precision(.fractionLength(1))) GB")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
+                    let cloakGB = Double(mode.cloakMemory) / 1_073_741_824
+                    let totalRAMGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+                    let combinedGB = cloakGB + memoryUsed
+                    VStack(alignment: .leading, spacing: 5) {
+                        LabeledContent("Model Memory") {
+                            if snapshot.state == "running", memoryUsed == 0 {
+                                Text("0.0 / \(budget, format: .number.precision(.fractionLength(1))) GB · loads on demand")
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("\(memoryUsed, format: .number.precision(.fractionLength(1))) / \(budget, format: .number.precision(.fractionLength(1))) GB")
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        ProgressView(value: min(combinedGB, max(totalRAMGB, 1)), total: max(totalRAMGB, 1))
+                            .tint(combinedGB > totalRAMGB * 0.85 ? .orange : .green)
+                        Text("RAM Budget: Cloak \(cloakGB, format: .number.precision(.fractionLength(1))) GB + Darkbloom \(memoryUsed, format: .number.precision(.fractionLength(1))) GB of \(totalRAMGB, format: .number.precision(.fractionLength(0))) GB unified RAM")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
                 }
                 if let tps = live?.resolvedTPS {

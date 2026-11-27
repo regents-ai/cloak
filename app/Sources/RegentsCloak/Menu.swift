@@ -1,4 +1,5 @@
 import AppKit
+import CloakChat
 import CloakControl
 #if DARKBLOOM
 import CloakDarkbloom
@@ -133,7 +134,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 Watched(
                     phase: supervisor.phase, startStep: supervisor.startStep,
                     resting: supervisor.resting, download: download.state,
-                    nearTor: settings.nearTor,
+                    nearTor: settings.nearTor, securityProfile: settings.securityProfile,
                     unread: indicator.hasUnreadAnswer, darkbloomServing: indicator.isDarkbloomServing)
             }) {
                 self.syncBloomAnimation(serving: watched.darkbloomServing)
@@ -200,6 +201,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         var resting: Bool
         var download: ModelDownload.State
         var nearTor: Bool
+        var securityProfile: SecurityProfile
         var unread: Bool
         var darkbloomServing: Bool
     }
@@ -255,16 +257,26 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             start.isEnabled = false
             menu.addItem(start)
         case .paused, .ready, .needsAttention:
-            let start = Action("Start", symbol: "play.fill", key: "s") { [supervisor, showChat] in
+            let start = Action(
+                settings.securityProfile.allowsAnyCloud ? "Start" : "Start (Blocked in Local Only)",
+                symbol: "play.fill",
+                key: settings.securityProfile.allowsAnyCloud ? "s" : ""
+            ) { [supervisor, showChat] in
                 supervisor.send(.start)
                 showChat()
             }
             // The header above says why.
-            if case .needsAttention(let reason) = phase { start.isEnabled = !Fix.startStops(for: reason, download: download) }
+            if !settings.securityProfile.allowsAnyCloud {
+                start.isEnabled = false
+            } else if case .needsAttention(let reason) = phase {
+                start.isEnabled = !Fix.startStops(for: reason, download: download)
+            }
             menu.addItem(start)
         }
         menu.addItem(Action("Chat", symbol: "bubble.left", run: showChat))
-        menu.addItem(Action("Funds", symbol: "creditcard", run: showFunds))
+        if settings.securityProfile.allowsAnyCloud {
+            menu.addItem(Action("Funds", symbol: "creditcard", run: showFunds))
+        }
         #if DARKBLOOM
         menu.addItem(Action("Inference Serving", symbol: "server.rack") { AppDelegate.current.showDarkbloom() })
         #endif

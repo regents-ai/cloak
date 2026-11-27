@@ -145,6 +145,19 @@ public final class Door {
         case address
     }
 
+    /// Where Mac apps connected through `CloakDoor` route their requests.
+    public enum MacRoute: Equatable, Sendable {
+        case zkapi
+        case tempo
+        /// 100% on-device local inference ($0/token, no Tor/VM required) via Cloak's
+        /// built-in worker or a detected loopback local server (Splash / TensorFold / LM Studio / mlx-serve / Ollama).
+        case local
+        /// Hardware-attested NEAR AI Gateway (Intel TDX + NVIDIA GPU E2EE v2 via `cloak-near`).
+        case near
+        /// Venice AI (Base USDC x402 wallet or Venice API key, Tor or direct HTTPS).
+        case venice
+    }
+
     /// What the door works with: in the app, the supervisor's and the
     /// keychain's.
     public struct Parts: Sendable {
@@ -157,8 +170,24 @@ public final class Door {
         let key: Remote.Key
         /// The conversations' key, found, or made when there is none.
         let sealing: @Sendable () async throws -> SymmetricKey?
-        /// How Mac apps connected through the door pay (defaults to zkAPI).
-        let macPayment: @Sendable () -> Payment
+        /// How Mac apps connected through the door route (`local`, `near`, `venice`, `tempo`, or `zkapi`).
+        let macRoute: @Sendable () -> MacRoute
+        /// Optional fail-closed Security Profile check; returns a plain-English refusal if `route` is disallowed.
+        let routeAllowed: @Sendable (MacRoute) -> String?
+        /// OpenAI `/v1/models` JSON returned when `macRoute() == .local`.
+        let localModels: @Sendable () async throws -> Data
+        /// Executes an OpenAI `/v1/chat/completions` JSON request locally on this Mac when `macRoute() == .local`.
+        let localComplete: @Sendable (Data) async throws -> Data
+        /// OpenAI `/v1/models` JSON returned when `macRoute() == .near`.
+        let nearModels: @Sendable () async throws -> Data
+        /// Executes an OpenAI `/v1/chat/completions` JSON request through NEAR TEE when `macRoute() == .near`.
+        let nearComplete: @Sendable (Data) async throws -> Data
+        /// OpenAI `/v1/models` JSON returned when `macRoute() == .venice`.
+        let veniceModels: @Sendable () async throws -> Data
+        /// Executes an OpenAI `/v1/chat/completions` JSON request through Venice when `macRoute() == .venice`.
+        let veniceComplete: @Sendable (Data, String) async throws -> Data
+        /// Preferred Venice model ID when mapping an unknown Claude/OpenAI alias on `.venice`.
+        let preferredVeniceModel: @Sendable () -> String?
         /// Preferred default model ID for a payment rail when an Anthropic
         /// client sends a Claude alias the provider does not list verbatim.
         let preferredModel: @Sendable (Payment) -> String?
@@ -179,6 +208,19 @@ public final class Door {
             exchange: @escaping Exchange, wallet: @escaping @Sendable () async throws -> String?, key: @escaping Remote.Key,
             sealing: @escaping @Sendable () async throws -> SymmetricKey?,
             macPayment: @escaping @Sendable () -> Payment = { .zkapi },
+            macRoute: (@Sendable () -> MacRoute)? = nil,
+            routeAllowed: @escaping @Sendable (MacRoute) -> String? = { _ in nil },
+            localModels: @escaping @Sendable () async throws -> Data = {
+                Data(#"{"object":"list","data":[{"id":"cloak-local"}]}"#.utf8)
+            },
+            localComplete: (@Sendable (Data) async throws -> Data)? = nil,
+            nearModels: @escaping @Sendable () async throws -> Data = {
+                Data(#"{"object":"list","data":[{"id":"Qwen/Qwen3.8-27B","object":"model","owned_by":"near-ai"}]}"#.utf8)
+            },
+            nearComplete: (@Sendable (Data) async throws -> Data)? = nil,
+            veniceModels: (@Sendable () async throws -> Data)? = nil,
+            veniceComplete: (@Sendable (Data, String) async throws -> Data)? = nil,
+            preferredVeniceModel: @escaping @Sendable () -> String? = { nil },
             preferredModel: @escaping @Sendable (Payment) -> String? = { _ in nil },
             forcedModel: @escaping @Sendable () -> String? = { nil },
             spendLedger: SpendLedger = SpendLedger(),
@@ -192,7 +234,28 @@ public final class Door {
             self.wallet = wallet
             self.key = key
             self.sealing = sealing
-            self.macPayment = macPayment
+            self.macRoute = macRoute ?? {
+                switch macPayment() {
+                case .zkapi: .zkapi
+                case .tempo: .tempo
+                }
+            }
+            self.routeAllowed = routeAllowed
+            self.localModels = localModels
+            self.localComplete = localComplete ?? { _ in
+                throw Failure(503, "local_unavailable", "Local inference is not configured for Connected Apps.")
+            }
+            self.nearModels = nearModels
+            self.nearComplete = nearComplete ?? { _ in
+                throw Failure(503, "near_unavailable", "NEAR AI Gateway is not configured for Connected Apps.")
+            }
+            self.veniceModels = veniceModels ?? {
+                throw Failure(503, "venice_unavailable", "Venice AI is not configured for Connected Apps.")
+            }
+            self.veniceComplete = veniceComplete ?? { _, _ in
+                throw Failure(503, "venice_unavailable", "Venice AI is not configured for Connected Apps.")
+            }
+            self.preferredVeniceModel = preferredVeniceModel
             self.preferredModel = preferredModel
             self.forcedModel = forcedModel
             self.spendLedger = spendLedger
@@ -266,9 +329,9 @@ public final class Door {
     /// Coalesced background flush of request counts so `admit` never blocks
     /// the main actor with `fsync` on every HTTP call.
     @ObservationIgnored private var appFlush: Task<Void, Never>?
-    /// Short-lived cache for `/v1/models` per payment rail so Connected Apps and
+    /// Short-lived cache for `/v1/models` per route so Connected Apps and
     /// Pi Agent turns don't pay an extra Tor round-trip on every single request.
-    @ObservationIgnored private var modelsCache: [Payment: (data: Data, at: Date)] = [:]
+    @ObservationIgnored private var modelsCache: [MacRoute: (data: Data, at: Date)] = [:]
     private static let modelsCacheTTL: TimeInterval = 60
     /// The box passes, by the agent's conversation, and how each
     /// conversation pays, until the door closes.
@@ -651,10 +714,10 @@ public final class Door {
         do {
             let (request, after) = try await HTTPRequest.head(connection)
             isAnthropic = request.path.hasPrefix("/v1/messages")
-            let (app, payment) = try admit(request, from: side)
+            let (app, route) = try admit(request, from: side)
             let body = try await request.body(after: after, from: connection)
             limit.cancel()
-            await routing(request, body: body, for: app, paying: payment, from: side, on: connection, since: started)
+            await routing(request, body: body, for: app, route: route, from: side, on: connection, since: started)
         } catch let failure as Failure {
             limit.cancel()
             await answer(failure.response(anthropic: isAnthropic), on: connection, since: started)
@@ -704,6 +767,16 @@ public final class Door {
     }
 
     /// A chat request with every user message reworded, ready to send.
+    /// Provider pricing and protocol-cap metadata parsed from `/v1/models`.
+    private struct ModelPricing: Sendable, Equatable {
+        /// zkAPI protocol-enforced per-request ticket ceiling (`oaRequestLimitMicroUsd`).
+        let protocolCapMicroUSD: UInt64?
+        /// US dollars per 1,000,000 input tokens (equivalent to micro-USD per input token).
+        let inputPerMillionUSD: Double?
+        /// US dollars per 1,000,000 output tokens (equivalent to micro-USD per output token).
+        let outputPerMillionUSD: Double?
+    }
+
     /// Sending it pays for it.
     private struct Ready: Sendable {
         /// How it is paid: through the payer, in its turn, or from the Tempo
@@ -711,6 +784,9 @@ public final class Door {
         enum Way: Sendable {
             case payer
             case wallet(DepositStore)
+            case local
+            case near
+            case venice
         }
 
         let app: UUID
@@ -724,6 +800,7 @@ public final class Door {
         /// Atomic SpendLedger reservation ID held until settlement or release.
         let reservationID: UUID?
         let estimatedMaxMicroUSD: UInt64
+        let pricing: ModelPricing?
         let restoreAliases: Bool
         let way: Way
     }
@@ -785,7 +862,7 @@ public final class Door {
     /// has been handed on to be paid for (`send`), and goes on to its
     /// answer, which an app that has left never reads.
     private func routing(
-        _ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side, on connection: some Link,
+        _ request: HTTPRequest, body: [UInt8], for app: UUID, route: MacRoute, from side: Side, on connection: some Link,
         since started: ContinuousClock.Instant
     ) async {
         let isAnthropic = request.path.hasPrefix("/v1/messages")
@@ -802,7 +879,7 @@ public final class Door {
                 await connection.ended()
                 return .ended
             }
-            group.addTask { await self.route(request, body: body, for: app, paying: payment, from: side) }
+            group.addTask { await self.route(request, body: body, for: app, route: route, from: side) }
             var stage = Routing.preparing
             while let routed = await group.next() {
                 switch routed {
@@ -855,7 +932,7 @@ public final class Door {
     /// and the app's request is counted; from the guest, a box pass. Returns
     /// the app, or the agent's conversation, and how its requests are paid:
     /// an app's as configured (`parts.macPayment`), a conversation's as its box says.
-    private func admit(_ request: HTTPRequest, from side: Side) throws(Failure) -> (UUID, Payment) {
+    private func admit(_ request: HTTPRequest, from side: Side) throws(Failure) -> (UUID, MacRoute) {
         guard request.headers["origin"] == nil, request.headers["sec-fetch-site"] != "cross-site" else { throw .origin }
         let rawPass: Substring
         if let header = request.headers["authorization"], header.hasPrefix("Bearer ") {
@@ -867,16 +944,16 @@ public final class Door {
         }
         let presented = Pass.fingerprint(rawPass)
         if case .guest = side {
-            var found: (UUID, Payment)?
+            var found: (UUID, MacRoute)?
             for (conversation, box) in boxes where Pass.same(box.fingerprint, presented) {
-                found = (conversation, box.payment)
+                found = (conversation, box.payment == .zkapi ? .zkapi : .tempo)
             }
             guard let found else { throw .pass }
             return found
         }
         if let probe = probeFingerprint, Pass.same(probe, presented) {
             guard request.method == "GET", request.path == "/v1/models" else { throw .pass }
-            return (Self.probeAppID, parts.macPayment())
+            return (Self.probeAppID, parts.macRoute())
         }
         var found: Int?
         for (index, app) in apps.enumerated() where Pass.same(app.fingerprint, presented) {
@@ -886,19 +963,22 @@ public final class Door {
         apps[found].requests += 1
         apps[found].lastUsed = .now
         scheduleKeep(key: key)
-        return (apps[found].id, parts.macPayment())
+        return (apps[found].id, parts.macRoute())
     }
 
     /// Routes one request up to the point where sending it would pay for
     /// it. A chat request is listed in `requests` from here; `routing` lists
     /// its end.
-    private func route(_ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side) async -> Routed {
+    private func route(_ request: HTTPRequest, body: [UInt8], for app: UUID, route: MacRoute, from side: Side) async -> Routed {
         let path = request.path
         let isAnthropic = path.hasPrefix("/v1/messages")
         do throws(Failure) {
+            if side == .mac, let refusal = parts.routeAllowed(route) {
+                throw Failure(403, "security_profile_blocked", refusal)
+            }
             switch (request.method, path) {
             case ("GET", "/v1/models"):
-                let list = try await models(paying: payment)
+                let list = try await models(route: route)
                 guard (try? GoJSON.read([UInt8](list)))?.members != nil else { throw Self.unreadable }
                 return .answer(HTTPResponse(status: 200, body: list))
             case ("POST", "/v1/messages/count_tokens"):
@@ -912,7 +992,7 @@ public final class Door {
                 if requests.count > Self.latest { requests[Self.latest].messages = [] }
                 do throws(Failure) {
                     return .ready(try await prepare(
-                        request, body: body, for: app, paying: payment, from: side,
+                        request, body: body, for: app, route: route, from: side,
                         anthropic: path == "/v1/messages", listed: listed.id))
                 } catch {
                     return .stopped(listed.id, error)
@@ -930,14 +1010,14 @@ public final class Door {
     private static let unreadable = Failure(502, "invalid_upstream_response", "The provider's answer did not read.")
 
     /// The provider's list of models, as it gives it: the zkAPI service's
-    /// through the payer, or the Tempo wallet's provider's through the
-    /// sender.
-    private func models(paying payment: Payment) async throws(Failure) -> Data {
-        if let cached = modelsCache[payment], Date.now.timeIntervalSince(cached.at) < Self.modelsCacheTTL {
+    /// through the payer, the Tempo wallet's provider's through the sender,
+    /// or the local model list when routing on-device.
+    private func models(route: MacRoute) async throws(Failure) -> Data {
+        if route != .local, let cached = modelsCache[route], Date.now.timeIntervalSince(cached.at) < Self.modelsCacheTTL {
             return cached.data
         }
         let fresh: Data
-        switch payment {
+        switch route {
         case .zkapi:
             do {
                 fresh = try await parts.queue.call("GET", "/v1/models")
@@ -950,18 +1030,42 @@ public final class Door {
             } catch {
                 throw Failure(error)
             }
+        case .local:
+            do {
+                fresh = try await parts.localModels()
+            } catch let failure as Failure {
+                throw failure
+            } catch {
+                throw Failure(503, "local_unavailable", error.localizedDescription)
+            }
+        case .near:
+            do {
+                fresh = try await parts.nearModels()
+            } catch let failure as Failure {
+                throw failure
+            } catch {
+                throw Failure(503, "near_unavailable", error.localizedDescription)
+            }
+        case .venice:
+            do {
+                fresh = try await parts.veniceModels()
+            } catch let failure as Failure {
+                throw failure
+            } catch {
+                throw Failure(503, "venice_unavailable", error.localizedDescription)
+            }
         }
-        modelsCache[payment] = (fresh, .now)
+        if route != .local {
+            modelsCache[route] = (fresh, .now)
+        }
         return fresh
     }
 
     /// Checks the request, then the model against the provider's list, then
-    /// rewords each user message on this Mac, then, for the Tempo wallet,
-    /// checks there is one; returns the request ready to send (`send`).
-    /// Nothing leaves this Mac before every user message is reworded, and
-    /// nothing here pays.
+    /// rewords each user message on this Mac (for remote rails), then checks
+    /// wallet/budget; returns the request ready to send (`send`).
     private func prepare(
-        _ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side,
+        _ request: HTTPRequest, body: [UInt8], for app: UUID, route: MacRoute, from side: Side,
         anthropic: Bool, listed: AgentRequest.ID
     ) async throws(Failure) -> Ready {
         try Asked.check(type: request.headers["content-type"])
@@ -990,17 +1094,56 @@ public final class Door {
                     "Blocked before sending: detected \(summary) in outbound request. Remove the secret and retry.")
             }
         }
-        let modelList = try await models(paying: payment)
+        let modelList = try await models(route: route)
         guard let ordered = Self.orderedIDs(modelList) else { throw Self.unreadable }
         let ids = Set(ordered)
         let effectiveModel: String
-        if side == .mac, let forced = parts.forcedModel()?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if route == .local {
+            if let forced = parts.forcedModel()?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !forced.isEmpty, ids.contains(forced)
+            {
+                effectiveModel = forced
+            } else if ids.contains(asked.model) {
+                effectiveModel = asked.model
+            } else if let first = ordered.first {
+                effectiveModel = first
+            } else {
+                throw Failure(503, "local_unavailable", "No local model is ready on this Mac. Download one in Settings → Local Models.")
+            }
+        } else if route == .near {
+            if let forced = parts.forcedModel()?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !forced.isEmpty, ids.contains(forced)
+            {
+                effectiveModel = forced
+            } else if ids.contains(asked.model) {
+                effectiveModel = asked.model
+            } else if let first = ordered.first {
+                effectiveModel = first
+            } else {
+                throw Failure(503, "near_unavailable", "NEAR AI Gateway lists no models right now.")
+            }
+        } else if route == .venice {
+            if let forced = parts.forcedModel()?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !forced.isEmpty, ids.contains(forced)
+            {
+                effectiveModel = forced
+            } else if ids.contains(asked.model) {
+                effectiveModel = asked.model
+            } else if let preferred = parts.preferredVeniceModel(), ids.contains(preferred) {
+                effectiveModel = preferred
+            } else if let first = ordered.first {
+                effectiveModel = first
+            } else {
+                throw Failure(503, "venice_unavailable", "Venice lists no private models right now.")
+            }
+        } else if side == .mac, let forced = parts.forcedModel()?.trimmingCharacters(in: .whitespacesAndNewlines),
             !forced.isEmpty, ids.contains(forced)
         {
             effectiveModel = forced
         } else if ids.contains(asked.model) {
             effectiveModel = asked.model
         } else if anthropic {
+            let payment: Payment = (route == .tempo) ? .tempo : .zkapi
             if let preferred = parts.preferredModel(payment), ids.contains(preferred) {
                 effectiveModel = preferred
             } else if let first = ordered.first {
@@ -1014,16 +1157,34 @@ public final class Door {
         if effectiveModel != clientModel {
             note(listed) { $0.model = "\(clientModel) → \(effectiveModel)" }
         }
-        let (identity, messages) = try await rewriteInOrder(for: app, asked: asked)
-        note(listed) { entry in
-            entry.reworded = asked.messages.count { $0.draft != nil }
+        let identity: String
+        let messages: [[UInt8]]
+        if route == .local || route == .near {
+            // Local stays 100% on-device; NEAR sends E2EE v2 to a verified TEE enclave.
+            // Both still pass through Privacy Shield below.
+            identity = route == .local ? "local" : "near"
+            messages = asked.messages.map { Array(asked.bytes[$0.value.span]) }
+            note(listed) { entry in
+                entry.reworded = 0
+            }
+        } else {
+            (identity, messages) = try await rewriteInOrder(for: app, asked: asked)
+            note(listed) { entry in
+                entry.reworded = asked.messages.count { $0.draft != nil }
+            }
         }
         let pairs = await Self.pairs(asked, sent: messages)
         if let index = requests.firstIndex(where: { $0.id == listed }), index < Self.latest {
             requests[index].messages = pairs
         }
         let way: Ready.Way
-        switch payment {
+        switch route {
+        case .local:
+            way = .local
+        case .near:
+            way = .near
+        case .venice:
+            way = .venice
         case .zkapi:
             way = .payer
         case .tempo:
@@ -1073,23 +1234,50 @@ public final class Door {
             }
         }
         guard !Task.isCancelled else { throw .stopped }
-        let estimatedMax = parts.requestMaxMicroUSD(payment)
+        let modelPricing = Self.modelPricing(in: modelList, for: effectiveModel)
+        let estimatedMax: UInt64
         var reservationID: UUID?
-        if side == .mac {
-            let networkID: PaymentNetwork.ID = (payment == .zkapi) ? .ethereum : .tempo
+        if side == .mac, route == .zkapi || route == .tempo || route == .venice {
+            let payment: Payment = (route == .zkapi) ? .zkapi : .tempo
+            let spendPolicy = parts.spendPolicy()
+            let currentSnapshot = await parts.spendLedger.snapshot()
+            let committedToday = currentSnapshot.spentTodayMicroUSD.saturatingAdd(currentSnapshot.reservedMicroUSD)
+            let remainingDaily = spendPolicy.dailyLimitMicroUSD > committedToday
+                ? (spendPolicy.dailyLimitMicroUSD - committedToday)
+                : 0
+            let effectiveCap = min(spendPolicy.perCallLimitMicroUSD, remainingDaily)
+            let budgetPlan = Self.planSpendAndCapOutput(
+                body: outboundBody,
+                pricing: modelPricing,
+                fallbackMinMicroUSD: parts.requestMaxMicroUSD(payment),
+                policyEnabled: spendPolicy.enabled,
+                effectiveCapMicroUSD: effectiveCap
+            )
+            outboundBody = budgetPlan.body
+            estimatedMax = budgetPlan.estimatedMaxMicroUSD
+            let networkID: PaymentNetwork.ID = switch route {
+            case .zkapi: .ethereum
+            case .venice: .base
+            case .tempo, .local, .near: .tempo
+            }
             let spec = PaymentNetwork.network(for: networkID)
+            let providerName: String = switch route {
+            case .zkapi: "zkapi"
+            case .venice: "venice"
+            case .tempo, .local, .near: "boundless"
+            }
             let appName = apps.first(where: { $0.id == app })?.name ?? "Connected App"
             let quote = SpendQuote(
                 idempotencyKey: listed.uuidString,
                 service: "Connected App · \(appName)",
-                provider: payment == .zkapi ? "zkapi" : "boundless",
+                provider: providerName,
                 network: networkID,
                 expectedChainID: spec.chainID,
-                asset: payment == .zkapi ? "ETH" : spec.stableAsset,
+                asset: route == .zkapi ? "ETH" : spec.stableAsset,
                 maxMicroUSD: estimatedMax,
-                leavesThisMac: policy.maskEntities ? "Rewritten & alias-shielded prompt (over Tor)" : "Rewritten prompt only (over Tor)"
+                leavesThisMac: policy.maskEntities ? "Rewritten & alias-shielded prompt" : "Rewritten prompt only"
             )
-            let decision = await parts.spendLedger.authorize(quote, policy: parts.spendPolicy())
+            let decision = await parts.spendLedger.authorize(quote, policy: spendPolicy)
             spendSnapshot = await parts.spendLedger.snapshot()
             switch decision {
             case .approved(let id):
@@ -1099,12 +1287,14 @@ public final class Door {
             case .rejected(let rejection):
                 throw Failure(402, "budget_limit_exceeded", rejection.message)
             }
+        } else {
+            estimatedMax = 0
         }
         return Ready(
             app: app, listed: listed, body: outboundBody, identity: identity,
             streaming: asked.streaming, anthropicModel: anthropic ? clientModel : nil,
             reservationID: reservationID, estimatedMaxMicroUSD: estimatedMax,
-            restoreAliases: restoreAliases, way: way)
+            pricing: modelPricing, restoreAliases: restoreAliases, way: way)
     }
 
     /// Sends a ready request, which pays for it: through the payer, in its
@@ -1113,11 +1303,14 @@ public final class Door {
     /// it asks for the request's key, and one cut after that may be charged;
     /// the Tempo wallet's exchange, once begun, runs to its end.
     private func send(_ ready: Ready) async -> Routed {
+        var providerResponded = false
+        var dispatchedPaidRequest = false
         do throws(Failure) {
             guard !Task.isCancelled else { throw .stopped }
             let completion: Data
             switch ready.way {
             case .payer:
+                dispatchedPaidRequest = true
                 do {
                     completion = try await parts.queue.complete(ready.body, identity: ready.identity, rank: .door)
                 } catch {
@@ -1125,6 +1318,7 @@ public final class Door {
                     throw Failure(error)
                 }
             case .wallet(let deposits):
+                dispatchedPaidRequest = true
                 do {
                     completion = try await Remote.complete(
                         ready.body, identity: ready.identity, key: parts.key, deposits: deposits, exchange: parts.exchange)
@@ -1132,7 +1326,38 @@ public final class Door {
                     logger.error("door send stopped: \(error.code.rawValue, privacy: .public) \(error.detail, privacy: .private)")
                     throw Failure(error)
                 }
+            case .local:
+                do {
+                    completion = try await parts.localComplete(ready.body)
+                } catch let failure as Failure {
+                    throw failure
+                } catch {
+                    logger.error("door local completion failed: \(String(describing: error), privacy: .public)")
+                    throw Failure(503, "local_failed", error.localizedDescription)
+                }
+            case .near:
+                do {
+                    completion = try await parts.nearComplete(ready.body)
+                } catch let failure as Failure {
+                    throw failure
+                } catch {
+                    logger.error("door NEAR completion failed: \(String(describing: error), privacy: .public)")
+                    throw Failure(502, "near_failed", error.localizedDescription)
+                }
+            case .venice:
+                dispatchedPaidRequest = true
+                do {
+                    completion = try await parts.veniceComplete(ready.body, ready.identity)
+                } catch let failure as Failure {
+                    throw failure
+                } catch {
+                    logger.error("door Venice completion failed: \(String(describing: error), privacy: .public)")
+                    throw Failure(502, "venice_failed", error.localizedDescription)
+                }
             }
+            // The provider has returned a paid response: from this point on, a local
+            // response-parsing error MUST NOT release the reservation.
+            providerResponded = true
             var completionData = completion
             if ready.restoreAliases, let map = redactionMaps[ready.app], !map.isEmpty {
                 let (restored, _) = PrivacyShield.restoreCompletionJSON(completionData, map: map)
@@ -1145,14 +1370,22 @@ public final class Door {
                 response = try Asked.answer(completionData, streaming: ready.streaming)
             }
             if let reservationID = ready.reservationID {
-                let charge = Self.estimatedActualMicroUSD(from: completion, fallback: ready.estimatedMaxMicroUSD)
+                let charge = Self.actualMicroUSD(
+                    from: completion,
+                    pricing: ready.pricing,
+                    fallback: ready.estimatedMaxMicroUSD)
                 await parts.spendLedger.settle(reservationID: reservationID, actualMicroUSD: charge)
                 spendSnapshot = await parts.spendLedger.snapshot()
             }
             return .sent(ready.listed, .success(response))
         } catch {
             if let reservationID = ready.reservationID {
-                if error.code == "timed_out" {
+                if providerResponded {
+                    // Payment succeeded on the provider side, but translating/parsing the
+                    // reply failed locally: settle actual usage if parseable, otherwise
+                    // mark ambiguous so the daily budget is never falsely refunded.
+                    await parts.spendLedger.markAmbiguous(reservationID: reservationID)
+                } else if dispatchedPaidRequest, !Self.isDefinitePreChargeFailure(error) {
                     await parts.spendLedger.markAmbiguous(reservationID: reservationID)
                 } else {
                     await parts.spendLedger.release(reservationID: reservationID, failed: true)
@@ -1163,17 +1396,131 @@ public final class Door {
         }
     }
 
-    /// Estimates actual spend from provider token counts when returned (bounded by the reserved max).
-    private nonisolated static func estimatedActualMicroUSD(from completion: Data, fallback: UInt64) -> UInt64 {
+    private nonisolated static let fallbackInputPerMillionUSD: Double = 5.0
+    private nonisolated static let fallbackOutputPerMillionUSD: Double = 15.0
+    private nonisolated static let defaultUnboundedOutputTokens: Int = 4_096
+    private nonisolated static let minAllowedOutputTokens: Int = 64
+
+    /// Errors known to fail BEFORE any upstream provider charge occurs.
+    private nonisolated static func isDefinitePreChargeFailure(_ error: Failure) -> Bool {
+        if [400, 401, 402, 403, 404, 429].contains(error.status) { return true }
+        return ["no_funds", "no_wallet", "model_not_found", "model_unavailable", "stopped"].contains(error.code)
+    }
+
+    /// Computes a worst-case micro-USD reservation from request size, output token cap,
+    /// and model pricing / zkAPI protocol caps. When `policyEnabled` is true and the client
+    /// omitted `max_tokens`/`max_completion_tokens`, injects an output token cap bounded to
+    /// the remaining budget so the provider cannot run away past the user's limit.
+    private nonisolated static func planSpendAndCapOutput(
+        body: Data,
+        pricing: ModelPricing?,
+        fallbackMinMicroUSD: UInt64,
+        policyEnabled: Bool,
+        effectiveCapMicroUSD: UInt64
+    ) -> (body: Data, estimatedMaxMicroUSD: UInt64) {
+        let inputRate = pricing?.inputPerMillionUSD ?? Self.fallbackInputPerMillionUSD
+        let outputRate = pricing?.outputPerMillionUSD ?? Self.fallbackOutputPerMillionUSD
+        let inputTokens = max(1, (body.count + 2) / 3)
+        let inputCostMicroUSD = UInt64(ceil(Double(inputTokens) * inputRate))
+        let protoCap = pricing?.protocolCapMicroUSD ?? 0
+
+        guard var root = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            let defaultOutCost = UInt64(ceil(Double(Self.defaultUnboundedOutputTokens) * outputRate))
+            let total = inputCostMicroUSD.saturatingAdd(defaultOutCost)
+            return (body, max(fallbackMinMicroUSD, protoCap, total))
+        }
+
+        let explicitMaxTokens = (root["max_completion_tokens"] as? Int) ?? (root["max_tokens"] as? Int)
+        if let maxOut = explicitMaxTokens, maxOut > 0 {
+            let outputCostMicroUSD = UInt64(ceil(Double(maxOut) * outputRate))
+            let tokenTotal = inputCostMicroUSD.saturatingAdd(outputCostMicroUSD)
+            return (body, max(fallbackMinMicroUSD, protoCap, tokenTotal))
+        }
+
+        // Client omitted an output token limit. When Spend Guardrails are active,
+        // bound `max_tokens` to what fits inside `effectiveCapMicroUSD` so an
+        // unbounded completion cannot silently blow past the configured cap.
+        if policyEnabled {
+            if inputCostMicroUSD < effectiveCapMicroUSD {
+                let remainingForOutput = effectiveCapMicroUSD - inputCostMicroUSD
+                let safeOutputRate = max(0.01, outputRate)
+                let affordableTokens = Int(floor(Double(remainingForOutput) / safeOutputRate))
+                if affordableTokens >= Self.minAllowedOutputTokens {
+                    let cappedTokens = min(affordableTokens, 16_384)
+                    root["max_tokens"] = cappedTokens
+                    let cappedBody = (try? JSONSerialization.data(withJSONObject: root, options: [.withoutEscapingSlashes])) ?? body
+                    let outputCostMicroUSD = UInt64(ceil(Double(cappedTokens) * outputRate))
+                    let boundedTotal = inputCostMicroUSD.saturatingAdd(outputCostMicroUSD)
+                    return (cappedBody, max(fallbackMinMicroUSD, protoCap, boundedTotal))
+                }
+            }
+            // Input + minimum reply already exceeds the remaining budget cap.
+            let minReplyCost = UInt64(ceil(Double(Self.minAllowedOutputTokens) * outputRate))
+            let minNeeded = inputCostMicroUSD.saturatingAdd(minReplyCost)
+            return (body, max(fallbackMinMicroUSD, protoCap, minNeeded, effectiveCapMicroUSD.saturatingAdd(1)))
+        }
+
+        let defaultOutCost = UInt64(ceil(Double(Self.defaultUnboundedOutputTokens) * outputRate))
+        let total = inputCostMicroUSD.saturatingAdd(defaultOutCost)
+        return (body, max(fallbackMinMicroUSD, protoCap, total))
+    }
+
+    /// Computes actual spend from provider token counts and real model pricing WITHOUT
+    /// artificially clipping larger responses down to the initial reservation estimate.
+    private nonisolated static func actualMicroUSD(from completion: Data, pricing: ModelPricing?, fallback: UInt64) -> UInt64 {
         guard let object = try? JSONSerialization.jsonObject(with: completion) as? [String: Any],
             let usage = object["usage"] as? [String: Any]
         else { return fallback }
         let input = (usage["prompt_tokens"] as? Int) ?? (usage["input_tokens"] as? Int) ?? 0
         let output = (usage["completion_tokens"] as? Int) ?? (usage["output_tokens"] as? Int) ?? 0
         guard input > 0 || output > 0 else { return fallback }
-        // Conservative blended rate (~$0.50/1M input, $2.00/1M output) capped at reservation.
-        let micro = UInt64((Double(input) * 0.5) + (Double(output) * 2.0))
-        return min(fallback, max(1_000, micro))
+        let inputRate = pricing?.inputPerMillionUSD ?? Self.fallbackInputPerMillionUSD
+        let outputRate = pricing?.outputPerMillionUSD ?? Self.fallbackOutputPerMillionUSD
+        let micro = UInt64(ceil((Double(input) * inputRate) + (Double(output) * outputRate)))
+        return max(1, micro)
+    }
+
+    /// Extracts protocol cap (`oaRequestLimitMicroUsd`) and per-million token pricing
+    /// for `modelID` from a provider's `/v1/models` JSON response.
+    private nonisolated static func modelPricing(in list: Data, for modelID: String) -> ModelPricing? {
+        guard let root = try? JSONSerialization.jsonObject(with: list) as? [String: Any],
+            let models = root["data"] as? [[String: Any]],
+            let match = models.first(where: { ($0["id"] as? String) == modelID })
+        else { return nil }
+
+        let protocolCap: UInt64? = {
+            if let v = match["oaRequestLimitMicroUsd"] as? UInt64 { return v }
+            if let v = match["oaRequestLimitMicroUsd"] as? Int, v > 0 { return UInt64(v) }
+            if let s = match["oaRequestLimitMicroUsd"] as? String, let v = UInt64(s) { return v }
+            return nil
+        }()
+
+        var inputPerMillion: Double?
+        var outputPerMillion: Double?
+        if let pricing = match["pricing"] as? [String: Any] {
+            // Boundless / Venice format: USD per 1,000,000 tokens (`input`, `output`).
+            if let inp = Self.doubleValue(pricing["input"]), inp >= 0 { inputPerMillion = inp }
+            if let out = Self.doubleValue(pricing["output"]), out >= 0 { outputPerMillion = out }
+            // OpenRouter / zkAPI format: USD per single token (`prompt`, `completion`).
+            if inputPerMillion == nil, let prompt = Self.doubleValue(pricing["prompt"]), prompt >= 0 {
+                inputPerMillion = prompt * 1_000_000.0
+            }
+            if outputPerMillion == nil, let comp = Self.doubleValue(pricing["completion"]), comp >= 0 {
+                outputPerMillion = comp * 1_000_000.0
+            }
+        }
+        guard protocolCap != nil || inputPerMillion != nil || outputPerMillion != nil else { return nil }
+        return ModelPricing(
+            protocolCapMicroUSD: protocolCap,
+            inputPerMillionUSD: inputPerMillion,
+            outputPerMillionUSD: outputPerMillion)
+    }
+
+    private nonisolated static func doubleValue(_ raw: Any?) -> Double? {
+        if let d = raw as? Double { return d }
+        if let i = raw as? Int { return Double(i) }
+        if let s = raw as? String { return Double(s) }
+        return nil
     }
 
     /// Each user message with text, as the app wrote it (its draft's texts)
@@ -1225,5 +1572,12 @@ public final class Door {
             guard case .string(let id)? = model.members?["id"]?.value else { return nil }
             return id
         }
+    }
+}
+
+private extension UInt64 {
+    func saturatingAdd(_ other: UInt64) -> UInt64 {
+        let (sum, overflow) = addingReportingOverflow(other)
+        return overflow ? .max : sum
     }
 }

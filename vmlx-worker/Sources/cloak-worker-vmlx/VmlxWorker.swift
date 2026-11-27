@@ -29,15 +29,17 @@ final class VmlxWorker: @unchecked Sendable {
     let pin: ModelPin
     let directory: URL
     let container: ModelContainer
+    let batchEngine: BatchEngine
     /// Enables DSpark MTP speculative decoding on >=24 GB Macs (~12.9 GiB peak);
     /// uses lean autoregressive JANGH2 (~10.3 GiB peak, 57-63 tok/s) on 16 GB Macs.
     let useDSpark: Bool
     private let state = Mutex(State.idle)
 
-    init(pin: ModelPin, directory: URL, container: ModelContainer) {
+    init(pin: ModelPin, directory: URL, container: ModelContainer, batchEngine: BatchEngine) {
         self.pin = pin
         self.directory = directory
         self.container = container
+        self.batchEngine = batchEngine
         self.useDSpark = ProcessInfo.processInfo.physicalMemory >= (24 << 30)
     }
 
@@ -88,12 +90,14 @@ final class VmlxWorker: @unchecked Sendable {
 
         let maxContext = Int(answers.contextTokens)
         let rawMessages = conversation.messages
+        let reasoningEffort = conversation.reasoningEffort ?? "medium"
 
         var params = GenerateParameters(
             maxTokens: Self.answerTokens + Self.thinkingTokens,
             temperature: 0.7,
             topP: 0.95
         )
+        params.cacheChainId = "cloak-local"
         if useDSpark {
             params.draftStrategy = .dspark(drafterPath: directory)
         }
@@ -110,7 +114,7 @@ final class VmlxWorker: @unchecked Sendable {
         let started = ContinuousClock.now
         let outcome: Outcome
         do {
-            outcome = try await container.perform { context -> Outcome in
+            let lmInput: LMInput = try await container.perform { context in
                 let chatMessages: [Chat.Message] = rawMessages.map { msg in
                     if msg.role == "assistant" {
                         return Chat.Message(
@@ -118,14 +122,16 @@ final class VmlxWorker: @unchecked Sendable {
                     }
                     return .user(msg.content)
                 }
-                let userInput = UserInput(chat: chatMessages)
-                let lmInput = try await context.processor.prepare(input: userInput)
-                let promptCount = lmInput.text.tokens.size
-                if promptCount + Self.answerTokens > maxContext {
-                    return .tooLong
-                }
-
-                let stream = try generate(input: lmInput, parameters: generateParams, context: context)
+                let userInput = UserInput(
+                    chat: chatMessages,
+                    additionalContext: ["reasoning_effort": reasoningEffort])
+                return try await context.processor.prepare(input: userInput)
+            }
+            let promptCount = lmInput.text.tokens.size
+            if promptCount + Self.answerTokens > maxContext {
+                outcome = .tooLong
+            } else {
+                let stream = await batchEngine.generate(input: lmInput, parameters: generateParams)
                 var visible = ""
                 var reasoning = ""
                 var lastEmitted = ""
@@ -137,7 +143,7 @@ final class VmlxWorker: @unchecked Sendable {
 
                 for await item in stream {
                     if Task.isCancelled {
-                        return .cancelled
+                        break
                     }
                     switch item {
                     case .chunk(let text):
@@ -151,7 +157,9 @@ final class VmlxWorker: @unchecked Sendable {
                             lastEmitted = visible
                             lastEmit = now
                             if !Frames.partial(Data(lastEmitted.utf8)) {
-                                return .cancelled
+                                stoppedByBudget = false
+                                visible = ""
+                                break
                             }
                         }
                         if answerChunks >= Self.answerTokens {
@@ -163,7 +171,7 @@ final class VmlxWorker: @unchecked Sendable {
                         reasoning += text
                         thinkingChunks += 1
                         if visible.isEmpty && thinkingChunks >= Self.thinkingTokens {
-                            return .thinkingExhausted
+                            break
                         }
                     case .info(let completionInfo):
                         info = completionInfo
@@ -172,37 +180,38 @@ final class VmlxWorker: @unchecked Sendable {
                     @unknown default:
                         break
                     }
-                    if stoppedByBudget { break }
+                    if stoppedByBudget || (visible.isEmpty && thinkingChunks >= Self.thinkingTokens) { break }
                 }
 
                 if Task.isCancelled {
-                    return .cancelled
+                    outcome = .cancelled
+                } else if visible.isEmpty && thinkingChunks >= Self.thinkingTokens {
+                    outcome = .thinkingExhausted
+                } else {
+                    let trimmed = visible.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.isEmpty {
+                        outcome = thinkingChunks > 0 ? .thinkingExhausted : .failed("empty answer")
+                    } else {
+                        if visible != lastEmitted {
+                            _ = Frames.partial(Data(visible.utf8))
+                        }
+                        let completionTokens = info?.generationTokenCount ?? (thinkingChunks + answerChunks)
+                        let promptTokens = info?.promptTokenCount ?? promptCount
+                        outcome = .ok(
+                            text: visible,
+                            reasoning: reasoning.isEmpty ? nil : reasoning,
+                            promptTokens: promptTokens,
+                            completionTokens: completionTokens,
+                            finishReason: stoppedByBudget ? "length" : "stop"
+                        )
+                    }
                 }
-                let trimmed = visible.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty {
-                    if thinkingChunks > 0 { return .thinkingExhausted }
-                    return .failed("empty answer")
-                }
-                if visible != lastEmitted {
-                    _ = Frames.partial(Data(visible.utf8))
-                }
-                let completionTokens = info?.generationTokenCount ?? (thinkingChunks + answerChunks)
-                let promptTokens = info?.promptTokenCount ?? promptCount
-                return .ok(
-                    text: visible,
-                    reasoning: reasoning.isEmpty ? nil : reasoning,
-                    promptTokens: promptTokens,
-                    completionTokens: completionTokens,
-                    finishReason: stoppedByBudget ? "length" : "stop"
-                )
             }
         } catch is CancellationError {
             outcome = .cancelled
         } catch {
             outcome = .failed(String(describing: error))
         }
-
-        Memory.clearCache()
 
         switch outcome {
         case .ok(let text, let reasoning, let promptTokens, let completionTokens, let finishReason):

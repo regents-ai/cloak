@@ -177,6 +177,10 @@ private struct Sidebar: View {
             .padding(.top, 8)
             .padding(.bottom, 6)
 
+            ProjectSwitcherRow(chat: chat)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+
             List(selection: $chat.selection) {
                 ForEach(visibleConversations) { conversation in
                     let isEmpty = conversation.turns.isEmpty
@@ -275,6 +279,74 @@ private struct Sidebar: View {
     }
 }
 
+/// Compact 1-click Saved Project Profile switcher in Chat's sidebar.
+private struct ProjectSwitcherRow: View {
+    let chat: Chat
+
+    var body: some View {
+        let active = chat.settings.activeProjectProfile
+        let profiles = chat.settings.projectProfiles
+        Menu {
+            Button {
+                chat.selectProjectProfile(nil)
+            } label: {
+                HStack {
+                    Text("Default (No Project)")
+                    if active == nil { Image(systemName: "checkmark") }
+                }
+            }
+            if !profiles.isEmpty {
+                Divider()
+                ForEach(profiles) { profile in
+                    Button {
+                        chat.selectProjectProfile(profile.id)
+                    } label: {
+                        HStack {
+                            Text(profile.name)
+                            if active?.id == profile.id { Image(systemName: "checkmark") }
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("Manage Projects…") {
+                AppDelegate.current.showSettings(on: .projects)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "folder.badge.gearshape")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(active != nil ? Color.accentColor : Color.secondary)
+                Text(active?.name ?? "No Project")
+                    .font(.caption.weight(active != nil ? .semibold : .medium))
+                    .foregroundStyle(active != nil ? Color.primary : Color.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(active != nil ? Color.accentColor.opacity(0.10) : Color.primary.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(active != nil ? Color.accentColor.opacity(0.28) : Color.primary.opacity(0.07), lineWidth: 0.75)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .tip(active.map { "Active Project Profile: \($0.name). Click to switch or manage projects." } ?? "Switch or create a Saved Project Profile to isolate folders, Private Terms, and routes.")
+    }
+}
+
 /// Live list of active privacy, network, cover, and isolation guarantees
 /// pinned to the bottom-left of Chat. Every row appears IF AND ONLY IF that
 /// guarantee is currently active for the selected mode, toggles, and app state.
@@ -337,6 +409,25 @@ private struct ActiveGuaranteesView: View {
 
         var items: [Item] = []
 
+        if settings.securityProfile != .privateCloud {
+            items.append(Item(
+                id: "security-profile",
+                symbol: settings.securityProfile.symbol,
+                title: "Profile: \(settings.securityProfile.shortTitle)",
+                detail: settings.securityProfile.summary
+            ))
+        }
+
+        if let project = settings.activeProjectProfile {
+            let scope = project.summaryParts.isEmpty ? "Active workspace profile." : project.summaryParts.joined(separator: " · ")
+            items.append(Item(
+                id: "project-profile",
+                symbol: "folder.badge.gearshape",
+                title: "Project: \(project.name)",
+                detail: "\(scope). Local folders stay isolated to this project and its Private Terms are active in Connected Apps."
+            ))
+        }
+
         if mode == .llama {
             items.append(Item(
                 id: "local-offline",
@@ -355,7 +446,9 @@ private struct ActiveGuaranteesView: View {
             }
         }
 
-        if (mode == .token || mode == .v), (agent || !settings.neverReword) {
+        let localRewriteActive = (mode == .token || mode == .v)
+            && (agent || (!settings.neverReword && (mode != .token || settings.tokenTor || chat.canRewordLocally)))
+        if localRewriteActive {
             items.append(Item(
                 id: "local-rewrite",
                 symbol: "pencil.line",
@@ -555,7 +648,7 @@ private struct Detail: View {
                             showNearSettings: showNearSettings)
                     }
                     .visibilityPriority(.high)
-                    if kind != .llama {
+                    if kind != .llama && chat.settings.securityProfile.allowsAnyCloud {
                         ToolbarItem {
                             WalletButton(chat: chat, v: kind == .v)
                         }
@@ -577,7 +670,7 @@ private struct Detail: View {
                             chat: chat, kind: kind, showLlamaSettings: showLlamaSettings,
                             showNearSettings: showNearSettings)
                     }
-                    if kind != .llama {
+                    if kind != .llama && chat.settings.securityProfile.allowsAnyCloud {
                         ToolbarItem {
                             WalletButton(chat: chat, v: kind == .v)
                         }
@@ -673,7 +766,9 @@ private struct Detail: View {
                             openTraces: { nearTab = .traces }
                         )
                     } else {
-                        Turns(chat: chat, conversation: conversation, showAgents: showAgents, showNearSettings: showNearSettings)
+                        Turns(
+                            chat: chat, conversation: conversation, showAgents: showAgents,
+                            showNearSettings: showNearSettings, showLlamaSettings: showLlamaSettings)
                         Divider()
                         Compose(
                             chat: chat, showDetails: showDetails, showNearSettings: showNearSettings,
@@ -811,6 +906,7 @@ private struct Turns: View {
     let conversation: Conversation
     let showAgents: () -> Void
     let showNearSettings: () -> Void
+    let showLlamaSettings: () -> Void
 
     var body: some View {
         let rewording = chat.rewording?.conversation == conversation.id ? chat.rewording : nil
@@ -830,13 +926,17 @@ private struct Turns: View {
                                 mode: mode, agent: agent,
                                 provider: chat.activeProviderName(for: mode, conversation: conversation),
                                 model: chat.activeModelName(for: mode, conversation: conversation))
+                            if mode != .llama, !agent, chat.settings.securityProfile == .privateCloud {
+                                SmartPrivateBar(chat: chat)
+                            }
                             if let requirement = ModeSetupRequirement.evaluate(
                                 chat: chat, mode: mode, agent: agent, conversation: conversation)
                             {
                                 ModeSetupCard(
                                     requirement: requirement,
                                     openFunds: { chat.showingWallet = true },
-                                    openNearSettings: showNearSettings)
+                                    openNearSettings: showNearSettings,
+                                    openLocalModels: showLlamaSettings)
                             }
                         }
                     }
@@ -1998,7 +2098,7 @@ private struct Compose: View {
             if showBottomRow {
                 HStack(spacing: 8) {
                     if showModeControls {
-                        ModeSwitch(kind: $chat.kind)
+                        ModeSwitch(kind: $chat.kind, profile: chat.settings.securityProfile)
                             .fixedSize()
                         if chat.kind.hasAgent {
                             AgentPill(
@@ -2014,6 +2114,9 @@ private struct Compose: View {
                     if llama {
                         LocalComposeControls(
                             activeCount: chat.settings.activeLocalContextSummary.count,
+                            effort: Binding(
+                                get: { chat.settings.localReasoningEffort },
+                                set: { chat.settings.localReasoningEffort = $0 }),
                             onAttachFiles: pickLocalFiles,
                             onOpenLocalAccess: showLocalAccessSettings)
                     }
@@ -2044,19 +2147,24 @@ private struct Compose: View {
                         }
                     }
                     if showCoverToggle {
+                        let coverLocked = chat.settings.securityProfile.enforcesTorAndCover
                         CompactPrivacyToggleButton(
                             symbol: "waveform.path",
                             label: "Cover Traffic",
                             isOn: chat.settings.cover,
                             isActive: chat.settings.cover && chat.supervisor.phase == .running,
                             isBusy: false,
-                            tip: chat.settings.cover
-                                ? (chat.supervisor.phase == .running
-                                    ? "Cover Traffic is ON — sending random public Tor fetches (~3/min) to blur prompt timing. Click to turn off."
-                                    : "Cover Traffic is ON (starts when Cloak runs). Click to turn off.")
-                                : "Cover Traffic is OFF — click to send random public Tor fetches (~3/min) to blur prompt timing."
+                            tip: coverLocked
+                                ? "Cover Traffic is locked ON by your Anon Private Cloud security profile."
+                                : (chat.settings.cover
+                                    ? (chat.supervisor.phase == .running
+                                        ? "Cover Traffic is ON — sending random public Tor fetches (~3/min) to blur prompt timing. Click to turn off."
+                                        : "Cover Traffic is ON (starts when Cloak runs). Click to turn off.")
+                                    : "Cover Traffic is OFF — click to send random public Tor fetches (~3/min) to blur prompt timing.")
                         ) {
-                            chat.settings.cover.toggle()
+                            if !coverLocked {
+                                chat.settings.cover.toggle()
+                            }
                         }
                     }
                     if near {
@@ -2080,7 +2188,8 @@ private struct Compose: View {
                         ModeSetupPill(
                             requirement: setupRequirement,
                             openFunds: { chat.showingWallet = true },
-                            openNearSettings: showNearSettings)
+                            openNearSettings: showNearSettings,
+                            openLocalModels: showLlamaSettings)
                     } else if agent, chat.supervisor.phase == .running, let block = chat.runBlock(in: mode) {
                         Text(block)
                             .font(.caption)
@@ -2173,14 +2282,56 @@ private struct Compose: View {
 }
 
 /// Compact offline-only controls in the Local Mode composer bar: attach local
-/// files (PDF, documents, images via OCR, Markdown, text, code) or configure Local Access.
+/// files (PDF, documents, images via OCR, Markdown, text, code), choose thinking depth,
+/// or configure Local Access.
 private struct LocalComposeControls: View {
     let activeCount: Int
+    @Binding var effort: LocalReasoningEffort
     let onAttachFiles: () -> Void
     let onOpenLocalAccess: () -> Void
 
+    private var effortSymbol: String {
+        switch effort {
+        case .fast: "bolt"
+        case .balanced: "gauge.with.dots.needle.50percent"
+        case .deep: "brain"
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
+            Menu {
+                ForEach(LocalReasoningEffort.allCases) { option in
+                    Button {
+                        effort = option
+                    } label: {
+                        HStack {
+                            Text(option.title)
+                            if option == effort {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: effortSymbol)
+                        .font(.caption.weight(.medium))
+                    Text(effort.title)
+                        .font(.caption.weight(.medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 9)
+                .frame(minHeight: 26)
+                .contentShape(.capsule)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .hover(Capsule())
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .tip("Thinking effort: \(effort.detail)")
+
             Button(action: onAttachFiles) {
                 HStack(spacing: 4) {
                     Image(systemName: "paperclip")
@@ -2223,6 +2374,66 @@ private struct LocalComposeControls: View {
     }
 }
 
+/// Plain-English Private Cloud intent selector (`Fast` / `Coding` / `Reasoning`)
+/// hiding payment/provider plumbing while always surfacing the exact active rail.
+private struct SmartPrivateBar: View {
+    let chat: Chat
+
+    var body: some View {
+        let activePreset = chat.settings.smartPrivatePreset
+        let decision = chat.smartPrivateDecision(for: activePreset)
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(SmartPrivatePreset.allCases) { preset in
+                    let selected = preset == activePreset
+                    Button {
+                        chat.applySmartPrivate(preset)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: Self.symbol(for: preset))
+                                .font(.caption2.weight(.semibold))
+                            Text(preset.shortTitle)
+                                .font(.caption.weight(selected ? .semibold : .medium))
+                        }
+                        .foregroundStyle(selected ? Color.primary : Color.secondary)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05))
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(
+                                selected ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.10),
+                                lineWidth: 0.75)
+                        )
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .tip(preset.summary)
+                }
+            }
+            HStack(spacing: 5) {
+                Image(systemName: decision.ready ? "checkmark.shield.fill" : "sparkles")
+                    .font(.caption2)
+                    .foregroundStyle(decision.ready ? .green : .secondary)
+                Text(decision.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 4)
+    }
+
+    private static func symbol(for preset: SmartPrivatePreset) -> String {
+        switch preset {
+        case .fast: "bolt.fill"
+        case .coding: "chevron.left.forwardslash.chevron.right"
+        case .reasoning: "brain.head.profile"
+        }
+    }
+}
+
 /// Onboarding requirement for any remote mode whose wallet, deposit, or API key
 /// is not ready yet. Surfaced both as an inviting card below `EmptyChatHeader`
 /// and as a compact clickable pill in the composer bar (including mid-chat).
@@ -2230,6 +2441,7 @@ private struct ModeSetupRequirement: Equatable {
     enum Destination: Equatable {
         case funds
         case nearSettings
+        case localModels
     }
 
     let badge: String
@@ -2258,6 +2470,26 @@ private struct ModeSetupRequirement: Equatable {
                 destination: .nearSettings)
 
         case .token:
+            // Direct Token Inference with Prompt Rewriting enabled fails closed if
+            // the local rewriter model is missing or too large for this Mac.
+            if !agent, !chat.settings.tokenTor, !chat.settings.neverReword, !chat.canRewordLocally {
+                if !chat.rewordingDownload.fits {
+                    return ModeSetupRequirement(
+                        badge: "Rewriter Too Large",
+                        symbol: "exclamationmark.triangle.fill",
+                        headline: "This Mac can't run the local prompt rewriter",
+                        detail: "Prompt rewriting is on, so Cloak won't send your original prompt directly. Turn Prompt rewriting Off in Settings → General (sends original text), or switch to Local or NEAR mode.",
+                        buttonTitle: "Local Models…",
+                        destination: .localModels)
+                }
+                return ModeSetupRequirement(
+                    badge: "Rewriter Required",
+                    symbol: "arrow.down.circle.fill",
+                    headline: "Download the local prompt rewriter to send",
+                    detail: "Prompt rewriting is enabled, so Direct Token Inference won't send your original prompt without the local rewriter. Download it in Settings → Local Models, or turn Prompt rewriting Off in Settings → General.",
+                    buttonTitle: "Local Models…",
+                    destination: .localModels)
+            }
             // Built-in Pi Agent in Token Inference uses Boundless / Tempo USDC.e.
             if !agent && chat.usesVenice(for: conversation) {
                 switch chat.settings.venicePays {
@@ -2362,6 +2594,7 @@ private struct ModeSetupCard: View {
     let requirement: ModeSetupRequirement
     let openFunds: () -> Void
     let openNearSettings: () -> Void
+    let openLocalModels: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2385,6 +2618,7 @@ private struct ModeSetupCard: View {
                     switch requirement.destination {
                     case .funds: openFunds()
                     case .nearSettings: openNearSettings()
+                    case .localModels: openLocalModels()
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -2407,12 +2641,14 @@ private struct ModeSetupPill: View {
     let requirement: ModeSetupRequirement
     let openFunds: () -> Void
     let openNearSettings: () -> Void
+    let openLocalModels: () -> Void
 
     var body: some View {
         Button {
             switch requirement.destination {
             case .funds: openFunds()
             case .nearSettings: openNearSettings()
+            case .localModels: openLocalModels()
             }
         } label: {
             HStack(spacing: 5) {
@@ -2914,9 +3150,10 @@ private struct NearStatus: View {
 /// segment's symbol or its name, never both.
 private struct ModeSwitch: NSViewRepresentable {
     @Binding var kind: Chat.Kind
+    let profile: SecurityProfile
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(kind: $kind)
+        Coordinator(kind: $kind, profile: profile)
     }
 
     func makeNSView(context: Context) -> NSSegmentedControl {
@@ -2925,7 +3162,6 @@ private struct ModeSwitch: NSViewRepresentable {
         control.segmentCount = Chat.Kind.modes.count
         for (index, mode) in Chat.Kind.modes.enumerated() {
             control.setImage(NSImage(systemSymbolName: mode.symbol, accessibilityDescription: mode.name), forSegment: index)
-            control.setToolTip(mode.about, forSegment: index)
         }
         control.target = context.coordinator
         control.action = #selector(Coordinator.choose(_:))
@@ -2934,10 +3170,25 @@ private struct ModeSwitch: NSViewRepresentable {
 
     func updateNSView(_ control: NSSegmentedControl, context: Context) {
         context.coordinator.kind = $kind
+        context.coordinator.profile = profile
         for (index, mode) in Chat.Kind.modes.enumerated() {
+            let allowed = Self.isAllowed(mode, in: profile)
+            control.setEnabled(allowed, forSegment: index)
             control.setLabel(mode == kind ? mode.name : "", forSegment: index)
+            control.setToolTip(
+                allowed ? mode.about : profile.refusalMessage(for: mode.name),
+                forSegment: index)
         }
         control.selectedSegment = Chat.Kind.modes.firstIndex(of: kind) ?? -1
+    }
+
+    static func isAllowed(_ mode: Chat.Kind, in profile: SecurityProfile) -> Bool {
+        switch mode {
+        case .llama: true
+        case .near: profile.allowsNear
+        case .token: profile.allowsTokenInference
+        case .v: profile.allowsZkAPI
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl, context: Context) -> CGSize? {
@@ -2946,13 +3197,17 @@ private struct ModeSwitch: NSViewRepresentable {
 
     @MainActor final class Coordinator: NSObject {
         var kind: Binding<Chat.Kind>
+        var profile: SecurityProfile
 
-        init(kind: Binding<Chat.Kind>) {
+        init(kind: Binding<Chat.Kind>, profile: SecurityProfile) {
             self.kind = kind
+            self.profile = profile
         }
 
         @objc func choose(_ control: NSSegmentedControl) {
-            kind.wrappedValue = Chat.Kind.modes[control.selectedSegment]
+            let target = Chat.Kind.modes[control.selectedSegment]
+            guard ModeSwitch.isAllowed(target, in: profile) else { return }
+            kind.wrappedValue = target
         }
     }
 }

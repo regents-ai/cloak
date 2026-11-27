@@ -131,6 +131,8 @@ done
 cp app/release-notes.md "$work/appcast/Regents-Cloak-$tag.txt"
 "$generate_appcast" --account cloak --embed-release-notes --maximum-versions 0 \
 	--maximum-deltas 3 --delta-compression lzma --versions "$build" \
+	--full-release-notes-url "https://github.com/regents-ai/cloak/releases" \
+	--link "https://regents.sh/cloak" \
 	--download-url-prefix "$downloads/$tag/" "$work/appcast"
 # Keep every older DMG item pointing at its own release tag (not $tag), while
 # leaving the new $tag item and its delta files pointing at $downloads/$tag/.

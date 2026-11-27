@@ -60,9 +60,22 @@ struct CloakVmlxWorkerMain {
             stop("cannot load \(name): \(error)")
         }
 
-        let worker = VmlxWorker(pin: pin, directory: directory, container: container)
+        // Enable strictly in-memory (RAM-only, zero SSD writes) paged KV prefix caching
+        // so multi-turn conversations and coding-agent loops reuse prompt prefixes ~12-15x faster
+        // without ever persisting prompts or KV tensors to disk.
+        let maxCacheBlocks = ProcessInfo.processInfo.physicalMemory >= (32 << 30) ? 1024 : 512
+        let cacheConfig = CacheCoordinatorConfig(
+            usePagedCache: true,
+            enableDiskCache: false,
+            pagedBlockSize: 64,
+            maxCacheBlocks: maxCacheBlocks,
+            modelKey: name)
+        await container.enableCachingAsync(config: cacheConfig)
+        let batchEngine = await container.makeBatchEngine(maxBatchSize: 1)
+
+        let worker = VmlxWorker(pin: pin, directory: directory, container: container, batchEngine: batchEngine)
         log.info(
-            "loaded vmlx \(name, privacy: .public); active \(Memory.activeMemory) bytes, peak \(Memory.peakMemory) bytes, dspark=\(worker.useDSpark)"
+            "loaded vmlx \(name, privacy: .public); active \(Memory.activeMemory) bytes, peak \(Memory.peakMemory) bytes, dspark=\(worker.useDSpark), pagedKV=true"
         )
         guard Frames.ready() else {
             stop("supervisor channel closed")

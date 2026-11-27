@@ -239,6 +239,132 @@ public actor Near {
         }
     }
 
+    /// Top-level fields permitted by `cloak-near`'s strict E2EE allowlist (`guest/near/src/chat.rs`).
+    private nonisolated static let allowedTopLevelKeys: Set<String> = [
+        "model", "stream", "temperature", "top_p", "max_tokens", "max_completion_tokens",
+        "n", "seed", "stop", "presence_penalty", "frequency_penalty", "parallel_tool_calls",
+        "messages", "tools", "tool_choice",
+    ]
+    /// Per-message keys covered by `cloak-near`'s strict E2EE sealing (`seal_message`).
+    private nonisolated static let allowedMessageKeys: Set<String> = [
+        "role", "tool_call_id", "content", "name", "reasoning_content", "reasoning", "refusal", "tool_calls",
+    ]
+
+    /// Normalizes an OpenAI `/v1/chat/completions` JSON request body into the exact
+    /// E2EE-covered schema accepted by `cloak-near` (`guest/near/src/chat.rs`), stripping
+    /// uncovered client extensions (e.g. `top_k`, `stream_options`, `metadata`, `user`,
+    /// `reasoning_effort`, non-function tools, or `cache_control`) so Connected Apps
+    /// (Claude Code, OpenCode, Goose, Cursor) never fail strict E2EE sealing.
+    public nonisolated static func sanitizedChatPayload(from body: Data) throws(NearStop) -> [String: Any] {
+        guard let raw = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            throw NearStop(kind: .request, code: nil, sent: false, text: "request body did not read as JSON")
+        }
+        var payload: [String: Any] = [:]
+        for (key, value) in raw where Self.allowedTopLevelKeys.contains(key) {
+            if value is NSNull { continue }
+            payload[key] = value
+        }
+        guard let rawMessages = payload["messages"] as? [[String: Any]], !rawMessages.isEmpty else {
+            throw NearStop(kind: .request, code: nil, sent: false, text: "request must include a nonempty messages array")
+        }
+        payload["messages"] = rawMessages.map { msg -> [String: Any] in
+            var clean: [String: Any] = [:]
+            for (k, v) in msg where Self.allowedMessageKeys.contains(k) {
+                if v is NSNull { continue }
+                if k == "tool_calls", let calls = v as? [[String: Any]] {
+                    clean[k] = calls.compactMap { call -> [String: Any]? in
+                        guard let fn = call["function"] as? [String: Any],
+                            let name = fn["name"] as? String
+                        else { return nil }
+                        var cleanCall: [String: Any] = [
+                            "type": (call["type"] as? String) ?? "function",
+                            "function": [
+                                "name": name,
+                                "arguments": (fn["arguments"] as? String) ?? "{}",
+                            ],
+                        ]
+                        if let id = call["id"] as? String {
+                            cleanCall["id"] = id
+                        }
+                        return cleanCall
+                    }
+                } else {
+                    clean[k] = v
+                }
+            }
+            return clean
+        }
+
+        if let rawTools = payload["tools"] as? [[String: Any]] {
+            let cleanTools: [[String: Any]] = rawTools.compactMap { tool in
+                guard (tool["type"] as? String) == "function",
+                    let fn = tool["function"] as? [String: Any],
+                    let name = fn["name"] as? String
+                else { return nil }
+                var cleanFn: [String: Any] = ["name": name]
+                if let desc = fn["description"] as? String {
+                    cleanFn["description"] = desc
+                }
+                if let params = fn["parameters"], !(params is NSNull) {
+                    cleanFn["parameters"] = params
+                }
+                return ["type": "function", "function": cleanFn]
+            }
+            if cleanTools.isEmpty {
+                payload.removeValue(forKey: "tools")
+                payload.removeValue(forKey: "tool_choice")
+            } else {
+                payload["tools"] = cleanTools
+            }
+        }
+
+        if let choice = payload["tool_choice"] {
+            if choice is String {
+                // "auto", "none", "required" are accepted directly by cloak-near.
+            } else if let obj = choice as? [String: Any],
+                let fn = obj["function"] as? [String: Any],
+                let name = fn["name"] as? String
+            {
+                payload["tool_choice"] = ["type": "function", "function": ["name": name]]
+            } else {
+                payload.removeValue(forKey: "tool_choice")
+            }
+        }
+
+        payload["model"] = Self.model
+        payload["stream"] = false
+        return payload
+    }
+
+    /// Sends a raw OpenAI `/v1/chat/completions` JSON payload through `cloak-near`
+    /// with Intel TDX + NVIDIA GPU attestation verification and E2EE v2 encryption,
+    /// returning the raw OpenAI completion JSON (used by `CloakDoor` Connected Apps).
+    public func complete(
+        route: NearRoute, proofAge: ProofFreshness, key: Key, body: Data
+    ) throws(NearStop) -> Data {
+        let payload = try Self.sanitizedChatPayload(from: body)
+        let line = try exchange(asking: true) { () throws(NearStop) -> [String: Any] in
+            let secret: String
+            do { secret = try key() } catch { throw NearStop(kind: .key, code: nil, sent: false, text: "\(error)") }
+            return [
+                "request": "ask", "model": Self.model, "route": route.line, "proof_age": proofAge.rawValue, "key": secret,
+                "body": payload,
+            ]
+        }
+        switch try answer(line, asking: true) {
+        case .replied:
+            guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                let reply = object["reply"] as? [String: Any],
+                let completion = try? JSONSerialization.data(withJSONObject: reply, options: [.withoutEscapingSlashes])
+            else {
+                throw NearStop(kind: .helper, code: nil, sent: true, text: "the helper's reply did not read")
+            }
+            return completion
+        case .stopped(let stop): throw stop
+        case .passed: throw NearStop(kind: .helper, code: nil, sent: true, text: "the helper answered an ask with a check")
+        }
+    }
+
     /// The tokens in `completion`'s `usage`, in OpenAI's shape, as NEAR
     /// counted them; nil when it has none, or one that does not read.
     private static func tokens(in completion: Data) -> Tokens? {

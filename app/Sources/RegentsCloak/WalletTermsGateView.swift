@@ -79,7 +79,7 @@ struct WalletTermsGateView: View {
                         tint: .accentColor,
                         title: "Privacy Policy",
                         bullets: [
-                            "**Regents Labs & Cloak keep zero user data:** Regents Labs and the Cloak app do not collect, log, store, or sell your prompts, chats, wallet addresses, private keys, IP address, or telemetry. Everything Cloak keeps lives locally on your Mac.",
+                            "**Zero data sent to Regents Labs (local storage only):** Regents Labs has no servers in your chat or payment path and never collects, logs, stores, or sells your prompts, chats, wallet addresses, private keys, IP address, or telemetry. Cloak stores your saved chats (encrypted), settings, local spend receipts, and self-custodial wallet keys (in macOS Keychain, never synced to iCloud) **exclusively on this Mac**.",
                             "**Third-party integrations:** External services Cloak connects to (Boundless, Venice AI, NEAR AI Cloud, zkAPI, Tempo, Base, Ethereum RPCs, Hugging Face model hosts, and Darkbloom) are chosen to avoid storing or sharing data where possible, **but they are independent third parties** outside Regents Labs' control and governed by their own terms and privacy policies.",
                             "**Tor vs. direct connections:** When Tor is enabled, your IP is masked through Tor relays. When you turn Tor off (direct NEAR or direct Token Inference), the selected provider and RPC see your Mac's IP address.",
                             "**Opt-in NEAR AI Traces:** Trace export is off by default. If you enable **Share traces** and upload exported chats to NEAR AI Gateway / Trace Commons, those chats are shared with that entity under its terms.",

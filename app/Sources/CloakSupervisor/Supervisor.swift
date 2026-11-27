@@ -382,10 +382,11 @@ public final class Supervisor {
 
     public func answer(
         _ messages: [LocalMessage], with model: Manifest.Model, lora: Manifest.Model.Adapter? = nil,
+        reasoningEffort: LocalReasoningEffort? = nil,
         onStage: (@Sendable (LocalAnswerStage) -> Void)? = nil,
         onPartial: (@Sendable (String) -> Void)? = nil
     ) async throws(AnswerStop) -> LocalAnswer {
-        guard let request = LocalLlama.request(messages) else { throw .tooLong }
+        guard let request = LocalLlama.request(messages, reasoningEffort: reasoningEffort) else { throw .tooLong }
         _ = await settled()
         guard !Task.isCancelled else { throw .stopped }
         // A run has its relay from before it is Running until it stops.

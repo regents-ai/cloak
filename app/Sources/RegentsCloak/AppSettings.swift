@@ -2,7 +2,11 @@ import AppKit
 import Carbon.HIToolbox
 import CloakChat
 import CloakControl
+#if DARKBLOOM
+import CloakDarkbloom
+#endif
 import CloakDoor
+import CloakSupervisor
 import Darwin
 import Observation
 import os
@@ -64,6 +68,19 @@ final class AppSettings {
         case spendDailyLimitUSD
         case spendPerCallLimitUSD
         case spendAllowedNetworks
+        case localReasoningEffort
+        case externalLocalServerURL
+        case externalLocalModelID
+        case externalLocalServerName
+        case smartPrivatePreset
+        case servingPauseOnBattery
+        case servingPauseOnHighThermal
+        case servingQuietHoursEnabled
+        case servingQuietStartHour
+        case servingQuietEndHour
+        case projectProfiles
+        case activeProjectProfileID
+        case securityProfile
     }
 
     /// Current version of the Beta Wallet Terms of Service & Privacy Policy.
@@ -132,11 +149,13 @@ final class AppSettings {
     var neverReword: Bool {
         get {
             access(keyPath: \.neverReword)
+            if securityProfile.enforcesPromptRewriting { return false }
             return defaults.bool(forKey: Key.neverReword.rawValue)
         }
         set {
-            withMutation(keyPath: \.neverReword) { defaults.set(newValue, forKey: Key.neverReword.rawValue) }
-            if newValue { review = false }
+            let effective = securityProfile.enforcesPromptRewriting ? false : newValue
+            withMutation(keyPath: \.neverReword) { defaults.set(effective, forKey: Key.neverReword.rawValue) }
+            if effective { review = false }
         }
     }
 
@@ -147,10 +166,59 @@ final class AppSettings {
     var cover: Bool {
         get {
             access(keyPath: \.cover)
+            if securityProfile.enforcesTorAndCover { return true }
             return defaults.object(forKey: Key.cover.rawValue) as? Bool ?? true
         }
         set {
-            withMutation(keyPath: \.cover) { defaults.set(newValue, forKey: Key.cover.rawValue) }
+            let effective = securityProfile.enforcesTorAndCover ? true : newValue
+            withMutation(keyPath: \.cover) { defaults.set(effective, forKey: Key.cover.rawValue) }
+        }
+    }
+
+    /// App-wide Security & Privacy Profile governing which modes, Connected Apps
+    /// rails, and integrations are permitted (`Local Only`, `Anon Private Cloud`,
+    /// or `Private Cloud AI`).
+    var securityProfile: SecurityProfile {
+        get {
+            access(keyPath: \.securityProfile)
+            return Self.securityProfile(in: defaults)
+        }
+        set {
+            withMutation(keyPath: \.securityProfile) {
+                defaults.set(newValue.rawValue, forKey: Key.securityProfile.rawValue)
+            }
+            switch newValue {
+            case .localOnly:
+                doorPayment = .local
+            case .anonCloud:
+                cover = true
+                neverReword = false
+                if !doorPayment.isAllowed(in: .anonCloud) {
+                    doorPayment = .zkapi
+                }
+            case .privateCloud:
+                break
+            }
+        }
+    }
+
+    nonisolated static func securityProfile(in defaults: UserDefaults) -> SecurityProfile {
+        defaults.string(forKey: Key.securityProfile.rawValue).flatMap(SecurityProfile.init(rawValue:)) ?? .privateCloud
+    }
+
+    nonisolated static func doorRouteRefusal(for route: Door.MacRoute, in defaults: UserDefaults) -> String? {
+        let profile = securityProfile(in: defaults)
+        switch route {
+        case .local:
+            return nil
+        case .zkapi:
+            return profile.allowsZkAPI ? nil : profile.refusalMessage(for: "zkAPI Anon Inference")
+        case .near:
+            return profile.allowsNear ? nil : profile.refusalMessage(for: "NEAR AI Gateway")
+        case .venice:
+            return profile.allowsTokenInference ? nil : profile.refusalMessage(for: "Venice AI")
+        case .tempo:
+            return profile.allowsTokenInference ? nil : profile.refusalMessage(for: "Boundless (Tempo)")
         }
     }
 
@@ -259,6 +327,156 @@ final class AppSettings {
             withMutation(keyPath: \.unfilteredLocal) { defaults.set(newValue, forKey: Key.unfilteredLocal.rawValue) }
         }
     }
+
+    /// Thinking depth for reasoning-capable local models (`Fast`, `Balanced`, `Deep`).
+    var localReasoningEffort: LocalReasoningEffort {
+        get {
+            access(keyPath: \.localReasoningEffort)
+            return Self.localReasoningEffort(in: defaults)
+        }
+        set {
+            withMutation(keyPath: \.localReasoningEffort) {
+                defaults.set(newValue.rawValue, forKey: Key.localReasoningEffort.rawValue)
+            }
+        }
+    }
+
+    nonisolated static func localReasoningEffort(in defaults: UserDefaults) -> LocalReasoningEffort {
+        defaults.string(forKey: Key.localReasoningEffort.rawValue).flatMap(LocalReasoningEffort.init(rawValue:)) ?? .balanced
+    }
+
+    /// Selected external loopback local server model (LM Studio, `mlx-serve`,
+    /// Ollama, or Darkbloom Local), or nil to use Cloak's built-in worker.
+    struct ExternalLocalSelection: Equatable, Sendable {
+        let serverName: String
+        let baseURL: URL
+        let modelID: String
+
+        var displayName: String {
+            let leaf = modelID.split(separator: "/").last.map(String.init) ?? modelID
+            return leaf
+                .replacingOccurrences(of: ".gguf", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
+    var externalLocalSelection: ExternalLocalSelection? {
+        access(keyPath: \.externalLocalSelection)
+        return Self.externalLocalSelection(in: defaults)
+    }
+
+    func selectExternalLocal(_ model: DiscoveredLocalModel?) {
+        withMutation(keyPath: \.externalLocalSelection) {
+            if let model, LocalServerDiscovery.isLoopback(model.baseURL) {
+                defaults.set(model.baseURL.absoluteString, forKey: Key.externalLocalServerURL.rawValue)
+                defaults.set(model.modelID, forKey: Key.externalLocalModelID.rawValue)
+                defaults.set(model.server.rawValue, forKey: Key.externalLocalServerName.rawValue)
+            } else {
+                defaults.removeObject(forKey: Key.externalLocalServerURL.rawValue)
+                defaults.removeObject(forKey: Key.externalLocalModelID.rawValue)
+                defaults.removeObject(forKey: Key.externalLocalServerName.rawValue)
+            }
+        }
+    }
+
+    nonisolated static func externalLocalSelection(in defaults: UserDefaults) -> ExternalLocalSelection? {
+        guard let urlText = defaults.string(forKey: Key.externalLocalServerURL.rawValue),
+            let url = URL(string: urlText),
+            LocalServerDiscovery.isLoopback(url),
+            let modelID = defaults.string(forKey: Key.externalLocalModelID.rawValue),
+            !modelID.isEmpty
+        else { return nil }
+        let serverName = defaults.string(forKey: Key.externalLocalServerName.rawValue) ?? "Local Server"
+        return ExternalLocalSelection(serverName: serverName, baseURL: url, modelID: modelID)
+    }
+
+    /// Plain-English Private Cloud intent preset (`Fast`, `Coding`, `Reasoning`).
+    var smartPrivatePreset: SmartPrivatePreset {
+        get {
+            access(keyPath: \.smartPrivatePreset)
+            return defaults.string(forKey: Key.smartPrivatePreset.rawValue).flatMap(SmartPrivatePreset.init(rawValue:)) ?? .fast
+        }
+        set {
+            withMutation(keyPath: \.smartPrivatePreset) {
+                defaults.set(newValue.rawValue, forKey: Key.smartPrivatePreset.rawValue)
+            }
+        }
+    }
+
+    // MARK: - Inference Serving QoS Guardrails
+
+    var servingPauseOnBattery: Bool {
+        get {
+            access(keyPath: \.servingPauseOnBattery)
+            return defaults.object(forKey: Key.servingPauseOnBattery.rawValue) as? Bool ?? true
+        }
+        set {
+            withMutation(keyPath: \.servingPauseOnBattery) {
+                defaults.set(newValue, forKey: Key.servingPauseOnBattery.rawValue)
+            }
+        }
+    }
+
+    var servingPauseOnHighThermal: Bool {
+        get {
+            access(keyPath: \.servingPauseOnHighThermal)
+            return defaults.object(forKey: Key.servingPauseOnHighThermal.rawValue) as? Bool ?? true
+        }
+        set {
+            withMutation(keyPath: \.servingPauseOnHighThermal) {
+                defaults.set(newValue, forKey: Key.servingPauseOnHighThermal.rawValue)
+            }
+        }
+    }
+
+    var servingQuietHoursEnabled: Bool {
+        get {
+            access(keyPath: \.servingQuietHoursEnabled)
+            return defaults.bool(forKey: Key.servingQuietHoursEnabled.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.servingQuietHoursEnabled) {
+                defaults.set(newValue, forKey: Key.servingQuietHoursEnabled.rawValue)
+            }
+        }
+    }
+
+    var servingQuietStartHour: Int {
+        get {
+            access(keyPath: \.servingQuietStartHour)
+            return (defaults.object(forKey: Key.servingQuietStartHour.rawValue) as? Int) ?? 9
+        }
+        set {
+            let clamped = max(0, min(23, newValue))
+            withMutation(keyPath: \.servingQuietStartHour) {
+                defaults.set(clamped, forKey: Key.servingQuietStartHour.rawValue)
+            }
+        }
+    }
+
+    var servingQuietEndHour: Int {
+        get {
+            access(keyPath: \.servingQuietEndHour)
+            return (defaults.object(forKey: Key.servingQuietEndHour.rawValue) as? Int) ?? 18
+        }
+        set {
+            let clamped = max(0, min(23, newValue))
+            withMutation(keyPath: \.servingQuietEndHour) {
+                defaults.set(clamped, forKey: Key.servingQuietEndHour.rawValue)
+            }
+        }
+    }
+
+    #if DARKBLOOM
+    nonisolated static func servingQoSPolicy(in defaults: UserDefaults) -> ServingQoSPolicy {
+        ServingQoSPolicy(
+            pauseOnBattery: defaults.object(forKey: Key.servingPauseOnBattery.rawValue) as? Bool ?? true,
+            pauseOnHighThermal: defaults.object(forKey: Key.servingPauseOnHighThermal.rawValue) as? Bool ?? true,
+            quietHoursEnabled: defaults.bool(forKey: Key.servingQuietHoursEnabled.rawValue),
+            quietStartHour: (defaults.object(forKey: Key.servingQuietStartHour.rawValue) as? Int) ?? 9,
+            quietEndHour: (defaults.object(forKey: Key.servingQuietEndHour.rawValue) as? Int) ?? 18)
+    }
+    #endif
 
     /// The model V chats are answered with, as its owner chose it in V's
     /// wallet; nil, the one whose requests cost least at most
@@ -490,12 +708,16 @@ final class AppSettings {
     }
 
     /// Snapshot of current Local Access options for `LocalContextBuilder`.
+    /// When a Saved Project Profile is active, Local Mode strictly scopes folder
+    /// search to that project's approved folders so projects never bleed together.
     var localContextOptions: LocalContextOptions {
         LocalContextOptions(
             shareMacInfo: localShareMacInfo,
             useMemory: localUseMemory,
             syncHermesMemory: localSyncHermesMemory,
-            approvedFolders: localApprovedFolders,
+            approvedFolders: ProjectProfileResolver.effectiveApprovedFolders(
+                active: activeProjectProfile,
+                globalFolders: localApprovedFolders),
             useCalendar: localUseCalendar,
             useReminders: localUseReminders,
             useContacts: localUseContacts)
@@ -504,16 +726,113 @@ final class AppSettings {
     /// Human-readable names of currently enabled Local Access sources.
     var activeLocalContextSummary: [String] {
         var names: [String] = []
+        if let project = activeProjectProfile {
+            names.append("Project: \(project.name)")
+        }
         if localShareMacInfo { names.append("Mac info") }
         if localUseMemory { names.append("Memory") }
-        if !localApprovedFolders.isEmpty {
-            let count = localApprovedFolders.count
+        let folders = ProjectProfileResolver.effectiveApprovedFolders(
+            active: activeProjectProfile,
+            globalFolders: localApprovedFolders)
+        if !folders.isEmpty {
+            let count = folders.count
             names.append(count == 1 ? "1 folder" : "\(count) folders")
         }
         if localUseCalendar { names.append("Calendar") }
         if localUseReminders { names.append("Reminders") }
         if localUseContacts { names.append("Contacts") }
         return names
+    }
+
+    // MARK: - Saved Project Profiles (free & unlocked in beta)
+
+    var projectProfiles: [ProjectProfile] {
+        get {
+            access(keyPath: \.projectProfiles)
+            return Self.projectProfiles(in: defaults)
+        }
+        set {
+            withMutation(keyPath: \.projectProfiles) {
+                if let data = try? JSONEncoder().encode(newValue) {
+                    defaults.set(data, forKey: Key.projectProfiles.rawValue)
+                }
+            }
+        }
+    }
+
+    nonisolated static func projectProfiles(in defaults: UserDefaults) -> [ProjectProfile] {
+        guard let data = defaults.data(forKey: Key.projectProfiles.rawValue),
+            let decoded = try? JSONDecoder().decode([ProjectProfile].self, from: data)
+        else { return [] }
+        return decoded
+    }
+
+    var activeProjectProfileID: UUID? {
+        get {
+            access(keyPath: \.activeProjectProfileID)
+            return Self.activeProjectProfileID(in: defaults)
+        }
+        set {
+            withMutation(keyPath: \.activeProjectProfileID) {
+                if let newValue {
+                    defaults.set(newValue.uuidString, forKey: Key.activeProjectProfileID.rawValue)
+                } else {
+                    defaults.removeObject(forKey: Key.activeProjectProfileID.rawValue)
+                }
+            }
+        }
+    }
+
+    nonisolated static func activeProjectProfileID(in defaults: UserDefaults) -> UUID? {
+        defaults.string(forKey: Key.activeProjectProfileID.rawValue).flatMap(UUID.init(uuidString:))
+    }
+
+    var activeProjectProfile: ProjectProfile? {
+        guard let id = activeProjectProfileID else { return nil }
+        return projectProfiles.first { $0.id == id }
+    }
+
+    nonisolated static func activeProjectProfile(in defaults: UserDefaults) -> ProjectProfile? {
+        guard let id = activeProjectProfileID(in: defaults) else { return nil }
+        return projectProfiles(in: defaults).first { $0.id == id }
+    }
+
+    func saveProjectProfile(_ profile: ProjectProfile) {
+        var next = projectProfiles
+        var updated = profile
+        updated.updatedAt = .now
+        if let idx = next.firstIndex(where: { $0.id == updated.id }) {
+            next[idx] = updated
+        } else {
+            next.append(updated)
+        }
+        projectProfiles = next
+    }
+
+    func deleteProjectProfile(_ id: UUID) {
+        if activeProjectProfileID == id {
+            activeProjectProfileID = nil
+        }
+        projectProfiles = projectProfiles.filter { $0.id != id }
+    }
+
+    func activateProjectProfile(_ id: UUID?) {
+        activeProjectProfileID = id
+        guard let profile = id.flatMap({ target in projectProfiles.first { $0.id == target } }) else { return }
+        switch profile.route {
+        case .local:
+            doorPayment = .local
+        case .near where securityProfile.allowsNear:
+            doorPayment = .near
+        case .venice where securityProfile.allowsTokenInference:
+            doorPayment = .venice
+        case .boundless where securityProfile.allowsTokenInference:
+            doorPayment = .tempo
+        case .zkapi where securityProfile.allowsZkAPI:
+            doorPayment = .zkapi
+        case .keepCurrent, .near, .venice, .boundless, .zkapi:
+            break
+        }
     }
 
     /// When V's deposit may be sent to the service's operator, as the payer
@@ -654,8 +973,10 @@ final class AppSettings {
     }
 
     nonisolated static func doorModel(in defaults: UserDefaults) -> String? {
-        let value = defaults.string(forKey: Key.doorModel.rawValue)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (value?.isEmpty == false) ? value : nil
+        let active = activeProjectProfile(in: defaults)
+        return ProjectProfileResolver.effectiveDoorModel(
+            active: active,
+            globalModel: defaults.string(forKey: Key.doorModel.rawValue))
     }
 
     nonisolated static func vModel(in defaults: UserDefaults) -> String? {
@@ -715,7 +1036,9 @@ final class AppSettings {
     nonisolated static func doorPrivacyPolicy(in defaults: UserDefaults) -> PrivacyShieldPolicy {
         let blockSecrets = doorBlockSecrets(in: defaults)
         let maskEntities = doorMaskEntities(in: defaults)
-        let rawTerms = defaults.string(forKey: Key.doorPrivateTerms.rawValue) ?? ""
+        let rawTerms = ProjectProfileResolver.mergedPrivateTermsRaw(
+            active: activeProjectProfile(in: defaults),
+            globalTermsRaw: defaults.string(forKey: Key.doorPrivateTerms.rawValue) ?? "")
         return PrivacyShieldPolicy(
             blockSecrets: blockSecrets,
             maskEntities: maskEntities,
@@ -849,38 +1172,77 @@ final class AppSettings {
             case .spendDailyLimitUSD: withMutation(keyPath: \.spendDailyLimitUSD, remove)
             case .spendPerCallLimitUSD: withMutation(keyPath: \.spendPerCallLimitUSD, remove)
             case .spendAllowedNetworks: withMutation(keyPath: \.spendAllowedNetworks, remove)
-            case .vModel, .depositExpires, .payProvider, .veniceModel, .venicePays,
+            case .localReasoningEffort: withMutation(keyPath: \.localReasoningEffort, remove)
+            case .externalLocalServerURL, .externalLocalModelID, .externalLocalServerName:
+                withMutation(keyPath: \.externalLocalSelection, remove)
+            case .smartPrivatePreset: withMutation(keyPath: \.smartPrivatePreset, remove)
+            case .servingPauseOnBattery: withMutation(keyPath: \.servingPauseOnBattery, remove)
+            case .servingPauseOnHighThermal: withMutation(keyPath: \.servingPauseOnHighThermal, remove)
+            case .servingQuietHoursEnabled: withMutation(keyPath: \.servingQuietHoursEnabled, remove)
+            case .servingQuietStartHour: withMutation(keyPath: \.servingQuietStartHour, remove)
+            case .servingQuietEndHour: withMutation(keyPath: \.servingQuietEndHour, remove)
+            case .activeProjectProfileID: withMutation(keyPath: \.activeProjectProfileID, remove)
+            case .securityProfile: withMutation(keyPath: \.securityProfile, remove)
+            case .projectProfiles, .vModel, .depositExpires, .payProvider, .veniceModel, .venicePays,
                 .walletTermsVersion, .walletTermsAcceptedAt: break
             }
         }
     }
 }
 
-/// Payment rail for Connected Apps (Claude Code, Cursor, Cline, Aider, etc.).
+/// Payment / inference rail for Connected Apps (Claude Code, OpenCode, Goose, Cursor, Cline, Aider, etc.).
 enum DoorPayment: String, CaseIterable, Identifiable, Sendable {
-    case zkapi
+    case local
+    case near
+    case venice
     case tempo
+    case zkapi
 
     var id: Self { self }
 
     var payment: Payment {
         switch self {
-        case .zkapi: .zkapi
+        case .local, .near, .zkapi: .zkapi
+        case .venice, .tempo: .tempo
+        }
+    }
+
+    var macRoute: Door.MacRoute {
+        switch self {
+        case .local: .local
+        case .near: .near
+        case .venice: .venice
         case .tempo: .tempo
+        case .zkapi: .zkapi
         }
     }
 
     var title: String {
         switch self {
+        case .local: "Local Model (Free · $0)"
+        case .near: "NEAR AI Gateway (TEE)"
+        case .venice: "Venice AI (Base USDC / Key)"
+        case .tempo: "Boundless (Tempo USDC.e)"
         case .zkapi: "zkAPI Anon Inference"
-        case .tempo: "Token Inference (Boundless)"
         }
     }
 
     var shortTitle: String {
         switch self {
+        case .local: "Local ($0)"
+        case .near: "NEAR TEE"
+        case .venice: "Venice · Base"
+        case .tempo: "Boundless · Tempo"
         case .zkapi: "zkAPI Anon"
-        case .tempo: "Token · Boundless"
+        }
+    }
+
+    func isAllowed(in profile: SecurityProfile) -> Bool {
+        switch self {
+        case .local: true
+        case .zkapi: profile.allowsZkAPI
+        case .near: profile.allowsNear
+        case .venice, .tempo: profile.allowsTokenInference
         }
     }
 }

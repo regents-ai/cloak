@@ -535,7 +535,7 @@ struct VeniceFundsSections: View {
                         Button {
                             onRampTarget = .baseUSDC(address: address)
                         } label: {
-                            Label("Add Funds with Card / Apple Pay", systemImage: "creditcard")
+                            Label("Add Funds (Stripe Link / Apple Pay)", systemImage: "creditcard")
                         }
                         .buttonStyle(.borderedProminent)
                     }
@@ -967,6 +967,7 @@ private struct Account: View {
     let wallet: Wallet
     let address: String
     let running: Bool
+    @State private var onRampTarget: CardOnRamp.Target?
     /// The wallet pays in USDC.e on Tempo and sends nothing else.
     private static let only = "Send USDC.e on Tempo only — other assets can't be recovered."
 
@@ -1008,18 +1009,31 @@ private struct Account: View {
             } else {
                 LabeledContent("Balance") { Unread(running: running, what: "wallet balance") }
             }
-            HStack {
+            HStack(spacing: 8) {
                 ExportPrivateKeyButton(
                     title: "Boundless Tempo Wallet",
                     address: address,
                     loadKey: { try WalletKeychain.key() })
                 Spacer(minLength: 0)
+                if CardOnRamp.isConfigured {
+                    Button {
+                        onRampTarget = .tempoUSDCe(address: address)
+                    } label: {
+                        Label("Add Funds (Stripe Link / Apple Pay)", systemImage: "creditcard")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             }
         } header: {
             Text("Wallet")
         } footer: {
             Text("Beta: keep working balances small. Private-key backup recovers wallet USDC.e only — close or withdraw any active channel before wiping or switching Macs (keys never sync to iCloud). [Wallet security & recovery](https://regents.sh/docs/cloak/wallets).")
                 .foregroundStyle(.secondary)
+        }
+        .sheet(item: $onRampTarget) { target in
+            CardOnRampSheet(target: target) {
+                Task { await wallet.refresh() }
+            }
         }
     }
 }

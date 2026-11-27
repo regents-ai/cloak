@@ -500,6 +500,31 @@ public struct Venice: Sendable {
         return try await Self.read(response, model: chat.model, partial: partial)
     }
 
+    /// Sends an OpenAI `/v1/chat/completions` JSON payload directly to Venice
+    /// (with `stream: false` and Venice privacy parameters applied) and returns
+    /// the raw OpenAI completion JSON (used by `CloakDoor` Connected Apps).
+    public func complete(body: Data) async throws(VeniceStop) -> Data {
+        guard var root = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            throw VeniceStop(.failed, sent: false, "request body did not read as JSON")
+        }
+        root["stream"] = false
+        if root["venice_parameters"] == nil {
+            root["venice_parameters"] = [
+                "include_venice_system_prompt": false,
+                "enable_web_search": "off",
+            ]
+        }
+        guard let outbound = try? JSONSerialization.data(withJSONObject: root, options: [.withoutEscapingSlashes]) else {
+            throw VeniceStop(.failed, sent: false, "request body could not be encoded")
+        }
+        let response = try await Self.carry(try await request("POST", "chat/completions", body: outbound), transport)
+        let responseBody = try await Self.whole(response)
+        guard response.status == 200 else {
+            throw VeniceStop.answered(response.status, responseBody, auth: auth)
+        }
+        return responseBody
+    }
+
     /// A chat request's body: these fields and no others. Venice adds no
     /// instruction of its own, keeps any thinking out of the answer, and
     /// searches nothing. Every stream ends with its usage unasked. Venice

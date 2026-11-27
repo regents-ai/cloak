@@ -21,6 +21,7 @@ struct DarkbloomView: View {
     }
 
     let mode: DarkbloomMode
+    @Bindable var settings: AppSettings = .standard
     var embedded = false
     @State private var confirmingStart = false
     /// Target serving mode waiting on the existing-setup confirmation dialog;
@@ -65,6 +66,7 @@ struct DarkbloomView: View {
                             onRequestCancelDownload: { cancellingOp = $0 }
                         )
                         DarkbloomMonitorSection(mode: mode)
+                        DarkbloomQoSSection(settings: settings, mode: mode)
                         if let endpoint = mode.snapshot?.endpoint {
                             DarkbloomLocalAPISection(mode: mode, endpoint: endpoint)
                         }
@@ -75,6 +77,7 @@ struct DarkbloomView: View {
                     } else {
                         DarkbloomSetupSection(mode: mode)
                     }
+                    DarkbloomNetworksSection()
                 }
                 .formStyle(.grouped)
                 .scrollContentBackground(.hidden)
@@ -269,6 +272,96 @@ struct DarkbloomFailureBadge: View {
             if let detail = failure.detail {
                 InfoButton("About \(failure.words)", note: detail)
             }
+        }
+    }
+}
+
+/// Smart Mac QoS guardrails (battery, thermal pressure, quiet hours) for network serving.
+private struct DarkbloomQoSSection: View {
+    @Bindable var settings: AppSettings
+    let mode: DarkbloomMode
+
+    var body: some View {
+        Section {
+            Toggle("Pause on battery power", isOn: $settings.servingPauseOnBattery)
+                .onChange(of: settings.servingPauseOnBattery) { _, _ in mode.evaluateQoS() }
+            Toggle("Pause if Mac runs hot", isOn: $settings.servingPauseOnHighThermal)
+                .onChange(of: settings.servingPauseOnHighThermal) { _, _ in mode.evaluateQoS() }
+            Toggle("Quiet hours schedule", isOn: $settings.servingQuietHoursEnabled)
+                .onChange(of: settings.servingQuietHoursEnabled) { _, _ in mode.evaluateQoS() }
+            if settings.servingQuietHoursEnabled {
+                LabeledContent("Pause window") {
+                    HStack(spacing: 6) {
+                        Picker("Start", selection: $settings.servingQuietStartHour) {
+                            ForEach(0..<24, id: \.self) { hour in
+                                Text(Self.formatHour(hour)).tag(hour)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 88)
+                        .onChange(of: settings.servingQuietStartHour) { _, _ in mode.evaluateQoS() }
+                        Text("to")
+                            .foregroundStyle(.secondary)
+                        Picker("End", selection: $settings.servingQuietEndHour) {
+                            ForEach(0..<24, id: \.self) { hour in
+                                Text(Self.formatHour(hour)).tag(hour)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 88)
+                        .onChange(of: settings.servingQuietEndHour) { _, _ in mode.evaluateQoS() }
+                    }
+                }
+            }
+        } header: {
+            Text("Mac Guardrails")
+        } footer: {
+            Text("Cloak automatically pauses network serving when a guardrail triggers and resumes once your Mac is plugged in, cool, and outside quiet hours.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private static func formatHour(_ hour: Int) -> String {
+        let normalized = ((hour % 24) + 24) % 24
+        let suffix = normalized >= 12 ? "PM" : "AM"
+        let display = normalized % 12 == 0 ? 12 : normalized % 12
+        return "\(display):00 \(suffix)"
+    }
+}
+
+/// Pluggable Serving Network catalog preparing Cloak for multi-network serving selection.
+private struct DarkbloomNetworksSection: View {
+    var body: some View {
+        Section {
+            ForEach(ServingNetworkDescriptor.catalog) { network in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(network.name)
+                            .fontWeight(.medium)
+                        Text(network.status.rawValue)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(network.status == .active ? .green : .secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule().fill(
+                                    network.status == .active ? Color.green.opacity(0.14) : Color.primary.opacity(0.07))
+                            )
+                        Spacer(minLength: 0)
+                        Text(network.settlement)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(network.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 2)
+            }
+        } header: {
+            Text("Serving Networks")
         }
     }
 }

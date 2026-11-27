@@ -39,9 +39,10 @@ struct DarkbloomServingSection: View {
                         }
                     }
                     Spacer(minLength: 8)
+                    let allowNetwork = AppSettings.standard.securityProfile.allowsNetworkServing
                     ServingModeControl(
                         selection: mode.servingMode,
-                        canServeNetwork: mode.canAlsoServe,
+                        canServeNetwork: mode.canAlsoServe && allowNetwork,
                         disabled: mode.state == .stopping,
                         onSelect: onSelectMode
                     )
@@ -50,6 +51,15 @@ struct DarkbloomServingSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if !AppSettings.standard.securityProfile.allowsNetworkServing {
+                    Label(
+                        "Network + Local earning is disabled in \(AppSettings.standard.securityProfile.shortTitle) profile. Local Only serving remains available.",
+                        systemImage: AppSettings.standard.securityProfile.symbol
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.vertical, 2)
 
@@ -62,6 +72,18 @@ struct DarkbloomServingSection: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            }
+
+            if case .pause(let reason) = mode.qosDecision {
+                HStack(spacing: 8) {
+                    Image(systemName: "shield.lefthalf.filled")
+                        .foregroundStyle(.orange)
+                    Text(reason.summary)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 2)
             }
 
             if mode.needsModelNotice {
@@ -137,15 +159,22 @@ struct DarkbloomServingSection: View {
             if let earnings = mode.cloudEarnings, earnings.linked {
                 if let balance = earnings.balanceMicroUsd {
                     LabeledContent("Payout Balance") {
-                        HStack(spacing: 8) {
-                            Text(DarkbloomCloudEarnings.formatMicroUSD(balance))
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(.green)
-                                .monospacedDigit()
-                            SymbolButton("Refresh Earnings", symbol: "arrow.clockwise") {
-                                mode.refreshEarnings(force: true)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            HStack(spacing: 8) {
+                                Text(DarkbloomCloudEarnings.formatMicroUSD(balance))
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.green)
+                                    .monospacedDigit()
+                                SymbolButton("Refresh Earnings", symbol: "arrow.clockwise") {
+                                    mode.refreshEarnings(force: true)
+                                }
+                                .overhanging()
                             }
-                            .overhanging()
+                            if let caption = ServingQoS.earnToSpendCaption(microUSD: balance) {
+                                Text(caption)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -161,6 +190,13 @@ struct DarkbloomServingSection: View {
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
+                            }
+                            if (earnings.balanceMicroUsd ?? 0) == 0,
+                                let caption = ServingQoS.earnToSpendCaption(microUSD: lifetime)
+                            {
+                                Text(caption)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }

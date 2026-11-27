@@ -31,8 +31,14 @@ import Sparkle
 /// the Llama app (decision 14 in docs/plan.md).
 @MainActor
 final class Updates: NSObject {
-    private lazy var controller = SPUStandardUpdaterController(
-        startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
+    static let changelogURL = URL(string: "https://github.com/regents-ai/cloak/releases")!
+
+    private lazy var userDriver = CloakUpdateUserDriver(hostBundle: .main, delegate: self)
+    private lazy var updater = SPUUpdater(
+        hostBundle: .main,
+        applicationBundle: .main,
+        userDriver: userDriver,
+        delegate: self)
     private let logger = Logger(subsystem: "sh.regents.cloak.app", category: "updates")
 
     private let updatesEnabled = !Places.isDev && Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil
@@ -43,17 +49,21 @@ final class Updates: NSObject {
     override init() {
         super.init()
         guard updatesEnabled else { return }
-        controller.updater.userAgentString = "curl/8.7.1"
-        controller.startUpdater()
+        updater.userAgentString = "curl/8.7.1"
+        do {
+            try updater.start()
+        } catch {
+            logger.error("updater could not start: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Whether Sparkle checks by itself, once a day. Off until the person
     /// answers Sparkle's question or turns it on.
     var checksAutomatically: Bool {
-        get { updatesEnabled ? controller.updater.automaticallyChecksForUpdates : false }
+        get { updatesEnabled ? updater.automaticallyChecksForUpdates : false }
         set {
             guard updatesEnabled else { return }
-            controller.updater.automaticallyChecksForUpdates = newValue
+            updater.automaticallyChecksForUpdates = newValue
         }
     }
 
@@ -67,13 +77,14 @@ final class Updates: NSObject {
             alert.messageText = "Updates Disabled in Cloak Dev"
             alert.informativeText =
                 "This is an isolated local test build (sh.regents.cloak.dev). Your release Cloak.app in /Applications updates independently through the normal channel."
+            alert.accessoryView = ChangelogLinkAccessory(url: Self.changelogURL)
             alert.runModal()
             AppWindow.leaveDock()
             return
         }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        controller.checkForUpdates(nil)
+        updater.checkForUpdates()
     }
 }
 
@@ -93,6 +104,14 @@ extension Updates: @preconcurrency SPUStandardUserDriverDelegate {
     /// keyboard from the app in front.
     var supportsGentleScheduledUpdateReminders: Bool { true }
 
+    func standardUserDriverShouldShowVersionHistory(for item: SUAppcastItem) -> Bool {
+        true
+    }
+
+    func standardUserDriverShowVersionHistory(for item: SUAppcastItem) {
+        NSWorkspace.shared.open(item.fullReleaseNotesURL ?? Self.changelogURL)
+    }
+
     /// A menu-bar app's window would open behind the one in front, so the
     /// app has a Dock icon while Sparkle shows an update.
     func standardUserDriverWillHandleShowingUpdate(
@@ -105,5 +124,84 @@ extension Updates: @preconcurrency SPUStandardUserDriverDelegate {
     /// own windows is open.
     func standardUserDriverWillFinishUpdateSession() {
         AppWindow.leaveDock()
+    }
+}
+
+/// Thin `SPUStandardUserDriver` subclass that preserves every standard Sparkle
+/// dialog while adding a clickable "View Changelog" hyperlink directly inside
+/// the "You're up to date!" alert.
+private final class CloakUpdateUserDriver: SPUStandardUserDriver {
+    override func showUpdateNotFoundWithError(_ error: any Error, acknowledgement: @escaping () -> Void) {
+        let nsError = error as NSError
+        let reason = (nsError.userInfo[SPUNoUpdateFoundReasonKey] as? NSNumber)?.intValue
+        let isUpToDate = reason == Int(SPUNoUpdateFoundReason.onLatestVersion.rawValue)
+            || reason == Int(SPUNoUpdateFoundReason.onNewerThanLatestVersion.rawValue)
+            || reason == nil
+        guard isUpToDate else {
+            super.showUpdateNotFoundWithError(error, acknowledgement: acknowledgement)
+            return
+        }
+
+        // Close Sparkle's "Checking for updates…" spinner cleanly before presenting our alert.
+        super.dismissUpdateInstallation()
+        let item = nsError.userInfo[SPULatestAppcastItemFoundKey] as? SUAppcastItem
+        let url = item?.fullReleaseNotesURL
+
+        MainActor.assumeIsolated {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert(error: nsError)
+            alert.alertStyle = .informational
+            alert.icon = NSApp.applicationIconImage
+            alert.accessoryView = ChangelogLinkAccessory(url: url ?? Updates.changelogURL)
+            alert.runModal()
+            AppWindow.leaveDock()
+        }
+        acknowledgement()
+    }
+}
+
+/// Centered clickable "View Changelog" link accessory for macOS `NSAlert`.
+@MainActor
+private final class ChangelogLinkAccessory: NSView {
+    private let url: URL
+
+    init(url: URL) {
+        self.url = url
+        super.init(frame: NSRect(x: 0, y: 0, width: 220, height: 22))
+        let button = LinkCursorButton(frame: bounds)
+        button.isBordered = false
+        button.target = self
+        button.action = #selector(openChangelog)
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        button.attributedTitle = NSAttributedString(
+            string: "View Changelog",
+            attributes: [
+                .foregroundColor: NSColor.linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium),
+                .paragraphStyle: style,
+            ]
+        )
+        button.setAccessibilityLabel("View Changelog")
+        button.setAccessibilityHelp("Opens Cloak's release notes on GitHub.")
+        button.autoresizingMask = [.width, .height]
+        addSubview(button)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func openChangelog() {
+        NSWorkspace.shared.open(url)
+    }
+}
+
+private final class LinkCursorButton: NSButton {
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
     }
 }

@@ -12,19 +12,21 @@ extension ExpiryGuard {
         let logger = Logger(subsystem: "sh.regents.cloak.app", category: "expiry")
         let notifier = ExpiryNotificationBridge(logger: logger)
 
+        let isBusy: @MainActor () -> Bool = {
+            payer.queue.sending
+                || payer.queue.held
+                || payer.review != nil
+                || payer.working > 0
+                || payer.activity != nil
+                || payer.view == nil
+        }
+
         self.init(parts: Parts(
             autoWithdrawEnabled: { settings.autoWithdrawBeforeExpiry },
             depositExpires: { settings.depositExpires },
             payerState: { payer.state },
             withdrawBlock: { payer.withdrawBlock },
-            isBusy: {
-                payer.queue.sending
-                    || payer.queue.held
-                    || payer.review != nil
-                    || payer.working > 0
-                    || payer.activity != nil
-                    || payer.view == nil
-            },
+            isBusy: isBusy,
             estimateWithdrawalFee: { await payer.estimateWithdrawalFee() },
             quoteWithdrawal: {
                 await payer.quoteWithdrawal()
@@ -56,7 +58,8 @@ extension ExpiryGuard {
                     expiry: settings.depositExpires,
                     autoWithdraw: settings.autoWithdrawBeforeExpiry,
                     state: payer.state,
-                    paused: payer.withdrawBlock == .paused)
+                    paused: payer.withdrawBlock == .paused,
+                    busy: isBusy())
             }) {
                 self.handle(snapshot)
             }
