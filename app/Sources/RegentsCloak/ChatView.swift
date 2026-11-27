@@ -46,6 +46,14 @@ struct ChatView: View {
                 chat.deleteSelected()
                 return true
             }
+            // Command-Shift-D toggles offline Local Voice dictation when a chat is active.
+            if flags == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "d" {
+                guard chat.isOpen, chat.selected != nil else { return false }
+                chat.voice.toggleDictation(currentDraft: { chat.draft }) { updated in
+                    chat.draft = updated
+                }
+                return true
+            }
             guard flags == .command, let key = event.charactersIgnoringModifiers else { return false }
             switch key {
             case "n" where chat.isOpen:
@@ -432,6 +440,15 @@ private struct ActiveGuaranteesView: View {
                 symbol: "eye.slash",
                 title: "Memory only (not saved)",
                 detail: "This chat never touches disk and vanishes when Cloak quits."
+            ))
+        }
+
+        if chat.voice.isListening || chat.voice.speakingTurn != nil {
+            items.append(Item(
+                id: "local-voice",
+                symbol: "waveform",
+                title: "On-device voice",
+                detail: "Speech dictation and read-aloud run 100% offline on this Mac using Apple's local speech engine. Zero audio leaves this Mac."
             ))
         }
 
@@ -938,8 +955,11 @@ private struct TurnCard: View {
                 Pane(title: "Answer", count: nil, mark: .added) {
                     AnswerText(text: answer)
                 } accessory: {
-                    if let tokens = turn.tokens {
-                        TokenMark(tokens: tokens)
+                    HStack(spacing: 6) {
+                        VoiceSpeakButton(voice: chat.voice, turnID: turn.id, text: answer)
+                        if let tokens = turn.tokens {
+                            TokenMark(tokens: tokens)
+                        }
                     }
                 }
             } else if let streaming = chat.veniceMode.partial[turn.id], !streaming.text.isEmpty {
@@ -1189,6 +1209,8 @@ private struct TaskCard: View {
             if let answer = turn.answer, !Chat.isBlank(answer) {
                 Pane(title: "Answer", count: nil, mark: .added) {
                     AnswerText(text: answer)
+                } accessory: {
+                    VoiceSpeakButton(voice: chat.voice, turnID: turn.id, text: answer)
                 }
             }
             if run == nil, turn.answer == nil {
@@ -1307,6 +1329,8 @@ private struct LlamaCard: View {
             if let answer = turn.answer {
                 Pane(title: "Answer", count: nil, mark: .added) {
                     AnswerText(text: answer)
+                } accessory: {
+                    VoiceSpeakButton(voice: chat.voice, turnID: turn.id, text: answer)
                 }
             } else if let answering {
                 if !answering.partial.isEmpty {
@@ -1856,7 +1880,44 @@ private struct Compose: View {
                     }
                 }
             }
-            // Clean prompt input bubble with integrated Send/Stop button.
+            if chat.voice.isListening {
+                HStack(spacing: 8) {
+                    VoiceLevelBars(level: chat.voice.level)
+                    Text(chat.voice.statusTitle)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Stop") { chat.voice.stopDictation() }
+                        .controlSize(.mini)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.red.opacity(0.08), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.red.opacity(0.22), lineWidth: 0.75))
+            } else if let voiceError = chat.voice.errorInfo {
+                HStack(spacing: 6) {
+                    Image(systemName: "mic.slash")
+                        .foregroundStyle(.orange)
+                    Text(voiceError.message)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    if let pane = voiceError.settingsPane {
+                        Button(pane.buttonTitle) {
+                            chat.voice.openSettings(pane)
+                        }
+                        .controlSize(.mini)
+                    }
+                    Button {
+                        chat.voice.dismissError()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .font(.caption)
+            }
+            // Clean prompt input bubble with integrated Local Voice + Send/Stop button.
             HStack(alignment: .bottom, spacing: 8) {
                 TextBox(
                     text: $chat.draft, label: label, maxHeight: 160, autofocus: true,
@@ -1873,6 +1934,12 @@ private struct Compose: View {
                                 .accessibilityHidden(true)
                         }
                     }
+                VoiceMicButton(voice: chat.voice) {
+                    chat.voice.toggleDictation(currentDraft: { chat.draft }) { updated in
+                        chat.draft = updated
+                    }
+                }
+                .padding(.bottom, 2)
                 if running || answering, let conversation {
                     Button("Stop", systemImage: "stop.fill") {
                         if llama { chat.stopAnswer(in: conversation.id) } else { chat.agent.stop(conversation.id) }
@@ -1896,8 +1963,10 @@ private struct Compose: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(
-                        llama && isDroppingLocalFiles ? Color.accentColor : Color(nsColor: .separatorColor),
-                        lineWidth: llama && isDroppingLocalFiles ? 1.5 : 1)
+                        chat.voice.isListening
+                            ? Color.red.opacity(0.6)
+                            : (llama && isDroppingLocalFiles ? Color.accentColor : Color(nsColor: .separatorColor)),
+                        lineWidth: (chat.voice.isListening || (llama && isDroppingLocalFiles)) ? 1.5 : 1)
             )
             .overlay(alignment: .center) {
                 if llama && isDroppingLocalFiles {
@@ -2026,7 +2095,10 @@ private struct Compose: View {
         .padding(.vertical, 12)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: chat.picks.details)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: agentToast)
-        .onDisappear { agentToastTask?.cancel() }
+        .onDisappear {
+            agentToastTask?.cancel()
+            chat.voice.stopAll()
+        }
     }
 
     private func showAgentToast(enabled: Bool) {

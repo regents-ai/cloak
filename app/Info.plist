@@ -53,6 +53,10 @@
 	<string>Cloak reads open Reminders strictly on this Mac when you enable Reminders in Local Access settings. Nothing is sent over the network.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Cloak looks up Contacts mentioned in your prompt strictly on this Mac when you enable Contacts in Local Access settings. Nothing is sent over the network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Cloak uses your microphone for Local Voice dictation strictly on this Mac. Audio never leaves this Mac.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Cloak transcribes speech strictly on-device using macOS offline speech recognition. Audio is never sent to Apple or any server.</string>
 	<key>OSAScriptingDefinition</key>
 	<string>RegentsCloak.sdef</string>
 </dict>

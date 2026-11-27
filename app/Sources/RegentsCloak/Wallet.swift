@@ -17,8 +17,8 @@ import os
 final class Wallet {
     /// The cheapest suitable open model in the provider's list when this was
     /// written; any model in the list can be picked.
-    static let defaultModel = "deepseek/deepseek-v4-flash-0731"
-    private static let modelKey = "tokenModel"
+    nonisolated static let defaultModel = "deepseek/deepseek-v4-flash-0731"
+    nonisolated static let modelKey = "tokenModel"
 
     let supervisor: Supervisor
     let settings: AppSettings
@@ -92,6 +92,8 @@ final class Wallet {
     /// Asks the keychain for the wallet, then reads it if there is one. A
     /// read that fails can be asked again.
     func find() async {
+        guard presence != .creating else { return }
+        if case .held = presence { return }
         presence = .looking
         let read: Result<String?, Keychain.Failure>
         do {
@@ -100,6 +102,7 @@ final class Wallet {
             logger.error("cannot read the wallet: \(error.description, privacy: .public)")
             read = .failure(error)
         }
+        guard presence == .looking else { return }
         presence = WalletPresence(read)
         await refresh()
     }

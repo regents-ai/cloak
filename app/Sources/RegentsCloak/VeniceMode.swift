@@ -64,10 +64,11 @@ final class VeniceMode {
     private(set) var walletStop: RemoteStop?
     /// Reads in flight for toolbar/sheet spinner.
     private(set) var reading = 0
-    /// Monotonic refresh generations so stale out-of-order Tor reads never
-    /// overwrite newer balances or model lists.
+    /// Monotonic refresh generations so stale out-of-order Tor/Keychain reads
+    /// never overwrite newer balances, model lists, or saved API key state.
     @ObservationIgnored private var modelsGeneration: UInt64 = 0
     @ObservationIgnored private var balancesGeneration: UInt64 = 0
+    @ObservationIgnored private var keyGeneration: UInt64 = 0
     /// Live streaming partial answers, by turn.
     private(set) var partial: [UUID: Partial] = [:]
     /// Last send stop per turn (in memory only).
@@ -214,14 +215,19 @@ final class VeniceMode {
     // MARK: Dedicated Venice Wallet (Decision R5b)
 
     func findWallet() async {
+        guard presence != .creating else { return }
+        if case .held = presence { return }
         presence = .looking
         do throws(Keychain.Failure) {
-            presence = WalletPresence(.success(try await VeniceWalletKeychain.address()))
+            let address = try await VeniceWalletKeychain.address()
+            guard presence == .looking else { return }
+            presence = WalletPresence(.success(address))
             if running, presence.address != nil {
                 await refreshBalances()
             }
         } catch {
             logger.error("cannot read Venice wallet from keychain: \(error.description, privacy: .public)")
+            guard presence == .looking else { return }
             presence = .unreadable
         }
     }
@@ -245,20 +251,25 @@ final class VeniceMode {
     // MARK: Optional Venice API Key
 
     func findKey() async {
+        keyGeneration &+= 1
+        let gen = keyGeneration
         do throws(Keychain.Failure) {
             let found = try await ProviderKeychain.venice.has()
+            guard keyGeneration == gen else { return }
             hasKey = found
             if running, found {
                 await refreshBalances()
             }
         } catch {
             logger.error("cannot check Venice API key: \(error.description, privacy: .public)")
+            guard keyGeneration == gen else { return }
             hasKey = nil
         }
     }
 
     func saveKey(_ key: String) async throws(Keychain.Failure) {
         try await ProviderKeychain.venice.store(key)
+        keyGeneration &+= 1
         hasKey = true
         keyAccount = nil
         keyAccountStop = nil
@@ -267,6 +278,7 @@ final class VeniceMode {
 
     func removeKey() async throws(Keychain.Failure) {
         try await ProviderKeychain.venice.remove()
+        keyGeneration &+= 1
         balancesGeneration &+= 1
         hasKey = false
         keyAccount = nil

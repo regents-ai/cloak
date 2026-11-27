@@ -15,6 +15,7 @@ final class AppWindow: NSObject, NSWindowDelegate {
     private let make: () -> NSWindow
     private var window: NSWindow?
     var onBecomeKey: (() -> Void)?
+    var onWillClose: (() -> Void)?
 
     init(_ make: @escaping () -> NSWindow) {
         self.make = make
@@ -57,6 +58,7 @@ final class AppWindow: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        onWillClose?()
         Self.leaveDock(closing: notification.object as? NSWindow)
     }
 

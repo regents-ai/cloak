@@ -31,30 +31,49 @@ public enum NearTraceExporter {
         public let turnCount: Int
     }
 
+    /// Turns eligible for TraceCommons Letta Trajectory v1 export:
+    /// TraceCommons (`trajectory.rs`) fails closed with `malformed_record` on
+    /// any assistant record with empty `content`, so turns with blank prompts
+    /// or blank answers are excluded cleanly.
+    public static func eligibleTurns(in conversation: Conversation) -> [Turn] {
+        guard conversation.isNear, !conversation.isAgent else { return [] }
+        return conversation.turns.filter { turn in
+            guard let answer = turn.answer else { return false }
+            return !turn.sent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     /// Encodes a NEAR AI Gateway chat as Letta Trajectory v1 JSON bytes.
     /// Format verified against TraceCommons `crates/trace-commons-contributor-sources/src/source/trajectory.rs`:
     /// - First record: `{"role":"meta","source":"cloak","model":"Qwen/Qwen3.8-27B"}`
-    /// - Followed by alternating `user` and `assistant` records with RFC 3339 `timestamp` and `content`.
+    /// - Followed by alternating `user` and `assistant` records with strictly
+    ///   monotonic RFC 3339 UTC `timestamp` and non-empty `content`.
     public static func encode(_ conversation: Conversation, model: String = Near.model) throws(Failure) -> Data {
         guard conversation.isNear, !conversation.isAgent else { throw .notNearChat }
-        let answered = conversation.turns.filter { $0.answer != nil }
+        let answered = eligibleTurns(in: conversation)
         guard !answered.isEmpty else { throw .noAnsweredTurns }
 
-        let timestamp = conversation.created.ISO8601Format(.iso8601(timeZone: .gmt))
         var records: [[String: String]] = [
             ["role": "meta", "source": "cloak", "model": model]
         ]
         records.reserveCapacity(1 + answered.count * 2)
+        let rfc3339UTC = Date.ISO8601FormatStyle(timeZone: .gmt)
+        var step = 0
         for turn in answered {
             guard let answer = turn.answer else { continue }
+            let userTimestamp = rfc3339UTC.format(conversation.created.addingTimeInterval(Double(step)))
+            step += 1
+            let assistantTimestamp = rfc3339UTC.format(conversation.created.addingTimeInterval(Double(step)))
+            step += 1
             records.append([
                 "role": "user",
-                "timestamp": timestamp,
+                "timestamp": userTimestamp,
                 "content": turn.sent,
             ])
             records.append([
                 "role": "assistant",
-                "timestamp": timestamp,
+                "timestamp": assistantTimestamp,
                 "content": answer,
             ])
         }
@@ -104,7 +123,7 @@ public enum NearTraceExporter {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
             let attrs = try FileManager.default.attributesOfItem(atPath: target.path)
             let modified = (attrs[.modificationDate] as? Date) ?? .now
-            let turns = conversation.turns.filter { $0.answer != nil }.count
+            let turns = eligibleTurns(in: conversation).count
             return ExportedFile(conversationID: conversation.id, url: target, bytes: data.count, modifiedAt: modified, turnCount: turns)
         } catch {
             throw .io(error.localizedDescription)

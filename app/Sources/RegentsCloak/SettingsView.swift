@@ -2,6 +2,9 @@ import AppKit
 import Carbon.HIToolbox
 import CloakChat
 import CloakControl
+#if DARKBLOOM
+import CloakDarkbloom
+#endif
 import CloakDoor
 import CloakSupervisor
 import OSLog
@@ -71,20 +74,9 @@ struct SettingsView: View {
                 openDoor: openDoor, showChat: showChat, showFunds: showFunds, showTour: showTour, darkbloom: darkbloom, selection: selection))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
-        window.contentMinSize = NSSize(width: 700, height: 460)
-        window.setContentSize(NSSize(width: 780, height: 520))
-        window.setFrameAutosaveName("sh.regents.cloak.window.settings.v2")
-        // ClosingWindow hides instead of destroying the SwiftUI view hierarchy,
-        // so explicitly close Darkbloom's stream/key on window close and refresh
-        // when the window becomes key again while Inference Serving is active.
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
-            MainActor.assumeIsolated { darkbloom.close() }
-        }
-        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { _ in
-            MainActor.assumeIsolated {
-                if selection.pane == .serving { darkbloom.open() }
-            }
-        }
+        window.contentMinSize = NSSize(width: 780, height: 480)
+        window.setContentSize(NSSize(width: 860, height: 560))
+        window.setFrameAutosaveName("sh.regents.cloak.window.settings.v3")
         return window
     }
     #else
@@ -107,9 +99,9 @@ struct SettingsView: View {
                 openDoor: openDoor, showChat: showChat, showFunds: showFunds, showTour: showTour, selection: selection))
         content.sceneBridgingOptions = [.toolbars]
         window.contentViewController = content
-        window.contentMinSize = NSSize(width: 700, height: 460)
-        window.setContentSize(NSSize(width: 780, height: 520))
-        window.setFrameAutosaveName("sh.regents.cloak.window.settings.v2")
+        window.contentMinSize = NSSize(width: 780, height: 480)
+        window.setContentSize(NSSize(width: 860, height: 560))
+        window.setFrameAutosaveName("sh.regents.cloak.window.settings.v3")
         return window
     }
     #endif
@@ -173,7 +165,7 @@ struct SettingsView: View {
                     .sidebarHover(selected: row == selection.pane)
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 236, ideal: 246, max: 280)
+            .navigationSplitViewColumnWidth(min: 276, ideal: 296, max: 340)
             .toolbar(removing: .sidebarToggle)
             .toolbar {
                 ToolbarItem {
@@ -205,7 +197,7 @@ struct SettingsView: View {
                 case .near: NearPane(settings: settings, mode: near)
                 case .connectedApps:
                     AgentsView(
-                        door: door, supervisor: supervisor, download: download, openDoor: openDoor,
+                        door: door, supervisor: supervisor, settings: settings, download: download, openDoor: openDoor,
                         showDetails: { selection.pane = .status }, showDoorSettings: { selection.pane = .advanced }, showFunds: showFunds)
                 #if DARKBLOOM
                 case .serving:
@@ -227,7 +219,7 @@ struct SettingsView: View {
             .textSelection(.enabled)
             .navigationTitle(shown.pageTitle)
         }
-        .frame(minWidth: 700, minHeight: 460)
+        .frame(minWidth: 780, minHeight: 480)
     }
 }
 
@@ -480,6 +472,14 @@ private struct GeneralPane: View {
                 }
                 Row("Save chat history", note: "Off: new chats stay in memory only and disappear when Cloak quits.") {
                     Switch("Save chat history", isOn: $settings.savedChats)
+                }
+            }
+            Section("Local Voice") {
+                Row(
+                    "Read replies aloud automatically",
+                    note: "Speaks new answers using macOS's offline voice synthesizer. Both dictation and read-aloud run 100% on this Mac — audio never leaves this Mac."
+                ) {
+                    Switch("Read replies aloud automatically", isOn: $settings.localVoiceAutoSpeak)
                 }
             }
             UpdatesSection(updates: updates)

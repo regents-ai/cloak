@@ -29,7 +29,9 @@ struct NearGatewayTabBar: View {
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var answeredNearChats: [Conversation] {
-        chat.conversations.filter { $0.isNear && $0.turns.contains(where: { $0.answer != nil }) }
+        chat.conversations.filter {
+            !chat.unsaved.contains($0.id) && !NearTraceExporter.eligibleTurns(in: $0).isEmpty
+        }
     }
 
     private var tracesBadgeCount: Int {
@@ -171,14 +173,16 @@ struct NearGatewayTracesView: View {
 
     private var nearChats: [Conversation] {
         chat.conversations.filter {
-            $0.isNear
-                && !chat.unsaved.contains($0.id)
-                && $0.turns.contains(where: { $0.answer != nil })
+            !chat.unsaved.contains($0.id) && !NearTraceExporter.eligibleTurns(in: $0).isEmpty
         }
     }
 
     private var notExportedChats: [Conversation] {
         nearChats.filter { !traces.isExported($0.id) }
+    }
+
+    private var pendingExportChats: [Conversation] {
+        nearChats.filter { !traces.isExported($0.id) || traces.hasNewTurns(for: $0) }
     }
 
     private var notExportedBytes: Int {
@@ -354,9 +358,14 @@ struct NearGatewayTracesView: View {
                 Text("NEAR AI Gateway Chats")
                     .font(.headline)
                 Spacer(minLength: 0)
-                if !notExportedChats.isEmpty, chat.settings.nearShareTraces {
-                    Button("Export All Ready (\(notExportedChats.count))") {
-                        for conversation in notExportedChats {
+                if !pendingExportChats.isEmpty, chat.settings.nearShareTraces {
+                    let hasUpdates = pendingExportChats.count > notExportedChats.count
+                    Button(
+                        hasUpdates
+                            ? "Export & Update All (\(pendingExportChats.count))"
+                            : "Export All Ready (\(pendingExportChats.count))"
+                    ) {
+                        for conversation in pendingExportChats {
                             traces.export(conversation)
                         }
                     }
@@ -436,7 +445,7 @@ private struct TraceChatRow: View {
     @State private var hovering = false
 
     private var answeredCount: Int {
-        conversation.turns.filter { $0.answer != nil }.count
+        NearTraceExporter.eligibleTurns(in: conversation).count
     }
 
     var body: some View {

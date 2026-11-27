@@ -19,5 +19,8 @@ app/RegentsCloak.provisionprofile
 guest/build/
 guest/sender/target/
 host/.build/
+# Local integration review runner state (never committed)
+var/integration-review/
+
 __pycache__/
 .DS_Store

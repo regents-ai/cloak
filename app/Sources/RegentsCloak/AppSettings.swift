@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import CloakChat
 import CloakControl
+import CloakDoor
 import Darwin
 import Observation
 import os
@@ -53,6 +54,16 @@ final class AppSettings {
         case localUseContacts
         case walletTermsVersion
         case walletTermsAcceptedAt
+        case doorPayment
+        case doorModel
+        case doorBlockSecrets
+        case doorMaskEntities
+        case doorPrivateTerms
+        case localVoiceAutoSpeak
+        case spendGuardEnabled
+        case spendDailyLimitUSD
+        case spendPerCallLimitUSD
+        case spendAllowedNetworks
     }
 
     /// Current version of the Beta Wallet Terms of Service & Privacy Policy.
@@ -603,6 +614,201 @@ final class AppSettings {
         walletTermsAcceptedAt = .now
     }
 
+    // MARK: - Connected Apps (Claude Code & OpenAI-compatible clients)
+
+    /// Which payment rail Connected Apps on this Mac bill through: zkAPI Anon
+    /// Inference (default) or Token Inference (Boundless / Tempo USDC.e).
+    var doorPayment: DoorPayment {
+        get {
+            access(keyPath: \.doorPayment)
+            return Self.doorPayment(in: defaults)
+        }
+        set {
+            withMutation(keyPath: \.doorPayment) {
+                defaults.set(newValue.rawValue, forKey: Key.doorPayment.rawValue)
+            }
+        }
+    }
+
+    nonisolated static func doorPayment(in defaults: UserDefaults) -> DoorPayment {
+        defaults.string(forKey: Key.doorPayment.rawValue).flatMap(DoorPayment.init) ?? .zkapi
+    }
+
+    /// Optional model ID override for Connected Apps (empty = pass through
+    /// requested model, or auto-map unknown Claude aliases on `/v1/messages`).
+    var doorModel: String {
+        get {
+            access(keyPath: \.doorModel)
+            return Self.doorModel(in: defaults) ?? ""
+        }
+        set {
+            withMutation(keyPath: \.doorModel) {
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    defaults.removeObject(forKey: Key.doorModel.rawValue)
+                } else {
+                    defaults.set(trimmed, forKey: Key.doorModel.rawValue)
+                }
+            }
+        }
+    }
+
+    nonisolated static func doorModel(in defaults: UserDefaults) -> String? {
+        let value = defaults.string(forKey: Key.doorModel.rawValue)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (value?.isEmpty == false) ? value : nil
+    }
+
+    nonisolated static func vModel(in defaults: UserDefaults) -> String? {
+        defaults.string(forKey: Key.vModel.rawValue)
+    }
+
+    /// Whether `CloakDoor` hard-blocks outbound Connected Apps requests containing
+    /// detected credentials, private keys, or `.env` secrets. On by default.
+    var doorBlockSecrets: Bool {
+        get {
+            access(keyPath: \.doorBlockSecrets)
+            return Self.doorBlockSecrets(in: defaults)
+        }
+        set {
+            withMutation(keyPath: \.doorBlockSecrets) {
+                defaults.set(newValue, forKey: Key.doorBlockSecrets.rawValue)
+            }
+        }
+    }
+
+    nonisolated static func doorBlockSecrets(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: Key.doorBlockSecrets.rawValue) as? Bool ?? true
+    }
+
+    /// Whether `CloakDoor` masks private terms, wallets, ENS names, home paths, and
+    /// emails with reversible per-app aliases before sending and restores them on replies.
+    var doorMaskEntities: Bool {
+        get {
+            access(keyPath: \.doorMaskEntities)
+            return Self.doorMaskEntities(in: defaults)
+        }
+        set {
+            withMutation(keyPath: \.doorMaskEntities) {
+                defaults.set(newValue, forKey: Key.doorMaskEntities.rawValue)
+            }
+        }
+    }
+
+    nonisolated static func doorMaskEntities(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: Key.doorMaskEntities.rawValue) as? Bool ?? true
+    }
+
+    /// Comma- or newline-separated private terms (names, organizations, repo slugs)
+    /// masked locally by `CloakDoor`'s reversible alias map.
+    var doorPrivateTerms: String {
+        get {
+            access(keyPath: \.doorPrivateTerms)
+            return defaults.string(forKey: Key.doorPrivateTerms.rawValue) ?? ""
+        }
+        set {
+            withMutation(keyPath: \.doorPrivateTerms) {
+                defaults.set(newValue, forKey: Key.doorPrivateTerms.rawValue)
+            }
+        }
+    }
+
+    nonisolated static func doorPrivacyPolicy(in defaults: UserDefaults) -> PrivacyShieldPolicy {
+        let blockSecrets = doorBlockSecrets(in: defaults)
+        let maskEntities = doorMaskEntities(in: defaults)
+        let rawTerms = defaults.string(forKey: Key.doorPrivateTerms.rawValue) ?? ""
+        return PrivacyShieldPolicy(
+            blockSecrets: blockSecrets,
+            maskEntities: maskEntities,
+            privateTerms: PrivacyShieldPolicy.parsePrivateTerms(rawTerms))
+    }
+
+    // MARK: - Local Voice (100% on-device)
+
+    /// Whether Cloak automatically reads new assistant replies aloud on this Mac
+    /// using macOS's offline speech synthesizer. Off by default.
+    var localVoiceAutoSpeak: Bool {
+        get {
+            access(keyPath: \.localVoiceAutoSpeak)
+            return defaults.bool(forKey: Key.localVoiceAutoSpeak.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.localVoiceAutoSpeak) {
+                defaults.set(newValue, forKey: Key.localVoiceAutoSpeak.rawValue)
+            }
+        }
+    }
+
+    // MARK: - Local Spend Guardrails (Deterministic, Outside the LLM)
+
+    var spendGuardEnabled: Bool {
+        get {
+            access(keyPath: \.spendGuardEnabled)
+            return defaults.bool(forKey: Key.spendGuardEnabled.rawValue)
+        }
+        set {
+            withMutation(keyPath: \.spendGuardEnabled) {
+                defaults.set(newValue, forKey: Key.spendGuardEnabled.rawValue)
+            }
+        }
+    }
+
+    var spendDailyLimitUSD: String {
+        get {
+            access(keyPath: \.spendDailyLimitUSD)
+            return defaults.string(forKey: Key.spendDailyLimitUSD.rawValue) ?? "5.00"
+        }
+        set {
+            withMutation(keyPath: \.spendDailyLimitUSD) {
+                defaults.set(newValue, forKey: Key.spendDailyLimitUSD.rawValue)
+            }
+        }
+    }
+
+    var spendPerCallLimitUSD: String {
+        get {
+            access(keyPath: \.spendPerCallLimitUSD)
+            return defaults.string(forKey: Key.spendPerCallLimitUSD.rawValue) ?? "0.50"
+        }
+        set {
+            withMutation(keyPath: \.spendPerCallLimitUSD) {
+                defaults.set(newValue, forKey: Key.spendPerCallLimitUSD.rawValue)
+            }
+        }
+    }
+
+    var spendAllowedNetworks: Set<PaymentNetwork.ID> {
+        get {
+            access(keyPath: \.spendAllowedNetworks)
+            return Self.spendAllowedNetworks(in: defaults)
+        }
+        set {
+            withMutation(keyPath: \.spendAllowedNetworks) {
+                defaults.set(newValue.map(\.rawValue).sorted(), forKey: Key.spendAllowedNetworks.rawValue)
+            }
+        }
+    }
+
+    nonisolated static func spendAllowedNetworks(in defaults: UserDefaults) -> Set<PaymentNetwork.ID> {
+        guard let raw = defaults.stringArray(forKey: Key.spendAllowedNetworks.rawValue) else {
+            return Set(PaymentNetwork.ID.allCases)
+        }
+        return Set(raw.compactMap(PaymentNetwork.ID.init(rawValue:)))
+    }
+
+    nonisolated static func spendPolicy(in defaults: UserDefaults) -> SpendPolicy {
+        let enabled = defaults.bool(forKey: Key.spendGuardEnabled.rawValue)
+        let dailyStr = defaults.string(forKey: Key.spendDailyLimitUSD.rawValue) ?? "5.00"
+        let perCallStr = defaults.string(forKey: Key.spendPerCallLimitUSD.rawValue) ?? "0.50"
+        let daily = ArcUSDC.parseUSD(dailyStr)?.microUnits ?? SpendPolicy.defaultDailyLimitMicroUSD
+        let perCall = ArcUSDC.parseUSD(perCallStr)?.microUnits ?? SpendPolicy.defaultPerCallLimitMicroUSD
+        return SpendPolicy(
+            enabled: enabled,
+            dailyLimitMicroUSD: daily,
+            perCallLimitMicroUSD: perCall,
+            allowedNetworks: spendAllowedNetworks(in: defaults)
+        )
+    }
+
     /// Puts every setting the Settings window shows back to its default,
     /// each change told to whatever watches that setting. V's model, chosen
     /// in V's wallet, stays, and so does the deposit's expiry, which is not
@@ -633,9 +839,48 @@ final class AppSettings {
             case .localUseCalendar: withMutation(keyPath: \.localUseCalendar, remove)
             case .localUseReminders: withMutation(keyPath: \.localUseReminders, remove)
             case .localUseContacts: withMutation(keyPath: \.localUseContacts, remove)
+            case .doorPayment: withMutation(keyPath: \.doorPayment, remove)
+            case .doorModel: withMutation(keyPath: \.doorModel, remove)
+            case .doorBlockSecrets: withMutation(keyPath: \.doorBlockSecrets, remove)
+            case .doorMaskEntities: withMutation(keyPath: \.doorMaskEntities, remove)
+            case .doorPrivateTerms: withMutation(keyPath: \.doorPrivateTerms, remove)
+            case .localVoiceAutoSpeak: withMutation(keyPath: \.localVoiceAutoSpeak, remove)
+            case .spendGuardEnabled: withMutation(keyPath: \.spendGuardEnabled, remove)
+            case .spendDailyLimitUSD: withMutation(keyPath: \.spendDailyLimitUSD, remove)
+            case .spendPerCallLimitUSD: withMutation(keyPath: \.spendPerCallLimitUSD, remove)
+            case .spendAllowedNetworks: withMutation(keyPath: \.spendAllowedNetworks, remove)
             case .vModel, .depositExpires, .payProvider, .veniceModel, .venicePays,
                 .walletTermsVersion, .walletTermsAcceptedAt: break
             }
+        }
+    }
+}
+
+/// Payment rail for Connected Apps (Claude Code, Cursor, Cline, Aider, etc.).
+enum DoorPayment: String, CaseIterable, Identifiable, Sendable {
+    case zkapi
+    case tempo
+
+    var id: Self { self }
+
+    var payment: Payment {
+        switch self {
+        case .zkapi: .zkapi
+        case .tempo: .tempo
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .zkapi: "zkAPI Anon Inference"
+        case .tempo: "Token Inference (Boundless)"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .zkapi: "zkAPI Anon"
+        case .tempo: "Token · Boundless"
         }
     }
 }

@@ -12,6 +12,7 @@ import SwiftUI
 struct AgentsView: View {
     let door: Door
     let supervisor: Supervisor
+    @Bindable var settings: AppSettings
     /// The download of the model that rewords, for the Start row's fix.
     let download: ModelDownload
     /// Opens the door again, in turn with the app's own opens and closes.
@@ -27,74 +28,15 @@ struct AgentsView: View {
     /// The request whose texts are open, by its id, so the sheet shows it
     /// as it is now.
     @State private var opened: AgentRequest.ID?
+    @State private var checkingConnection = false
+    @State private var connectionCheck: Door.ConnectionCheck?
 
     var body: some View {
         let line = DoorLine(door.state, running: supervisor.phase == .running)
         Form {
-            Section {
-                LabeledContent {
-                    Copyable(text: door.address)
-                } label: {
-                    HStack(spacing: 2) {
-                        Text("Base URL")
-                        InfoButton(
-                            "About Base URL",
-                            hint: "OpenAI-compatible local endpoint. Rewrites your prompts locally, routes over Tor, and pays via zkAPI Anon Inference."
-                        ) {
-                            BulletNote(
-                                "OpenAI-Compatible Endpoint",
-                                bullets: [
-                                    "Serves /v1/chat/completions and /v1/models on localhost only.",
-                                    "Rewrites user messages only (system, assistant, and tool payloads pass unchanged); up to 4,096 messages / 8 MiB rewritten.",
-                                    "Accepts stream: true, waits for the complete answer over Tor, and returns it as a single SSE chunk + [DONE].",
-                                    "Paid from your zkAPI deposit with a fresh one-time key per request.",
-                                ])
-                        }
-                    }
-                }
-                LabeledContent("Status") {
-                    switch line {
-                    case .open:
-                        Label("Open", systemImage: "circle.fill")
-                            .foregroundStyle(.green)
-                    case .stopped:
-                        Text("Closed")
-                            .foregroundStyle(.secondary)
-                    case .opening:
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .controlSize(.mini)
-                            Text("Opening")
-                        }
-                        .foregroundStyle(.secondary)
-                        .accessibilityElement(children: .combine)
-                    case .refused:
-                        Label("Can't open", systemImage: "exclamationmark.triangle.fill")
-                            .symbolRenderingMode(.multicolor)
-                    }
-                }
-                switch line {
-                case .open, .opening:
-                    EmptyView()
-                case .stopped:
-                    StartRow(supervisor: supervisor, download: download, showDetails: showDetails)
-                case .refused(let refusal):
-                    HStack(spacing: 8) {
-                        Text(refusal.words)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        // The port is read when the door opens, so a new
-                        // one, or the other app's quitting, needs Try Again.
-                        if case .portTaken = refusal {
-                            Button("Change Port…", action: showDoorSettings)
-                        }
-                        Button("Try Again", action: openDoor)
-                    }
-                }
-                LabeledContent("Funds") {
-                    Button("Manage Funds…", action: showFunds)
-                }
-            }
+            connectionSection(line: line)
+            privacyShieldSection
+            spendGuardrailsSection
             if let problem = door.problem {
                 Section {
                     HStack(spacing: 8) {
@@ -107,7 +49,7 @@ struct AgentsView: View {
             }
             Section {
                 if door.apps.isEmpty {
-                    Text("Add an app to create a local API key for Cursor, Cline, Continue, Aider, or other OpenAI-compatible tools.")
+                    Text("Add an app to create a local API key for Claude Code, OpenCode, Goose, Cursor, Cline, or other compatible tools.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -147,7 +89,10 @@ struct AgentsView: View {
                 }
             }
         }
-        .task { await door.load() }
+        .task {
+            await door.load()
+            await door.refreshSpendSnapshot()
+        }
         .textSelection(.enabled)
         .sheet(item: $adding) { stage in
             AddApp(door: door, adding: stage) { adding = $0 }
@@ -168,6 +113,362 @@ struct AgentsView: View {
             Button("Remove", role: .destructive) { door.remove(app.id) }
         } message: { _ in
             Text("Its API key stops working at once.")
+        }
+    }
+
+    @ViewBuilder
+    private func connectionSection(line: DoorLine) -> some View {
+        let claudeBullets = [
+            "Serves /v1/messages (including ?beta=true) and local /v1/messages/count_tokens on localhost only.",
+            "Translates Anthropic system, text, base64 images, tool_use, and tool_result blocks while rewriting only your prompts on-device.",
+            "Unknown Claude model aliases automatically map to your selected billing rail's default model (or the Model override below).",
+            "Run: ANTHROPIC_BASE_URL=\(door.baseURL) ANTHROPIC_API_KEY=<key> CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude",
+        ]
+        Section {
+            LabeledContent {
+                Copyable(text: door.address)
+            } label: {
+                HStack(spacing: 2) {
+                    Text("OpenAI Base URL")
+                    InfoButton(
+                        "About OpenAI Base URL",
+                        hint: "OpenAI-compatible local endpoint. Rewrites user prompts locally and routes over Tor."
+                    ) {
+                        BulletNote(
+                            "OpenAI-Compatible Endpoint",
+                            bullets: [
+                                "Serves /v1/chat/completions and /v1/models on localhost only.",
+                                "Rewrites user messages only (system, assistant, and tool payloads pass unchanged); up to 4,096 messages / 8 MiB rewritten.",
+                                "Accepts stream: true, waits for the complete answer over Tor, and returns it as a single SSE chunk + [DONE].",
+                                "Accepts Authorization: Bearer <key> or x-api-key: <key>.",
+                            ])
+                    }
+                }
+            }
+            LabeledContent {
+                Copyable(text: door.baseURL)
+            } label: {
+                HStack(spacing: 2) {
+                    Text("Claude Code URL")
+                    InfoButton(
+                        "About Claude Code Compatibility",
+                        hint: "Anthropic Messages API endpoint for Claude Code (ANTHROPIC_BASE_URL)."
+                    ) {
+                        BulletNote("Claude Code / Anthropic Messages API", bullets: claudeBullets)
+                    }
+                }
+            }
+            LabeledContent("Billing") {
+                Picker("Billing", selection: $settings.doorPayment) {
+                    ForEach(DoorPayment.allCases) { rail in
+                        Text(rail.shortTitle).tag(rail)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            LabeledContent {
+                TextField("Model override", text: $settings.doorModel, prompt: Text("Auto"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout.monospaced())
+                    .frame(maxWidth: 220)
+            } label: {
+                HStack(spacing: 2) {
+                    Text("Model override")
+                    InfoButton(
+                        "About Model Override",
+                        note: "Optional provider model ID. Leave blank for Auto — requested models pass through, and unknown Claude aliases map to your billing rail's default model."
+                    )
+                }
+            }
+            LabeledContent("Status") {
+                HStack(spacing: 10) {
+                    switch line {
+                    case .open:
+                        Label("Open", systemImage: "circle.fill")
+                            .foregroundStyle(.green)
+                        Button {
+                            checkingConnection = true
+                            connectionCheck = nil
+                            Task {
+                                let result = await door.verifyConnection()
+                                connectionCheck = result
+                                checkingConnection = false
+                            }
+                        } label: {
+                            if checkingConnection {
+                                HStack(spacing: 4) {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                    Text("Testing…")
+                                }
+                            } else {
+                                Text("Test Connection")
+                            }
+                        }
+                        .disabled(checkingConnection)
+                    case .stopped:
+                        Text("Closed")
+                            .foregroundStyle(.secondary)
+                    case .opening:
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Opening")
+                        }
+                        .foregroundStyle(.secondary)
+                        .accessibilityElement(children: .combine)
+                    case .refused:
+                        Label("Can't open", systemImage: "exclamationmark.triangle.fill")
+                            .symbolRenderingMode(.multicolor)
+                    }
+                }
+            }
+            if let check = connectionCheck {
+                HStack(spacing: 6) {
+                    Image(systemName: check.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(check.ok ? .green : .orange)
+                    Text(check.summary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            switch line {
+            case .open, .opening:
+                EmptyView()
+            case .stopped:
+                StartRow(supervisor: supervisor, download: download, showDetails: showDetails)
+            case .refused(let refusal):
+                HStack(spacing: 8) {
+                    Text(refusal.words)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if case .portTaken = refusal {
+                        Button("Change Port…", action: showDoorSettings)
+                    }
+                    Button("Try Again", action: openDoor)
+                }
+            }
+            LabeledContent("Funds") {
+                Button("Manage Funds…", action: showFunds)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var privacyShieldSection: some View {
+        Section {
+            LabeledContent {
+                Toggle("Block secrets before sending", isOn: $settings.doorBlockSecrets)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            } label: {
+                HStack(spacing: 2) {
+                    Text("Block secrets before sending")
+                    InfoButton(
+                        "About Secret Tripwire",
+                        hint: "Scans prompts and tool outputs locally before any bytes leave your Mac."
+                    ) {
+                        BulletNote(
+                            "Pre-Send Secret Tripwire",
+                            bullets: [
+                                "Checks user messages, system prompts, and tool results in under 1 ms before sending or paying.",
+                                "Blocks PEM private keys, AWS/OpenAI/Anthropic/GitHub/Stripe/Slack tokens, JWTs, wallet private keys, and .env secrets with HTTP 400.",
+                                "Secrets are never logged, persisted, or rehydrated.",
+                            ])
+                    }
+                }
+            }
+            LabeledContent {
+                Toggle("Mask & restore private entities", isOn: $settings.doorMaskEntities)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            } label: {
+                HStack(spacing: 2) {
+                    Text("Mask & restore private entities")
+                    InfoButton(
+                        "About Reversible Alias Shield",
+                        hint: "Replaces sensitive entities with local aliases before sending and restores them in assistant prose."
+                    ) {
+                        BulletNote(
+                            "Reversible Alias Shield",
+                            bullets: [
+                                "Masks Ethereum addresses, ENS names, /Users/... paths, emails, non-loopback IPs, and your Private Terms into stable in-memory aliases ([ETH_1], [PATH_1], [ENTITY_1]).",
+                                "Restores aliases in human-facing assistant replies while intentionally keeping model-generated tool_calls un-rehydrated.",
+                                "Alias maps stay strictly in memory and are wiped when an app is removed or Cloak stops.",
+                            ])
+                    }
+                }
+            }
+            if settings.doorMaskEntities {
+                LabeledContent {
+                    TextField(
+                        "Private terms",
+                        text: $settings.doorPrivateTerms,
+                        prompt: Text("e.g. Acme Labs, cedar-relay, alice.eth"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .font(.callout)
+                        .frame(maxWidth: 280)
+                } label: {
+                    HStack(spacing: 2) {
+                        Text("Private terms")
+                        InfoButton(
+                            "About Private Terms",
+                            note: "Comma-separated names, companies, or private repo slugs to replace with stable local aliases before sending."
+                        )
+                    }
+                }
+            }
+        } header: {
+            Text("Privacy Shield")
+        }
+    }
+
+    @ViewBuilder
+    private var spendGuardrailsSection: some View {
+        let snapshot = door.spendSnapshot
+        let dailyLimit = ArcUSDC.parseUSD(settings.spendDailyLimitUSD)?.microUnits ?? SpendPolicy.defaultDailyLimitMicroUSD
+        let perCallValid = ArcUSDC.parseUSD(settings.spendPerCallLimitUSD) != nil
+        let dailyValid = ArcUSDC.parseUSD(settings.spendDailyLimitUSD) != nil
+        Section {
+            LabeledContent {
+                Toggle("Enforce spending limits", isOn: $settings.spendGuardEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            } label: {
+                HStack(spacing: 2) {
+                    Text("Enforce local limits")
+                    InfoButton(
+                        "About Spend Guardrails",
+                        hint: "Deterministic spending caps enforced in Swift outside the model — agents cannot bypass them."
+                    ) {
+                        BulletNote(
+                            "Deterministic Local Spend Guardrails",
+                            bullets: [
+                                "Checks chain ID, allowed networks, per-call cap, and daily budget before any payment is signed.",
+                                "Reserves budget atomically across parallel agent calls and releases unused funds on settlement or failure.",
+                                "Receipts store settlement metadata only — never prompts, prompt hashes, or repository paths.",
+                            ])
+                    }
+                }
+            }
+            if settings.spendGuardEnabled {
+                LabeledContent("Daily budget (USD)") {
+                    HStack(spacing: 6) {
+                        Text("$")
+                            .foregroundStyle(.secondary)
+                        TextField("Daily budget", text: $settings.spendDailyLimitUSD, prompt: Text("5.00"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .font(.callout.monospaced())
+                            .frame(width: 96)
+                        if !dailyValid {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .tip("Enter a valid USD amount like 5.00")
+                        }
+                    }
+                }
+                LabeledContent("Max per call (USD)") {
+                    HStack(spacing: 6) {
+                        Text("$")
+                            .foregroundStyle(.secondary)
+                        TextField("Max per call", text: $settings.spendPerCallLimitUSD, prompt: Text("0.50"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .font(.callout.monospaced())
+                            .frame(width: 96)
+                        if !perCallValid {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .tip("Enter a valid USD amount like 0.50")
+                        }
+                    }
+                }
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        ForEach(PaymentNetwork.all) { net in
+                            let allowed = settings.spendAllowedNetworks.contains(net.id)
+                            Button {
+                                var next = settings.spendAllowedNetworks
+                                if allowed { next.remove(net.id) } else { next.insert(net.id) }
+                                settings.spendAllowedNetworks = next
+                            } label: {
+                                Text(net.name)
+                                    .font(.caption.weight(.medium))
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        Capsule().fill(allowed ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05))
+                                    )
+                                    .overlay(
+                                        Capsule().strokeBorder(
+                                            allowed ? Color.accentColor.opacity(0.6) : Color.primary.opacity(0.12),
+                                            lineWidth: 0.75)
+                                    )
+                                    .foregroundStyle(allowed ? Color.primary : Color.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .tip("\(net.name) (chain \(net.chainID)\(net.circleDomain.map { ", Circle domain \($0)" } ?? "")): \(net.roleSummary)")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 2) {
+                        Text("Allowed networks")
+                        InfoButton(
+                            "About Payment Networks",
+                            note: "Ethereum (1), Base (8453), Tempo (4217), and Arc (5042). Arc uses USDC gas with public settlement (not anonymous)."
+                        )
+                    }
+                }
+                LabeledContent("Today") {
+                    let spent = ArcUSDC(microUnits: snapshot.spentTodayMicroUSD).formattedUSD
+                    let remaining = ArcUSDC(microUnits: snapshot.remainingTodayMicroUSD(limit: dailyLimit)).formattedUSD
+                    Text("\(spent) spent · \(remaining) left")
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if !snapshot.recentReceipts.isEmpty {
+                ForEach(snapshot.recentReceipts.prefix(5)) { receipt in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(receipt.service)
+                                .fontWeight(.medium)
+                            Text("\(PaymentNetwork.network(for: receipt.network).name) · \(receipt.asset) · \(receipt.leavesThisMac)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            let micro = receipt.actualChargeMicroUSD ?? receipt.authorizedMaxMicroUSD
+                            Text(ArcUSDC(microUnits: micro).formattedUSD)
+                                .font(.callout.monospacedDigit())
+                            Text(receipt.status.rawValue.capitalized)
+                                .font(.caption)
+                                .foregroundStyle(
+                                    receipt.status == .settled
+                                        ? Color.green
+                                        : (receipt.status == .ambiguous ? Color.orange : Color.secondary))
+                        }
+                    }
+                }
+            }
+        } header: {
+            HStack {
+                Text("Spend Guardrails")
+                Spacer()
+                if !snapshot.recentReceipts.isEmpty {
+                    Button("Clear Receipts") {
+                        Task { await door.clearSpendReceipts() }
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+            }
         }
     }
 
@@ -344,6 +645,12 @@ private struct RequestRow: View {
         case 1: details.append("1 message reworded")
         case let count?: details.append("\(count.formatted()) messages reworded")
         }
+        if let shielded = request.shielded, shielded > 0 {
+            details.append("\(shielded.formatted()) shielded")
+        }
+        if let blocked = request.blockedSecret, !blocked.isEmpty {
+            details.append("secret blocked")
+        }
         if let took = request.took {
             details.append(took.formatted(.units(allowed: [.minutes, .seconds], width: .wide, fractionalPart: .show(length: 1))))
         }
@@ -503,6 +810,66 @@ private enum Adding: Identifiable {
     var id: Int { 0 }
 }
 
+private enum ClientPreset: String, CaseIterable, Identifiable {
+    case claudeCode = "Claude Code"
+    case openCode = "OpenCode"
+    case goose = "Goose"
+    case openAI = "OpenAI / Other"
+
+    var id: Self { self }
+
+    static func inferred(from appName: String) -> ClientPreset {
+        let lower = appName.lowercased()
+        if lower.contains("opencode") || lower.contains("open code") { return .openCode }
+        if lower.contains("goose") { return .goose }
+        if lower.contains("claude") { return .claudeCode }
+        return .openAI
+    }
+
+    @MainActor
+    func snippet(door: Door, pass: String) -> (title: String, text: String, note: String) {
+        switch self {
+        case .claudeCode:
+            return (
+                "Claude Code Quickstart",
+                "ANTHROPIC_BASE_URL=\(door.baseURL) ANTHROPIC_API_KEY=\(pass) CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude",
+                "Runs Claude Code against Cloak's local Anthropic /v1/messages adapter with telemetry disabled."
+            )
+        case .openCode:
+            return (
+                "opencode.json Provider Block",
+                #"""
+                {
+                  "provider": {
+                    "cloak": {
+                      "npm": "@ai-sdk/openai-compatible",
+                      "name": "Cloak",
+                      "options": {
+                        "baseURL": "\#(door.address)",
+                        "apiKey": "\#(pass)"
+                      }
+                    }
+                  }
+                }
+                """#,
+                "Add to opencode.json (or ~/.config/opencode/opencode.json), then select the Cloak provider in OpenCode."
+            )
+        case .goose:
+            return (
+                "Goose Session Command",
+                "GOOSE_PROVIDER=openai OPENAI_HOST=\(door.baseURL) OPENAI_BASE_PATH=v1/chat/completions OPENAI_API_KEY=\(pass) goose session",
+                "Launches Goose using Cloak's localhost OpenAI endpoint (or configure these values via `goose configure`)."
+            )
+        case .openAI:
+            return (
+                "OpenAI-Compatible Environment",
+                "OPENAI_BASE_URL=\(door.address) OPENAI_API_KEY=\(pass)",
+                "Works with Cursor, Cline, Continue, Aider, Zed ACP agents, and OpenAI SDKs."
+            )
+        }
+    }
+}
+
 /// Asks the app's name, then shows its pass once, with the address. While
 /// the app is kept there is no Cancel: the door keeps it either way.
 private struct AddApp: View {
@@ -511,11 +878,15 @@ private struct AddApp: View {
     /// The next stage; nil closes the sheet.
     let move: (Adding?) -> Void
     @State private var name = ""
+    @State private var preset: ClientPreset = .claudeCode
+
+    private static let quickNames = ["Claude Code", "OpenCode", "Goose", "Cursor", "Cline"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             switch adding {
             case .kept(let name, let pass):
+                let guide = preset.snippet(door: door, pass: pass)
                 Text(name)
                     .font(.headline)
                 VStack(alignment: .leading, spacing: 4) {
@@ -524,11 +895,26 @@ private struct AddApp: View {
                     Copyable(text: pass)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Base URL")
+                    Text("OpenAI Base URL")
                         .font(.subheadline.weight(.semibold))
                     Copyable(text: door.address)
                 }
-                Text("Copy the API key now: Cloak shows it only once. Paste it where the app asks for an API key, and the base URL where it asks for one.")
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("Setup", selection: $preset) {
+                        ForEach(ClientPreset.allCases) { item in
+                            Text(item.rawValue).tag(item)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    Text(guide.title)
+                        .font(.subheadline.weight(.semibold))
+                    Copyable(text: guide.text)
+                    Text(guide.note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Copy the API key now: Cloak shows it only once.")
                     .foregroundStyle(.secondary)
                 HStack {
                     Spacer()
@@ -539,6 +925,16 @@ private struct AddApp: View {
                 Text("New App")
                     .font(.headline)
                 field
+                HStack(spacing: 6) {
+                    ForEach(Self.quickNames, id: \.self) { label in
+                        Button(label) {
+                            name = label
+                            preset = ClientPreset.inferred(from: label)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
                 if let stop {
                     Text(stop)
                         .foregroundStyle(.secondary)
@@ -565,7 +961,7 @@ private struct AddApp: View {
             }
         }
         .padding(20)
-        .frame(width: 460)
+        .frame(width: 520)
         // Its own height, so the pass and the words under it wrap in full.
         .fixedSize(horizontal: false, vertical: true)
         .interactiveDismissDisabled(isKeeping)
@@ -583,12 +979,13 @@ private struct AddApp: View {
     }
 
     private func add() {
-        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard case .naming = adding, !name.isEmpty else { return }
-        move(.keeping(name: name))
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard case .naming = adding, !trimmed.isEmpty else { return }
+        preset = ClientPreset.inferred(from: trimmed)
+        move(.keeping(name: trimmed))
         Task {
-            if let pass = await door.add(name) {
-                move(.kept(name: name, pass: pass))
+            if let pass = await door.add(trimmed) {
+                move(.kept(name: trimmed, pass: pass))
             } else {
                 move(.naming(stop: door.problem))
             }

@@ -230,14 +230,16 @@ final class Chat {
     var selection: UUID? {
         didSet {
             guard selection != oldValue else { return }
+            voice.stopAll()
             pendingProviderSwitch = nil
             picks = DetailPicks()
-            localAttachments = []
-            localAttachmentError = nil
+            resetLocalAttachments()
             askDetails()
             giveBack()
         }
     }
+    /// 100% on-device dictation and read-aloud controller.
+    let voice = LocalVoice()
     /// The message being written.
     var draft = "" {
         didSet {
@@ -254,6 +256,8 @@ final class Chat {
     var localAttachmentError: String?
     private var attachingLocalFileCount = 0
     var attachingLocalFiles: Bool { attachingLocalFileCount > 0 }
+    @ObservationIgnored private var attachGeneration: UInt64 = 0
+    @ObservationIgnored private var attachTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var turnLocalAttachments: [UUID: [LocalAttachment]] = [:]
 
     /// True while extracted attachment text for `turn` is still in memory
@@ -276,8 +280,7 @@ final class Chat {
         didSet {
             if kind != oldValue {
                 if kind != .llama {
-                    localAttachments = []
-                    localAttachmentError = nil
+                    resetLocalAttachments()
                 }
                 askDetails()
             }
@@ -472,6 +475,15 @@ final class Chat {
         return settings.neverReword ? isOpen : canReword
     }
 
+    private func resetLocalAttachments() {
+        attachGeneration &+= 1
+        for task in attachTasks.values { task.cancel() }
+        attachTasks.removeAll()
+        attachingLocalFileCount = 0
+        localAttachments = []
+        localAttachmentError = nil
+    }
+
     /// Attaches one or more local PDF, document, image (OCR), or text/code files
     /// to the next Local Mode turn. Extraction runs off the main thread so PDF
     /// parsing and on-device Vision OCR never block the UI.
@@ -479,12 +491,15 @@ final class Chat {
         guard !urls.isEmpty else { return }
         localAttachmentError = nil
         attachingLocalFileCount += 1
+        let generation = attachGeneration
         let targetConversation = selection
-        Task { [weak self] in
+        let taskID = UUID()
+        attachTasks[taskID] = Task { [weak self] in
             let outcome: ([LocalAttachment], [String]) = await Task.detached(priority: .userInitiated) {
                 var items: [LocalAttachment] = []
                 var errors: [String] = []
                 for url in urls {
+                    guard !Task.isCancelled else { break }
                     do {
                         items.append(try LocalAttachment.from(url: url))
                     } catch {
@@ -494,8 +509,11 @@ final class Chat {
                 return (items, errors)
             }.value
             guard let self else { return }
+            self.attachTasks[taskID] = nil
+            // Drop results cleanly if the user switched conversations, left Local Mode,
+            // or submitted a turn while reading so stale work never leaks back.
+            guard self.attachGeneration == generation, !Task.isCancelled else { return }
             self.attachingLocalFileCount = max(0, self.attachingLocalFileCount - 1)
-            // Drop results if the user switched conversations or left Local Mode while reading.
             guard self.selection == targetConversation,
                 let selected = self.selected, self.kind(of: selected) == .llama
             else { return }
@@ -1137,6 +1155,9 @@ final class Chat {
     }
 
     private func submit(approvedProvider: PayProvider?) {
+        if voice.isListening {
+            voice.stopDictation()
+        }
         let (written, picked) = (draft, picks)
         let original = picked.message(written.trimmingCharacters(in: .whitespacesAndNewlines))
         guard canSubmit, var conversation = selected else { return }
@@ -1175,8 +1196,7 @@ final class Chat {
             send(turn.id, in: id)
         } else if mode == .llama {
             let attachments = localAttachments
-            localAttachments = []
-            localAttachmentError = nil
+            resetLocalAttachments()
             let trimmed = written.trimmingCharacters(in: .whitespacesAndNewlines)
             let messageText = trimmed.isEmpty && !attachments.isEmpty
                 ? "Summarize the attached local files."
@@ -1298,6 +1318,9 @@ final class Chat {
         update(conversation)
         if !hadAnswer, let answer = turn.answer, !Self.isBlank(answer) {
             onAnswerArrived?(id)
+            if settings.localVoiceAutoSpeak, selection == id {
+                voice.speak(answer, turnID: turn.id)
+            }
         }
     }
 
@@ -1396,17 +1419,50 @@ final class Chat {
             if shouldUseVenice {
                 if conversation.venice == nil {
                     guard let chatConfig = veniceMode.newChat else {
-                        // Load Venice models first if Cloak just started.
+                        // Load Venice models first if Cloak just started, locking the turn in
+                        // `sending[turn]` so edits/rewords cannot race the fetch and failures
+                        // surface through `sendStops[turn]`.
                         guard sendTasks[turn] == nil else { return }
+                        press(turn, at: index, in: &conversation)
                         sendTasks[turn] = Task { [weak self] in
                             guard let self else { return }
                             await self.veniceMode.refreshModels()
                             self.sendTasks[turn] = nil
-                            guard !Task.isCancelled, self.settings.payProvider == .venice else { return }
-                            if self.veniceMode.newChat != nil {
-                                self.send(turn, in: id, approvedProvider: approvedProvider)
-                            } else if let stop = self.veniceMode.listStop {
-                                self.veniceMode.recordStop(stop, for: turn)
+                            guard !Task.isCancelled, self.settings.payProvider == .venice else {
+                                self.sent(turn, in: id, answer: nil, tokens: nil)
+                                return
+                            }
+                            guard let chatConfig = self.veniceMode.newChat else {
+                                let stop = self.veniceMode.listStop
+                                    ?? VeniceStop(.failed, sent: false, "Venice lists no private models right now.")
+                                self.finish(turn, in: id, .failure(.venice(stop)))
+                                return
+                            }
+                            guard var latest = self.conversations.first(where: { $0.id == id }),
+                                latest.turns.contains(where: { $0.id == turn })
+                            else {
+                                self.sent(turn, in: id, answer: nil, tokens: nil)
+                                return
+                            }
+                            latest.venice = chatConfig
+                            if let prior = latest.lastTokenProvider, prior != PayProvider.venice.rawValue {
+                                self.identities[id] = Self.newIdentity()
+                            }
+                            latest.tokenProvider = PayProvider.venice.rawValue
+                            self.update(latest)
+                            let identity = self.identity(of: id)
+                            self.veniceMode.send(turn, in: latest, identity: identity) { [weak self] result in
+                                guard let self else { return }
+                                switch result {
+                                case .success(let answer):
+                                    let tokens: Tokens? =
+                                        if let i = answer.promptTokens, let o = answer.answerTokens {
+                                            Tokens(input: i, output: o)
+                                        } else { nil }
+                                    self.finish(turn, in: id, .success(answer.text), tokens: tokens)
+                                case .failure(let stop):
+                                    self.finish(turn, in: id, .failure(.venice(stop)))
+                                }
                             }
                         }
                         return
@@ -1536,6 +1592,9 @@ final class Chat {
         conversation.turns[index].tokens = tokens
         update(conversation)
         onAnswerArrived?(id)
+        if settings.localVoiceAutoSpeak, selection == id, !Self.isBlank(answer) {
+            voice.speak(answer, turnID: turn)
+        }
     }
 
     /// Asks the chosen model on this Mac to answer a Local Llama
@@ -1621,6 +1680,9 @@ final class Chat {
             conversation.turns[index].thinking = reply.thinking
             update(conversation)
             onAnswerArrived?(id)
+            if settings.localVoiceAutoSpeak, selection == id, !Self.isBlank(reply.text) {
+                voice.speak(reply.text, turnID: turn)
+            }
         case .failure(let stop):
             answerStops[turn] = stop
         }

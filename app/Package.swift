@@ -15,11 +15,13 @@ let package = Package(
             name: "CloakSupervisor",
             dependencies: ["CloakControl", .product(name: "CloakHost", package: "host")]),
         .target(name: "CloakChat", dependencies: ["CloakControl", .product(name: "CloakHost", package: "host")]),
+        .target(name: "CloakDarkbloom"),
         .target(name: "CloakDoor", dependencies: ["CloakControl", "CloakSupervisor", "CloakChat"]),
         .executableTarget(
             name: "RegentsCloak",
             dependencies: [
-                "CloakControl", "CloakSupervisor", "CloakChat", "CloakDoor", .product(name: "Sparkle", package: "Sparkle"),
+                "CloakControl", "CloakSupervisor", "CloakChat", "CloakDarkbloom", "CloakDoor",
+                .product(name: "Sparkle", package: "Sparkle"),
             ]),
         .executableTarget(
             name: "CloakWidgets",
@@ -30,7 +32,7 @@ let package = Package(
         .testTarget(
             name: "CloakTests",
             dependencies: [
-                "CloakChat", "CloakDoor", "CloakSupervisor", .product(name: "CloakHost", package: "host"),
+                "CloakChat", "CloakDarkbloom", "CloakDoor", "CloakSupervisor", .product(name: "CloakHost", package: "host"),
             ]),
     ]
 )

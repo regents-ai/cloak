@@ -6,13 +6,24 @@ import Network
 struct HTTPRequest: Sendable {
     let method: String
     let target: String
-    /// By lowercased name. A name given twice is refused.
+    /// By lowercased name. Security-sensitive singletons given twice are refused;
+    /// repeatable headers (such as `anthropic-beta`) are comma-joined per RFC 9110.
     let headers: [String: String]
 
     static let maxHead = 16 << 10
-    static let maxBody = 4 << 20
+    static let maxBody = 8 << 20
     /// The whole request, head and body, must arrive within this.
     static let readLimit = Duration.seconds(30)
+
+    /// The request target without any `?query` string (e.g. `/v1/messages?beta=true` → `/v1/messages`).
+    var path: String {
+        target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? target
+    }
+
+    private static let singletonHeaders: Set<String> = [
+        "content-length", "content-type", "host", "authorization", "x-api-key",
+        "origin", "sec-fetch-site", "transfer-encoding",
+    ]
 
     /// The head, without its blank line: a request line, then header lines,
     /// each ending in CRLF.
@@ -30,8 +41,13 @@ struct HTTPRequest: Sendable {
             else { throw Failure(400, "invalid_request", "A header line did not read.") }
             let name = line[..<colon].lowercased()
             let value = line[line.index(after: colon)...].trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
-            guard headers.updateValue(value, forKey: name) == nil else {
-                throw Failure(400, "invalid_request", "The header \(name) is given twice.")
+            if let existing = headers[name] {
+                guard !Self.singletonHeaders.contains(name) else {
+                    throw Failure(400, "invalid_request", "The header \(name) is given twice.")
+                }
+                headers[name] = existing + ", " + value
+            } else {
+                headers[name] = value
             }
         }
         method = String(request[0])
@@ -39,11 +55,22 @@ struct HTTPRequest: Sendable {
         self.headers = headers
     }
 
-    /// The body's length, as its head gives it.
+    /// True when the request uses `Transfer-Encoding: chunked`.
+    private var isChunked: Bool {
+        headers["transfer-encoding"]?.lowercased() == "chunked"
+    }
+
+    /// The body's length, as its head gives it (for non-chunked requests).
     var length: Int {
         get throws(Failure) {
-            guard headers["transfer-encoding"] == nil else {
-                throw Failure(411, "length_required", "Send the body whole, with Content-Length.")
+            if let te = headers["transfer-encoding"] {
+                guard te.lowercased() == "chunked" else {
+                    throw Failure(411, "length_required", "Send the body whole, with Content-Length or Transfer-Encoding: chunked.")
+                }
+                guard headers["content-length"] == nil else {
+                    throw Failure(400, "invalid_request", "Do not send both Content-Length and Transfer-Encoding.")
+                }
+                return 0
             }
             guard let text = headers["content-length"] else {
                 if method == "POST" { throw Failure(411, "length_required", "Send the body whole, with Content-Length.") }
@@ -52,7 +79,7 @@ struct HTTPRequest: Sendable {
             guard (1...9).contains(text.count), text.allSatisfy(\.isASCII), let length = Int(text), length >= 0 else {
                 throw Failure(400, "invalid_request", "Content-Length did not read.")
             }
-            guard length <= Self.maxBody else { throw Failure(413, "request_too_large", "The request is over 4 MiB.") }
+            guard length <= Self.maxBody else { throw Failure(413, "request_too_large", "The request is over 8 MiB.") }
             return length
         }
     }
@@ -81,6 +108,9 @@ struct HTTPRequest: Sendable {
     /// read with the head; bytes past it are not taken.
     func body(after: [UInt8], from connection: some Link) async throws -> [UInt8] {
         let length = try self.length
+        if isChunked {
+            return try await chunkedBody(after: after, from: connection)
+        }
         var body = after
         if body.count < length, headers["expect"]?.lowercased() == "100-continue" {
             await connection.write(Data("HTTP/1.1 100 Continue\r\n\r\n".utf8), final: false)
@@ -89,6 +119,66 @@ struct HTTPRequest: Sendable {
             body += try await connection.next(upTo: min(64 << 10, length - body.count))
         }
         return Array(body.prefix(length))
+    }
+
+    /// Reads an HTTP/1.1 `Transfer-Encoding: chunked` body up to `maxBody`.
+    private func chunkedBody(after: [UInt8], from connection: some Link) async throws -> [UInt8] {
+        let crlf: [UInt8] = [13, 10]
+        var buffer = after
+        var cursor = 0
+        var decoded = [UInt8]()
+        if headers["expect"]?.lowercased() == "100-continue" {
+            await connection.write(Data("HTTP/1.1 100 Continue\r\n\r\n".utf8), final: false)
+        }
+
+        func ensureLine() async throws -> ArraySlice<UInt8> {
+            while true {
+                if let end = buffer[cursor...].firstRange(of: crlf)?.lowerBound {
+                    let line = buffer[cursor..<end]
+                    cursor = end + 2
+                    return line
+                }
+                guard buffer.count - cursor <= 1024 else {
+                    throw Failure(400, "invalid_request", "Chunk size line is too long.")
+                }
+                buffer += try await connection.next(upTo: 64 << 10)
+            }
+        }
+
+        func ensureBytes(_ count: Int) async throws -> ArraySlice<UInt8> {
+            while buffer.count - cursor < count {
+                buffer += try await connection.next(upTo: min(64 << 10, max(1, count - (buffer.count - cursor))))
+            }
+            let slice = buffer[cursor..<(cursor + count)]
+            cursor += count
+            return slice
+        }
+
+        while true {
+            let sizeLine = String(decoding: try await ensureLine(), as: UTF8.self)
+            let hexPart = sizeLine.split(separator: ";", maxSplits: 1).first?
+                .trimmingCharacters(in: CharacterSet(charactersIn: " \t")) ?? ""
+            guard !hexPart.isEmpty, hexPart.count <= 8, let size = Int(hexPart, radix: 16), size >= 0 else {
+                throw Failure(400, "invalid_request", "Chunked transfer size did not read.")
+            }
+            if size == 0 {
+                // Consume optional trailer headers until terminating blank line.
+                while !(try await ensureLine()).isEmpty {}
+                return decoded
+            }
+            guard decoded.count + size <= Self.maxBody else {
+                throw Failure(413, "request_too_large", "The request is over 8 MiB.")
+            }
+            decoded.append(contentsOf: try await ensureBytes(size))
+            let tail = try await ensureBytes(2)
+            guard tail.elementsEqual(crlf) else {
+                throw Failure(400, "invalid_request", "Chunked transfer framing did not read.")
+            }
+            if cursor > 64 << 10 {
+                buffer.removeFirst(cursor)
+                cursor = 0
+            }
+        }
     }
 
     /// The connection ended before a whole request.
@@ -113,9 +203,9 @@ struct HTTPResponse: Sendable {
 
     private static let reasons = [
         200: "OK", 400: "Bad Request", 401: "Unauthorized", 402: "Payment Required", 403: "Forbidden", 404: "Not Found",
-        405: "Method Not Allowed", 411: "Length Required", 413: "Content Too Large", 415: "Unsupported Media Type",
-        431: "Request Header Fields Too Large", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout",
-        505: "HTTP Version Not Supported",
+        405: "Method Not Allowed", 409: "Conflict", 411: "Length Required", 413: "Content Too Large",
+        415: "Unsupported Media Type", 429: "Too Many Requests", 431: "Request Header Fields Too Large",
+        502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout", 505: "HTTP Version Not Supported",
     ]
 }
 

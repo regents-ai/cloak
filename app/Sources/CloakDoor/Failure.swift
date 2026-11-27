@@ -23,7 +23,27 @@ struct Failure: Error, Sendable, Equatable {
         return HTTPResponse(status: status, headers: status == 401 ? [("WWW-Authenticate", "Bearer")] : [], body: Data(error.utf8))
     }
 
-    static let pass = Failure(401, "invalid_api_key", "Use the pass Cloak showed when this app was added, as Authorization: Bearer and the pass.")
+    /// Anthropic Messages API error envelope (`{"type":"error","error":{"type":...,"message":...}}`).
+    var anthropicResponse: HTTPResponse {
+        let errorType: String
+        switch status {
+        case 401: errorType = "authentication_error"
+        case 403: errorType = "permission_error"
+        case 404: errorType = "not_found_error"
+        case 413: errorType = "request_too_large"
+        case 429: errorType = "rate_limit_error"
+        case 500...599: errorType = "api_error"
+        default: errorType = "invalid_request_error"
+        }
+        let error = #"{"type":"error","error":{"type":"# + Rewrite.quote(errorType) + #","message":"# + Rewrite.quote(message) + #"}}"#
+        return HTTPResponse(status: status, body: Data(error.utf8))
+    }
+
+    func response(anthropic: Bool) -> HTTPResponse {
+        anthropic ? anthropicResponse : response
+    }
+
+    static let pass = Failure(401, "invalid_api_key", "Use the pass Cloak showed when this app was added, as Authorization: Bearer or x-api-key.")
     static let origin = Failure(403, "browser_origin_denied", "Cloak does not answer web pages. Connect from an app on this Mac.")
     static let stopped = Failure(503, "cloak_stopped", "Cloak was paused or stopped. Start it, then try again.")
 

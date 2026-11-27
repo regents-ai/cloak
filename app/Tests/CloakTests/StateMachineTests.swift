@@ -403,18 +403,25 @@ struct StateMachineTests {
             _ = try NearTraceExporter.encode(anonV)
         }
 
-        // NEAR chat without answered turns is refused.
-        var emptyNear = Conversation(turns: [Turn(original: "Draft", reworded: nil, answer: nil)])
+        // NEAR chat without answered turns or with only whitespace-only answers is refused
+        // (TraceCommons `trajectory.rs` fails closed with `malformed_record` on empty assistant content).
+        var emptyNear = Conversation(turns: [
+            Turn(original: "Draft", reworded: nil, answer: nil),
+            Turn(original: "Blank reply", reworded: nil, answer: "   \n "),
+        ])
         emptyNear.near = true
         #expect(throws: NearTraceExporter.Failure.noAnsweredTurns) {
             _ = try NearTraceExporter.encode(emptyNear)
         }
 
-        // Answered NEAR chat exports Letta Trajectory v1 using Turn.sent and omits unanswered drafts.
+        // Answered NEAR chat exports Letta Trajectory v1 using Turn.sent, omits unanswered/blank turns,
+        // and emits strictly monotonic RFC 3339 UTC timestamps across multi-turn sessions.
         var nearChat = Conversation(
             created: Date(timeIntervalSince1970: 1_795_400_000),
             turns: [
                 Turn(original: "Private original", reworded: "Sent prompt", answer: "Enclave reply"),
+                Turn(original: "Blank answer turn", reworded: "Blank answer turn", answer: "  "),
+                Turn(original: "Second prompt", reworded: "Second prompt", answer: "Second reply"),
                 Turn(original: "Unanswered draft", reworded: nil, answer: nil),
             ]
         )
@@ -425,15 +432,20 @@ struct StateMachineTests {
 
         let exported = try NearTraceExporter.export(nearChat, to: tempDir)
         #expect(exported.conversationID == nearChat.id)
-        #expect(exported.turnCount == 1)
+        #expect(exported.turnCount == 2)
         #expect(FileManager.default.fileExists(atPath: tempDir.appending(path: ".metadata_never_index").path))
 
         let backupValues = try tempDir.resourceValues(forKeys: [.isExcludedFromBackupKey])
         #expect(backupValues.isExcludedFromBackup == true)
 
+        let dirPerms = try FileManager.default.attributesOfItem(atPath: tempDir.path)[.posixPermissions] as? Int
+        let filePerms = try FileManager.default.attributesOfItem(atPath: exported.url.path)[.posixPermissions] as? Int
+        #expect(dirPerms == 0o700)
+        #expect(filePerms == 0o600)
+
         let raw = try Data(contentsOf: exported.url)
         let records = try #require(JSONSerialization.jsonObject(with: raw) as? [[String: String]])
-        #expect(records.count == 3)
+        #expect(records.count == 5)
         #expect(records[0]["role"] == "meta")
         #expect(records[0]["source"] == "cloak")
         #expect(records[0]["model"] == Near.model)
@@ -441,9 +453,19 @@ struct StateMachineTests {
         #expect(records[1]["content"] == "Sent prompt")
         #expect(records[2]["role"] == "assistant")
         #expect(records[2]["content"] == "Enclave reply")
+        #expect(records[3]["role"] == "user")
+        #expect(records[3]["content"] == "Second prompt")
+        #expect(records[4]["role"] == "assistant")
+        #expect(records[4]["content"] == "Second reply")
+
+        let timestamps = records.dropFirst().compactMap { $0["timestamp"] }
+        #expect(timestamps.count == 4)
+        let rfc3339Regex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
+        #expect(timestamps.allSatisfy { $0.wholeMatch(of: rfc3339Regex) != nil })
+        #expect(timestamps[0] < timestamps[1] && timestamps[1] < timestamps[2] && timestamps[2] < timestamps[3])
 
         let scanned = NearTraceExporter.scan(in: tempDir)
-        #expect(scanned[nearChat.id]?.turnCount == 1)
+        #expect(scanned[nearChat.id]?.turnCount == 2)
 
         try NearTraceExporter.remove(conversationID: nearChat.id, from: tempDir)
         #expect(NearTraceExporter.scan(in: tempDir).isEmpty)

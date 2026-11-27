@@ -1,6 +1,9 @@
 import AppKit
 import CloakChat
 import CloakControl
+#if DARKBLOOM
+import CloakDarkbloom
+#endif
 import CloakDoor
 import CloakSupervisor
 import os
@@ -139,6 +142,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.onBecomeKey = { [weak self] in
             self?.menuBarIndicator.hasUnreadAnswer = false
         }
+        window.onWillClose = { [weak self] in
+            self?.madeChat?.voice.stopAll()
+        }
         return window
     }()
     #if DARKBLOOM
@@ -147,7 +153,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var madeDarkbloomMode: DarkbloomMode?
     private var darkbloomMode: DarkbloomMode {
         if let madeDarkbloomMode { return madeDarkbloomMode }
-        let mode = DarkbloomMode(manifest: Launch.manifest, settings: .standard)
+        let manifest = Launch.manifest
+        let settings = AppSettings.standard
+        let mode = DarkbloomMode(parts: DarkbloomMode.Parts(
+            cloakMemory: {
+                let chosen = manifest.answerModels.first { $0.name == settings.answerModel && $0.name != manifest.model }
+                return manifest.cloakMemory + (chosen?.memory ?? 0)
+            },
+            openURL: { url in
+                NSWorkspace.shared.open(url)
+            }
+        ))
         madeDarkbloomMode = mode
         return mode
     }
@@ -158,25 +174,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     #endif
     private let settingsSelection = SettingsView.Selection()
-    private lazy var settings = AppWindow { [unowned self, supervisor, prompt, door, updates, nearMode, download, downloads, adapterDownloads, settingsSelection] in
-        let chat = self.conversations
+    private lazy var settings: AppWindow = {
+        let window = AppWindow { [unowned self, supervisor, prompt, door, updates, nearMode, download, downloads, adapterDownloads, settingsSelection] in
+            let chat = self.conversations
+            #if DARKBLOOM
+            return SettingsView.window(
+                .standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode,
+                wallet: chat.wallet, veniceMode: chat.veniceMode, payer: chat.payer,
+                download: download, downloads: downloads, adapterDownloads: adapterDownloads,
+                darkbloom: self.darkbloomMode,
+                openDoor: { self.turnDoor() }, showChat: { self.showChat() }, showFunds: { self.showFunds() }, showTour: { self.showTour() },
+                selection: settingsSelection)
+            #else
+            return SettingsView.window(
+                .standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode,
+                wallet: chat.wallet, veniceMode: chat.veniceMode, payer: chat.payer,
+                download: download, downloads: downloads, adapterDownloads: adapterDownloads,
+                openDoor: { self.turnDoor() }, showChat: { self.showChat() }, showFunds: { self.showFunds() }, showTour: { self.showTour() },
+                selection: settingsSelection)
+            #endif
+        }
         #if DARKBLOOM
-        return SettingsView.window(
-            .standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode,
-            wallet: chat.wallet, veniceMode: chat.veniceMode, payer: chat.payer,
-            download: download, downloads: downloads, adapterDownloads: adapterDownloads,
-            darkbloom: self.darkbloomMode,
-            openDoor: { self.turnDoor() }, showChat: { self.showChat() }, showFunds: { self.showFunds() }, showTour: { self.showTour() },
-            selection: settingsSelection)
-        #else
-        return SettingsView.window(
-            .standard, prompt: prompt, supervisor: supervisor, door: door, updates: updates, near: nearMode,
-            wallet: chat.wallet, veniceMode: chat.veniceMode, payer: chat.payer,
-            download: download, downloads: downloads, adapterDownloads: adapterDownloads,
-            openDoor: { self.turnDoor() }, showChat: { self.showChat() }, showFunds: { self.showFunds() }, showTour: { self.showTour() },
-            selection: settingsSelection)
+        window.onWillClose = { [weak self] in
+            self?.madeDarkbloomMode?.close()
+        }
+        window.onBecomeKey = { [weak self] in
+            guard let self, self.settingsSelection.pane == .serving else { return }
+            self.madeDarkbloomMode?.open()
+        }
         #endif
-    }
+        return window
+    }()
     private lazy var credits = AppWindow { CreditsView.window() }
     private lazy var prompt = QuickPrompt(settings: .standard) { [unowned self] text in
         conversations.compose(text)
@@ -200,7 +228,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         for: conversations,
                         alsoSealed: [Launch.layout.wallet.appending(path: "deposit"), Launch.layout.agents],
                         find: Keychain.find, make: Keychain.make)
-                }),
+                },
+                macPayment: { AppSettings.doorPayment(in: .standard).payment },
+                preferredModel: { payment in
+                    switch payment {
+                    case .zkapi:
+                        return AppSettings.vModel(in: .standard)
+                    case .tempo:
+                        return UserDefaults.standard.string(forKey: Wallet.modelKey) ?? Wallet.defaultModel
+                    }
+                },
+                forcedModel: { AppSettings.doorModel(in: .standard) },
+                spendLedger: SpendLedger(file: Launch.layout.wallet.appending(path: "spend-receipts.json")),
+                spendPolicy: { AppSettings.spendPolicy(in: .standard) },
+                privacyPolicy: { AppSettings.doorPrivacyPolicy(in: .standard) }),
             port: { AppSettings.standard.doorPort })
     }()
     /// The door's latest open or close, which the next one waits for, so
@@ -276,8 +317,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ever.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
-        ) { [supervisor] _ in
-            MainActor.assumeIsolated { _ = supervisor.send(.sleep) }
+        ) { [weak self, supervisor] _ in
+            MainActor.assumeIsolated {
+                self?.madeChat?.voice.stopAll()
+                _ = supervisor.send(.sleep)
+            }
         }
         // A minimized window reads "Cloak - Chat" and so on in the Dock;
         // Settings reads "Cloak - Settings" whatever pane it shows. Set as it

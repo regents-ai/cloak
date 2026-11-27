@@ -1,5 +1,8 @@
 import AppKit
 import CloakControl
+#if DARKBLOOM
+import CloakDarkbloom
+#endif
 import CloakSupervisor
 import Observation
 

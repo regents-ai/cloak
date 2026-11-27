@@ -58,6 +58,10 @@ public struct AgentRequest: Identifiable, Sendable {
     public internal(set) var model: String?
     /// The user messages that went reworded, once every one has.
     public internal(set) var reworded: Int?
+    /// Sensitive entities masked with reversible aliases before leaving this Mac.
+    public internal(set) var shielded: Int?
+    /// Detected credential kinds when the secret tripwire blocked this request before sending.
+    public internal(set) var blockedSecret: String?
     public internal(set) var stage = Stage.rewording
     /// Once it is answered or stopped.
     public internal(set) var took: Duration?
@@ -153,11 +157,34 @@ public final class Door {
         let key: Remote.Key
         /// The conversations' key, found, or made when there is none.
         let sealing: @Sendable () async throws -> SymmetricKey?
+        /// How Mac apps connected through the door pay (defaults to zkAPI).
+        let macPayment: @Sendable () -> Payment
+        /// Preferred default model ID for a payment rail when an Anthropic
+        /// client sends a Claude alias the provider does not list verbatim.
+        let preferredModel: @Sendable (Payment) -> String?
+        /// Optional user-configured model ID that overrides the requested model
+        /// for Mac apps when listed by the provider.
+        let forcedModel: @Sendable () -> String?
+        /// Deterministic local spending ledger enforcing budgets outside the LLM.
+        let spendLedger: SpendLedger
+        /// Current spending policy snapshot read before each Mac app payment.
+        let spendPolicy: @Sendable () -> SpendPolicy
+        /// Conservative per-request max spend estimate (micro-USD) reserved before send.
+        let requestMaxMicroUSD: @Sendable (Payment) -> UInt64
+        /// Pre-send Privacy Shield policy (secret tripwire + reversible alias masking).
+        let privacyPolicy: @Sendable () -> PrivacyShieldPolicy
 
         public init(
             reword: @escaping @Sendable ([String]) async throws(RewriteStop) -> [String], queue: PayQueue,
             exchange: @escaping Exchange, wallet: @escaping @Sendable () async throws -> String?, key: @escaping Remote.Key,
-            sealing: @escaping @Sendable () async throws -> SymmetricKey?
+            sealing: @escaping @Sendable () async throws -> SymmetricKey?,
+            macPayment: @escaping @Sendable () -> Payment = { .zkapi },
+            preferredModel: @escaping @Sendable (Payment) -> String? = { _ in nil },
+            forcedModel: @escaping @Sendable () -> String? = { nil },
+            spendLedger: SpendLedger = SpendLedger(),
+            spendPolicy: @escaping @Sendable () -> SpendPolicy = { .disabled },
+            requestMaxMicroUSD: @escaping @Sendable (Payment) -> UInt64 = { _ in 50_000 },
+            privacyPolicy: @escaping @Sendable () -> PrivacyShieldPolicy = { .disabled }
         ) {
             self.reword = reword
             self.queue = queue
@@ -165,6 +192,13 @@ public final class Door {
             self.wallet = wallet
             self.key = key
             self.sealing = sealing
+            self.macPayment = macPayment
+            self.preferredModel = preferredModel
+            self.forcedModel = forcedModel
+            self.spendLedger = spendLedger
+            self.spendPolicy = spendPolicy
+            self.requestMaxMicroUSD = requestMaxMicroUSD
+            self.privacyPolicy = privacyPolicy
         }
     }
 
@@ -177,6 +211,8 @@ public final class Door {
     /// never on disk or in the log, and kept until Cloak quits. Only the
     /// newest `latest` keep their messages' texts.
     public private(set) var requests: [AgentRequest] = []
+    /// Live local spending totals and recent privacy-safe receipts.
+    public private(set) var spendSnapshot: SpendSnapshot = .empty
     /// The requests the Agents window lists, newest first, and the only
     /// ones that keep their messages' texts.
     public static let latest = 20
@@ -185,6 +221,9 @@ public final class Door {
 
     private enum Access {
         case unread
+        /// A single coalesced load in flight so concurrent `load()` callers
+        /// share one Keychain/disk read instead of racing.
+        case loading(Task<Void, Never>)
         /// The key is there once there is a file of apps.
         case read(SymmetricKey?)
         case failed
@@ -198,9 +237,29 @@ public final class Door {
     /// Settings window's.
     @ObservationIgnored private let chosen: () -> UInt16
     @ObservationIgnored private var listener: NWListener?
+    /// Callers awaiting `open()`'s transition out of `.closed` to `.open` or `.refused`.
+    @ObservationIgnored private var openWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Result of a live loopback `/v1/models` connection check from Connected Apps.
+    public struct ConnectionCheck: Equatable, Sendable {
+        public let ok: Bool
+        public let summary: String
+        public let modelCount: Int
+
+        public init(ok: Bool, summary: String, modelCount: Int = 0) {
+            self.ok = ok
+            self.summary = summary
+            self.modelCount = modelCount
+        }
+    }
+
     private var serving: [UUID: Task<Void, Never>] = [:]
     /// By app, and by the agent's conversation.
     @ObservationIgnored private var memories: [UUID: Memory] = [:]
+    /// Reversible alias maps per app, in memory only (cleared on `remove` and `close`).
+    @ObservationIgnored private var redactionMaps: [UUID: RedactionMap] = [:]
+    /// Ephemeral one-shot probe pass fingerprint used only during `verifyConnection()`.
+    @ObservationIgnored private var probeFingerprint: Data?
+    private static let probeAppID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     /// Serializes memory read-rewrite-commit per app so concurrent requests
     /// from the same app never desynchronize digests from transcripts.
     @ObservationIgnored private var memoryTurns: [UUID: Task<Void, Never>] = [:]
@@ -235,30 +294,54 @@ public final class Door {
     /// otherwise the one it opens on next.
     public var port: UInt16 { opened ?? chosen() }
 
-    /// What an app is pointed at.
+    /// What an OpenAI-compatible app is pointed at.
     public var address: String { "http://127.0.0.1:\(port)/v1" }
 
+    /// What Anthropic SDK / Claude Code (`ANTHROPIC_BASE_URL`) is pointed at.
+    public var baseURL: String { "http://127.0.0.1:\(port)" }
+
+    /// Refreshes the published spend snapshot from `parts.spendLedger`.
+    public func refreshSpendSnapshot() async {
+        spendSnapshot = await parts.spendLedger.snapshot()
+    }
+
+    /// Clears settled/released spend receipts from history (in-flight reservations stay).
+    public func clearSpendReceipts() async {
+        await parts.spendLedger.clearHistory()
+        spendSnapshot = await parts.spendLedger.snapshot()
+    }
+
     /// Reads the apps; with no file of them, there are none and no key is
-    /// needed yet.
+    /// needed yet. Concurrent callers coalesce onto the single in-flight read.
     public func load() async {
         switch access {
-        case .unread, .failed: break
-        case .read: return
+        case .read:
+            return
+        case .loading(let task):
+            await task.value
+            return
+        case .unread, .failed:
+            break
         }
-        do {
-            guard FileManager.default.fileExists(atPath: file.path) else {
-                access = .read(nil)
-                return
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                guard FileManager.default.fileExists(atPath: self.file.path) else {
+                    self.access = .read(nil)
+                    return
+                }
+                guard let key = try await self.parts.sealing() else { throw CocoaError(.fileReadNoPermission) }
+                self.apps = try AgentStore(file: self.file, key: key).load()
+                self.access = .read(key)
+                self.problem = nil
+            } catch {
+                self.logger.error("cannot read the apps: \(String(describing: error), privacy: .public)")
+                self.access = .failed
+                self.problem = "Cloak couldn't read your apps."
             }
-            guard let key = try await parts.sealing() else { throw CocoaError(.fileReadNoPermission) }
-            apps = try AgentStore(file: file, key: key).load()
-            access = .read(key)
-            problem = nil
-        } catch {
-            logger.error("cannot read the apps: \(String(describing: error), privacy: .public)")
-            access = .failed
-            problem = "Cloak couldn't read your apps."
         }
+        access = .loading(task)
+        await task.value
     }
 
     /// Adds an app. Returns its pass, to be shown once; nil when it could
@@ -281,7 +364,7 @@ public final class Door {
                 problem = "Cloak couldn't keep the app."
                 return nil
             }
-        case .unread, .failed:
+        case .unread, .loading, .failed:
             return nil
         }
         let pass = Pass.make()
@@ -295,6 +378,7 @@ public final class Door {
     public func remove(_ id: UUID) {
         guard case .read(let key?) = access, keep(apps.filter { $0.id != id }, key: key) else { return }
         memories[id] = nil
+        redactionMaps[id] = nil
     }
 
     private func keep(_ apps: [AgentApp], key: SymmetricKey) -> Bool {
@@ -340,9 +424,15 @@ public final class Door {
     /// listener changes, so requests under way keep their connections and
     /// the box passes stay.
     public func open() async {
-        guard listener == nil || opened != chosen() else { return }
+        if listener != nil && opened == chosen() {
+            if state == .closed {
+                await withCheckedContinuation { openWaiters.append($0) }
+            }
+            return
+        }
         listener?.cancel()
         listener = nil
+        resumeOpenWaiters()
         await load()
         guard case .read = access else {
             state = .refused(.appsUnread)
@@ -355,6 +445,7 @@ public final class Door {
             return
         }
         opened = port
+        state = .closed
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: endpointPort)
         parameters.allowLocalEndpointReuse = false
@@ -383,13 +474,26 @@ public final class Door {
         }
         self.listener = listener
         listener.start(queue: .main)
+        if self.listener === listener && state == .closed {
+            await withCheckedContinuation { openWaiters.append($0) }
+        }
+    }
+
+    private func resumeOpenWaiters() {
+        let waiters = openWaiters
+        openWaiters = []
+        for waiter in waiters { waiter.resume() }
     }
 
     private func changed(_ change: NWListener.State) {
         switch change {
         case .ready:
+            if opened == 0, let bound = listener?.port?.rawValue {
+                opened = bound
+            }
             logger.info("door open on 127.0.0.1:\(self.port, privacy: .public)")
             state = .open
+            resumeOpenWaiters()
         case .failed(let error), .waiting(let error):
             let attempted = port
             logger.error("door refused: \(String(describing: error), privacy: .public)")
@@ -397,6 +501,9 @@ public final class Door {
             listener = nil
             opened = nil
             state = .refused(error == .posix(.EADDRINUSE) ? .portTaken(attempted) : .address)
+            resumeOpenWaiters()
+        case .cancelled:
+            resumeOpenWaiters()
         default:
             break
         }
@@ -411,10 +518,13 @@ public final class Door {
         if state == .open { logger.info("door closed") }
         state = .closed
         opened = nil
+        resumeOpenWaiters()
         for conversation in boxes.keys {
             memories[conversation] = nil
             memoryTurns[conversation] = nil
         }
+        redactionMaps = [:]
+        probeFingerprint = nil
         boxes = [:]
         let serving = Array(self.serving.values)
         for task in serving { task.cancel() }
@@ -450,7 +560,9 @@ public final class Door {
         let identity = memory.identity(for: asked.messages)
         let (messages, transcript) = try await memory.rewrite(asked, reword: parts.reword)
         memory.transcript = transcript
-        memories[app] = memory
+        if apps.contains(where: { $0.id == app }) || boxes[app] != nil {
+            memories[app] = memory
+        }
         return (identity, messages)
     }
 
@@ -535,15 +647,17 @@ public final class Door {
             try? await Task.sleep(for: HTTPRequest.readLimit)
             if !Task.isCancelled { connection.cancel() }
         }
+        var isAnthropic = false
         do {
             let (request, after) = try await HTTPRequest.head(connection)
+            isAnthropic = request.path.hasPrefix("/v1/messages")
             let (app, payment) = try admit(request, from: side)
             let body = try await request.body(after: after, from: connection)
             limit.cancel()
             await routing(request, body: body, for: app, paying: payment, from: side, on: connection, since: started)
         } catch let failure as Failure {
             limit.cancel()
-            await answer(failure.response, on: connection, since: started)
+            await answer(failure.response(anthropic: isAnthropic), on: connection, since: started)
         } catch {
             // It ended, ran out of time or was cancelled before a whole request.
             limit.cancel()
@@ -604,7 +718,65 @@ public final class Door {
         let body: Data
         let identity: String
         let streaming: Bool
+        /// Non-nil when the request arrived on `/v1/messages`; holds the model
+        /// name the Anthropic client asked for so responses echo it back.
+        let anthropicModel: String?
+        /// Atomic SpendLedger reservation ID held until settlement or release.
+        let reservationID: UUID?
+        let estimatedMaxMicroUSD: UInt64
+        let restoreAliases: Bool
         let way: Way
+    }
+
+    /// Verifies live loopback connectivity, Bearer auth, and provider model listing
+    /// over `http://127.0.0.1:<port>/v1/models` using a one-shot in-memory probe token
+    /// that can only access `GET /v1/models` and is cleared immediately afterward.
+    public func verifyConnection() async -> ConnectionCheck {
+        guard state == .open else {
+            return ConnectionCheck(ok: false, summary: "Door is closed. Start Cloak to open 127.0.0.1:\(port).")
+        }
+        let pass = Pass.make()
+        let currentPort = port
+        probeFingerprint = Pass.fingerprint(pass)
+        defer { probeFingerprint = nil }
+
+        guard let url = URL(string: "http://127.0.0.1:\(currentPort)/v1/models") else {
+            return ConnectionCheck(ok: false, summary: "Invalid local door address.")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(pass)", forHTTPHeaderField: "Authorization")
+
+        let config = URLSessionConfiguration.ephemeral
+        config.connectionProxyDictionary = [:]
+        config.httpCookieStorage = nil
+        config.urlCache = nil
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                return ConnectionCheck(ok: false, summary: "Door returned a non-HTTP response.")
+            }
+            if http.statusCode == 200, let ids = Self.orderedIDs(data) {
+                let noun = ids.count == 1 ? "model" : "models"
+                return ConnectionCheck(
+                    ok: true,
+                    summary: "Connected on 127.0.0.1:\(currentPort) · \(ids.count) \(noun) ready",
+                    modelCount: ids.count)
+            }
+            if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let err = root["error"] as? [String: Any],
+                let message = err["message"] as? String, !message.isEmpty
+            {
+                return ConnectionCheck(ok: false, summary: message)
+            }
+            return ConnectionCheck(ok: false, summary: "Door answered HTTP \(http.statusCode).")
+        } catch {
+            return ConnectionCheck(ok: false, summary: error.localizedDescription)
+        }
     }
 
     /// Routes one request read whole while watching its connection, and
@@ -616,6 +788,8 @@ public final class Door {
         _ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side, on connection: some Link,
         since started: ContinuousClock.Instant
     ) async {
+        let isAnthropic = request.path.hasPrefix("/v1/messages")
+
         /// Writes `response` while the app is there to read it.
         func finish(_ response: HTTPResponse, at stage: inout Routing) async {
             guard stage == .preparing || stage == .sending else { return }
@@ -648,13 +822,18 @@ public final class Door {
                     await finish(response, at: &stage)
                 case .stopped(let listed, let failure):
                     note(listed) { $0.end(stage == .dropped ? .left(paid: false) : .stopped(failure.message)) }
-                    await finish(failure.response, at: &stage)
+                    await finish(failure.response(anthropic: isAnthropic), at: &stage)
                 case .ready(let ready):
                     guard stage == .preparing else {
+                        if let reservationID = ready.reservationID {
+                            await parts.spendLedger.release(reservationID: reservationID, failed: false)
+                            spendSnapshot = await parts.spendLedger.snapshot()
+                        }
                         note(ready.listed) { $0.end(.left(paid: false)) }
                         continue
                     }
                     stage = .sending
+                    note(ready.listed) { $0.stage = .sending }
                     group.addTask { await self.send(ready) }
                 case .sent(let listed, .success(let response)):
                     note(listed) { $0.end(stage == .unread ? .left(paid: true) : .answered) }
@@ -664,7 +843,7 @@ public final class Door {
                         memories[app]?.rotateIdentity()
                     }
                     note(listed) { $0.end(.stopped(failure.message)) }
-                    await finish(failure.response, at: &stage)
+                    await finish(failure.response(anthropic: isAnthropic), at: &stage)
                 }
             }
         }
@@ -672,14 +851,21 @@ public final class Door {
 
     /// Refuses a request from a web page, then one without a pass of this
     /// side's, as the daemon does (`ServeHTTP`, internal/server/server.go:70-97):
-    /// from the Mac, an app's pass, and the app's request is counted; from the
-    /// guest, a box pass. Returns the app, or the agent's conversation, and
-    /// how its requests are paid: an app's through zkAPI, a conversation's
-    /// as its box says.
+    /// from the Mac, an app's pass (`Authorization: Bearer` or `x-api-key`),
+    /// and the app's request is counted; from the guest, a box pass. Returns
+    /// the app, or the agent's conversation, and how its requests are paid:
+    /// an app's as configured (`parts.macPayment`), a conversation's as its box says.
     private func admit(_ request: HTTPRequest, from side: Side) throws(Failure) -> (UUID, Payment) {
         guard request.headers["origin"] == nil, request.headers["sec-fetch-site"] != "cross-site" else { throw .origin }
-        guard let header = request.headers["authorization"], header.hasPrefix("Bearer ") else { throw .pass }
-        let presented = Pass.fingerprint(header.dropFirst("Bearer ".count))
+        let rawPass: Substring
+        if let header = request.headers["authorization"], header.hasPrefix("Bearer ") {
+            rawPass = header.dropFirst("Bearer ".count)
+        } else if let apiKey = request.headers["x-api-key"], !apiKey.isEmpty {
+            rawPass = Substring(apiKey)
+        } else {
+            throw .pass
+        }
+        let presented = Pass.fingerprint(rawPass)
         if case .guest = side {
             var found: (UUID, Payment)?
             for (conversation, box) in boxes where Pass.same(box.fingerprint, presented) {
@@ -687,6 +873,10 @@ public final class Door {
             }
             guard let found else { throw .pass }
             return found
+        }
+        if let probe = probeFingerprint, Pass.same(probe, presented) {
+            guard request.method == "GET", request.path == "/v1/models" else { throw .pass }
+            return (Self.probeAppID, parts.macPayment())
         }
         var found: Int?
         for (index, app) in apps.enumerated() where Pass.same(app.fingerprint, presented) {
@@ -696,37 +886,44 @@ public final class Door {
         apps[found].requests += 1
         apps[found].lastUsed = .now
         scheduleKeep(key: key)
-        return (apps[found].id, .zkapi)
+        return (apps[found].id, parts.macPayment())
     }
 
     /// Routes one request up to the point where sending it would pay for
     /// it. A chat request is listed in `requests` from here; `routing` lists
     /// its end.
     private func route(_ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side) async -> Routed {
+        let path = request.path
+        let isAnthropic = path.hasPrefix("/v1/messages")
         do throws(Failure) {
-            switch (request.method, request.target) {
+            switch (request.method, path) {
             case ("GET", "/v1/models"):
                 let list = try await models(paying: payment)
                 guard (try? GoJSON.read([UInt8](list)))?.members != nil else { throw Self.unreadable }
                 return .answer(HTTPResponse(status: 200, body: list))
-            case ("POST", "/v1/chat/completions"):
+            case ("POST", "/v1/messages/count_tokens"):
+                try Asked.check(type: request.headers["content-type"])
+                return .answer(try Anthropic.countTokens(body))
+            case ("POST", "/v1/chat/completions"), ("POST", "/v1/messages"):
                 let listed = AgentRequest(sender: side == .mac ? .app(app) : .agent)
                 requests.insert(listed, at: 0)
                 if requests.count > 200 { requests.removeLast() }
                 // The one this pushed out of the newest drops its texts.
                 if requests.count > Self.latest { requests[Self.latest].messages = [] }
                 do throws(Failure) {
-                    return .ready(try await prepare(request, body: body, for: app, paying: payment, listed: listed.id))
+                    return .ready(try await prepare(
+                        request, body: body, for: app, paying: payment, from: side,
+                        anthropic: path == "/v1/messages", listed: listed.id))
                 } catch {
                     return .stopped(listed.id, error)
                 }
-            case (_, "/v1/models"), (_, "/v1/chat/completions"):
+            case (_, "/v1/models"), (_, "/v1/chat/completions"), (_, "/v1/messages"), (_, "/v1/messages/count_tokens"):
                 throw Failure(405, "method_not_allowed", "Method not allowed.")
             default:
-                throw Failure(404, "not_found", "Cloak answers /v1/chat/completions and /v1/models only.")
+                throw Failure(404, "not_found", "Cloak answers /v1/chat/completions, /v1/messages, and /v1/models only.")
             }
         } catch {
-            return .answer(error.response)
+            return .answer(error.response(anthropic: isAnthropic))
         }
     }
 
@@ -764,19 +961,62 @@ public final class Door {
     /// Nothing leaves this Mac before every user message is reworded, and
     /// nothing here pays.
     private func prepare(
-        _ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, listed: AgentRequest.ID
+        _ request: HTTPRequest, body: [UInt8], for app: UUID, paying payment: Payment, from side: Side,
+        anthropic: Bool, listed: AgentRequest.ID
     ) async throws(Failure) -> Ready {
         try Asked.check(type: request.headers["content-type"])
-        let asked = try await Asked.read(body)
-        note(listed) { $0.model = asked.model }
-        guard let ids = Self.ids(try await models(paying: payment)) else { throw Self.unreadable }
-        guard ids.contains(asked.model) else {
+        let openAIBytes: [UInt8]
+        let requestedModel: String
+        if anthropic {
+            let translated = try Anthropic.translateRequest(body)
+            openAIBytes = translated.openAIBytes
+            requestedModel = translated.requestedModel
+        } else {
+            openAIBytes = body
+            requestedModel = ""
+        }
+        let asked = try await Asked.read(openAIBytes)
+        let clientModel = anthropic ? requestedModel : asked.model
+        note(listed) { $0.model = clientModel }
+        let policy = side == .mac ? parts.privacyPolicy() : .disabled
+        if policy.blockSecrets {
+            let findings = PrivacyShield.scanRequestJSONForSecrets(Data(openAIBytes))
+            if !findings.isEmpty {
+                let summary = findings.map(\.kind).joined(separator: ", ")
+                note(listed) { $0.blockedSecret = summary }
+                throw Failure(
+                    400,
+                    "secret_blocked",
+                    "Blocked before sending: detected \(summary) in outbound request. Remove the secret and retry.")
+            }
+        }
+        let modelList = try await models(paying: payment)
+        guard let ordered = Self.orderedIDs(modelList) else { throw Self.unreadable }
+        let ids = Set(ordered)
+        let effectiveModel: String
+        if side == .mac, let forced = parts.forcedModel()?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !forced.isEmpty, ids.contains(forced)
+        {
+            effectiveModel = forced
+        } else if ids.contains(asked.model) {
+            effectiveModel = asked.model
+        } else if anthropic {
+            if let preferred = parts.preferredModel(payment), ids.contains(preferred) {
+                effectiveModel = preferred
+            } else if let first = ordered.first {
+                effectiveModel = first
+            } else {
+                throw Failure(404, "model_not_found", "The provider lists no models right now.")
+            }
+        } else {
             throw Failure(404, "model_not_found", "The provider has no model \(asked.model).")
+        }
+        if effectiveModel != clientModel {
+            note(listed) { $0.model = "\(clientModel) → \(effectiveModel)" }
         }
         let (identity, messages) = try await rewriteInOrder(for: app, asked: asked)
         note(listed) { entry in
             entry.reworded = asked.messages.count { $0.draft != nil }
-            entry.stage = .sending
         }
         let pairs = await Self.pairs(asked, sent: messages)
         if let index = requests.firstIndex(where: { $0.id == listed }), index < Self.latest {
@@ -800,8 +1040,71 @@ public final class Door {
             }
             way = .wallet(DepositStore(folder: walletFolder, key: key))
         }
+        let modelOverride = effectiveModel == asked.model ? nil : effectiveModel
+        var outboundBody = asked.body(messages, modelOverride: modelOverride)
+        var restoreAliases = false
+        if policy.isActive {
+            var map = redactionMaps[app] ?? RedactionMap()
+            let (protected, maskedCount): (Data, Int)
+            do throws(Failure) {
+                (protected, maskedCount) = try PrivacyShield.protectRequestJSON(outboundBody, map: &map, policy: policy)
+            } catch {
+                if error.code == "secret_blocked" {
+                    note(listed) { $0.blockedSecret = error.message }
+                }
+                throw error
+            }
+            outboundBody = protected
+            if policy.maskEntities {
+                if !map.isEmpty {
+                    redactionMaps[app] = map
+                    restoreAliases = true
+                }
+                if maskedCount > 0 {
+                    note(listed) { entry in
+                        entry.shielded = maskedCount
+                        entry.messages = entry.messages.map { pair in
+                            var previewMap = map
+                            let (maskedSent, _) = previewMap.mask(pair.sent, privateTerms: policy.privateTerms)
+                            return AgentRequest.Message(written: pair.written, sent: maskedSent)
+                        }
+                    }
+                }
+            }
+        }
         guard !Task.isCancelled else { throw .stopped }
-        return Ready(app: app, listed: listed, body: asked.body(messages), identity: identity, streaming: asked.streaming, way: way)
+        let estimatedMax = parts.requestMaxMicroUSD(payment)
+        var reservationID: UUID?
+        if side == .mac {
+            let networkID: PaymentNetwork.ID = (payment == .zkapi) ? .ethereum : .tempo
+            let spec = PaymentNetwork.network(for: networkID)
+            let appName = apps.first(where: { $0.id == app })?.name ?? "Connected App"
+            let quote = SpendQuote(
+                idempotencyKey: listed.uuidString,
+                service: "Connected App · \(appName)",
+                provider: payment == .zkapi ? "zkapi" : "boundless",
+                network: networkID,
+                expectedChainID: spec.chainID,
+                asset: payment == .zkapi ? "ETH" : spec.stableAsset,
+                maxMicroUSD: estimatedMax,
+                leavesThisMac: policy.maskEntities ? "Rewritten & alias-shielded prompt (over Tor)" : "Rewritten prompt only (over Tor)"
+            )
+            let decision = await parts.spendLedger.authorize(quote, policy: parts.spendPolicy())
+            spendSnapshot = await parts.spendLedger.snapshot()
+            switch decision {
+            case .approved(let id):
+                reservationID = id
+            case .idempotentReplay:
+                throw Failure(409, "duplicate_request", "This payment authorization was already settled.")
+            case .rejected(let rejection):
+                throw Failure(402, "budget_limit_exceeded", rejection.message)
+            }
+        }
+        return Ready(
+            app: app, listed: listed, body: outboundBody, identity: identity,
+            streaming: asked.streaming, anthropicModel: anthropic ? clientModel : nil,
+            reservationID: reservationID, estimatedMaxMicroUSD: estimatedMax,
+            restoreAliases: restoreAliases, way: way)
     }
 
     /// Sends a ready request, which pays for it: through the payer, in its
@@ -830,10 +1133,47 @@ public final class Door {
                     throw Failure(error)
                 }
             }
-            return .sent(ready.listed, .success(try Asked.answer(completion, streaming: ready.streaming)))
+            var completionData = completion
+            if ready.restoreAliases, let map = redactionMaps[ready.app], !map.isEmpty {
+                let (restored, _) = PrivacyShield.restoreCompletionJSON(completionData, map: map)
+                completionData = restored
+            }
+            let response: HTTPResponse
+            if let anthropicModel = ready.anthropicModel {
+                response = try Anthropic.answer(completionData, requestedModel: anthropicModel, streaming: ready.streaming)
+            } else {
+                response = try Asked.answer(completionData, streaming: ready.streaming)
+            }
+            if let reservationID = ready.reservationID {
+                let charge = Self.estimatedActualMicroUSD(from: completion, fallback: ready.estimatedMaxMicroUSD)
+                await parts.spendLedger.settle(reservationID: reservationID, actualMicroUSD: charge)
+                spendSnapshot = await parts.spendLedger.snapshot()
+            }
+            return .sent(ready.listed, .success(response))
         } catch {
+            if let reservationID = ready.reservationID {
+                if error.code == "timed_out" {
+                    await parts.spendLedger.markAmbiguous(reservationID: reservationID)
+                } else {
+                    await parts.spendLedger.release(reservationID: reservationID, failed: true)
+                }
+                spendSnapshot = await parts.spendLedger.snapshot()
+            }
             return .sent(ready.listed, .failure(error))
         }
+    }
+
+    /// Estimates actual spend from provider token counts when returned (bounded by the reserved max).
+    private nonisolated static func estimatedActualMicroUSD(from completion: Data, fallback: UInt64) -> UInt64 {
+        guard let object = try? JSONSerialization.jsonObject(with: completion) as? [String: Any],
+            let usage = object["usage"] as? [String: Any]
+        else { return fallback }
+        let input = (usage["prompt_tokens"] as? Int) ?? (usage["input_tokens"] as? Int) ?? 0
+        let output = (usage["completion_tokens"] as? Int) ?? (usage["output_tokens"] as? Int) ?? 0
+        guard input > 0 || output > 0 else { return fallback }
+        // Conservative blended rate (~$0.50/1M input, $2.00/1M output) capped at reservation.
+        let micro = UInt64((Double(input) * 0.5) + (Double(output) * 2.0))
+        return min(fallback, max(1_000, micro))
     }
 
     /// Each user message with text, as the app wrote it (its draft's texts)
@@ -857,6 +1197,9 @@ public final class Door {
     /// as read with the apps, or, when there are none (as for the agent's
     /// requests before any app is added), found or made now.
     private func sealing() async throws(Failure) -> SymmetricKey {
+        if case .loading(let task) = access {
+            await task.value
+        }
         switch access {
         case .read(let key?):
             return key
@@ -869,18 +1212,18 @@ public final class Door {
                 logger.error("cannot get the key for the deposit: \(String(describing: error), privacy: .public)")
                 throw Failure(502, "failed", "Cloak couldn't read its key.")
             }
-        case .unread, .failed:
+        case .unread, .loading, .failed:
             throw .stopped
         }
     }
 
-    /// The model names in the provider's list (`data[].id`).
-    private static func ids(_ list: Data) -> Set<String>? {
+    /// The model names in the provider's list (`data[].id`), preserving provider order.
+    private static func orderedIDs(_ list: Data) -> [String]? {
         let bytes = [UInt8](list)
         guard let data = try? GoJSON.read(bytes).members?["data"], case .array(let models) = data.value else { return nil }
-        return Set(models.compactMap { model in
+        return models.compactMap { model in
             guard case .string(let id)? = model.members?["id"]?.value else { return nil }
             return id
-        })
+        }
     }
 }

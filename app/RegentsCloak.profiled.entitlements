@@ -4,6 +4,8 @@
 <dict>
 	<key>com.apple.security.virtualization</key>
 	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>367G3Z7G3J.sh.regents.cloak</string>

@@ -76,3 +76,7 @@ the same commit, and push to main. Public release, signing keys and
 notarization remain Sean's.
 
 Progress lives in [docs/plan.md](docs/plan.md); `bd` is not used.
+
+## Integration review
+
+Use [INTEGRATIONS.md](INTEGRATIONS.md) for external services, networks, protocols, local runtimes, applications, and Regents products that Cloak uses or may integrate with. During an integration review, follow its two-stage daily review procedure: compare exact upstream diffs against Cloak's actual code/contracts, keep integration status separate from capability evidence, and include a falsifiable overturn condition on every actionable finding. Keep routine check state outside `INTEGRATIONS.md` (e.g., `var/integration-review/state.json`). Research does not authorize implementation or spending; implementation follows this repository's existing workflow and task authorization.

@@ -163,9 +163,12 @@ struct Asked: Sendable {
     }
 
     /// The body that goes to the provider: these messages, the fields kept,
-    /// and `"stream":false`.
-    func body(_ messages: [[UInt8]]) -> Data {
+    /// an optional resolved model ID, and `"stream":false`.
+    func body(_ messages: [[UInt8]], modelOverride: String? = nil) -> Data {
         var members = fields.mapValues { Array(bytes[$0.span]) }
+        if let modelOverride {
+            members["model"] = Array(Rewrite.quote(modelOverride).utf8)
+        }
         members["messages"] = Array("[".utf8) + messages.joined(separator: [UInt8(ascii: ",")]) + Array("]".utf8)
         members["stream"] = Array("false".utf8)
         return Data(Self.object(members))

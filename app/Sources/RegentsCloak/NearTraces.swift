@@ -51,11 +51,14 @@ final class NearTraces {
         exported[conversationID] != nil
     }
 
-    /// True when the conversation has more answered turns than its exported file.
+    /// True when the conversation's eligible answered turns or serialized bytes
+    /// differ from its exported file on disk (new turns or regenerated answers).
     func hasNewTurns(for conversation: Conversation) -> Bool {
         guard let file = exported[conversation.id] else { return false }
-        let answered = conversation.turns.filter { $0.answer != nil }.count
-        return answered > file.turnCount
+        let answered = NearTraceExporter.eligibleTurns(in: conversation).count
+        guard answered > 0 else { return false }
+        if answered != file.turnCount { return true }
+        return NearTraceExporter.estimatedBytes(for: conversation) != file.bytes
     }
 
     /// Turns trace sharing on (creating the owner-only, Time-Machine-excluded
@@ -89,11 +92,11 @@ final class NearTraces {
     @discardableResult
     func export(_ conversation: Conversation) -> Bool {
         errorMessage = nil
-        if !settings.nearShareTraces {
-            settings.nearShareTraces = true
-        }
         do {
             let file = try NearTraceExporter.export(conversation, to: folder)
+            if !settings.nearShareTraces {
+                settings.nearShareTraces = true
+            }
             exported[conversation.id] = file
             return true
         } catch {
