@@ -225,6 +225,15 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }
 
     func showContextMenu(below button: NSStatusBarButton) {
+        if let modal = NSApp.modalWindow {
+            if #available(macOS 27.0, *) {
+                item.expandedInterfaceSession?.cancel()
+            }
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            modal.makeKeyAndOrderFront(nil)
+            return
+        }
         if #available(macOS 27.0, *) {
             item.expandedInterfaceSession?.cancel()
             item.expandedInterfaceDelegate = nil

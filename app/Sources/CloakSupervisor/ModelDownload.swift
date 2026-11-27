@@ -188,6 +188,43 @@ public final class ModelDownload {
         }
     }
 
+    private struct DiskSnapshot: Sendable {
+        let inPlace: Set<String>
+        let partial: [String: Int]
+        let free: Int?
+    }
+
+    @concurrent
+    private static func scanDisk(files: [Manifest.Model.File], folder: URL) async -> DiskSnapshot {
+        let inPlace = Set(files.filter { Checks.isInPlace($0, in: folder) }.map(\.path))
+        var partial: [String: Int] = [:]
+        for file in files where !inPlace.contains(file.path) {
+            partial[file.path] = Self.size(of: Self.partial(for: file, in: folder))
+        }
+        let free = Self.freeSpace(at: folder)
+        return DiskSnapshot(inPlace: inPlace, partial: partial, free: free)
+    }
+
+    /// Reads disk state off the main thread so opening the menu bar panel never
+    /// stalls on filesystem stats or APFS `cachedelete` purgeable-space XPC.
+    public func refreshAsync() {
+        guard !isUnderWay else { return }
+        let files = self.files
+        let folder = self.folder
+        Task { [weak self] in
+            let snap = await Self.scanDisk(files: files, folder: folder)
+            guard let self, !self.isUnderWay else { return }
+            self.inPlace = snap.inPlace
+            self.partial = snap.partial
+            self.free = snap.free
+            if self.inPlace.count == self.files.count {
+                self.state = .installed
+            } else if self.state == .installed {
+                self.state = .stopped(nil)
+            }
+        }
+    }
+
     /// Download, or Continue: starts fetching what is not in place, unless
     /// it is certain to fail.
     public func start() {

@@ -2,6 +2,7 @@ import AppKit
 import CloakControl
 import os
 import Sparkle
+import SwiftUI
 
 /// Updates, through Sparkle: its window, its own setting for checking by
 /// itself (`checksAutomatically`; Sparkle keeps it and asks the person on
@@ -31,9 +32,13 @@ import Sparkle
 /// the Llama app (decision 14 in docs/plan.md).
 @MainActor
 final class Updates: NSObject {
-    static let changelogURL = URL(string: "https://github.com/regents-ai/cloak/releases")!
+    nonisolated static let changelogURL = URL(string: "https://github.com/regents-ai/cloak/releases")!
 
-    private lazy var userDriver = CloakUpdateUserDriver(hostBundle: .main, delegate: self)
+    private let statusPresenter = UpdateStatusPresenter()
+    private lazy var userDriver = CloakUpdateUserDriver(
+        hostBundle: .main,
+        delegate: self,
+        statusPresenter: statusPresenter)
     private lazy var updater = SPUUpdater(
         hostBundle: .main,
         applicationBundle: .main,
@@ -70,16 +75,13 @@ final class Updates: NSObject {
     /// Checks now, in Sparkle's window, with the app in front.
     func check() {
         guard updatesEnabled else {
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert()
-            alert.alertStyle = .informational
-            alert.messageText = "Updates Disabled in Cloak Dev"
-            alert.informativeText =
-                "This is an isolated local test build (sh.regents.cloak.dev). Your release Cloak.app in /Applications updates independently through the normal channel."
-            alert.accessoryView = ChangelogLinkAccessory(url: Self.changelogURL)
-            alert.runModal()
-            AppWindow.leaveDock()
+            statusPresenter.show(
+                title: "Updates Disabled in Cloak Dev",
+                message:
+                    "This is an isolated local test build (sh.regents.cloak.dev). Your release Cloak.app in /Applications updates independently through the normal channel.",
+                changelogURL: Self.changelogURL,
+                onDismiss: {}
+            )
             return
         }
         NSApp.setActivationPolicy(.regular)
@@ -127,81 +129,256 @@ extension Updates: @preconcurrency SPUStandardUserDriverDelegate {
     }
 }
 
-/// Thin `SPUStandardUserDriver` subclass that preserves every standard Sparkle
-/// dialog while adding a clickable "View Changelog" hyperlink directly inside
-/// the "You're up to date!" alert.
+/// Thin `SPUStandardUserDriver` subclass that replaces Sparkle's blocking
+/// `NSAlert.runModal()` dialogs ("You're up to date!" and updater errors) with
+/// a non-modal native window that also includes a clickable "View Changelog"
+/// link. Avoiding `NSAlert.runModal()` inside Sparkle's `DispatchQueue.main`
+/// callbacks prevents deadlocking `@MainActor` tasks and locking out the
+/// menu bar panel if the user switches apps or opens the changelog in a browser.
 private final class CloakUpdateUserDriver: SPUStandardUserDriver {
+    private let statusPresenter: UpdateStatusPresenter
+
+    init(hostBundle: Bundle, delegate: (any SPUStandardUserDriverDelegate)?, statusPresenter: UpdateStatusPresenter) {
+        self.statusPresenter = statusPresenter
+        super.init(hostBundle: hostBundle, delegate: delegate)
+    }
+
     override func showUpdateNotFoundWithError(_ error: any Error, acknowledgement: @escaping () -> Void) {
         let nsError = error as NSError
         let reason = (nsError.userInfo[SPUNoUpdateFoundReasonKey] as? NSNumber)?.intValue
         let isUpToDate = reason == Int(SPUNoUpdateFoundReason.onLatestVersion.rawValue)
             || reason == Int(SPUNoUpdateFoundReason.onNewerThanLatestVersion.rawValue)
             || reason == nil
-        guard isUpToDate else {
-            super.showUpdateNotFoundWithError(error, acknowledgement: acknowledgement)
-            return
-        }
 
-        // Close Sparkle's "Checking for updates…" spinner cleanly before presenting our alert.
+        // Close Sparkle's "Checking for updates…" spinner cleanly before presenting our status window.
         super.dismissUpdateInstallation()
         let item = nsError.userInfo[SPULatestAppcastItemFoundKey] as? SUAppcastItem
-        let url = item?.fullReleaseNotesURL
+        let changelogURL = isUpToDate ? (item?.fullReleaseNotesURL ?? Updates.changelogURL) : item?.fullReleaseNotesURL
+        let title = nsError.localizedDescription.isEmpty ? "You’re up to date!" : nsError.localizedDescription
+        let fallbackVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let message = nsError.localizedRecoverySuggestion
+            ?? (fallbackVersion.isEmpty
+                ? "Cloak is currently the newest version available."
+                : "Cloak \(fallbackVersion) is currently the newest version available.")
 
+        let presenter = self.statusPresenter
+        nonisolated(unsafe) let ack = acknowledgement
         MainActor.assumeIsolated {
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert(error: nsError)
-            alert.alertStyle = .informational
-            alert.icon = NSApp.applicationIconImage
-            alert.accessoryView = ChangelogLinkAccessory(url: url ?? Updates.changelogURL)
-            alert.runModal()
-            AppWindow.leaveDock()
+            presenter.show(
+                title: title,
+                message: message,
+                changelogURL: changelogURL,
+                onDismiss: ack
+            )
         }
-        acknowledgement()
+    }
+
+    override func showUpdaterError(_ error: any Error, acknowledgement: @escaping () -> Void) {
+        let nsError = error as NSError
+        super.dismissUpdateInstallation()
+        let title = nsError.localizedDescription.isEmpty ? "Update Error" : nsError.localizedDescription
+        let parts = [nsError.localizedFailureReason, nsError.localizedRecoverySuggestion]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let message = parts.isEmpty
+            ? "An error occurred while checking for updates. Please try again later."
+            : parts.joined(separator: "\n\n")
+
+        let presenter = self.statusPresenter
+        nonisolated(unsafe) let ack = acknowledgement
+        MainActor.assumeIsolated {
+            presenter.show(
+                title: title,
+                message: message,
+                changelogURL: nil,
+                onDismiss: ack
+            )
+        }
+    }
+
+    override func showUpdateInFocus() {
+        let presenter = self.statusPresenter
+        let handled = MainActor.assumeIsolated {
+            presenter.bringToFrontIfVisible()
+        }
+        if !handled {
+            super.showUpdateInFocus()
+        }
+    }
+
+    override func dismissUpdateInstallation() {
+        let presenter = self.statusPresenter
+        MainActor.assumeIsolated {
+            presenter.dismiss()
+        }
+        super.dismissUpdateInstallation()
     }
 }
 
-/// Centered clickable "View Changelog" link accessory for macOS `NSAlert`.
+/// Non-modal native status window for Sparkle up-to-date and error notifications.
+/// Never calls `NSAlert.runModal()`, so switching apps or clicking "View Changelog"
+/// can never freeze `DispatchQueue.main` or block clicks in Cloak's menu bar panel.
 @MainActor
-private final class ChangelogLinkAccessory: NSView {
-    private let url: URL
+private final class UpdateStatusPresenter: NSObject, NSWindowDelegate {
+    private var window: ClosingWindow?
+    private var onDismiss: (() -> Void)?
 
-    init(url: URL) {
-        self.url = url
-        super.init(frame: NSRect(x: 0, y: 0, width: 220, height: 22))
-        let button = LinkCursorButton(frame: bounds)
-        button.isBordered = false
-        button.target = self
-        button.action = #selector(openChangelog)
-        let style = NSMutableParagraphStyle()
-        style.alignment = .center
-        button.attributedTitle = NSAttributedString(
-            string: "View Changelog",
-            attributes: [
-                .foregroundColor: NSColor.linkColor,
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium),
-                .paragraphStyle: style,
-            ]
+    func show(title: String, message: String, changelogURL: URL?, onDismiss: @escaping () -> Void) {
+        // Finish any previous status window cleanly before presenting the next one.
+        dismiss()
+
+        self.onDismiss = onDismiss
+
+        let view = UpdateStatusView(
+            title: title,
+            message: message,
+            changelogURL: changelogURL,
+            openChangelog: { [weak self] url in
+                NSWorkspace.shared.open(url)
+                self?.dismiss()
+            },
+            close: { [weak self] in
+                self?.dismiss()
+            }
         )
-        button.setAccessibilityLabel("View Changelog")
-        button.setAccessibilityHelp("Opens Cloak's release notes on GitHub.")
-        button.autoresizingMask = [.width, .height]
-        addSubview(button)
+        let hosting = NSHostingController(rootView: view)
+        let fitting = hosting.sizeThatFits(in: CGSize(width: 300, height: 420))
+        let width: CGFloat = 300
+        let height = max(fitting.height, 180)
+
+        let window = ClosingWindow(
+            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = ""
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.isReleasedWhenClosed = false
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.contentViewController = hosting
+        window.setContentSize(NSSize(width: width, height: height))
+        window.center()
+        window.delegate = self
+        self.window = window
+
+        let wasAccessory = NSApp.activationPolicy() != .regular
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        if wasAccessory {
+            DispatchQueue.main.async { [weak window] in
+                guard let window, window.isVisible else { return }
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    func bringToFrontIfVisible() -> Bool {
+        guard let window, window.isVisible else { return false }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        return true
     }
 
-    @objc private func openChangelog() {
-        NSWorkspace.shared.open(url)
+    func dismiss() {
+        let closing = window
+        window = nil
+        let callback = onDismiss
+        onDismiss = nil
+        if let closing {
+            closing.delegate = nil
+            closing.orderOut(nil)
+            AppWindow.leaveDock(closing: closing)
+        }
+        callback?()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        let closed = notification.object as? NSWindow
+        if closed === window {
+            window = nil
+        }
+        let callback = onDismiss
+        onDismiss = nil
+        AppWindow.leaveDock(closing: closed)
+        callback?()
     }
 }
 
-private final class LinkCursorButton: NSButton {
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .pointingHand)
+private struct UpdateStatusView: View {
+    let title: String
+    let message: String
+    let changelogURL: URL?
+    let openChangelog: (URL) -> Void
+    let close: () -> Void
+    @State private var hoveringLink = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 64, height: 64)
+
+            VStack(spacing: 6) {
+                Text(title)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let changelogURL {
+                Button {
+                    openChangelog(changelogURL)
+                } label: {
+                    Text("View Changelog")
+                        .font(.footnote.weight(.medium))
+                        .underline()
+                        .foregroundStyle(Color(nsColor: .linkColor))
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    if hovering != hoveringLink {
+                        hoveringLink = hovering
+                        if hovering {
+                            NSCursor.pointingHand.push()
+                        } else {
+                            NSCursor.pop()
+                        }
+                    }
+                }
+                .onDisappear {
+                    if hoveringLink {
+                        hoveringLink = false
+                        NSCursor.pop()
+                    }
+                }
+                .help("Opens Cloak's release notes on GitHub.")
+                .accessibilityLabel("View Changelog")
+            }
+
+            Button(action: close) {
+                Text("OK")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 4)
+        .padding(.bottom, 20)
+        .frame(width: 300)
     }
 }

@@ -65,6 +65,9 @@ final class AppWindow: NSObject, NSWindowDelegate {
     /// Makes the app a menu-bar app again, unless one of its windows other
     /// than `closing` is still open or minimized (including updater windows).
     static func leaveDock(closing: NSWindow? = nil) {
+        // Never hide the Dock icon while an AppKit modal window is active;
+        // otherwise switching away buries the modal dialog with no way to Cmd-Tab back.
+        guard NSApp.modalWindow == nil else { return }
         let keepsDock = NSApp.windows.contains { window in
             guard window !== closing, !(window is NSPanel) else { return false }
             if window is ClosingWindow { return window.isVisible || window.isMiniaturized }

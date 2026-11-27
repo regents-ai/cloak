@@ -908,7 +908,8 @@ private struct LocalAccessPane: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        if panel.runModal() == .OK {
+        let apply: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK else { return }
             var updated = settings.localApprovedFolders
             for url in panel.urls {
                 let path = url.standardizedFileURL.path
@@ -917,6 +918,11 @@ private struct LocalAccessPane: View {
                 }
             }
             settings.localApprovedFolders = updated
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window, completionHandler: apply)
+        } else {
+            panel.begin(completionHandler: apply)
         }
     }
 
@@ -1205,13 +1211,19 @@ private struct ProjectProfileEditorSheet: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        if panel.runModal() == .OK {
+        let apply: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK else { return }
             for url in panel.urls {
                 let path = url.standardizedFileURL.path
                 if !approvedFolders.contains(path) {
                     approvedFolders.append(path)
                 }
             }
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window, completionHandler: apply)
+        } else {
+            panel.begin(completionHandler: apply)
         }
     }
 

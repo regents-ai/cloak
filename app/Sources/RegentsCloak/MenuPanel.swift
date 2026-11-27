@@ -48,6 +48,7 @@ final class MenuPanelController: NSObject {
     private var localKeyMonitor: Any?
     private var resizeTask: Task<Void, Never>?
     private var isShowing = false
+    private var hideGeneration: UInt64 = 0
 
     init(
         supervisor: Supervisor,
@@ -101,11 +102,28 @@ final class MenuPanelController: NSObject {
     }
 
     func show(below statusItem: NSStatusItem, cancelSession: @escaping () -> Void) {
-        download.refresh()
+        // Never open an unclickable non-activating panel on top of an active
+        // AppKit modal loop (clicks would just beep); surface the modal dialog instead.
+        if let modal = NSApp.modalWindow {
+            cancelSession()
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            modal.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        hideGeneration &+= 1
         state.selectedMode = actions.activeMode()
         anchorButtonWindow = statusItem.button?.window
         self.cancelSession = cancelSession
         isShowing = true
+
+        // Cancel any in-flight fade-out animation so rapid re-opens never appear invisible.
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0
+            panel.animator().alphaValue = 1
+        }
+        panel.alphaValue = 1
 
         let size = measuredSize()
         panel.setContentSize(size)
@@ -113,10 +131,15 @@ final class MenuPanelController: NSObject {
         installMonitors()
         startResizeObserver()
         panel.makeKeyAndOrderFront(nil)
+
+        // Refresh disk/free-space state off the main thread so opening never stalls on APFS XPC.
+        download.refreshAsync()
     }
 
     func hide(animated: Bool) {
         guard isShowing || panel.isVisible else { return }
+        hideGeneration &+= 1
+        let generation = hideGeneration
         isShowing = false
         cancelSession = nil
         anchorButtonWindow = nil
@@ -128,9 +151,10 @@ final class MenuPanelController: NSObject {
                 ctx.duration = 0.12
                 panel.animator().alphaValue = 0
             } completionHandler: { [weak self] in
-                Task { @MainActor in
-                    self?.panel.orderOut(nil)
-                    self?.panel.alphaValue = 1
+                MainActor.assumeIsolated {
+                    guard let self, self.hideGeneration == generation, !self.isShowing else { return }
+                    self.panel.orderOut(nil)
+                    self.panel.alphaValue = 1
                 }
             }
         } else {
@@ -196,7 +220,7 @@ final class MenuPanelController: NSObject {
     private func installMonitors() {
         removeMonitors()
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.requestDismiss()
             }
         }
