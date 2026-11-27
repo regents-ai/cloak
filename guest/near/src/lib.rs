@@ -62,7 +62,7 @@ pub use verify::{verify_intel, Refusal, Who};
 /// `N` bytes from the system's secure random source; None if it fails.
 fn random<const N: usize>() -> Option<[u8; N]> {
     let mut bytes = [0u8; N];
-    rustls::crypto::ring::default_provider()
+    rustls::crypto::aws_lc_rs::default_provider()
         .secure_random
         .fill(&mut bytes)
         .ok()?;

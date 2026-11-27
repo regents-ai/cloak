@@ -354,7 +354,7 @@ fn server_config() -> Arc<ServerConfig> {
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
         include_bytes!("../tests/fixtures/stand-in/server-key.der").to_vec(),
     ));
-    let provider = rustls::crypto::ring::default_provider();
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
     let mut config = ServerConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
         .unwrap()

@@ -67,6 +67,9 @@ set -- \
 	"$out/appcast.xml" \
 	"$out/SHA256SUMS.txt" \
 	"$out/checksums.json"
+for pq_sig in "$out/checksums.json.mldsa65.sig" "$out/SHA256SUMS.txt.mldsa65.sig"; do
+	[ -f "$pq_sig" ] && set -- "$@" "$pq_sig"
+done
 for delta in "$out"/*.delta; do
 	[ -f "$delta" ] && set -- "$@" "$delta"
 done

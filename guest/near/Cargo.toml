@@ -8,11 +8,13 @@ description = "The guest's check of NEAR AI Cloud's Intel TDX proof and Intel Tr
 # dcap-qvl checks the Intel quotes, pinned exactly to a version after every
 # advisory it has had, with its pure-Rust crypto and without its collateral
 # client. chacha20poly1305, curve25519-dalek and hkdf are NEAR's encryption,
-# version 2 (curve25519-dalek is the copy dcap-qvl already brings). ring
-# (the copy rustls already brings) checks Intel Trust Authority's PS384
-# signatures, and base64 (the copy dcap-qvl already brings) reads its
-# tokens. Every other crate is pinned by Cargo.lock, built --locked.
+# version 2 (curve25519-dalek is the copy dcap-qvl already brings). aws-lc-rs
+# backs rustls (enabling TLS 1.3 X25519MLKEM768 hybrid post-quantum key
+# exchange) and checks Intel Trust Authority's PS384 signatures, and base64
+# (the copy dcap-qvl already brings) reads its tokens. Every other crate is
+# pinned by Cargo.lock, built --locked.
 [dependencies]
+aws-lc-rs = "1.19.0"
 base64 = "0.23.1"
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
 curve25519-dalek = { version = "4.1.3", default-features = false }
@@ -20,8 +22,7 @@ dcap-qvl = { version = "=0.7.1", default-features = false, features = ["std", "r
 der = { version = "0.8.1", default-features = false, features = ["alloc"] }
 hex = { version = "0.4", features = ["serde"] }
 hkdf = "0.13.0"
-ring = "0.17.14"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.11"

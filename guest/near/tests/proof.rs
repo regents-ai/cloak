@@ -30,8 +30,8 @@ use cloak_near::{
     verify_gpu, verify_intel, Collateral, GpuProof, GpuRefusal, IntelProof, Pins, Refusal,
     TcbStatus, Who,
 };
-use ring::rand::SystemRandom;
-use ring::signature::{RsaKeyPair, RsaPublicKeyComponents, RSA_PSS_SHA384};
+use aws_lc_rs::rand::SystemRandom;
+use aws_lc_rs::signature::{KeyPair, RsaKeyPair, RsaPublicKeyComponents, RSA_PSS_SHA384};
 use serde_json::{json, Value};
 
 const DAY: u64 = 24 * 60 * 60;
@@ -296,7 +296,7 @@ impl GpuCase {
             URL_SAFE_NO_PAD.encode(header.to_string()),
             URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap())
         );
-        let mut signature = vec![0; self.test_key.public().modulus_len()];
+        let mut signature = vec![0; self.test_key.public_key().modulus_len()];
         self.test_key
             .sign(
                 &RSA_PSS_SHA384,
@@ -312,7 +312,7 @@ impl GpuCase {
 
         let list = self.keys["keys"].as_array_mut().unwrap();
         if !list.iter().any(|k| k["kid"] == TEST_KID) {
-            let public = RsaPublicKeyComponents::<Vec<u8>>::from(self.test_key.public());
+            let public = RsaPublicKeyComponents::<Vec<u8>>::from(self.test_key.public_key());
             list.push(json!({
                 "kty": "RSA",
                 "alg": "PS384",

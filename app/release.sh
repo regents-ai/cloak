@@ -203,10 +203,20 @@ cat > "$out/checksums.json" <<EOF
 }
 EOF
 
+pq_key=$(plutil -extract pq_release_public_key raw app/release.json 2>/dev/null || true)
+if [ -n "$pq_key" ]; then
+	swift app/pq-release-sign.swift sign "$out/checksums.json" "$out/checksums.json.mldsa65.sig"
+	swift app/pq-release-sign.swift verify "$out/checksums.json" "$out/checksums.json.mldsa65.sig" "$pq_key"
+	swift app/pq-release-sign.swift sign "$out/SHA256SUMS.txt" "$out/SHA256SUMS.txt.mldsa65.sig"
+	swift app/pq-release-sign.swift verify "$out/SHA256SUMS.txt" "$out/SHA256SUMS.txt.mldsa65.sig" "$pq_key"
+fi
+
 rm -rf "$work"
 
 echo "$dmg"
 echo "$out/appcast.xml"
 echo "$out/SHA256SUMS.txt"
 echo "$out/checksums.json"
+[ -f "$out/checksums.json.mldsa65.sig" ] && echo "$out/checksums.json.mldsa65.sig"
+[ -f "$out/SHA256SUMS.txt.mldsa65.sig" ] && echo "$out/SHA256SUMS.txt.mldsa65.sig"
 echo "$out/tag"

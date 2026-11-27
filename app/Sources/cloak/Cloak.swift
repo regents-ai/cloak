@@ -10,7 +10,7 @@ struct Cloak: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cloak",
         abstract: "Control Cloak.",
-        subcommands: [StatusCommand.self, Start.self, Pause.self, Resume.self, Stop.self, Verify.self, Doctor.self])
+        subcommands: [StatusCommand.self, Start.self, Pause.self, Resume.self, Stop.self, Verify.self, Doctor.self, VerifyRelease.self])
 }
 
 struct Output: ParsableArguments {
@@ -58,6 +58,90 @@ struct Doctor: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Check this Mac and every installed part.")
     @OptionGroup var output: Output
     func run() throws { try perform(.doctor, output) }
+}
+
+struct VerifyRelease: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "verify-release",
+        abstract: "Verify a Cloak release checksums.json and artifact against an ML-DSA-65 signature.")
+
+    @Option(name: .long, help: "Path to checksums.json downloaded from GitHub Releases.")
+    var checksums: String
+
+    @Option(name: .long, help: "Path to checksums.json.mldsa65.sig.")
+    var signature: String
+
+    @Option(name: .long, help: "Base64 ML-DSA-65 public key (defaults to the key embedded in Cloak.app Info.plist).")
+    var publicKey: String?
+
+    @Option(name: .long, help: "Optional path to a downloaded Regents-Cloak.dmg to hash and check.")
+    var dmg: String?
+
+    @Option(name: .long, help: "Optional path to an installed RegentsCloak Mach-O binary to hash and check.")
+    var appBinary: String?
+
+    @OptionGroup var output: Output
+
+    func run() throws {
+        if dmg != nil && appBinary != nil {
+            fputs("error: pass either --dmg or --app-binary, not both\n", stderr)
+            throw ExitCode.failure
+        }
+        guard let key = resolvePublicKey() else {
+            fputs("error: no ML-DSA-65 public key provided (pass --public-key or install a build with RegentsPQReleasePublicKey)\n", stderr)
+            throw ExitCode.failure
+        }
+        do {
+            let checksumsData = try Data(contentsOf: URL(fileURLWithPath: checksums))
+            let signatureBase64 = try String(contentsOf: URL(fileURLWithPath: signature), encoding: .utf8)
+            let artifactURL: URL? = (dmg ?? appBinary).map { URL(fileURLWithPath: $0) }
+            let artifactKind: PostQuantumReleaseSignature.ArtifactKind = appBinary != nil ? .appBinary : .dmg
+            let outcome = try PostQuantumReleaseSignature.verifyRelease(
+                checksumsData: checksumsData,
+                signatureBase64: signatureBase64,
+                publicKeyBase64: key,
+                artifactURL: artifactURL,
+                artifactKind: artifactKind
+            )
+            if output.json {
+                let enc = JSONEncoder()
+                enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try enc.encode(outcome)
+                print(String(decoding: data, as: UTF8.self))
+            } else {
+                print("Verified \(outcome.algorithm) signature for Cloak \(outcome.tag) (Team \(outcome.teamID)).")
+                print("Key fingerprint (SHA-256): \(outcome.keyFingerprintSHA256)")
+                if let sha = outcome.artifactSHA256, let kind = outcome.artifactKind {
+                    print("Artifact (\(kind.rawValue)) SHA-256 matches checksums.json: \(sha)")
+                }
+            }
+        } catch {
+            if output.json {
+                let body: [String: String] = ["verified": "false", "error": error.localizedDescription]
+                if let data = try? JSONEncoder().encode(body) {
+                    print(String(decoding: data, as: UTF8.self))
+                }
+            } else {
+                fputs("verification failed: \(error.localizedDescription)\n", stderr)
+            }
+            throw ExitCode.failure
+        }
+    }
+
+    private func resolvePublicKey() -> String? {
+        if let explicit = publicKey?.trimmingCharacters(in: .whitespacesAndNewlines), !explicit.isEmpty {
+            return explicit
+        }
+        // When run from Cloak.app/Contents/MacOS/cloak, look beside MacOS at ../Info.plist.
+        let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let plistURL = exe.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Info.plist")
+        guard let data = try? Data(contentsOf: plistURL),
+              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let embedded = dict["RegentsPQReleasePublicKey"] as? String
+        else { return nil }
+        let trimmed = embedded.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 /// Sends `command` and prints the answer. Exits 1 when the command was

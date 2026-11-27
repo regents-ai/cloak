@@ -411,7 +411,7 @@ fn routes<'a>(socks: Option<SocketAddr>, identities: &'a [String; 2]) -> Routes<
 /// of their own.
 fn fresh_identity() -> Result<String, String> {
     let mut bytes = [0u8; 8];
-    rustls::crypto::ring::default_provider()
+    rustls::crypto::aws_lc_rs::default_provider()
         .secure_random
         .fill(&mut bytes)
         .map_err(|_| "no randomness".to_string())?;

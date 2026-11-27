@@ -25,7 +25,7 @@ use std::fmt;
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
-use ring::signature::{RsaPublicKeyComponents, RSA_PSS_2048_8192_SHA384};
+use aws_lc_rs::signature::{RsaPublicKeyComponents, RSA_PSS_2048_8192_SHA384};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256, Sha512};

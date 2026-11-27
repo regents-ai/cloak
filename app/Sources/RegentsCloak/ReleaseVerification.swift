@@ -1,12 +1,15 @@
+import CloakControl
 import CryptoKit
 import Foundation
 import Security
 
 /// Live on-disk cryptographic identity of the running Cloak app bundle:
-/// its Mach-O executable SHA-256, Apple Code Directory hash (`CDHash`), and
-/// Developer ID Team Identifier, plus copy-paste macOS Terminal commands so
-/// users can independently verify the build using built-in OS tools (`shasum`,
-/// `codesign`, `spctl`) rather than trusting the app to attest to itself.
+/// its Mach-O executable SHA-256, Apple Code Directory hash (`CDHash`),
+/// Developer ID Team Identifier, and pinned FIPS 204 ML-DSA-65 post-quantum
+/// release key fingerprint, plus copy-paste macOS Terminal commands so users
+/// can independently verify the build using built-in OS tools (`shasum`,
+/// `codesign`, `spctl`, and `cloak verify-release`) rather than trusting the
+/// app to attest to itself.
 struct ReleaseVerification: Equatable, Sendable {
     static let expectedTeamID = "367G3Z7G3J"
     static let githubReleasesURL = URL(string: "https://github.com/regents-ai/cloak/releases")!
@@ -18,6 +21,7 @@ struct ReleaseVerification: Equatable, Sendable {
     let binarySHA256: String?
     let cdHash: String?
     let teamID: String?
+    let pqPublicKeyFingerprint: String?
 
     var releaseTag: String {
         "\(releaseVersion)-\(buildNumber)"
@@ -31,6 +35,10 @@ struct ReleaseVerification: Equatable, Sendable {
         "\"\(appPath)/Contents/MacOS/RegentsCloak\""
     }
 
+    var quotedCLIPath: String {
+        "\"\(appPath)/Contents/MacOS/cloak\""
+    }
+
     /// Built-in macOS Terminal commands users can run independently to verify
     /// this installation and the downloaded DMG against GitHub Releases and
     /// regents.sh/cloak/install.
@@ -40,18 +48,16 @@ struct ReleaseVerification: Equatable, Sendable {
             ("Downloaded DMG SHA-256 (shasum)", "shasum -a 256 ~/Downloads/Regents-Cloak.dmg"),
             ("Apple signature & CDHash (codesign)", "codesign -dvv --strict \(quotedAppPath)"),
             ("Notarization & Gatekeeper (spctl)", "spctl --assess --type execute -vv \(quotedAppPath)"),
+            (
+                "Post-quantum release signature (ML-DSA-65)",
+                "\(quotedCLIPath) verify-release --checksums ~/Downloads/checksums.json --signature ~/Downloads/checksums.json.mldsa65.sig --dmg ~/Downloads/Regents-Cloak.dmg"
+            ),
         ]
     }
 
     /// Computes SHA-256 hex digest of any file using streaming 1 MiB chunks.
     static func sha256Hex(of fileURL: URL) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
-        defer { try? handle.close() }
-        var hasher = SHA256()
-        while let chunk = try? handle.read(upToCount: 1_048_576), !chunk.isEmpty {
-            hasher.update(data: chunk)
-        }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        PostQuantumReleaseSignature.sha256Hex(ofFileAt: fileURL)
     }
 
     /// Inspects the running `Bundle.main` off the main actor.
@@ -62,13 +68,19 @@ struct ReleaseVerification: Equatable, Sendable {
         let appPath = Bundle.main.bundlePath
         let binarySHA256 = Bundle.main.executableURL.flatMap { sha256Hex(of: $0) }
         let (cdHash, teamID) = readSigningInfo()
+        let pqKey = (info?["RegentsPQReleasePublicKey"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let pqFingerprint = pqKey.flatMap { key in
+            key.isEmpty ? nil : try? PostQuantumReleaseSignature.publicKeyFingerprint(publicKeyBase64: key)
+        }
         return ReleaseVerification(
             releaseVersion: release,
             buildNumber: build,
             appPath: appPath,
             binarySHA256: binarySHA256,
             cdHash: cdHash,
-            teamID: teamID
+            teamID: teamID,
+            pqPublicKeyFingerprint: pqFingerprint
         )
     }
 

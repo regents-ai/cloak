@@ -420,12 +420,28 @@ pub(crate) fn connect(
 /// TLS on `socket` to `host`, after ordinary certificate checks against
 /// `roots`, and the SHA-256 of the leaf certificate's
 /// SubjectPublicKeyInfo.
+/// Crypto provider for NEAR TLS handshakes: `aws-lc-rs` with hybrid post-quantum
+/// `X25519MLKEM768` promoted to first preference so TLS 1.3 offers a PQ key share
+/// immediately while retaining classical groups for compatibility.
+pub(crate) fn tls_provider() -> rustls::crypto::CryptoProvider {
+    let mut provider = rustls::crypto::aws_lc_rs::default_provider();
+    if let Some(pos) = provider
+        .kx_groups
+        .iter()
+        .position(|g| g.name() == rustls::NamedGroup::X25519MLKEM768)
+    {
+        let pq = provider.kx_groups.remove(pos);
+        provider.kx_groups.insert(0, pq);
+    }
+    provider
+}
+
 fn handshake(
     socket: Socket,
     host: &str,
     roots: &RootCertStore,
 ) -> Result<(Tls, [u8; 32]), FetchError> {
-    let provider = rustls::crypto::ring::default_provider();
+    let provider = tls_provider();
     let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
         .map_err(|e| FetchError::Connect(e.to_string()))?
@@ -750,4 +766,23 @@ fn percent_decode(text: &str) -> Option<String> {
         }
     }
     String::from_utf8(out).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tls_provider_prefers_hybrid_post_quantum_x25519mlkem768() {
+        let provider = super::tls_provider();
+        let groups: Vec<rustls::NamedGroup> =
+            provider.kx_groups.iter().map(|g| g.name()).collect();
+        assert_eq!(
+            groups.first().copied(),
+            Some(rustls::NamedGroup::X25519MLKEM768),
+            "cloak-near TLS provider must offer X25519MLKEM768 first; got {groups:?}"
+        );
+        assert!(
+            groups.contains(&rustls::NamedGroup::X25519),
+            "classical fallback group must remain present; got {groups:?}"
+        );
+    }
 }

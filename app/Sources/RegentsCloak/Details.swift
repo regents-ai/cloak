@@ -208,6 +208,29 @@ struct DetailsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                LabeledContent("Post-Quantum Key (ML-DSA-65)") {
+                    if let fp = v.pqPublicKeyFingerprint {
+                        HStack(spacing: 4) {
+                            Text("Pinned")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.green)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.green.opacity(0.14), in: Capsule())
+                            Text(fp)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: 165, alignment: .trailing)
+                            CopyButton("Copy ML-DSA-65 key fingerprint", side: 26, text: fp)
+                                .overhanging()
+                        }
+                    } else {
+                        Text("Not enrolled in this build")
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 LabeledContent("Compare Against") {
                     HStack(spacing: 8) {
                         Button {

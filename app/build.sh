@@ -117,6 +117,10 @@ if [ -n "$dev" ]; then
 else
 	plutil -insert SUFeedURL -string "$(plutil -extract update_feed raw app/release.json)" "$app/Contents/Info.plist"
 	plutil -insert SUPublicEDKey -string "$(plutil -extract update_key raw app/release.json)" "$app/Contents/Info.plist"
+	pq_key=$(plutil -extract pq_release_public_key raw app/release.json 2>/dev/null || true)
+	if [ -n "$pq_key" ]; then
+		plutil -insert RegentsPQReleasePublicKey -string "$pq_key" "$app/Contents/Info.plist"
+	fi
 fi
 
 # Embed Control Center & Desktop WidgetKit extension (CloakWidgets.appex) in
