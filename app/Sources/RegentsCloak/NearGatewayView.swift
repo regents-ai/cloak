@@ -604,6 +604,16 @@ struct NearGatewayInsightsView: View {
                             Label("Intel TDX + NVIDIA TEE verified · \(servers), \(gpus)", systemImage: "checkmark.shield.fill")
                                 .font(.caption)
                                 .foregroundStyle(.green)
+                            if let tls = proof.tlsSummary {
+                                let posture = proof.isHybridPostQuantumTLS ? "Hybrid Post-Quantum" : "Classical ECC"
+                                let suite = proof.tlsCipherSuite.map { " · \($0)" } ?? ""
+                                Label(
+                                    "Transport: \(tls) (\(posture))\(suite)",
+                                    systemImage: proof.isHybridPostQuantumTLS ? "lock.shield.fill" : "lock.fill"
+                                )
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(proof.isHybridPostQuantumTLS ? Color.teal : Color.secondary)
+                            }
                         } else if mode.checking != nil {
                             Label("Checking NEAR's hardware attestation…", systemImage: "shield")
                                 .font(.caption)

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::error::Category;
 use serde_json::Value;
 
-use crate::{ask, check, Kept, Pins, Proof, Proxy, Route, Routes, SocksAddr, Stop};
+use crate::{ask, check, Kept, Pins, Proof, Proxy, Route, Routes, SocksAddr, Stop, TlsSession};
 
 /// The SOCKS password sent with each identity. Tor keeps circuits apart by
 /// the user name and password together; the identities alone tell them
@@ -115,16 +115,28 @@ struct ProofLine {
     model_key: String,
     /// SHA-256 of the gateway's TLS key, in hex.
     gateway_tls_key_sha256: String,
+    /// Negotiated TLS protocol version on the gateway connection (local only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_protocol: Option<String>,
+    /// Negotiated TLS cipher suite on the gateway connection (local only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_cipher_suite: Option<String>,
+    /// Negotiated TLS key exchange group on the gateway connection (local only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_key_exchange: Option<String>,
 }
 
 impl ProofLine {
-    fn of(proof: &Proof, passed_at: u64) -> ProofLine {
+    fn of(proof: &Proof, passed_at: u64, tls: Option<&TlsSession>) -> ProofLine {
         ProofLine {
             passed_at,
             model_servers: proof.intel.instances,
             gpus: proof.gpu.gpus,
             model_key: hex::encode(proof.intel.model_key),
             gateway_tls_key_sha256: hex::encode(proof.intel.gateway_tls_key),
+            tls_protocol: tls.map(|t| t.protocol.clone()),
+            tls_cipher_suite: tls.map(|t| t.cipher_suite.clone()),
+            tls_key_exchange: tls.map(|t| t.key_exchange.clone()),
         }
     }
 }
@@ -160,7 +172,7 @@ fn run(request: Request, pins: &Pins, kept: &mut Kept) -> Answer {
         ) {
             Ok(passed) => Answer::Passed {
                 sent: false,
-                proof: ProofLine::of(&passed.proof, passed.at),
+                proof: ProofLine::of(&passed.proof, passed.at, passed.tls.as_ref()),
             },
             Err(stop) => stopped(&stop),
         },
@@ -181,7 +193,11 @@ fn run(request: Request, pins: &Pins, kept: &mut Kept) -> Answer {
         ) {
             Ok(answered) => Answer::Replied {
                 sent: true,
-                proof: ProofLine::of(&answered.proof, answered.proof_passed_at),
+                proof: ProofLine::of(
+                    &answered.proof,
+                    answered.proof_passed_at,
+                    answered.tls.as_ref(),
+                ),
                 reply: answered.reply,
             },
             Err(stop) => stopped(&stop),
@@ -236,7 +252,7 @@ mod checks {
 
     use super::respond;
     use crate::e2ee::ReplyKey;
-    use crate::{GpuProof, IntelProof, Kept, Passed, Pins, Proof, TcbStatus};
+    use crate::{GpuProof, IntelProof, Kept, Passed, Pins, Proof, TcbStatus, TlsSession};
 
     const MODEL: &str = "z-ai/glm-5.3-flash";
 
@@ -279,6 +295,11 @@ mod checks {
                 gpu: GpuProof { gpus: 8 },
             },
             at,
+            tls: Some(TlsSession {
+                protocol: "TLS 1.3".into(),
+                cipher_suite: "TLS13_AES_256_GCM_SHA384".into(),
+                key_exchange: "X25519MLKEM768".into(),
+            }),
         }
     }
 
@@ -310,6 +331,8 @@ mod checks {
         assert_eq!(answer["proof"]["passed_at"], now - 5);
         assert_eq!(answer["proof"]["model_servers"], 3);
         assert_eq!(answer["proof"]["gpus"], 8);
+        assert_eq!(answer["proof"]["tls_protocol"], "TLS 1.3");
+        assert_eq!(answer["proof"]["tls_key_exchange"], "X25519MLKEM768");
         assert_eq!(connections.load(Ordering::SeqCst), 0);
 
         // The same kept proof, for an `ask`: it goes to the chat endpoint's

@@ -8,6 +8,7 @@ import SwiftUI
 struct DetailsView: View {
     let supervisor: Supervisor
     let download: ModelDownload
+    let near: NearMode
     let showTour: () -> Void
     @State private var memory: Memory?
     @State private var verification: ReleaseVerification?
@@ -111,6 +112,7 @@ struct DetailsView: View {
                 }
             }
             verificationSection
+            negotiatedCryptoSection
             Section {
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) { technical.toggle() }
@@ -142,7 +144,10 @@ struct DetailsView: View {
         }
         .onReturn { download.refresh() }
         .sheet(isPresented: $showingDiagnostics) {
-            DiagnosticReportSheet(supervisor: supervisor)
+            DiagnosticReportSheet(
+                supervisor: supervisor,
+                negotiatedCryptoSummary: near.negotiatedCryptoSummary
+            )
         }
         .task {
             verification = await ReleaseVerification.inspectCurrentBundle()
@@ -156,6 +161,54 @@ struct DetailsView: View {
                 guard !Task.isCancelled else { break }
                 memory = sample
             } while (try? await Task.sleep(for: .seconds(3))) != nil
+        }
+    }
+
+    @ViewBuilder
+    private var negotiatedCryptoSection: some View {
+        Section {
+            if let latest = near.cryptoSessions.first {
+                LabeledContent("NEAR TLS transport") {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Label(
+                            "\(latest.tlsProtocol) · \(latest.tlsKeyExchange)",
+                            systemImage: latest.isHybridPostQuantum ? "lock.shield.fill" : "lock.fill"
+                        )
+                        .font(.callout.monospaced())
+                        .foregroundStyle(latest.isHybridPostQuantum ? Color.teal : Color.primary)
+                        Text(
+                            "\(latest.isHybridPostQuantum ? "Hybrid post-quantum" : "Classical ECC") · \(latest.routeLabel)"
+                                + (latest.tlsCipherSuite.map { " · \($0)" } ?? "")
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                if near.cryptoSessions.count > 1 {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Recent local sessions (\(near.cryptoSessions.count), in-memory only)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(near.cryptoSessions.prefix(4)) { entry in
+                            Text(
+                                "\(entry.recordedAt.formatted(date: .omitted, time: .shortened)) · \(entry.routeLabel) · \(entry.tlsProtocol) · \(entry.tlsKeyExchange)"
+                            )
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } else {
+                LabeledContent("NEAR TLS transport") {
+                    Text("No NEAR session recorded yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Negotiated Crypto (Local Only)")
+        } footer: {
+            Text("Recorded directly from cloak-near's TLS handshake in memory on this Mac. Zero telemetry.")
         }
     }
 

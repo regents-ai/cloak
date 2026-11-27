@@ -206,11 +206,11 @@ struct SettingsView: View {
                 case .offlineData:
                     OfflineDataPane(settings: settings, manager: OfflineDataManager.shared)
                 case .status:
-                    DetailsView(supervisor: supervisor, download: download, showTour: showTour)
+                    DetailsView(supervisor: supervisor, download: download, near: near, showTour: showTour)
                 case .advanced:
                     AdvancedPane(settings: settings, prompt: prompt, supervisor: supervisor, door: door, updates: updates)
                 case .feedback:
-                    FeedbackPane(supervisor: supervisor)
+                    FeedbackPane(supervisor: supervisor, near: near)
                 }
             }
             .formStyle(.grouped)
@@ -855,6 +855,7 @@ private struct LocalAccessPane: View {
 /// feature requests, and questions.
 private struct FeedbackPane: View {
     let supervisor: Supervisor
+    let near: NearMode
     @State private var showingDiagnostics = false
     @State private var recentCrash: DiagnosticReport.CrashInfo?
 
@@ -965,7 +966,10 @@ private struct FeedbackPane: View {
             }
         }
         .sheet(isPresented: $showingDiagnostics) {
-            DiagnosticReportSheet(supervisor: supervisor)
+            DiagnosticReportSheet(
+                supervisor: supervisor,
+                negotiatedCryptoSummary: near.negotiatedCryptoSummary
+            )
         }
         .task {
             recentCrash = await Task.detached(priority: .utility) {

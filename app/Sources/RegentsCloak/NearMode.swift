@@ -24,6 +24,51 @@ final class NearMode {
     /// was and throws to whoever asked, which shows the stop where it asked:
     /// Settings' Key row, or the Wallet's.
     private(set) var hasKey: Bool?
+    /// One local-only record of the actual TLS parameters negotiated with NEAR's
+    /// gateway. Held strictly in memory on this Mac (zero telemetry, never sent).
+    struct CryptoSessionEntry: Identifiable, Sendable, Equatable {
+        let id = UUID()
+        let recordedAt: Date
+        let routeLabel: String
+        let tlsProtocol: String
+        let tlsKeyExchange: String
+        let tlsCipherSuite: String?
+        let isHybridPostQuantum: Bool
+    }
+
+    private static let maxCryptoSessions = 12
+
+    /// Bounded in-memory log of recent negotiated NEAR TLS sessions (newest first).
+    private(set) var cryptoSessions: [CryptoSessionEntry] = []
+
+    /// Plain-text summary of recent negotiated TLS sessions for local diagnostic reports.
+    var negotiatedCryptoSummary: String? {
+        guard !cryptoSessions.isEmpty else { return nil }
+        let fmt = ISO8601DateFormatter()
+        return cryptoSessions.map { entry in
+            let posture = entry.isHybridPostQuantum ? "hybrid-PQ" : "classical-ECC"
+            let suite = entry.tlsCipherSuite.map { " · \($0)" } ?? ""
+            return "\(fmt.string(from: entry.recordedAt)) | \(entry.routeLabel) | \(entry.tlsProtocol) · \(entry.tlsKeyExchange)\(suite) [\(posture)]"
+        }
+        .joined(separator: "\n")
+    }
+
+    private func recordCryptoSession(from proof: NearProof, route: NearRoute) {
+        guard let kex = proof.tlsKeyExchange else { return }
+        let entry = CryptoSessionEntry(
+            recordedAt: .now,
+            routeLabel: route == .direct ? "Direct" : "Tor",
+            tlsProtocol: proof.tlsProtocol ?? "TLS",
+            tlsKeyExchange: kex,
+            tlsCipherSuite: proof.tlsCipherSuite,
+            isHybridPostQuantum: proof.isHybridPostQuantumTLS
+        )
+        cryptoSessions.insert(entry, at: 0)
+        if cryptoSessions.count > Self.maxCryptoSessions {
+            cryptoSessions.removeLast(cryptoSessions.count - Self.maxCryptoSessions)
+        }
+    }
+
     /// The last check that passed, the one a message last went on included;
     /// nil once one stopped.
     private(set) var proof: NearProof?
@@ -87,6 +132,7 @@ final class NearMode {
             let verified = try await near.check(route: route, proofAge: settings.proofFreshness)
             guard generation == checkGeneration, !Task.isCancelled else { return }
             proof = verified
+            recordCryptoSession(from: verified, route: route)
             checkStop = nil
         } catch {
             guard generation == checkGeneration, !Task.isCancelled else { return }
@@ -109,6 +155,7 @@ final class NearMode {
                 route: route, proofAge: settings.proofFreshness, key: { try NearKeychain.key() }, turn: turn, in: conversation)
             if self.route == route && checkGeneration == generation {
                 proof = answer.proof
+                recordCryptoSession(from: answer.proof, route: route)
                 checkStop = nil
             }
             return (answer.text, answer.tokens)

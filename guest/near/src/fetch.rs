@@ -49,6 +49,23 @@ const TOKEN_ASKS: u32 = 3;
 /// Says nothing about Cloak.
 const USER_AGENT: &str = "curl/8.7.1";
 
+/// Negotiated TLS session parameters observed directly on `rustls::ClientConnection`.
+/// Held strictly locally so Cloak can verify whether the gateway actually negotiated
+/// hybrid post-quantum key exchange (`X25519MLKEM768`) vs. classical ECC.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TlsSession {
+    pub protocol: String,
+    pub cipher_suite: String,
+    pub key_exchange: String,
+}
+
+impl TlsSession {
+    /// True when the negotiated key exchange includes an ML-KEM hybrid group.
+    pub fn is_hybrid_pqc(&self) -> bool {
+        self.key_exchange.to_ascii_uppercase().contains("MLKEM")
+    }
+}
+
 /// A report as it came, with what it must be checked against.
 #[derive(Clone, Debug)]
 pub struct Fetched {
@@ -59,6 +76,8 @@ pub struct Fetched {
     /// SHA-256 of the gateway certificate's SubjectPublicKeyInfo, as seen on
     /// the connection the report came on.
     pub spki_sha256: [u8; 32],
+    /// Actual TLS session parameters negotiated on the report connection.
+    pub tls: TlsSession,
 }
 
 #[derive(Debug)]
@@ -110,7 +129,7 @@ impl From<io::Error> for FetchError {
 pub fn fetch_report(route: &Route, model: &str) -> Result<Fetched, FetchError> {
     let nonce =
         crate::random().ok_or_else(|| FetchError::Connect("no randomness for the nonce".into()))?;
-    let (mut tls, spki_sha256) = connect(route, NEAR, &mozilla())?;
+    let (mut tls, spki_sha256, tls_session) = connect(route, NEAR, &mozilla())?;
     let path = format!(
         "/v1/attestation/report?model={}&provider=near&signing_algo=ed25519&include_tls_fingerprint=true&nonce={}",
         percent_encode(model),
@@ -130,6 +149,7 @@ pub fn fetch_report(route: &Route, model: &str) -> Result<Fetched, FetchError> {
             report: answer.body,
             nonce,
             spki_sha256,
+            tls: tls_session,
         }),
         429 => Err(FetchError::Busy {
             retry_after: answer
@@ -294,7 +314,7 @@ fn get(
             }
         };
         let result = (|| {
-            let (mut tls, _) = connect(&attempt_route, host, &mozilla())?;
+            let (mut tls, _, _) = connect(&attempt_route, host, &mozilla())?;
             let answer = request(&mut tls, "GET", host, path, headers, None, limit)?;
             match answer.status {
                 200 => Ok(answer),
@@ -395,7 +415,7 @@ pub(crate) fn connect(
     route: &Route,
     host: &str,
     roots: &RootCertStore,
-) -> Result<(Tls, [u8; 32]), FetchError> {
+) -> Result<(Tls, [u8; 32], TlsSession), FetchError> {
     let proxy = match route {
         Route::Direct => return handshake(Socket::Tcp(direct(host)?), host, roots),
         Route::Tor(proxy) => proxy,
@@ -440,7 +460,7 @@ fn handshake(
     socket: Socket,
     host: &str,
     roots: &RootCertStore,
-) -> Result<(Tls, [u8; 32]), FetchError> {
+) -> Result<(Tls, [u8; 32], TlsSession), FetchError> {
     let provider = tls_provider();
     let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
@@ -456,6 +476,7 @@ fn handshake(
     while tls.conn.is_handshaking() {
         tls.conn.complete_io(&mut tls.sock)?;
     }
+    let tls_session = extract_tls_session(&tls.conn);
     let leaf = tls
         .conn
         .peer_certificates()
@@ -464,7 +485,47 @@ fn handshake(
     let spki = x509_cert::Certificate::from_der(leaf.as_ref())
         .and_then(|c| c.tbs_certificate().subject_public_key_info().to_der())
         .map_err(|e| FetchError::Connect(format!("{host}'s certificate: {e}")))?;
-    Ok((tls, Sha256::digest(spki).into()))
+    Ok((tls, Sha256::digest(spki).into(), tls_session))
+}
+
+fn extract_tls_session(conn: &ClientConnection) -> TlsSession {
+    let protocol = conn
+        .protocol_version()
+        .map(format_protocol)
+        .unwrap_or_else(|| "unknown".into());
+    let cipher_suite = conn
+        .negotiated_cipher_suite()
+        .and_then(|s| s.suite().as_str())
+        .unwrap_or("unknown")
+        .to_owned();
+    let key_exchange = conn
+        .negotiated_key_exchange_group()
+        .map(|g| format_named_group(g.name()))
+        .unwrap_or_else(|| "unknown".into());
+    TlsSession {
+        protocol,
+        cipher_suite,
+        key_exchange,
+    }
+}
+
+fn format_protocol(version: rustls::ProtocolVersion) -> String {
+    match version {
+        rustls::ProtocolVersion::TLSv1_3 => "TLS 1.3".into(),
+        rustls::ProtocolVersion::TLSv1_2 => "TLS 1.2".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn format_named_group(group: rustls::NamedGroup) -> String {
+    match group {
+        rustls::NamedGroup::X25519MLKEM768 => "X25519MLKEM768".into(),
+        rustls::NamedGroup::secp256r1MLKEM768 => "SecP256r1MLKEM768".into(),
+        rustls::NamedGroup::X25519 => "X25519".into(),
+        rustls::NamedGroup::secp256r1 => "secp256r1".into(),
+        rustls::NamedGroup::secp384r1 => "secp384r1".into(),
+        other => format!("{other:?}"),
+    }
 }
 
 /// A connection to `host`:`port` through a SOCKS5 proxy (RFC 1928) that
@@ -784,5 +845,25 @@ mod tests {
             groups.contains(&rustls::NamedGroup::X25519),
             "classical fallback group must remain present; got {groups:?}"
         );
+    }
+
+    #[test]
+    fn tls_session_classifies_hybrid_pq_vs_classical() {
+        let pq = super::TlsSession {
+            protocol: super::format_protocol(rustls::ProtocolVersion::TLSv1_3),
+            cipher_suite: "TLS13_AES_256_GCM_SHA384".into(),
+            key_exchange: super::format_named_group(rustls::NamedGroup::X25519MLKEM768),
+        };
+        assert_eq!(pq.protocol, "TLS 1.3");
+        assert_eq!(pq.key_exchange, "X25519MLKEM768");
+        assert!(pq.is_hybrid_pqc());
+
+        let classical = super::TlsSession {
+            protocol: super::format_protocol(rustls::ProtocolVersion::TLSv1_3),
+            cipher_suite: "TLS13_AES_256_GCM_SHA384".into(),
+            key_exchange: super::format_named_group(rustls::NamedGroup::X25519),
+        };
+        assert_eq!(classical.key_exchange, "X25519");
+        assert!(!classical.is_hybrid_pqc());
     }
 }

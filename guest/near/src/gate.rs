@@ -286,7 +286,15 @@ fn run(answer: Option<Answer>, pin: [u8; 32]) -> (Result<Value, Stop>, Seen) {
         password: "check",
     });
     let body = serde_json::to_vec(&request()).unwrap();
-    let result = send(&proof(pin), &route, &roots(), MODEL, API_KEY, &body);
+    let result = send(&proof(pin), &route, &roots(), MODEL, API_KEY, &body)
+        .map(|(reply, tls)| {
+            assert_eq!(tls.protocol, "TLS 1.3");
+            assert!(
+                !tls.key_exchange.is_empty() && tls.key_exchange != "unknown",
+                "expected negotiated key exchange group, got {tls:?}"
+            );
+            reply
+        });
     (result, stand_in.join().unwrap())
 }
 

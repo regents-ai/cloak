@@ -18,7 +18,7 @@ use rustls::RootCertStore;
 use serde_json::{json, Map, Value};
 
 use crate::e2ee::{ReplyKey, SealKey};
-use crate::fetch::{connect, families, mozilla, request, NEAR};
+use crate::fetch::{connect, families, mozilla, request, TlsSession, NEAR};
 use crate::gpu::keys_cover;
 use crate::{
     fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, verify_gpu, verify_intel,
@@ -148,6 +148,8 @@ pub struct Passed {
     /// When the proof passed, in seconds since 1970: in this call, or in an
     /// earlier one when [`Kept`] held it.
     pub at: u64,
+    /// Negotiated TLS metadata observed on the gateway connection.
+    pub tls: Option<TlsSession>,
 }
 
 impl Kept {
@@ -225,6 +227,9 @@ pub struct Answered {
     /// earlier one when [`Kept`] held it. The hardware was checked then, not
     /// when the request was sent.
     pub proof_passed_at: u64,
+    /// Actual TLS session metadata negotiated on the chat connection that
+    /// carried this request.
+    pub tls: Option<TlsSession>,
     /// The chat completion as NEAR's model gave it, every sealed field
     /// opened.
     pub reply: Value,
@@ -257,7 +262,7 @@ pub fn ask(
     let passed = check(routes, model, pins, kept, proof_age)?;
     let via_tor = Kept::route_uses_tor(routes);
     // Only now, holding a proof that passed, is the request sent.
-    let reply = send(
+    let (reply, tls_session) = send(
         &passed.proof,
         &routes.near,
         &mozilla(),
@@ -275,6 +280,7 @@ pub fn ask(
     Ok(Answered {
         proof: passed.proof,
         proof_passed_at: passed.at,
+        tls: Some(tls_session),
         reply,
     })
 }
@@ -338,6 +344,7 @@ fn prove(routes: &Routes, model: &str, pins: &Pins, kept: &mut Kept) -> Result<P
     Ok(Passed {
         proof: Proof { intel, gpu },
         at: now,
+        tls: Some(fetched.tls),
     })
 }
 
@@ -363,7 +370,7 @@ pub(crate) fn send(
     model: &str,
     api_key: &str,
     body: &[u8],
-) -> Result<Value, Stop> {
+) -> Result<(Value, TlsSession), Stop> {
     let mut body = checked(body, model, api_key)?;
     let model_key = SealKey::from_ed25519(&proof.intel.model_key).ok_or_else(|| {
         Stop::Refused(Refusal::Malformed(
@@ -382,7 +389,7 @@ pub(crate) fn send(
 
     // `connect` writes no byte of the request: a connection it cannot make
     // is tried again there, before anything of the request goes out.
-    let (mut tls, spki_sha256) = connect(route, NEAR, roots).map_err(Stop::Connect)?;
+    let (mut tls, spki_sha256, tls_session) = connect(route, NEAR, roots).map_err(Stop::Connect)?;
     if spki_sha256 != proof.intel.gateway_tls_key {
         return Err(Stop::Pin);
     }
@@ -426,7 +433,7 @@ pub(crate) fn send(
     let mut reply: Value =
         serde_json::from_slice(&answer.body).map_err(|_| Stop::Reply("it is not JSON".into()))?;
     open_reply(&mut reply, &reply_key).map_err(Stop::Reply)?;
-    Ok(reply)
+    Ok((reply, tls_session))
 }
 
 /// The request as it will go, before sealing: a JSON object for `model`,
@@ -691,6 +698,7 @@ mod proof_age {
                 gpu: GpuProof { gpus: 8 },
             },
             at,
+            tls: None,
         }
     }
 

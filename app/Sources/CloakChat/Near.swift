@@ -38,13 +38,53 @@ public enum ProofFreshness: Int, CaseIterable, Identifiable, Sendable {
 }
 
 /// What a passed check covered, and when it passed: for a check used again,
-/// at an earlier line.
+/// at an earlier line. Includes local-only TLS transport metadata captured
+/// directly from `rustls::ClientConnection` (never transmitted as telemetry).
 public struct NearProof: Sendable, Equatable, Decodable {
     public let passedAt: Date
     /// How many of the model's servers the Intel check covered.
     public let modelServers: Int
     /// How many GPUs of one server Intel passed.
     public let gpus: Int
+    /// Negotiated TLS protocol version (e.g. "TLS 1.3").
+    public let tlsProtocol: String?
+    /// Negotiated TLS cipher suite (e.g. "TLS13_AES_256_GCM_SHA384").
+    public let tlsCipherSuite: String?
+    /// Negotiated TLS key exchange group (e.g. "X25519MLKEM768" or "X25519").
+    public let tlsKeyExchange: String?
+
+    public init(
+        passedAt: Date,
+        modelServers: Int,
+        gpus: Int,
+        tlsProtocol: String? = nil,
+        tlsCipherSuite: String? = nil,
+        tlsKeyExchange: String? = nil
+    ) {
+        self.passedAt = passedAt
+        self.modelServers = modelServers
+        self.gpus = gpus
+        self.tlsProtocol = tlsProtocol
+        self.tlsCipherSuite = tlsCipherSuite
+        self.tlsKeyExchange = tlsKeyExchange
+    }
+
+    /// True when the gateway connection negotiated a hybrid post-quantum key
+    /// exchange group (e.g. `X25519MLKEM768`).
+    public var isHybridPostQuantumTLS: Bool {
+        guard let kex = tlsKeyExchange?.uppercased() else { return false }
+        return kex.contains("MLKEM")
+    }
+
+    /// Compact local display string (e.g. "TLS 1.3 · X25519MLKEM768").
+    public var tlsSummary: String? {
+        switch (tlsProtocol, tlsKeyExchange) {
+        case let (proto?, kex?): "\(proto) · \(kex)"
+        case let (nil, kex?): kex
+        case let (proto?, nil): proto
+        case (nil, nil): nil
+        }
+    }
 }
 
 /// Why a check or a message stopped, and whether the message may have

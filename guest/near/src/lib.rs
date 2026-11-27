@@ -54,6 +54,7 @@ pub use chat::{ask, check, Answered, Kept, Passed, Stop};
 pub use dcap_qvl::{QuoteCollateralV3, TcbStatus};
 pub use fetch::{
     fetch_collateral, fetch_ita_keys, fetch_ita_tokens, fetch_report, FetchError, Fetched,
+    TlsSession,
 };
 pub use gpu::{verify_gpu, GpuRefusal};
 pub use helper::respond;

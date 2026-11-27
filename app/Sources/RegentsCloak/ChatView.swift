@@ -2884,14 +2884,19 @@ private struct NearStatus: View {
     }
 
     /// "Checked 2 min ago: 1 server, 8 GPUs", or with several servers,
-    /// "Checked 2 min ago: 3 servers, 8 GPUs on one".
+    /// "Checked 2 min ago: 3 servers, 8 GPUs on one", plus negotiated TLS
+    /// key exchange when reported by `cloak-near`.
     private static func checked(_ proof: NearProof, age: TimeInterval) -> String {
         let minutes = Int(age / 60)
         let when = minutes < 1 ? "just now" : "\(minutes) min ago"
         let gpus = proof.gpus == 1 ? "1 GPU" : "\(proof.gpus) GPUs"
-        return proof.modelServers == 1
+        let base = proof.modelServers == 1
             ? "Checked \(when): 1 server, \(gpus)"
             : "Checked \(when): \(proof.modelServers) servers, \(gpus) on one"
+        if let tls = proof.tlsSummary {
+            return "\(base) · \(tls)"
+        }
+        return base
     }
 
     /// "now", or "9 min".

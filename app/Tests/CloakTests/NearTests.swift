@@ -51,5 +51,38 @@ struct NearTests {
         #expect(line["request"] as? String == "ask")
         #expect(line["proof_age"] as? Int == freshness.rawValue)
         #expect(line["route"] as? [String: String] == expected)
+        #expect(answered.proof.tlsProtocol == nil)
+        #expect(answered.proof.isHybridPostQuantumTLS == false)
+    }
+
+    @Test
+    func checkLineDecodesLocalNegotiatedTLSMetadata() async throws {
+        let folder = URL(filePath: "/tmp").appending(path: "cloak-near-tls-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let helper = folder.appending(path: "cloak-near")
+        let response = #"""
+            {"answer":"passed","sent":false,"proof":{"passed_at":1795125440,"model_servers":2,"gpus":8,"model_key":"00","gateway_tls_key_sha256":"ff","tls_protocol":"TLS 1.3","tls_cipher_suite":"TLS13_AES_256_GCM_SHA384","tls_key_exchange":"X25519MLKEM768"}}
+            """#
+        let script = """
+            #!/bin/sh
+            IFS= read -r _line
+            printf '%s\\n' '\(response)'
+            """
+        try Data(script.utf8).write(to: helper)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let sha256 = SHA256.hash(data: try Data(contentsOf: helper)).map { String(format: "%02x", $0) }.joined()
+        let near = Near(helper: helper, sha256: sha256)
+        defer { near.stop() }
+
+        let proof = try await near.check(route: .direct, proofAge: .everyMessage)
+
+        #expect(proof.modelServers == 2)
+        #expect(proof.gpus == 8)
+        #expect(proof.tlsProtocol == "TLS 1.3")
+        #expect(proof.tlsCipherSuite == "TLS13_AES_256_GCM_SHA384")
+        #expect(proof.tlsKeyExchange == "X25519MLKEM768")
+        #expect(proof.isHybridPostQuantumTLS == true)
+        #expect(proof.tlsSummary == "TLS 1.3 · X25519MLKEM768")
     }
 }

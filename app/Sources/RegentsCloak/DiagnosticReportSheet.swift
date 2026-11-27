@@ -8,6 +8,7 @@ import SwiftUI
 /// into a GitHub issue, Patchbay thread, or email.
 struct DiagnosticReportSheet: View {
     let supervisor: Supervisor
+    var negotiatedCryptoSummary: String? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var report: DiagnosticReport.Result?
@@ -145,7 +146,8 @@ struct DiagnosticReportSheet: View {
                 rewriterModel: status.model.label,
                 rewriterResting: supervisor.resting,
                 lastCheckSummary: checkSummary,
-                statusDetail: status.detail
+                statusDetail: status.detail,
+                negotiatedCryptoSummary: negotiatedCryptoSummary
             )
         }
     }

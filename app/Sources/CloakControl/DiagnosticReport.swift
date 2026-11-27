@@ -73,6 +73,7 @@ public enum DiagnosticReport {
         rewriterResting: Bool,
         lastCheckSummary: String,
         statusDetail: String,
+        negotiatedCryptoSummary: String? = nil,
         minutes: Int = 60
     ) async -> Result {
         let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
@@ -104,6 +105,11 @@ public enum DiagnosticReport {
         lines.append("[Status Detail]")
         lines.append(redact(statusDetail))
         lines.append("")
+        if let negotiatedCryptoSummary, !negotiatedCryptoSummary.isEmpty {
+            lines.append("[Negotiated Crypto Sessions (local only, zero telemetry)]")
+            lines.append(redact(negotiatedCryptoSummary))
+            lines.append("")
+        }
         lines.append("[Recent Cloak Logs (last \(minutes)m, redacted)]")
         if redactedLogs.isEmpty {
             lines.append("(no log entries found in the last \(minutes) minutes)")
